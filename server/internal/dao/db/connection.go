@@ -8,11 +8,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/lifei6671/papermind/server/library/config"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/lifei6671/papermind/server/library/config"
 )
 
 var (
