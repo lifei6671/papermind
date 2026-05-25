@@ -98,6 +98,7 @@ P0 文档与项目骨架
 - [x] 引入 `gorm.io/datatypes`。
 - [x] 引入 `gorm.io/plugin/soft_delete`。
 - [x] 创建 `server/conf/app.yaml` 开发配置模板。
+- [x] 创建 `server/conf/app.example.yaml` 示例配置，并为每一项提供中文注释。
 - [x] 确认 `.gitignore` 排除 `server/conf_online/`、私有配置、SQLite 数据库文件、导入导出临时文件、构建产物。
 - [x] 初始化 `web` 为 React + Vite + TypeScript 项目。
 
@@ -118,36 +119,36 @@ P0 文档与项目骨架
 
 ### P1.1 YAML 配置
 
-- [ ] 定义 `server/library/config` 配置结构。
-- [ ] 支持 `app.name`。
-- [ ] 支持 `app.env`。
-- [ ] 支持 `app.http_port`。
-- [ ] 支持 `app.public_url`。
-- [ ] 支持 `database.driver`。
-- [ ] 支持 `database.dsn`。
-- [ ] 支持 `database.max_open_conns`。
-- [ ] 支持 `database.max_idle_conns`。
-- [ ] 支持 `auth.access_token_ttl`。
-- [ ] 支持 `auth.refresh_token_ttl`。
-- [ ] 支持 `auth.exam_token_buffer_minutes`。
-- [ ] 支持 `storage.temp_dir`。
-- [ ] 支持 `storage.import_dir`。
-- [ ] 支持 `storage.export_dir`。
-- [ ] 支持 `security.allow_register_default`。
-- [ ] 支持 `security.password_min_length`。
-- [ ] 支持 `security.cors_origins`。
-- [ ] 支持环境变量覆盖敏感配置。
-- [ ] 启动时校验存储目录存在且可写。
+- [x] 定义 `server/library/config` 配置结构。
+- [x] 支持 `app.name`。
+- [x] 支持 `app.env`。
+- [x] 支持 `app.http_port`。
+- [x] 支持 `app.public_url`。
+- [x] 支持 `database.driver`。
+- [x] 支持 `database.dsn`。
+- [x] 支持 `database.max_open_conns`。
+- [x] 支持 `database.max_idle_conns`。
+- [x] 支持 `auth.access_token_ttl`。
+- [x] 支持 `auth.refresh_token_ttl`。
+- [x] 支持 `auth.exam_token_buffer_minutes`。
+- [x] 支持 `storage.temp_dir`。
+- [x] 支持 `storage.import_dir`。
+- [x] 支持 `storage.export_dir`。
+- [x] 支持 `security.allow_register_default`。
+- [x] 支持 `security.password_min_length`。
+- [x] 支持 `security.cors_origins`。
+- [x] 支持环境变量覆盖敏感配置。
+- [x] 启动时校验存储目录存在且可写。
 
 ### P1.2 日志与响应
 
-- [ ] 实现统一 `request_id` 中间件。
-- [ ] 实现 Gin 请求日志中间件。
-- [ ] 实现 panic recover 中间件。
-- [ ] 实现统一响应结构 `{ code, message, data }`。
-- [ ] 实现分页响应结构 `{ items, page, page_size, total }`。
-- [ ] 定义错误码目录 `server/library/code`。
-- [ ] 定义业务错误封装 `server/library/xerr`。
+- [x] 实现统一 `request_id` 中间件。
+- [x] 实现 Gin 请求日志中间件。
+- [x] 实现 panic recover 中间件。
+- [x] 实现统一响应结构 `{ code, message, data }`。
+- [x] 实现分页响应结构 `{ items, page, page_size, total }`。
+- [x] 定义错误码目录 `server/library/code`。
+- [x] 定义业务错误封装 `server/library/xerr`。
 
 ### P1.3 数据库连接
 

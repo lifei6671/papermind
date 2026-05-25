@@ -1288,9 +1288,10 @@ page_size  默认 20，最大 100
 
 ```text
 server/conf/app.yaml
+server/conf/app.example.yaml
 ```
 
-仓库只保留开发配置模板。生产环境不提交 `conf_online` 目录，生产配置通过环境变量、Docker secret 或部署平台密钥管理能力注入，并在 `.gitignore` 中排除本地私有配置文件。
+仓库只保留开发配置模板和示例配置。`app.example.yaml` 必须为每一项配置提供中文注释，便于部署和二次开发时对照。生产环境不提交 `conf_online` 目录，生产配置通过环境变量、Docker secret 或部署平台密钥管理能力注入，并在 `.gitignore` 中排除本地私有配置文件。
 
 建议配置结构：
 
