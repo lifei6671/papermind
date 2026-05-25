@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
     PRIMARY KEY (id),
     UNIQUE KEY uk_tenants_tenant_code_deleted_at (tenant_code, deleted_at)
-) COMMENT='租户表，保存学校、企业、培训机构等租户主体';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户表，保存学校、企业、培训机构等租户主体';
 
 CREATE TABLE IF NOT EXISTS spaces (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '空间主键 ID',
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS spaces (
     deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
     PRIMARY KEY (id),
     KEY idx_spaces_tenant_id (tenant_id)
-) COMMENT='空间表，保存班级、专业、课程、培训项目等租户内组织边界';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='空间表，保存班级、专业、课程、培训项目等租户内组织边界';
 
 CREATE TABLE IF NOT EXISTS space_members (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '空间成员关系主键 ID',
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS space_members (
     PRIMARY KEY (id),
     UNIQUE KEY uk_space_members_user_deleted_at (tenant_id, space_id, user_id, deleted_at),
     KEY idx_space_members_space_status (tenant_id, space_id, status, deleted_at)
-) COMMENT='空间成员表，保存用户在空间内的角色和启用状态';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='空间成员表，保存用户在空间内的角色和启用状态';
 
 CREATE TABLE IF NOT EXISTS space_configs (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '空间配置主键 ID',
@@ -71,4 +71,244 @@ CREATE TABLE IF NOT EXISTS space_configs (
     ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
     PRIMARY KEY (id),
     UNIQUE KEY uk_space_configs_key (tenant_id, space_id, config_key)
-) COMMENT='空间配置表，保存空间级配置项';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='空间配置表，保存空间级配置项';
+
+CREATE TABLE IF NOT EXISTS platform_users (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '平台管理员主键 ID',
+    username VARCHAR(64) NOT NULL COMMENT '平台管理员登录名',
+    avatar_url VARCHAR(512) NOT NULL DEFAULT '' COMMENT '用户头像地址',
+    phone VARCHAR(32) NOT NULL DEFAULT '' COMMENT '手机号，可用于登录或找回账号',
+    email VARCHAR(128) NOT NULL DEFAULT '' COMMENT '邮箱，可用于登录或通知',
+    password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希',
+    last_login_ip VARCHAR(64) NOT NULL DEFAULT '' COMMENT '最后登录 IP',
+    last_login_at BIGINT NOT NULL DEFAULT 0 COMMENT '最后登录时间，Unix 毫秒时间戳',
+    status VARCHAR(32) NOT NULL DEFAULT 'enabled' COMMENT '平台管理员状态：enabled / disabled',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_platform_users_username_deleted_at (username, deleted_at),
+    UNIQUE KEY uk_platform_users_phone_deleted_at (phone, deleted_at),
+    UNIQUE KEY uk_platform_users_email_deleted_at (email, deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台管理员账号表，保存平台级管理员身份';
+
+CREATE TABLE IF NOT EXISTS platform_configs (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '平台配置主键 ID',
+    config_key VARCHAR(128) NOT NULL COMMENT '配置键，例如 allow_register_default',
+    config_value TEXT NOT NULL COMMENT '配置值，按字符串保存',
+    value_type VARCHAR(32) NOT NULL DEFAULT 'string' COMMENT '配置值类型：string / number / bool / json',
+    description VARCHAR(512) NOT NULL DEFAULT '' COMMENT '配置说明',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_platform_configs_config_key (config_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台配置表，保存平台级开关、默认值和注册策略';
+
+CREATE TABLE IF NOT EXISTS users (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '租户用户主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    username VARCHAR(64) NOT NULL COMMENT '租户内登录名',
+    real_name VARCHAR(128) NOT NULL DEFAULT '' COMMENT '真实姓名，用于阅卷、成绩单和导出',
+    avatar_url VARCHAR(512) NOT NULL DEFAULT '' COMMENT '用户头像地址',
+    phone VARCHAR(32) NOT NULL DEFAULT '' COMMENT '手机号，可用于登录或通知',
+    email VARCHAR(128) NOT NULL DEFAULT '' COMMENT '邮箱，可用于登录或通知',
+    password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希',
+    last_login_ip VARCHAR(64) NOT NULL DEFAULT '' COMMENT '最后登录 IP',
+    last_login_at BIGINT NOT NULL DEFAULT 0 COMMENT '最后登录时间，Unix 毫秒时间戳',
+    status VARCHAR(32) NOT NULL DEFAULT 'enabled' COMMENT '用户状态：enabled / disabled',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_users_username_deleted_at (tenant_id, username, deleted_at),
+    UNIQUE KEY uk_users_phone_deleted_at (tenant_id, phone, deleted_at),
+    UNIQUE KEY uk_users_email_deleted_at (tenant_id, email, deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户用户表，保存租户内考生、教师和租户管理员';
+
+CREATE TABLE IF NOT EXISTS user_roles (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '用户角色关系主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    user_id BIGINT UNSIGNED NOT NULL COMMENT '租户用户 ID',
+    role VARCHAR(32) NOT NULL COMMENT '用户角色：tenant_admin / teacher / student',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_user_roles_role (tenant_id, user_id, role)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户角色关系表，保存租户用户的固定角色';
+
+CREATE TABLE IF NOT EXISTS questions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '题目主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    space_id BIGINT UNSIGNED NULL COMMENT '所属空间 ID，NULL 表示租户公共题库',
+    type VARCHAR(32) NOT NULL COMMENT '题型：single / multiple / judge / fill_blank / short_text',
+    difficulty VARCHAR(32) NOT NULL DEFAULT 'medium' COMMENT '难度：easy / medium / hard',
+    title TEXT NOT NULL COMMENT '题干内容',
+    analysis TEXT NOT NULL COMMENT '题目解析，出题人可选填',
+    score_default DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '默认分值',
+    choice_display_count INT NULL COMMENT '选择题展示选项数量，可为空',
+    shuffle_options TINYINT(1) NOT NULL DEFAULT 0 COMMENT '题库默认选项随机设置',
+    status VARCHAR(32) NOT NULL DEFAULT 'draft' COMMENT '题目状态：draft / enabled / disabled',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
+    PRIMARY KEY (id),
+    KEY idx_questions_filter (tenant_id, space_id, type, difficulty, status, deleted_at),
+    KEY idx_questions_creator (tenant_id, created_by, deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='题目表，保存租户公共题库和空间题库中的题目';
+
+CREATE TABLE IF NOT EXISTS question_options (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '题目选项主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    question_id BIGINT UNSIGNED NOT NULL COMMENT '题目 ID',
+    option_key VARCHAR(32) NOT NULL COMMENT '出题编辑时的原始展示标签，例如 A / B / C / D，不参与判分',
+    sort_order INT NOT NULL COMMENT '选项原始排序',
+    content TEXT NOT NULL COMMENT '选项内容',
+    is_correct TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否为正确答案',
+    is_distractor TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否可作为随机补位干扰项',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_question_options_key (tenant_id, question_id, option_key),
+    UNIQUE KEY uk_question_options_sort_order (tenant_id, question_id, sort_order),
+    KEY idx_question_options_question (tenant_id, question_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='题目选项表，保存选择题和判断题选项';
+
+CREATE TABLE IF NOT EXISTS tags (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '标签主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    name VARCHAR(128) NOT NULL COMMENT '标签名称，例如知识点、章节、技能点',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_tags_name_deleted_at (tenant_id, name, deleted_at),
+    KEY idx_tags_tenant_deleted_at (tenant_id, deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='标签表，保存知识点、章节、技能点等题目标签';
+
+CREATE TABLE IF NOT EXISTS question_tags (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '题目标签关系主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    question_id BIGINT UNSIGNED NOT NULL COMMENT '题目 ID',
+    tag_id BIGINT UNSIGNED NOT NULL COMMENT '标签 ID',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_question_tags_tag (tenant_id, question_id, tag_id),
+    KEY idx_question_tags_tag (tenant_id, tag_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='题目标签关系表，保存题目和标签的绑定关系';
+
+CREATE TABLE IF NOT EXISTS papers (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '试卷主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    space_id BIGINT UNSIGNED NULL COMMENT '所属空间 ID，NULL 表示租户公共试卷',
+    name VARCHAR(128) NOT NULL COMMENT '试卷名称',
+    description TEXT NOT NULL COMMENT '试卷说明',
+    total_score DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '试卷总分，由系统按大题题目聚合计算',
+    build_mode VARCHAR(32) NOT NULL COMMENT '组卷方式：manual / rule_fixed / rule_live',
+    shuffle_questions TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否对每个考生随机题目顺序',
+    show_analysis TINYINT(1) NOT NULL DEFAULT 0 COMMENT '成绩可见后是否向考生展示题目解析',
+    status VARCHAR(32) NOT NULL DEFAULT 'draft' COMMENT '试卷状态：draft / enabled / disabled',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
+    PRIMARY KEY (id),
+    KEY idx_papers_filter (tenant_id, space_id, status, deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='试卷表，保存公共试卷和空间内试卷';
+
+CREATE TABLE IF NOT EXISTS paper_sections (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '试卷大题主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    paper_id BIGINT UNSIGNED NOT NULL COMMENT '试卷 ID',
+    sort_order INT NOT NULL COMMENT '大题排序',
+    name VARCHAR(128) NOT NULL COMMENT '大题名称，例如一、单选题',
+    question_type VARCHAR(32) NOT NULL COMMENT '大题题型',
+    instructions TEXT NOT NULL COMMENT '大题作答说明',
+    total_score DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '大题小计分，由系统聚合计算',
+    question_count INT NOT NULL DEFAULT 0 COMMENT '大题题目数量，由系统聚合计算',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_paper_sections_sort_order (tenant_id, paper_id, sort_order),
+    UNIQUE KEY uk_paper_sections_id_paper (tenant_id, id, paper_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='试卷大题表，保存大题结构、题型和小计信息';
+
+CREATE TABLE IF NOT EXISTS paper_section_questions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '大题题目关系主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    section_id BIGINT UNSIGNED NOT NULL COMMENT '大题 ID',
+    paper_id BIGINT UNSIGNED NOT NULL COMMENT '试卷 ID，冗余保存用于减少查询 JOIN',
+    question_id BIGINT UNSIGNED NOT NULL COMMENT '题目 ID',
+    sort_order INT NOT NULL COMMENT '题目在大题中的排序',
+    score DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '该题在本试卷中的分值',
+    shuffle_options TINYINT(1) NULL COMMENT '手动或固化组卷下该题是否随机选项，NULL 表示回退题库默认值',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_paper_section_questions_question (tenant_id, paper_id, question_id),
+    UNIQUE KEY uk_paper_section_questions_sort_order (tenant_id, section_id, sort_order),
+    CONSTRAINT fk_paper_section_questions_section FOREIGN KEY (tenant_id, section_id, paper_id) REFERENCES paper_sections (tenant_id, id, paper_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='大题题目关系表，保存手动或固化组卷后的题目';
+
+CREATE TABLE IF NOT EXISTS paper_section_rules (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '大题抽题规则主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    section_id BIGINT UNSIGNED NOT NULL COMMENT '大题 ID',
+    paper_id BIGINT UNSIGNED NOT NULL COMMENT '试卷 ID，冗余保存用于减少查询 JOIN',
+    sort_order INT NOT NULL COMMENT '规则在大题内的排序',
+    difficulty VARCHAR(32) NULL COMMENT '抽题难度条件，NULL 表示不限难度',
+    tag_filter TEXT NOT NULL COMMENT '标签过滤条件，JSON 数组字符串',
+    question_count INT NOT NULL COMMENT '该规则抽题数量',
+    score_per_question DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '该规则下每题分值',
+    shuffle_options TINYINT(1) NULL COMMENT '规则组卷下是否随机选项，NULL 表示回退题库默认值',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_paper_section_rules_sort_order (tenant_id, section_id, sort_order),
+    CONSTRAINT fk_paper_section_rules_section FOREIGN KEY (tenant_id, section_id, paper_id) REFERENCES paper_sections (tenant_id, id, paper_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='大题抽题规则表，保存规则组卷条件';

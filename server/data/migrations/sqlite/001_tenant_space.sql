@@ -77,3 +77,266 @@ CREATE TABLE IF NOT EXISTS space_configs (
 );
 -- 同一空间内同一个配置键只能存在一条记录。
 CREATE UNIQUE INDEX IF NOT EXISTS uk_space_configs_key ON space_configs (tenant_id, space_id, config_key);
+
+-- platform_users：平台管理员账号表，保存平台级管理员身份。
+CREATE TABLE IF NOT EXISTS platform_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    avatar_url TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    last_login_ip TEXT NOT NULL DEFAULT '',
+    last_login_at INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'enabled',
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}',
+    deleted_at INTEGER NOT NULL DEFAULT 0
+);
+-- 平台管理员登录名在未删除账号内唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_username_deleted_at ON platform_users (username, deleted_at);
+-- 平台管理员手机号在未删除账号内唯一，空字符串也按唯一值处理。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_phone_deleted_at ON platform_users (phone, deleted_at);
+-- 平台管理员邮箱在未删除账号内唯一，空字符串也按唯一值处理。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_email_deleted_at ON platform_users (email, deleted_at);
+
+-- platform_configs：平台配置表，保存平台级开关、默认值和注册策略。
+CREATE TABLE IF NOT EXISTS platform_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_key TEXT NOT NULL,
+    config_value TEXT NOT NULL DEFAULT '',
+    value_type TEXT NOT NULL DEFAULT 'string',
+    description TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
+-- 平台配置项按配置键全平台唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_configs_config_key ON platform_configs (config_key);
+
+-- users：租户用户表，保存租户内考生、教师和租户管理员。
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    real_name TEXT NOT NULL DEFAULT '',
+    avatar_url TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    last_login_ip TEXT NOT NULL DEFAULT '',
+    last_login_at INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'enabled',
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}',
+    deleted_at INTEGER NOT NULL DEFAULT 0
+);
+-- 租户内登录名在未删除用户内唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (tenant_id, username, deleted_at);
+-- 租户内手机号在未删除用户内唯一，空字符串也按唯一值处理。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (tenant_id, phone, deleted_at);
+-- 租户内邮箱在未删除用户内唯一，空字符串也按唯一值处理。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (tenant_id, email, deleted_at);
+
+-- user_roles：用户角色关系表，保存租户用户的固定角色。
+CREATE TABLE IF NOT EXISTS user_roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
+-- 同一租户用户不能重复分配同一个固定角色。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_role ON user_roles (tenant_id, user_id, role);
+
+-- questions：题目表，保存租户公共题库和空间题库中的题目。
+CREATE TABLE IF NOT EXISTS questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    space_id INTEGER,
+    type TEXT NOT NULL,
+    difficulty TEXT NOT NULL DEFAULT 'medium',
+    title TEXT NOT NULL,
+    analysis TEXT NOT NULL DEFAULT '',
+    score_default NUMERIC NOT NULL DEFAULT 0,
+    choice_display_count INTEGER,
+    shuffle_options INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}',
+    deleted_at INTEGER NOT NULL DEFAULT 0
+);
+-- 题库筛选高频按租户、空间、题型、难度、状态和软删除过滤。
+CREATE INDEX IF NOT EXISTS idx_questions_filter ON questions (tenant_id, space_id, type, difficulty, status, deleted_at);
+-- 教师维护题目列表高频按创建人过滤。
+CREATE INDEX IF NOT EXISTS idx_questions_creator ON questions (tenant_id, created_by, deleted_at);
+
+-- question_options：题目选项表，保存选择题和判断题选项。
+CREATE TABLE IF NOT EXISTS question_options (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    option_key TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    is_correct INTEGER NOT NULL DEFAULT 0,
+    is_distractor INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
+-- 同一题目不能出现重复的编辑展示标签。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_question_options_key ON question_options (tenant_id, question_id, option_key);
+-- 同一题目不能出现重复的选项原始排序。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_question_options_sort_order ON question_options (tenant_id, question_id, sort_order);
+-- 查询题目详情时按题目加载选项。
+CREATE INDEX IF NOT EXISTS idx_question_options_question ON question_options (tenant_id, question_id);
+
+-- tags：标签表，保存知识点、章节、技能点等题目标签。
+CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}',
+    deleted_at INTEGER NOT NULL DEFAULT 0
+);
+-- 同一租户内标签名称唯一，软删除后允许重建同名标签。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_tags_name_deleted_at ON tags (tenant_id, name, deleted_at);
+-- 标签列表高频按租户和软删除过滤。
+CREATE INDEX IF NOT EXISTS idx_tags_tenant_deleted_at ON tags (tenant_id, deleted_at);
+
+-- question_tags：题目标签关系表，保存题目和标签的绑定关系。
+CREATE TABLE IF NOT EXISTS question_tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    tag_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
+-- 同一题目不能重复绑定同一标签。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_question_tags_tag ON question_tags (tenant_id, question_id, tag_id);
+-- 按标签查题时使用该索引。
+CREATE INDEX IF NOT EXISTS idx_question_tags_tag ON question_tags (tenant_id, tag_id);
+
+-- papers：试卷表，保存公共试卷和空间内试卷。
+CREATE TABLE IF NOT EXISTS papers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    space_id INTEGER,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    total_score NUMERIC NOT NULL DEFAULT 0,
+    build_mode TEXT NOT NULL,
+    shuffle_questions INTEGER NOT NULL DEFAULT 0,
+    show_analysis INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}',
+    deleted_at INTEGER NOT NULL DEFAULT 0
+);
+-- 试卷列表高频按租户、空间、状态和软删除过滤。
+CREATE INDEX IF NOT EXISTS idx_papers_filter ON papers (tenant_id, space_id, status, deleted_at);
+
+-- paper_sections：试卷大题表，保存大题结构、题型和小计信息。
+CREATE TABLE IF NOT EXISTS paper_sections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    paper_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    question_type TEXT NOT NULL,
+    instructions TEXT NOT NULL DEFAULT '',
+    total_score NUMERIC NOT NULL DEFAULT 0,
+    question_count INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}',
+    deleted_at INTEGER NOT NULL DEFAULT 0
+);
+-- 同一试卷内大题排序稳定唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_paper_sections_sort_order ON paper_sections (tenant_id, paper_id, sort_order);
+-- 支撑子表通过 section_id 和冗余 paper_id 建立复合外键。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_paper_sections_id_paper ON paper_sections (tenant_id, id, paper_id);
+
+-- paper_section_questions：大题题目关系表，保存手动或固化组卷后的题目。
+CREATE TABLE IF NOT EXISTS paper_section_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    section_id INTEGER NOT NULL,
+    paper_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL,
+    score NUMERIC NOT NULL DEFAULT 0,
+    shuffle_options INTEGER,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (tenant_id, section_id, paper_id) REFERENCES paper_sections (tenant_id, id, paper_id)
+);
+-- 同一题不能重复加入同一张固化试卷。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_paper_section_questions_question ON paper_section_questions (tenant_id, paper_id, question_id);
+-- 同一大题内题目排序稳定唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_paper_section_questions_sort_order ON paper_section_questions (tenant_id, section_id, sort_order);
+
+-- paper_section_rules：大题抽题规则表，保存规则组卷条件。
+CREATE TABLE IF NOT EXISTS paper_section_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    section_id INTEGER NOT NULL,
+    paper_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL,
+    difficulty TEXT,
+    tag_filter TEXT NOT NULL DEFAULT '[]',
+    question_count INTEGER NOT NULL,
+    score_per_question NUMERIC NOT NULL DEFAULT 0,
+    shuffle_options INTEGER,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (tenant_id, section_id, paper_id) REFERENCES paper_sections (tenant_id, id, paper_id)
+);
+-- 同一大题内抽题规则排序稳定唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_paper_section_rules_sort_order ON paper_section_rules (tenant_id, section_id, sort_order);

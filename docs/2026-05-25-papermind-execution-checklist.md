@@ -230,64 +230,64 @@ P0 文档与项目骨架
 
 ### P2.4 用户与角色表
 
-- [ ] 创建 `platform_users`。
-- [ ] `platform_users` 包含 `avatar_url`。
-- [ ] `platform_users` 包含 `last_login_ip`。
-- [ ] `platform_users` 包含 `last_login_at`。
-- [ ] `platform_users` 建立 `UNIQUE (username, deleted_at)`。
-- [ ] `platform_users` 建立 `UNIQUE (phone, deleted_at)`。
-- [ ] `platform_users` 建立 `UNIQUE (email, deleted_at)`。
-- [ ] 创建 `platform_configs`。
-- [ ] `platform_configs` 建立 `UNIQUE (config_key)`。
-- [ ] 创建 `users`。
-- [ ] `users` 包含 `real_name`。
-- [ ] `users` 包含 `avatar_url`。
-- [ ] `users` 包含 `last_login_ip`。
-- [ ] `users` 包含 `last_login_at`。
-- [ ] `users` 建立 `UNIQUE (tenant_id, username, deleted_at)`。
-- [ ] `users` 建立 `UNIQUE (tenant_id, phone, deleted_at)`。
-- [ ] `users` 建立 `UNIQUE (tenant_id, email, deleted_at)`。
-- [ ] 创建 `user_roles`。
-- [ ] `user_roles` 建立 `UNIQUE (tenant_id, user_id, role)`。
+- [x] 创建 `platform_users`。
+- [x] `platform_users` 包含 `avatar_url`。
+- [x] `platform_users` 包含 `last_login_ip`。
+- [x] `platform_users` 包含 `last_login_at`。
+- [x] `platform_users` 建立 `UNIQUE (username, deleted_at)`。
+- [x] `platform_users` 建立 `UNIQUE (phone, deleted_at)`。
+- [x] `platform_users` 建立 `UNIQUE (email, deleted_at)`。
+- [x] 创建 `platform_configs`。
+- [x] `platform_configs` 建立 `UNIQUE (config_key)`。
+- [x] 创建 `users`。
+- [x] `users` 包含 `real_name`。
+- [x] `users` 包含 `avatar_url`。
+- [x] `users` 包含 `last_login_ip`。
+- [x] `users` 包含 `last_login_at`。
+- [x] `users` 建立 `UNIQUE (tenant_id, username, deleted_at)`。
+- [x] `users` 建立 `UNIQUE (tenant_id, phone, deleted_at)`。
+- [x] `users` 建立 `UNIQUE (tenant_id, email, deleted_at)`。
+- [x] 创建 `user_roles`。
+- [x] `user_roles` 建立 `UNIQUE (tenant_id, user_id, role)`。
 
 ### P2.5 题库表
 
-- [ ] 创建 `questions`。
-- [ ] `questions.type` 支持 `single`。
-- [ ] `questions.type` 支持 `multiple`。
-- [ ] `questions.type` 支持 `judge`。
-- [ ] `questions.type` 支持 `fill_blank`。
-- [ ] `questions.type` 支持 `short_text`。
-- [ ] `questions.analysis` 可为空。
-- [ ] 创建 `question_options`。
-- [ ] `question_options` 包含 `option_key`，仅用于编辑展示。
-- [ ] `question_options` 包含 `sort_order`。
-- [ ] `question_options` 建立 `UNIQUE (tenant_id, question_id, option_key)`。
-- [ ] `question_options` 建立 `UNIQUE (tenant_id, question_id, sort_order)`。
-- [ ] 创建 `tags`。
-- [ ] `tags.name` 在同租户唯一，唯一约束包含 `deleted_at`。
-- [ ] 创建 `question_tags`。
-- [ ] `question_tags` 建立 `UNIQUE (tenant_id, question_id, tag_id)`。
+- [x] 创建 `questions`。
+- [x] `questions.type` 支持 `single`。
+- [x] `questions.type` 支持 `multiple`。
+- [x] `questions.type` 支持 `judge`。
+- [x] `questions.type` 支持 `fill_blank`。
+- [x] `questions.type` 支持 `short_text`。
+- [x] `questions.analysis` 可为空。
+- [x] 创建 `question_options`。
+- [x] `question_options` 包含 `option_key`，仅用于编辑展示。
+- [x] `question_options` 包含 `sort_order`。
+- [x] `question_options` 建立 `UNIQUE (tenant_id, question_id, option_key)`。
+- [x] `question_options` 建立 `UNIQUE (tenant_id, question_id, sort_order)`。
+- [x] 创建 `tags`。
+- [x] `tags.name` 在同租户唯一，唯一约束包含 `deleted_at`。
+- [x] 创建 `question_tags`。
+- [x] `question_tags` 建立 `UNIQUE (tenant_id, question_id, tag_id)`。
 
 ### P2.6 试卷与组卷表
 
-- [ ] 创建 `papers`。
-- [ ] `papers.build_mode` 支持 `manual`。
-- [ ] `papers.build_mode` 支持 `rule_fixed`。
-- [ ] `papers.build_mode` 支持 `rule_live`。
-- [ ] `papers.show_analysis` 控制解析展示。
-- [ ] 创建 `paper_sections`。
-- [ ] `paper_sections` 包含 `deleted_at`。
-- [ ] `paper_sections` 建立 `UNIQUE (tenant_id, paper_id, sort_order)`。
-- [ ] `paper_sections` 建立 `UNIQUE (tenant_id, id, paper_id)`。
-- [ ] 创建 `paper_section_questions`。
-- [ ] `paper_section_questions` 建立 `UNIQUE (tenant_id, paper_id, question_id)`。
-- [ ] `paper_section_questions` 建立 `UNIQUE (tenant_id, section_id, sort_order)`。
-- [ ] `paper_section_questions` 建立复合外键 `(tenant_id, section_id, paper_id)` 引用 `paper_sections(tenant_id, id, paper_id)`。
-- [ ] 创建 `paper_section_rules`。
-- [ ] `paper_section_rules.difficulty` 允许为空，表示不限难度。
-- [ ] `paper_section_rules` 建立 `UNIQUE (tenant_id, section_id, sort_order)`。
-- [ ] `paper_section_rules` 建立复合外键 `(tenant_id, section_id, paper_id)` 引用 `paper_sections(tenant_id, id, paper_id)`。
+- [x] 创建 `papers`。
+- [x] `papers.build_mode` 支持 `manual`。
+- [x] `papers.build_mode` 支持 `rule_fixed`。
+- [x] `papers.build_mode` 支持 `rule_live`。
+- [x] `papers.show_analysis` 控制解析展示。
+- [x] 创建 `paper_sections`。
+- [x] `paper_sections` 包含 `deleted_at`。
+- [x] `paper_sections` 建立 `UNIQUE (tenant_id, paper_id, sort_order)`。
+- [x] `paper_sections` 建立 `UNIQUE (tenant_id, id, paper_id)`。
+- [x] 创建 `paper_section_questions`。
+- [x] `paper_section_questions` 建立 `UNIQUE (tenant_id, paper_id, question_id)`。
+- [x] `paper_section_questions` 建立 `UNIQUE (tenant_id, section_id, sort_order)`。
+- [x] `paper_section_questions` 建立复合外键 `(tenant_id, section_id, paper_id)` 引用 `paper_sections(tenant_id, id, paper_id)`。
+- [x] 创建 `paper_section_rules`。
+- [x] `paper_section_rules.difficulty` 允许为空，表示不限难度。
+- [x] `paper_section_rules` 建立 `UNIQUE (tenant_id, section_id, sort_order)`。
+- [x] `paper_section_rules` 建立复合外键 `(tenant_id, section_id, paper_id)` 引用 `paper_sections(tenant_id, id, paper_id)`。
 
 ### P2.7 考试与答题表
 
