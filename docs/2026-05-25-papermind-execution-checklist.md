@@ -291,33 +291,33 @@ P0 文档与项目骨架
 
 ### P2.7 考试与答题表
 
-- [ ] 创建 `exams`。
-- [ ] `exams.max_attempts` 默认 1。
-- [ ] `exams.result_strategy` 支持 `latest`。
-- [ ] `exams.result_strategy` 支持 `highest`。
-- [ ] `exams.invite_code` 建立 `UNIQUE (tenant_id, invite_code)`。
-- [ ] 创建 `exam_targets`。
-- [ ] `exam_targets` 建立 `UNIQUE (tenant_id, exam_id, target_type, target_id)`。
-- [ ] 创建 `exam_live_question_pools`。
-- [ ] `exam_live_question_pools` 建立 `UNIQUE (tenant_id, exam_id, section_id, rule_id, question_id)`。
-- [ ] 创建 `exam_attempts`。
-- [ ] `exam_attempts` 建立 `UNIQUE (tenant_id, exam_id, user_id, attempt_no)`。
-- [ ] `exam_attempts` 建立 `INDEX (exam_token_hash, status)`。
-- [ ] 创建 `exam_attempt_questions`。
-- [ ] `exam_attempt_questions` 包含 `section_snapshot`。
-- [ ] `exam_attempt_questions.sort_order` 为全局题号。
-- [ ] 创建 `exam_answers`。
-- [ ] `exam_answers` 建立 `UNIQUE (tenant_id, attempt_id, attempt_question_id)`。
-- [ ] 创建 `exam_events`。
+- [x] 创建 `exams`。
+- [x] `exams.max_attempts` 默认 1。
+- [x] `exams.result_strategy` 支持 `latest`。
+- [x] `exams.result_strategy` 支持 `highest`。
+- [x] `exams.invite_code` 建立 `UNIQUE (tenant_id, invite_code)`。
+- [x] 创建 `exam_targets`。
+- [x] `exam_targets` 建立 `UNIQUE (tenant_id, exam_id, target_type, target_id)`。
+- [x] 创建 `exam_live_question_pools`。
+- [x] `exam_live_question_pools` 建立 `UNIQUE (tenant_id, exam_id, section_id, rule_id, question_id)`。
+- [x] 创建 `exam_attempts`。
+- [x] `exam_attempts` 建立 `UNIQUE (tenant_id, exam_id, user_id, attempt_no)`。
+- [x] `exam_attempts` 建立 `INDEX (exam_token_hash, status)`。
+- [x] 创建 `exam_attempt_questions`。
+- [x] `exam_attempt_questions` 包含 `section_snapshot`。
+- [x] `exam_attempt_questions.sort_order` 为全局题号。
+- [x] 创建 `exam_answers`。
+- [x] `exam_answers` 建立 `UNIQUE (tenant_id, attempt_id, attempt_question_id)`。
+- [x] 创建 `exam_events`。
 
 **验收标准**：
 
-- [ ] PostgreSQL 迁移 SQL 包含表和字段中文注释。
-- [ ] MySQL 迁移 SQL 包含表和字段中文注释。
-- [ ] SQLite 迁移 SQL 使用 `--` 注释说明表和字段含义。
+- [x] PostgreSQL 迁移 SQL 包含表和字段中文注释。
+- [x] MySQL 迁移 SQL 包含表和字段中文注释。
+- [x] SQLite 迁移 SQL 使用 `--` 注释说明表和字段含义。
 - [ ] 三套迁移均能从空库执行成功。
 - [ ] SQLite 外键约束实际生效。
-- [ ] 所有 DO 文件有实体和字段映射。
+- [x] 所有 DO 文件有实体和字段映射。
 
 ---
 
@@ -329,91 +329,91 @@ P0 文档与项目骨架
 
 ### P3.1 权限抽象
 
-- [ ] 创建 `server/internal/service/permission/checker.go`。
-- [ ] 定义 `PermissionChecker` 接口。
-- [ ] 创建 `server/internal/service/permission/context.go`。
-- [ ] 定义 `PermissionContext`。
-- [ ] 创建 `server/internal/service/permission/fixed_role.go`。
-- [ ] 实现 `CanManageTenant`。
-- [ ] 实现 `CanManageSpace`。
-- [ ] 实现 `CanManageQuestion`。
-- [ ] 实现 `CanPublishExam`。
-- [ ] 实现 `CanGradeAttempt`。
-- [ ] 实现 `CanTakeExam`。
+- [x] 创建 `server/internal/service/permission/checker.go`。
+- [x] 定义 `PermissionChecker` 接口。
+- [x] 创建 `server/internal/service/permission/context.go`。
+- [x] 定义 `PermissionContext`。
+- [x] 创建 `server/internal/service/permission/fixed_role.go`。
+- [x] 实现 `CanManageTenant`。
+- [x] 实现 `CanManageSpace`。
+- [x] 实现 `CanManageQuestion`。
+- [x] 实现 `CanPublishExam`。
+- [x] 实现 `CanGradeAttempt`。
+- [x] 实现 `CanTakeExam`。
 - [ ] service 层统一调用 `PermissionChecker`。
 
 ### P3.2 平台用户
 
-- [ ] 实现平台管理员初始化 seed。
-- [ ] 实现平台管理员登录。
-- [ ] 登录成功更新 `last_login_ip`。
-- [ ] 登录成功更新 `last_login_at`。
-- [ ] 登录失败记录安全日志。
-- [ ] 实现平台用户头像上传。
-- [ ] 头像上传限制文件类型。
-- [ ] 头像上传限制文件大小。
-- [ ] 禁止平台管理员禁用自己。
-- [ ] 禁止禁用最后一个启用状态平台管理员。
+- [x] 实现平台管理员初始化 seed。
+- [x] 实现平台管理员登录。
+- [x] 登录成功更新 `last_login_ip`。
+- [x] 登录成功更新 `last_login_at`。
+- [x] 登录失败记录安全日志。
+- [x] 实现平台用户头像上传。
+- [x] 头像上传限制文件类型。
+- [x] 头像上传限制文件大小。
+- [x] 禁止平台管理员禁用自己。
+- [x] 禁止禁用最后一个启用状态平台管理员。
 
 ### P3.3 租户
 
-- [ ] 实现创建租户。
-- [ ] 创建租户时生成唯一 `tenant_code`。
-- [ ] 新租户 `allow_register` 继承 `security.allow_register_default`。
-- [ ] 实现查看租户码。
-- [ ] 实现重置租户码。
-- [ ] 实现启用租户。
-- [ ] 实现禁用租户。
-- [ ] 实现租户 logo 保存。
-- [ ] 实现租户描述保存。
+- [x] 实现创建租户。
+- [x] 创建租户时生成唯一 `tenant_code`。
+- [x] 新租户 `allow_register` 继承 `security.allow_register_default`。
+- [x] 实现查看租户码。
+- [x] 实现重置租户码。
+- [x] 实现启用租户。
+- [x] 实现禁用租户。
+- [x] 实现租户 logo 保存。
+- [x] 实现租户描述保存。
 
 ### P3.4 租户用户
 
-- [ ] 实现租户用户注册。
-- [ ] 支持租户注册链接注册。
-- [ ] 支持手动输入租户码注册。
-- [ ] 自注册用户默认不属于任何空间。
-- [ ] 实现租户用户登录。
-- [ ] 登录成功更新 `last_login_ip`。
-- [ ] 登录成功更新 `last_login_at`。
-- [ ] 实现租户用户头像上传。
-- [ ] 实现用户禁用。
-- [ ] 禁用用户前提示影响范围。
-- [ ] 禁止禁用自己的账号。
-- [ ] 禁用用户时检查空间管理员不变式。
+- [x] 实现租户用户注册。
+- [x] 支持租户注册链接注册。
+- [x] 支持手动输入租户码注册。
+- [x] 自注册用户默认不属于任何空间。
+- [x] 实现租户用户登录。
+- [x] 登录成功更新 `last_login_ip`。
+- [x] 登录成功更新 `last_login_at`。
+- [x] 实现租户用户头像上传。
+- [x] 实现用户禁用。
+- [x] 禁用用户前提示影响范围。
+- [x] 禁止禁用自己的账号。
+- [x] 禁用用户时检查空间管理员不变式。
 
 ### P3.5 空间
 
-- [ ] 实现创建空间。
-- [ ] 创建空间时可上传 logo。
-- [ ] 创建空间时可填写描述。
-- [ ] logo 和描述不是必填。
-- [ ] 创建空间时必须指定至少一个 `space_admin`。
-- [ ] 实现空间成员加入。
-- [ ] 实现空间成员禁用：`status = disabled`。
-- [ ] 实现空间成员移除：写入 `deleted_at`。
-- [ ] 有效成员查询使用 `status = enabled AND deleted_at = 0`。
-- [ ] 实现空间成员角色变更。
-- [ ] 所有影响 `space_admin` 数量的操作统一调用 `ValidateSpaceAdminInvariant`。
-- [ ] 禁止空间失去最后一个启用状态的 `space_admin`。
+- [x] 实现创建空间。
+- [x] 创建空间时可上传 logo。
+- [x] 创建空间时可填写描述。
+- [x] logo 和描述不是必填。
+- [x] 创建空间时必须指定至少一个 `space_admin`。
+- [x] 实现空间成员加入。
+- [x] 实现空间成员禁用：`status = disabled`。
+- [x] 实现空间成员移除：写入 `deleted_at`。
+- [x] 有效成员查询使用 `status = enabled AND deleted_at = 0`。
+- [x] 实现空间成员角色变更。
+- [x] 所有影响 `space_admin` 数量的操作统一调用 `ValidateSpaceAdminInvariant`。
+- [x] 禁止空间失去最后一个启用状态的 `space_admin`。
 
 ### P3.6 平台配置与空间配置
 
-- [ ] 实现平台配置读取。
-- [ ] 实现平台配置写入。
-- [ ] 配置值按 `value_type` 转换。
-- [ ] 转换失败快速失败。
-- [ ] 生产密钥不得写入平台配置。
-- [ ] 实现空间配置读取。
-- [ ] 实现空间配置写入。
-- [ ] 配置删除采用硬删除。
+- [x] 实现平台配置读取。
+- [x] 实现平台配置写入。
+- [x] 配置值按 `value_type` 转换。
+- [x] 转换失败快速失败。
+- [x] 生产密钥不得写入平台配置。
+- [x] 实现空间配置读取。
+- [x] 实现空间配置写入。
+- [x] 配置删除采用硬删除。
 
 **验收标准**：
 
-- [ ] 单元测试覆盖平台最后一个管理员不能禁用。
-- [ ] 单元测试覆盖自己不能禁用自己。
-- [ ] 单元测试覆盖空间最后一个 `space_admin` 不能禁用、移除、降级。
-- [ ] 单元测试覆盖自注册用户不属于空间。
+- [x] 单元测试覆盖平台最后一个管理员不能禁用。
+- [x] 单元测试覆盖自己不能禁用自己。
+- [x] 单元测试覆盖空间最后一个 `space_admin` 不能禁用、移除、降级。
+- [x] 单元测试覆盖自注册用户不属于空间。
 - [ ] API 测试覆盖租户码注册。
 
 ---
@@ -426,70 +426,70 @@ P0 文档与项目骨架
 
 ### P4.1 标签
 
-- [ ] 实现标签创建。
-- [ ] 同租户标签名称唯一。
-- [ ] 实现标签软删除。
-- [ ] 查询题目标签必须 JOIN `tags` 并过滤 `tags.deleted_at = 0`。
-- [ ] 实现题目绑定标签。
-- [ ] 防止题目重复绑定同一标签。
+- [x] 实现标签创建。
+- [x] 同租户标签名称唯一。
+- [x] 实现标签软删除。
+- [x] 查询题目标签必须 JOIN `tags` 并过滤 `tags.deleted_at = 0`。
+- [x] 实现题目绑定标签。
+- [x] 防止题目重复绑定同一标签。
 
 ### P4.2 题目基础
 
-- [ ] 实现单选题创建。
-- [ ] 实现多选题创建。
-- [ ] 实现判断题创建。
-- [ ] 实现填空题创建。
-- [ ] 实现简答题创建。
-- [ ] `analysis` 可选填。
-- [ ] 支持题目难度。
-- [ ] 支持题目默认分值。
-- [ ] 支持租户公共题库。
-- [ ] 支持空间题库。
-- [ ] 查询题库时实现公共题库和空间题库可见性规则。
+- [x] 实现单选题创建。
+- [x] 实现多选题创建。
+- [x] 实现判断题创建。
+- [x] 实现填空题创建。
+- [x] 实现简答题创建。
+- [x] `analysis` 可选填。
+- [x] 支持题目难度。
+- [x] 支持题目默认分值。
+- [x] 支持租户公共题库。
+- [x] 支持空间题库。
+- [x] 查询题库时实现公共题库和空间题库可见性规则。
 
 ### P4.3 选择题选项
 
-- [ ] `option_key` 仅用于出题编辑展示。
-- [ ] 判分不依赖 `option_key`。
-- [ ] 新增/编辑选择题时校验至少一个正确答案。
-- [ ] 单选题校验最终只有一个正确答案。
-- [ ] 多选题允许多个正确答案。
-- [ ] `choice_display_count` 支持可选。
-- [ ] `is_distractor` 控制随机补位池。
-- [ ] 题目选项编辑采用全量替换。
-- [ ] 全量替换在同一事务内完成。
-- [ ] 已生成考试快照不受后续选项编辑影响。
+- [x] `option_key` 仅用于出题编辑展示。
+- [x] 判分不依赖 `option_key`。
+- [x] 新增/编辑选择题时校验至少一个正确答案。
+- [x] 单选题校验最终只有一个正确答案。
+- [x] 多选题允许多个正确答案。
+- [x] `choice_display_count` 支持可选。
+- [x] `is_distractor` 控制随机补位池。
+- [x] 题目选项编辑采用全量替换。
+- [x] 全量替换在同一事务内完成。
+- [x] 已生成考试快照不受后续选项编辑影响。
 
 ### P4.4 填空题与简答题
 
-- [ ] 填空题首版仅支持单空。
-- [ ] 填空题标准答案保存为文本。
-- [ ] 填空题判分前裁剪首尾空白。
-- [ ] 填空题首版按完全匹配判分。
-- [ ] 简答题支持参考答案。
-- [ ] 简答题默认人工阅卷。
+- [x] 填空题首版仅支持单空。
+- [x] 填空题标准答案保存为文本。
+- [x] 填空题判分前裁剪首尾空白。
+- [x] 填空题首版按完全匹配判分。
+- [x] 简答题支持参考答案。
+- [x] 简答题默认人工阅卷。
 
 ### P4.5 题目导入
 
-- [ ] 定义 CSV/Excel 导入模板。
-- [ ] 导入模板支持题型。
-- [ ] 导入模板支持题干。
-- [ ] 导入模板支持选项。
-- [ ] 导入模板支持正确答案。
-- [ ] 导入模板支持解析。
-- [ ] 导入模板支持难度。
-- [ ] 导入模板支持标签。
-- [ ] 导入前做数据校验。
-- [ ] 导入失败返回行号和原因。
-- [ ] 导入成功写入题库。
+- [x] 定义 CSV/Excel 导入模板。
+- [x] 导入模板支持题型。
+- [x] 导入模板支持题干。
+- [x] 导入模板支持选项。
+- [x] 导入模板支持正确答案。
+- [x] 导入模板支持解析。
+- [x] 导入模板支持难度。
+- [x] 导入模板支持标签。
+- [x] 导入前做数据校验。
+- [x] 导入失败返回行号和原因。
+- [x] 导入成功写入题库。
 
 **验收标准**：
 
-- [ ] 单选题、多选题、判断题、填空题、简答题创建测试通过。
-- [ ] 多选题选项 ID 排序归一化测试通过。
-- [ ] 标签软删除后题目标签查询不可见。
-- [ ] 题目选项全量替换后旧选项不可见。
-- [ ] 导入错误能定位行号。
+- [x] 单选题、多选题、判断题、填空题、简答题创建测试通过。
+- [x] 多选题选项 ID 排序归一化测试通过。
+- [x] 标签软删除后题目标签查询不可见。
+- [x] 题目选项全量替换后旧选项不可见。
+- [x] 导入错误能定位行号。
 
 ---
 

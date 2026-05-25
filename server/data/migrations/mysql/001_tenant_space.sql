@@ -312,3 +312,135 @@ CREATE TABLE IF NOT EXISTS paper_section_rules (
     UNIQUE KEY uk_paper_section_rules_sort_order (tenant_id, section_id, sort_order),
     CONSTRAINT fk_paper_section_rules_section FOREIGN KEY (tenant_id, section_id, paper_id) REFERENCES paper_sections (tenant_id, id, paper_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='大题抽题规则表，保存规则组卷条件';
+
+CREATE TABLE IF NOT EXISTS exams (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '考试主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    paper_id BIGINT UNSIGNED NOT NULL COMMENT '关联试卷 ID',
+    name VARCHAR(128) NOT NULL COMMENT '考试名称',
+    start_time BIGINT NOT NULL COMMENT '考试开始时间，Unix 毫秒时间戳',
+    end_time BIGINT NOT NULL COMMENT '考试结束时间，Unix 毫秒时间戳',
+    duration_minutes INT NOT NULL COMMENT '单次作答时长，单位分钟',
+    max_attempts INT NOT NULL DEFAULT 1 COMMENT '每名考生最多作答次数',
+    result_strategy VARCHAR(32) NOT NULL DEFAULT 'latest' COMMENT '多次作答成绩策略：latest / highest',
+    publish_mode VARCHAR(32) NOT NULL DEFAULT 'manual_publish' COMMENT '成绩发布模式：immediate_score / manual_publish',
+    score_publish_time BIGINT NULL COMMENT '统一成绩公布时间，可为空',
+    invite_code VARCHAR(64) NOT NULL DEFAULT '' COMMENT '考试邀请码',
+    status VARCHAR(32) NOT NULL DEFAULT 'draft' COMMENT '考试状态：draft / published / closed',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_exams_invite_code (tenant_id, invite_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='考试表，保存试卷发布后的考试安排';
+
+CREATE TABLE IF NOT EXISTS exam_targets (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '考试发布范围主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    exam_id BIGINT UNSIGNED NOT NULL COMMENT '考试 ID',
+    target_type VARCHAR(32) NOT NULL COMMENT '发布目标类型：space / user',
+    target_id BIGINT UNSIGNED NOT NULL COMMENT '发布目标 ID',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_exam_targets_target (tenant_id, exam_id, target_type, target_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='考试发布范围表，保存考试面向的空间或用户';
+
+CREATE TABLE IF NOT EXISTS exam_live_question_pools (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'rule_live 发布态题池主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    exam_id BIGINT UNSIGNED NOT NULL COMMENT '考试 ID',
+    section_id BIGINT UNSIGNED NOT NULL COMMENT '大题 ID',
+    rule_id BIGINT UNSIGNED NOT NULL COMMENT '大题抽题规则 ID',
+    question_id BIGINT UNSIGNED NOT NULL COMMENT '候选题目 ID',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_exam_live_question_pools_question (tenant_id, exam_id, section_id, rule_id, question_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='rule_live 发布态题池表，保存发布时冻结的候选题目';
+
+CREATE TABLE IF NOT EXISTS exam_attempts (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '考生作答主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    exam_id BIGINT UNSIGNED NOT NULL COMMENT '考试 ID',
+    user_id BIGINT UNSIGNED NOT NULL COMMENT '考生用户 ID',
+    attempt_no INT NOT NULL COMMENT '第几次作答，从 1 开始',
+    status VARCHAR(32) NOT NULL DEFAULT 'in_progress' COMMENT '作答状态：in_progress / submitted / graded',
+    started_at BIGINT NOT NULL COMMENT '开始作答时间，Unix 毫秒时间戳',
+    submitted_at BIGINT NULL COMMENT '提交时间，可为空',
+    exam_token_hash VARCHAR(128) NOT NULL COMMENT '考试过程 token 哈希',
+    exam_token_expires_at BIGINT NOT NULL COMMENT '考试过程 token 过期时间',
+    objective_score DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '客观题得分',
+    subjective_score DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '主观题得分',
+    total_score DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '总分',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_exam_attempts_attempt_no (tenant_id, exam_id, user_id, attempt_no),
+    KEY idx_exam_attempts_token_status (exam_token_hash, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='考生作答表，保存每次考试作答过程和成绩';
+
+CREATE TABLE IF NOT EXISTS exam_attempt_questions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '考生题目快照主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    attempt_id BIGINT UNSIGNED NOT NULL COMMENT '作答 ID',
+    section_id BIGINT UNSIGNED NOT NULL COMMENT '原始大题 ID，仅用于溯源',
+    question_id BIGINT UNSIGNED NOT NULL COMMENT '原始题目 ID',
+    section_snapshot JSON NOT NULL COMMENT '大题快照 JSON，包含大题名称和作答说明',
+    sort_order INT NOT NULL COMMENT '该考生看到的全局题号，从 1 连续递增',
+    score DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '该题在本次作答中的分值',
+    question_snapshot JSON NOT NULL COMMENT '题干快照 JSON',
+    option_snapshot JSON NOT NULL COMMENT '选项快照 JSON',
+    correct_answer_snapshot JSON NOT NULL COMMENT '正确答案快照 JSON',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='考生题目快照表，保存考生本次作答看到的题目快照';
+
+CREATE TABLE IF NOT EXISTS exam_answers (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '答案主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    attempt_id BIGINT UNSIGNED NOT NULL COMMENT '作答 ID',
+    attempt_question_id BIGINT UNSIGNED NOT NULL COMMENT '考生题目快照 ID',
+    answer_content TEXT NOT NULL COMMENT '考生答案内容',
+    score DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '该题得分',
+    grading_status VARCHAR(32) NOT NULL DEFAULT 'pending' COMMENT '阅卷状态：auto / pending / graded',
+    graded_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '阅卷人用户 ID，0 表示未阅卷',
+    graded_at BIGINT NULL COMMENT '阅卷时间，可为空',
+    grader_comment TEXT NOT NULL COMMENT '阅卷评语',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    updated_at BIGINT NOT NULL COMMENT '更新时间，Unix 毫秒时间戳',
+    updated_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '更新人用户 ID',
+    version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_exam_answers_attempt_question (tenant_id, attempt_id, attempt_question_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='答案表，保存考生答案、得分和阅卷信息';
+
+CREATE TABLE IF NOT EXISTS exam_events (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '考试事件主键 ID',
+    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
+    attempt_id BIGINT UNSIGNED NOT NULL COMMENT '作答 ID',
+    event_type VARCHAR(32) NOT NULL COMMENT '事件类型：blur / focus / auto_save / submit / auto_submit',
+    event_time BIGINT NOT NULL COMMENT '事件发生时间，Unix 毫秒时间戳',
+    payload JSON NOT NULL COMMENT '事件负载 JSON',
+    created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
+    created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人用户 ID',
+    ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
+    PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='考试事件表，追加记录切屏、自动保存、提交等考试过程事件';

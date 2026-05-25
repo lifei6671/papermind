@@ -340,3 +340,141 @@ CREATE TABLE IF NOT EXISTS paper_section_rules (
 );
 -- 同一大题内抽题规则排序稳定唯一。
 CREATE UNIQUE INDEX IF NOT EXISTS uk_paper_section_rules_sort_order ON paper_section_rules (tenant_id, section_id, sort_order);
+
+-- exams：考试表，保存试卷发布后的考试安排。
+CREATE TABLE IF NOT EXISTS exams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    paper_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    start_time INTEGER NOT NULL,
+    end_time INTEGER NOT NULL,
+    duration_minutes INTEGER NOT NULL,
+    max_attempts INTEGER NOT NULL DEFAULT 1,
+    result_strategy TEXT NOT NULL DEFAULT 'latest',
+    publish_mode TEXT NOT NULL DEFAULT 'manual_publish',
+    score_publish_time INTEGER,
+    invite_code TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}',
+    deleted_at INTEGER NOT NULL DEFAULT 0
+);
+-- 同一租户内考试邀请码唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exams_invite_code ON exams (tenant_id, invite_code);
+
+-- exam_targets：考试发布范围表，保存考试面向的空间或用户。
+CREATE TABLE IF NOT EXISTS exam_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    exam_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
+-- 同一考试不能重复添加相同空间或用户目标。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exam_targets_target ON exam_targets (tenant_id, exam_id, target_type, target_id);
+
+-- exam_live_question_pools：rule_live 发布态题池表，保存发布时冻结的候选题目。
+CREATE TABLE IF NOT EXISTS exam_live_question_pools (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    exam_id INTEGER NOT NULL,
+    section_id INTEGER NOT NULL,
+    rule_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
+-- 同一规则候选题不能重复冻结。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exam_live_question_pools_question ON exam_live_question_pools (tenant_id, exam_id, section_id, rule_id, question_id);
+
+-- exam_attempts：考生作答表，保存每次考试作答过程和成绩。
+CREATE TABLE IF NOT EXISTS exam_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    exam_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    attempt_no INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'in_progress',
+    started_at INTEGER NOT NULL,
+    submitted_at INTEGER,
+    exam_token_hash TEXT NOT NULL,
+    exam_token_expires_at INTEGER NOT NULL,
+    objective_score NUMERIC NOT NULL DEFAULT 0,
+    subjective_score NUMERIC NOT NULL DEFAULT 0,
+    total_score NUMERIC NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
+-- 同一考生同一考试的作答次数编号唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exam_attempts_attempt_no ON exam_attempts (tenant_id, exam_id, user_id, attempt_no);
+-- 考试过程鉴权高频按 token 哈希和作答状态查询。
+CREATE INDEX IF NOT EXISTS idx_exam_attempts_token_status ON exam_attempts (exam_token_hash, status);
+
+-- exam_attempt_questions：考生题目快照表，保存考生本次作答看到的题目快照。
+CREATE TABLE IF NOT EXISTS exam_attempt_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    attempt_id INTEGER NOT NULL,
+    section_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    section_snapshot TEXT NOT NULL DEFAULT '{}',
+    sort_order INTEGER NOT NULL,
+    score NUMERIC NOT NULL DEFAULT 0,
+    question_snapshot TEXT NOT NULL DEFAULT '{}',
+    option_snapshot TEXT NOT NULL DEFAULT '[]',
+    correct_answer_snapshot TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
+
+-- exam_answers：答案表，保存考生答案、得分和阅卷信息。
+CREATE TABLE IF NOT EXISTS exam_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    attempt_id INTEGER NOT NULL,
+    attempt_question_id INTEGER NOT NULL,
+    answer_content TEXT NOT NULL DEFAULT '',
+    score NUMERIC NOT NULL DEFAULT 0,
+    grading_status TEXT NOT NULL DEFAULT 'pending',
+    graded_by INTEGER NOT NULL DEFAULT 0,
+    graded_at INTEGER,
+    grader_comment TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    updated_by INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
+-- 同一作答题目只能有一条答案记录。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exam_answers_attempt_question ON exam_answers (tenant_id, attempt_id, attempt_question_id);
+
+-- exam_events：考试事件表，追加记录切屏、自动保存、提交等考试过程事件。
+CREATE TABLE IF NOT EXISTS exam_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    attempt_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    event_time INTEGER NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL DEFAULT 0,
+    ext_json TEXT NOT NULL DEFAULT '{}'
+);
