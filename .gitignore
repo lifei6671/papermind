@@ -23,9 +23,12 @@ server/conf/*.secret.yaml
 # 运行期数据由部署环境挂载或初始化生成。
 server/data/sqlite/*.db
 server/data/sqlite/*.db-*
-server/data/tmp/
-server/data/imports/
-server/data/exports/
+server/data/tmp/*
+!server/data/tmp/.gitkeep
+server/data/imports/*
+!server/data/imports/.gitkeep
+server/data/exports/*
+!server/data/exports/.gitkeep
 
 # 常见构建产物。
 server/bin/

@@ -43,39 +43,40 @@ P0 文档与项目骨架
 
 ### P0.1 后端目录
 
-- [ ] 创建 `server/api/router`。
-- [ ] 创建 `server/api/middleware`。
-- [ ] 创建 `server/api/request`。
-- [ ] 创建 `server/api/response`。
-- [ ] 创建 `server/api/v1`。
-- [ ] 创建 `server/bootstrap`。
-- [ ] 创建 `server/cmd/papermind`。
-- [ ] 创建 `server/conf`。
-- [ ] 创建 `server/data/migrations/postgres`。
-- [ ] 创建 `server/data/migrations/mysql`。
-- [ ] 创建 `server/data/migrations/sqlite`。
-- [ ] 创建 `server/data/seeds`。
-- [ ] 创建 `server/data/sqlite`。
-- [ ] 创建 `server/data/imports`。
-- [ ] 创建 `server/data/exports`。
-- [ ] 创建 `server/internal/service`。
-- [ ] 创建 `server/internal/service/permission`。
-- [ ] 创建 `server/internal/dao/db`。
-- [ ] 创建 `server/internal/dao/external`。
-- [ ] 创建 `server/internal/model`。
-- [ ] 创建 `server/internal/dto`。
-- [ ] 创建 `server/internal/job`。
-- [ ] 创建 `server/library/code`。
-- [ ] 创建 `server/library/constant`。
-- [ ] 创建 `server/library/logger`。
-- [ ] 创建 `server/library/config`。
-- [ ] 创建 `server/library/validator`。
-- [ ] 创建 `server/library/response`。
-- [ ] 创建 `server/library/crypto`。
-- [ ] 创建 `server/library/xerr`。
-- [ ] 创建 `server/mock`。
-- [ ] 创建 `server/script`。
-- [ ] 创建 `server/tests`。
+- [x] 创建 `server/api/router`。
+- [x] 创建 `server/api/middleware`。
+- [x] 创建 `server/api/request`。
+- [x] 创建 `server/api/response`。
+- [x] 创建 `server/api/v1`。
+- [x] 创建 `server/bootstrap`。
+- [x] 创建 `server/cmd/papermind`。
+- [x] 创建 `server/conf`。
+- [x] 创建 `server/data/migrations/postgres`。
+- [x] 创建 `server/data/migrations/mysql`。
+- [x] 创建 `server/data/migrations/sqlite`。
+- [x] 创建 `server/data/seeds`。
+- [x] 创建 `server/data/sqlite`。
+- [x] 创建 `server/data/tmp`。
+- [x] 创建 `server/data/imports`。
+- [x] 创建 `server/data/exports`。
+- [x] 创建 `server/internal/service`。
+- [x] 创建 `server/internal/service/permission`。
+- [x] 创建 `server/internal/dao/db`。
+- [x] 创建 `server/internal/dao/external`。
+- [x] 创建 `server/internal/model`。
+- [x] 创建 `server/internal/dto`。
+- [x] 创建 `server/internal/job`。
+- [x] 创建 `server/library/code`。
+- [x] 创建 `server/library/constant`。
+- [x] 创建 `server/library/logger`。
+- [x] 创建 `server/library/config`。
+- [x] 创建 `server/library/validator`。
+- [x] 创建 `server/library/response`。
+- [x] 创建 `server/library/crypto`。
+- [x] 创建 `server/library/xerr`。
+- [x] 创建 `server/mock`。
+- [x] 创建 `server/script`。
+- [x] 创建 `server/tests`。
 
 ### P0.2 前端与部署目录
 
