@@ -501,71 +501,71 @@ P0 文档与项目骨架
 
 ### P5.1 大题结构
 
-- [ ] 实现创建大题。
-- [ ] 实现编辑大题名称。
-- [ ] 实现编辑大题题型。
-- [ ] 实现编辑大题作答说明。
-- [ ] 实现大题排序。
-- [ ] 保证 `UNIQUE (tenant_id, paper_id, sort_order)`。
-- [ ] 删除大题时写入 `paper_sections.deleted_at`。
-- [ ] 删除大题时同一事务硬删除对应 `paper_section_questions`。
-- [ ] 删除大题时同一事务硬删除对应 `paper_section_rules`。
-- [ ] 查询大题时过滤 `paper_sections.deleted_at = 0`。
+- [x] 实现创建大题。
+- [x] 实现编辑大题名称。
+- [x] 实现编辑大题题型。
+- [x] 实现编辑大题作答说明。
+- [x] 实现大题排序。
+- [x] 保证 `UNIQUE (tenant_id, paper_id, sort_order)`。
+- [x] 删除大题时写入 `paper_sections.deleted_at`。
+- [x] 删除大题时同一事务硬删除对应 `paper_section_questions`。
+- [x] 删除大题时同一事务硬删除对应 `paper_section_rules`。
+- [x] 查询大题时过滤 `paper_sections.deleted_at = 0`。
 
 ### P5.2 手动组卷
 
-- [ ] 实现 `manual` 试卷创建。
-- [ ] 按大题添加题目。
-- [ ] 校验同一试卷题目不重复。
-- [ ] 支持题目在大题内排序。
-- [ ] 支持题目在试卷内分值覆盖。
-- [ ] 支持 `paper_section_questions.shuffle_options` 可空布尔。
-- [ ] 保存后重算大题小计分。
-- [ ] 保存后重算试卷总分。
+- [x] 实现 `manual` 试卷创建。
+- [x] 按大题添加题目。
+- [x] 校验同一试卷题目不重复。
+- [x] 支持题目在大题内排序。
+- [x] 支持题目在试卷内分值覆盖。
+- [x] 支持 `paper_section_questions.shuffle_options` 可空布尔。
+- [x] 保存后重算大题小计分。
+- [x] 保存后重算试卷总分。
 
 ### P5.3 rule_fixed
 
-- [ ] 实现大题规则配置。
-- [ ] `difficulty = NULL` 表示不限难度。
-- [ ] `tag_filter` 使用 JSON 数组字符串。
-- [ ] 规则顺序稳定。
-- [ ] 触发生成时按规则抽题。
-- [ ] 生成后写入 `paper_section_questions`。
-- [ ] 教师可审题。
-- [ ] 教师可替换题目。
-- [ ] 教师可调整顺序。
-- [ ] 教师可调整分值。
-- [ ] 生成后后续考试流程等同 `manual`。
+- [x] 实现大题规则配置。
+- [x] `difficulty = NULL` 表示不限难度。
+- [x] `tag_filter` 使用 JSON 数组字符串。
+- [x] 规则顺序稳定。
+- [x] 触发生成时按规则抽题。
+- [x] 生成后写入 `paper_section_questions`。
+- [x] 教师可审题。
+- [x] 教师可替换题目。
+- [x] 教师可调整顺序。
+- [x] 教师可调整分值。
+- [x] 生成后后续考试流程等同 `manual`。
 
 ### P5.4 rule_live
 
-- [ ] 实现 `rule_live` 规则预检查。
-- [ ] 预检查跨规则合并题池后去重。
-- [ ] 预检查数量不足时失败。
-- [ ] 发布时冻结候选题池到 `exam_live_question_pools`。
-- [ ] 冻结题池后题库变更不影响已发布考试。
-- [ ] 规则修改必须撤回考试后重新冻结。
+- [x] 实现 `rule_live` 规则预检查。
+- [x] 预检查跨规则合并题池后去重。
+- [x] 预检查数量不足时失败。
+- [x] 发布时冻结候选题池到 `exam_live_question_pools`。
+- [x] 冻结题池后题库变更不影响已发布考试。
+- [x] 规则修改必须撤回考试后重新冻结。
 
 ### P5.5 聚合重算
 
-- [ ] 统一实现试卷聚合重算服务。
-- [ ] `manual` 按 `paper_section_questions.score` 和题目数重算。
-- [ ] `rule_fixed` 按 `paper_section_questions.score` 和题目数重算。
-- [ ] `rule_live` 按 `paper_section_rules.question_count × score_per_question` 重算。
-- [ ] 增删题目后重算。
-- [ ] 调整分值后重算。
-- [ ] 生成固化试卷后重算。
-- [ ] 修改规则后重算。
-- [ ] 重算与业务修改在同一事务内完成。
+- [x] 统一实现试卷聚合重算服务。
+- [x] `manual` 按 `paper_section_questions.score` 和题目数重算。
+- [x] `rule_fixed` 按 `paper_section_questions.score` 和题目数重算。
+- [x] `rule_live` 按 `paper_section_rules.question_count × score_per_question` 重算。
+- [x] 增删题目后重算。
+- [x] 调整分值后重算。
+- [x] 生成固化试卷后重算。
+- [x] 修改规则后重算。
+- [x] 重算与业务修改在同一事务内完成。
 
 **验收标准**：
 
-- [ ] 大题顺序和题号连续编排测试通过。
-- [ ] `manual` 组卷总分正确。
-- [ ] `rule_fixed` 生成后可审题和替换。
-- [ ] `rule_live` 发布时冻结题池。
-- [ ] 题库变更不影响已发布 `rule_live` 考试。
-- [ ] 复合外键阻止冗余 `paper_id` 跑偏。
+- [x] 大题顺序和题号连续编排测试通过。
+- [x] `manual` 组卷总分正确。
+- [x] `rule_fixed` 生成后可审题和替换。
+- [x] `rule_live` 发布时冻结题池。
+- [x] 题库变更不影响已发布 `rule_live` 考试。
+- [x] 复合外键阻止冗余 `paper_id` 跑偏。
 
 ---
 
@@ -577,61 +577,61 @@ P0 文档与项目骨架
 
 ### P6.1 考试创建与发布
 
-- [ ] 创建考试草稿。
-- [ ] 设置考试开始时间。
-- [ ] 设置考试结束时间。
-- [ ] 设置单次作答时长。
-- [ ] 发布前校验 `duration_minutes <= end_time - start_time`。
-- [ ] 设置 `max_attempts`。
-- [ ] 包含简答题时禁止 `max_attempts > 1`。
-- [ ] 设置 `result_strategy`。
-- [ ] 设置成绩发布模式。
-- [ ] 设置成绩公布时间。
-- [ ] 生成考试邀请码。
-- [ ] `invite_code` 在同租户唯一。
-- [ ] `rule_live` 发布时冻结题池。
+- [x] 创建考试草稿。
+- [x] 设置考试开始时间。
+- [x] 设置考试结束时间。
+- [x] 设置单次作答时长。
+- [x] 发布前校验 `duration_minutes <= end_time - start_time`。
+- [x] 设置 `max_attempts`。
+- [x] 包含简答题时禁止 `max_attempts > 1`。
+- [x] 设置 `result_strategy`。
+- [x] 设置成绩发布模式。
+- [x] 设置成绩公布时间。
+- [x] 生成考试邀请码。
+- [x] `invite_code` 在同租户唯一。
+- [x] `rule_live` 发布时冻结题池。
 
 ### P6.2 考试范围
 
-- [ ] 发布给空间。
-- [ ] 发布给指定用户。
-- [ ] 防止重复添加同一空间目标。
-- [ ] 防止重复添加同一用户目标。
-- [ ] 邀请码临时参加仍需登录或注册。
+- [x] 发布给空间。
+- [x] 发布给指定用户。
+- [x] 防止重复添加同一空间目标。
+- [x] 防止重复添加同一用户目标。
+- [x] 邀请码临时参加仍需登录或注册。
 
 ### P6.3 开始考试
 
-- [ ] 校验考试资格。
-- [ ] 校验考试时间。
-- [ ] 若存在 `in_progress` attempt，直接返回已有 attempt。
-- [ ] 若无 `in_progress` attempt，校验未超过 `max_attempts`。
-- [ ] 生成下一个 `attempt_no`。
-- [ ] 插入 `exam_attempts`。
-- [ ] 唯一冲突时只查询已有 `in_progress`，不能递增创建新 attempt。
-- [ ] 签发不透明 `exam_token`。
-- [ ] 只保存 `exam_token_hash`。
-- [ ] 设置 `exam_token_expires_at`。
+- [x] 校验考试资格。
+- [x] 校验考试时间。
+- [x] 若存在 `in_progress` attempt，直接返回已有 attempt。
+- [x] 若无 `in_progress` attempt，校验未超过 `max_attempts`。
+- [x] 生成下一个 `attempt_no`。
+- [x] 插入 `exam_attempts`。
+- [x] 唯一冲突时只查询已有 `in_progress`，不能递增创建新 attempt。
+- [x] 签发不透明 `exam_token`。
+- [x] 只保存 `exam_token_hash`。
+- [x] 设置 `exam_token_expires_at`。
 
 ### P6.4 个人试卷快照
 
-- [ ] `manual` 按固化大题题目生成快照。
-- [ ] `rule_fixed` 按固化大题题目生成快照。
-- [ ] `rule_live` 从 `exam_live_question_pools` 抽题生成快照。
-- [ ] 生成 `section_snapshot`。
-- [ ] 生成 `question_snapshot`。
-- [ ] 生成 `option_snapshot`。
-- [ ] 生成 `correct_answer_snapshot`。
-- [ ] `sort_order` 是全局题号，从 1 连续递增。
-- [ ] 选择题快照保存最终展示选项 ID 顺序。
-- [ ] A/B/C/D 只在前端按展示顺序生成。
+- [x] `manual` 按固化大题题目生成快照。
+- [x] `rule_fixed` 按固化大题题目生成快照。
+- [x] `rule_live` 从 `exam_live_question_pools` 抽题生成快照。
+- [x] 生成 `section_snapshot`。
+- [x] 生成 `question_snapshot`。
+- [x] 生成 `option_snapshot`。
+- [x] 生成 `correct_answer_snapshot`。
+- [x] `sort_order` 是全局题号，从 1 连续递增。
+- [x] 选择题快照保存最终展示选项 ID 顺序。
+- [x] A/B/C/D 只在前端按展示顺序生成。
 
 **验收标准**：
 
-- [ ] 开始考试幂等测试通过。
-- [ ] 并发开始考试不会创建语义重复 attempt。
-- [ ] `rule_live` 从冻结题池抽题。
-- [ ] 试卷快照不受后续题库修改影响。
-- [ ] exam token 只能访问当前 attempt。
+- [x] 开始考试幂等测试通过。
+- [x] 并发开始考试不会创建语义重复 attempt。
+- [x] `rule_live` 从冻结题池抽题。
+- [x] 试卷快照不受后续题库修改影响。
+- [x] exam token 只能访问当前 attempt。
 
 ---
 
@@ -643,53 +643,53 @@ P0 文档与项目骨架
 
 ### P7.1 exam token 校验
 
-- [ ] 校验 token hash。
-- [ ] 校验 attempt 状态为 `in_progress`。
-- [ ] 校验 token 未过期。
-- [ ] 校验业务作答截止时间。
-- [ ] 业务截止时间为 `min(started_at + duration_minutes, exam.end_time)`。
-- [ ] 超过业务截止时间后拒绝自动保存新答案。
-- [ ] 允许最多 5 秒网络传输宽限。
+- [x] 校验 token hash。
+- [x] 校验 attempt 状态为 `in_progress`。
+- [x] 校验 token 未过期。
+- [x] 校验业务作答截止时间。
+- [x] 业务截止时间为 `min(started_at + duration_minutes, exam.end_time)`。
+- [x] 超过业务截止时间后拒绝自动保存新答案。
+- [x] 允许最多 5 秒网络传输宽限。
 
 ### P7.2 自动保存
 
-- [ ] 实现答案 upsert。
-- [ ] 唯一键使用 `UNIQUE (tenant_id, attempt_id, attempt_question_id)`。
-- [ ] 单选题保存选项 ID。
-- [ ] 判断题保存选项 ID。
-- [ ] 多选题保存前选项 ID 升序排序。
-- [ ] 多选题保存为 JSON 数组字符串。
-- [ ] 填空题保存文本。
-- [ ] 简答题保存文本。
-- [ ] 提交后禁止继续保存。
+- [x] 实现答案 upsert。
+- [x] 唯一键使用 `UNIQUE (tenant_id, attempt_id, attempt_question_id)`。
+- [x] 单选题保存选项 ID。
+- [x] 判断题保存选项 ID。
+- [x] 多选题保存前选项 ID 升序排序。
+- [x] 多选题保存为 JSON 数组字符串。
+- [x] 填空题保存文本。
+- [x] 简答题保存文本。
+- [x] 提交后禁止继续保存。
 
 ### P7.3 提交与自动交卷
 
-- [ ] 手动提交使用 `status + version` 条件更新。
-- [ ] 自动交卷使用 `status + version` 条件更新。
-- [ ] 并发提交更新行数为 0 时按幂等成功返回。
-- [ ] 提交后锁定答卷。
-- [ ] 提交时触发客观题自动判分。
-- [ ] 提交时写关键事件。
+- [x] 手动提交使用 `status + version` 条件更新。
+- [x] 自动交卷使用 `status + version` 条件更新。
+- [x] 并发提交更新行数为 0 时按幂等成功返回。
+- [x] 提交后锁定答卷。
+- [x] 提交时触发客观题自动判分。
+- [x] 提交时写关键事件。
 
 ### P7.4 防作弊事件
 
-- [ ] 前端 `blur` / `focus` 事件 1 秒内节流。
-- [ ] 非关键事件进入带缓冲 channel。
-- [ ] 入队成功立即返回。
-- [ ] 队列满可丢弃非关键事件。
-- [ ] 队列满记录 WARN。
-- [ ] `submit` / `auto_submit` 关键事件不能静默丢弃。
-- [ ] 启动异步事件消费者。
-- [ ] 异步事件消费者支持批量或逐条落库。
+- [x] 前端 `blur` / `focus` 事件 1 秒内节流。
+- [x] 非关键事件进入带缓冲 channel。
+- [x] 入队成功立即返回。
+- [x] 队列满可丢弃非关键事件。
+- [x] 队列满记录 WARN。
+- [x] `submit` / `auto_submit` 关键事件不能静默丢弃。
+- [x] 启动异步事件消费者。
+- [x] 异步事件消费者支持批量或逐条落库。
 
 **验收标准**：
 
-- [ ] 自动保存 upsert 测试通过。
-- [ ] 超过业务截止时间自动保存失败。
-- [ ] 手动提交和自动交卷并发幂等。
-- [ ] 非关键事件队列满不影响自动保存。
-- [ ] 关键事件不静默丢弃。
+- [x] 自动保存 upsert 测试通过。
+- [x] 超过业务截止时间自动保存失败。
+- [x] 手动提交和自动交卷并发幂等。
+- [x] 非关键事件队列满不影响自动保存。
+- [x] 关键事件不静默丢弃。
 
 ---
 
