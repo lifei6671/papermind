@@ -7,6 +7,7 @@
 
 - [ ] 每个阶段完成后先做代码审查，再进入下一阶段。
 - [ ] 所有数据库迁移 SQL 必须包含中文表注释、字段注释、关键索引/约束注释。
+- [ ] 后续新增和修改的代码必须提供完善中文注释，关键业务规则、状态流转、异常分支和跨层约束必须写在对应实现附近。
 - [ ] 所有业务表保留 `created_at`、`created_by`、`updated_at`、`updated_by`、`version`、`ext_json`，豁免表按方案明确处理。
 - [ ] 所有软删除核心表使用 `gorm.io/plugin/soft_delete` Unix 时间戳模式。
 - [ ] 所有 GORM 实体必须显式声明 `gorm:"column:xxx"` 字段映射。
@@ -152,31 +153,33 @@ P0 文档与项目骨架
 
 ### P1.3 数据库连接
 
-- [ ] 根据 `database.driver` 初始化 PostgreSQL。
-- [ ] 根据 `database.driver` 初始化 MySQL。
-- [ ] 根据 `database.driver` 初始化 SQLite。
-- [ ] SQLite DSN 必须包含 `_foreign_keys=on`。
-- [ ] SQLite DSN 必须包含 `_journal_mode=WAL`。
-- [ ] SQLite DSN 必须包含 `_busy_timeout=5000`。
-- [ ] SQLite 默认 `max_open_conns = 1`。
-- [ ] 支持配置 SQLite 小规模多人模式 `max_open_conns = 5-10`。
-- [ ] PostgreSQL / MySQL 按配置设置连接池。
-- [ ] 数据库初始化必须输出 driver、连接池参数和迁移目录日志。
+- [x] 根据 `database.driver` 初始化 PostgreSQL。
+- [x] 根据 `database.driver` 初始化 MySQL。
+- [x] 根据 `database.driver` 初始化 SQLite。
+- [x] SQLite DSN 必须包含 `_foreign_keys=on`。
+- [x] SQLite DSN 必须包含 `_journal_mode=WAL`。
+- [x] SQLite DSN 必须包含 `_busy_timeout=5000`。
+- [x] SQLite 默认 `max_open_conns = 1`。
+- [x] 支持配置 SQLite 小规模多人模式 `max_open_conns = 5-10`。
+- [x] PostgreSQL / MySQL 按配置设置连接池。
+- [x] 数据库连接在服务启动时初始化一次，DAO 层复用单例 `*gorm.DB`。
+- [x] 数据库初始化必须输出 driver、连接池参数和迁移目录日志。
 
 ### P1.4 GORM 基础约束
 
-- [ ] 实体统一使用显式 `gorm:"column:xxx"`。
-- [ ] `ext_json` 统一使用 `datatypes.JSON`。
-- [ ] 软删除字段使用 `soft_delete.DeletedAt` Unix 时间戳模式。
-- [ ] 字段映射常量与实体同文件维护。
-- [ ] 禁止 service 层直接 import GORM。
+- [x] 实体统一使用显式 `gorm:"column:xxx"`。
+- [x] `ext_json` 统一使用 `datatypes.JSON`。
+- [x] 软删除字段使用 `soft_delete.DeletedAt` Unix 时间戳模式。
+- [x] 字段映射常量与实体同文件维护。
+- [x] 禁止 service 层直接 import GORM。
+- [x] 基础实体和约束测试包含清晰中文注释，后续业务实现沿用该注释规范。
 
 **验收标准**：
 
-- [ ] 三种数据库 driver 初始化逻辑都有单元测试。
-- [ ] SQLite 测试命令使用 `go test -tags json1 ./server/...`。
-- [ ] 配置目录缺失或不可写时启动失败且错误明确。
-- [ ] API 返回结构统一。
+- [x] 三种数据库 driver 初始化逻辑都有单元测试。
+- [x] SQLite 测试命令使用 `go test -tags json1 ./server/...`。
+- [x] 配置目录缺失或不可写时启动失败且错误明确。
+- [x] API 返回结构统一。
 
 ---
 
@@ -188,41 +191,42 @@ P0 文档与项目骨架
 
 ### P2.1 迁移框架
 
-- [ ] 建立 PostgreSQL 迁移执行脚本。
-- [ ] 建立 MySQL 迁移执行脚本。
-- [ ] 建立 SQLite 迁移执行脚本。
-- [ ] 迁移 SQL 文件按版本号排序执行。
-- [ ] 迁移 SQL 必须可重复检测已执行版本。
-- [ ] 迁移失败必须停止启动。
+- [x] 服务启动时根据 `database.driver` 自动选择 PostgreSQL 迁移目录。
+- [x] 服务启动时根据 `database.driver` 自动选择 MySQL 迁移目录。
+- [x] 服务启动时根据 `database.driver` 自动选择 SQLite 迁移目录。
+- [x] 迁移期间 HTTP 层返回系统升级中间页或稳定 JSON 响应。
+- [x] 迁移 SQL 文件按版本号排序执行。
+- [x] 迁移 SQL 必须可重复检测已执行版本。
+- [x] 迁移失败必须停止启动。
 
 ### P2.2 基础字段规范
 
-- [ ] 所有业务表包含 `created_at`。
-- [ ] 所有业务表包含 `created_by`。
-- [ ] 所有非豁免表包含 `updated_at`。
-- [ ] 所有非豁免表包含 `updated_by`。
-- [ ] 所有非豁免表包含 `version`。
-- [ ] 所有表包含 `ext_json`。
-- [ ] 核心主表包含 `deleted_at`。
-- [ ] 纯关系表按方案豁免 `updated_at`、`updated_by`、`version`。
-- [ ] `exam_events` 按方案豁免 `updated_at`、`updated_by`、`version`。
+- [x] 所有业务表包含 `created_at`。
+- [x] 所有业务表包含 `created_by`。
+- [x] 所有非豁免表包含 `updated_at`。
+- [x] 所有非豁免表包含 `updated_by`。
+- [x] 所有非豁免表包含 `version`。
+- [x] 所有表包含 `ext_json`。
+- [x] 核心主表包含 `deleted_at`。
+- [x] 纯关系表按方案豁免 `updated_at`、`updated_by`、`version`。
+- [x] `exam_events` 按方案豁免 `updated_at`、`updated_by`、`version`。
 
 ### P2.3 租户与空间表
 
-- [ ] 创建 `tenants`。
-- [ ] `tenants` 包含 `logo_url`。
-- [ ] `tenants` 包含 `description`。
-- [ ] `tenants.tenant_code` 全平台唯一。
-- [ ] 创建 `spaces`。
-- [ ] `spaces` 包含 `logo_url`。
-- [ ] `spaces` 包含 `description`。
-- [ ] 创建 `space_members`。
-- [ ] `space_members` 包含 `role_in_space`。
-- [ ] `space_members` 包含 `status`。
-- [ ] `space_members` 建立 `UNIQUE (tenant_id, space_id, user_id, deleted_at)`。
-- [ ] 创建 `space_configs`。
-- [ ] `space_configs` 建立 `UNIQUE (tenant_id, space_id, config_key)`。
-- [ ] 配置表不使用软删除。
+- [x] 创建 `tenants`。
+- [x] `tenants` 包含 `logo_url`。
+- [x] `tenants` 包含 `description`。
+- [x] `tenants.tenant_code` 全平台唯一。
+- [x] 创建 `spaces`。
+- [x] `spaces` 包含 `logo_url`。
+- [x] `spaces` 包含 `description`。
+- [x] 创建 `space_members`。
+- [x] `space_members` 包含 `role_in_space`。
+- [x] `space_members` 包含 `status`。
+- [x] `space_members` 建立 `UNIQUE (tenant_id, space_id, user_id, deleted_at)`。
+- [x] 创建 `space_configs`。
+- [x] `space_configs` 建立 `UNIQUE (tenant_id, space_id, config_key)`。
+- [x] 配置表不使用软删除。
 
 ### P2.4 用户与角色表
 

@@ -131,6 +131,8 @@ func TestValidateStorageDirsRequiresExistingWritableDirectories(t *testing.T) {
 	cfg.Storage.ExportDir = filepath.Join(root, "missing")
 	if err := ValidateStorageDirs(cfg); err == nil {
 		t.Fatalf("ValidateStorageDirs() error = nil, want missing directory error")
+	} else if !strings.Contains(err.Error(), "storage.export_dir") {
+		t.Fatalf("ValidateStorageDirs() error = %q, want storage.export_dir", err.Error())
 	}
 }
 

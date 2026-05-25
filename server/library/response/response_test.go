@@ -1,6 +1,9 @@
 package response
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestOKBuildsUnifiedResponse(t *testing.T) {
 	resp := OK(map[string]string{"id": "1"})
@@ -30,5 +33,23 @@ func TestPageBuildsPaginationResponse(t *testing.T) {
 	}
 	if page.Total != 41 {
 		t.Fatalf("Total = %d", page.Total)
+	}
+}
+
+func TestResponseJSONFieldNamesAreStable(t *testing.T) {
+	body, err := json.Marshal(OK("pong"))
+	if err != nil {
+		t.Fatalf("Marshal(OK) error = %v", err)
+	}
+	if string(body) != `{"code":0,"message":"ok","data":"pong"}` {
+		t.Fatalf("OK JSON = %s", string(body))
+	}
+
+	page, err := json.Marshal(Page([]string{"a"}, 1, 10, 1))
+	if err != nil {
+		t.Fatalf("Marshal(Page) error = %v", err)
+	}
+	if string(page) != `{"items":["a"],"page":1,"page_size":10,"total":1}` {
+		t.Fatalf("Page JSON = %s", string(page))
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lifei6671/papermind/server/bootstrap/migration"
 )
 
 func TestRequestIDAddsHeaderAndContextValue(t *testing.T) {
@@ -90,4 +91,76 @@ func TestRequestLoggerDoesNotChangeSuccessfulResponse(t *testing.T) {
 	if recorder.Body.String() != "created" {
 		t.Fatalf("body = %q", recorder.Body.String())
 	}
+}
+
+func TestMigrationGuardReturnsMiddlePageForBrowserRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(MigrationGuard(staticMigrationStatus{state: migration.StateRunning}))
+	router.GET("/", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Accept", "text/html")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if recorder.Header().Get("Retry-After") != "5" {
+		t.Fatalf("Retry-After = %q", recorder.Header().Get("Retry-After"))
+	}
+	if recorder.Body.String() == "" {
+		t.Fatalf("migration page body is empty")
+	}
+}
+
+func TestMigrationGuardReturnsJSONForAPIRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(MigrationGuard(staticMigrationStatus{state: migration.StateRunning}))
+	router.GET("/api/v1/ping", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/ping", nil)
+	request.Header.Set("Accept", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if recorder.Body.String() == "" {
+		t.Fatalf("migration json body is empty")
+	}
+}
+
+func TestMigrationGuardAllowsRequestsAfterMigration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(MigrationGuard(staticMigrationStatus{state: migration.StateDone}))
+	router.GET("/ping", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ping", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if recorder.Body.String() != "ok" {
+		t.Fatalf("body = %q", recorder.Body.String())
+	}
+}
+
+type staticMigrationStatus struct {
+	state migration.State
+}
+
+func (s staticMigrationStatus) Status() migration.Status {
+	return migration.Status{State: s.state}
 }
