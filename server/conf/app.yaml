@@ -1,0 +1,27 @@
+app:
+  name: papermind
+  env: dev
+  http_port: 8080
+  public_url: http://localhost:8080
+
+database:
+  driver: sqlite
+  dsn: file:server/data/sqlite/papermind.db?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000
+  max_open_conns: 1
+  max_idle_conns: 1
+
+auth:
+  access_token_ttl: 7200
+  refresh_token_ttl: 604800
+  exam_token_buffer_minutes: 30
+
+storage:
+  temp_dir: server/data/tmp
+  import_dir: server/data/imports
+  export_dir: server/data/exports
+
+security:
+  allow_register_default: false
+  password_min_length: 8
+  cors_origins:
+    - http://localhost:5173

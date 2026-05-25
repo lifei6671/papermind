@@ -80,32 +80,32 @@ P0 文档与项目骨架
 
 ### P0.2 前端与部署目录
 
-- [ ] 创建 `web`。
-- [ ] 创建 `deployments/docker-compose`。
-- [ ] 创建 `deployments/sqlite-single-node`。
-- [ ] 创建 `docs/api`。
-- [ ] 创建 `docs/database`。
-- [ ] 创建 `docs/specs`。
+- [x] 创建 `web`。
+- [x] 创建 `deployments/docker-compose`。
+- [x] 创建 `deployments/sqlite-single-node`。
+- [x] 创建 `docs/api`。
+- [x] 创建 `docs/database`。
+- [x] 创建 `docs/specs`。
 
 ### P0.3 项目基础文件
 
-- [ ] 初始化 `server/go.mod`。
-- [ ] 引入 `github.com/gin-gonic/gin`。
-- [ ] 引入 `gorm.io/gorm`。
-- [ ] 引入 `gorm.io/driver/postgres`。
-- [ ] 引入 `gorm.io/driver/mysql`。
-- [ ] 引入 `gorm.io/driver/sqlite`。
-- [ ] 引入 `gorm.io/datatypes`。
-- [ ] 引入 `gorm.io/plugin/soft_delete`。
-- [ ] 创建 `server/conf/app.yaml` 开发配置模板。
-- [ ] 确认 `.gitignore` 排除 `server/conf_online/`、私有配置、SQLite 数据库文件、导入导出临时文件、构建产物。
-- [ ] 初始化 `web` 为 React + Vite + TypeScript 项目。
+- [x] 初始化 `server/go.mod`。
+- [x] 引入 `github.com/gin-gonic/gin`。
+- [x] 引入 `gorm.io/gorm`。
+- [x] 引入 `gorm.io/driver/postgres`。
+- [x] 引入 `gorm.io/driver/mysql`。
+- [x] 引入 `gorm.io/driver/sqlite`。
+- [x] 引入 `gorm.io/datatypes`。
+- [x] 引入 `gorm.io/plugin/soft_delete`。
+- [x] 创建 `server/conf/app.yaml` 开发配置模板。
+- [x] 确认 `.gitignore` 排除 `server/conf_online/`、私有配置、SQLite 数据库文件、导入导出临时文件、构建产物。
+- [x] 初始化 `web` 为 React + Vite + TypeScript 项目。
 
 **验收标准**：
 
-- [ ] `go test ./...` 可以在空业务骨架下运行。
-- [ ] `go test -tags json1 ./...` 可以运行。
-- [ ] `web` 可以启动 Vite 开发服务。
+- [x] `go test ./...` 可以在空业务骨架下运行。
+- [x] `go test -tags json1 ./...` 可以运行。
+- [x] `web` 可以启动 Vite 开发服务。
 - [ ] 仓库不存在 `server/conf_online` 生产配置目录。
 
 ---
