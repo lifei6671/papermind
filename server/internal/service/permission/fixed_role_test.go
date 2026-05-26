@@ -55,6 +55,9 @@ func TestFixedRoleCheckerUsesResourceScopeForQuestionsPapersAttemptsAndExams(t *
 	if err := checker.CanGradeAttempt(teacher, 400); err != nil {
 		t.Fatalf("teacher should grade scoped attempt: %v", err)
 	}
+	if err := checker.CanGradeExam(teacher, 500); err != nil {
+		t.Fatalf("teacher should grade scoped exam: %v", err)
+	}
 	if err := checker.CanTakeExam(teacher, 500); err == nil {
 		t.Fatalf("teacher without student role should not take exam")
 	}

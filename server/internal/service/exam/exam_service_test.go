@@ -2,6 +2,7 @@ package exam
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -65,6 +66,21 @@ func TestCreateDraftAndPublishExamValidatesSettingsAndFreezesRuleLivePool(t *tes
 	})
 	if !errors.Is(err, ErrShortTextCannotRepeatAttempt) {
 		t.Fatalf("expected ErrShortTextCannotRepeatAttempt, got %v", err)
+	}
+
+	_, err = svc.Publish(context.Background(), PublishInput{
+		TenantID:        10,
+		ExamID:          3,
+		PaperID:         101,
+		StartTime:       fixedUnixMilli,
+		EndTime:         fixedUnixMilli + 120*minuteMillis,
+		DurationMinutes: 60,
+		MaxAttempts:     1,
+		ResultStrategy:  ResultStrategyLatest,
+		PublishMode:     PublishModeImmediateScore,
+	})
+	if !errors.Is(err, ErrShortTextCannotImmediateScore) {
+		t.Fatalf("expected ErrShortTextCannotImmediateScore, got %v", err)
 	}
 
 	scorePublishTime := fixedUnixMilli + 90*minuteMillis
@@ -231,11 +247,11 @@ func TestGenerateAttemptSnapshotsUseSourceAndKeepImmutablePayload(t *testing.T) 
 			3: {ID: 3, TenantID: 10, PaperID: 102, BuildMode: BuildModeRuleLive},
 		},
 		fixedQuestions: []SnapshotSourceQuestion{
-			{SectionID: 10, SectionName: "一、单选题", QuestionID: 300, Title: "1+1=?", Score: "2", OptionIDs: []uint64{2, 1}, CorrectOptionIDs: []uint64{1}},
-			{SectionID: 11, SectionName: "二、填空题", QuestionID: 301, Title: "Go mod file", Score: "3", CorrectText: "go.mod"},
+			{SectionID: 10, SectionName: "一、单选题", QuestionID: 300, QuestionType: QuestionTypeSingle, Title: "1+1=?", Score: "2", OptionIDs: []uint64{2, 1}, CorrectOptionIDs: []uint64{1}},
+			{SectionID: 11, SectionName: "二、填空题", QuestionID: 301, QuestionType: QuestionTypeFillBlank, Title: "Go mod file", Score: "3", CorrectText: "go.mod"},
 		},
 		liveQuestions: []SnapshotSourceQuestion{
-			{SectionID: 12, SectionName: "实时题", QuestionID: 400, Title: "live", Score: "5", OptionIDs: []uint64{9, 8}, CorrectOptionIDs: []uint64{8}},
+			{SectionID: 12, SectionName: "实时题", QuestionID: 400, QuestionType: QuestionTypeSingle, Title: "live", Score: "5", OptionIDs: []uint64{9, 8}, CorrectOptionIDs: []uint64{8}},
 		},
 	}
 	svc := NewService(ServiceOptions{Repo: repo, Now: fixedNow})
@@ -269,6 +285,16 @@ func TestGenerateAttemptSnapshotsUseSourceAndKeepImmutablePayload(t *testing.T) 
 	}
 	if len(snapshots) != 1 || snapshots[0].QuestionID != 400 {
 		t.Fatalf("expected live snapshot from frozen pool, got %#v", snapshots)
+	}
+	var questionSnapshot struct {
+		Title string `json:"title"`
+		Type  string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(snapshots[0].QuestionSnapshot), &questionSnapshot); err != nil {
+		t.Fatalf("question snapshot should be valid JSON: %v", err)
+	}
+	if questionSnapshot.Type != QuestionTypeSingle {
+		t.Fatalf("expected question type frozen into snapshot, got %#v", questionSnapshot)
 	}
 	before := snapshots[0].QuestionSnapshot
 	repo.liveQuestions[0].Title = "changed"

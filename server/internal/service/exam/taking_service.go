@@ -3,7 +3,10 @@ package exam
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,6 +38,18 @@ const (
 	defaultEventBufferSize           = 64
 )
 
+const (
+	// GradingStatusAuto 表示客观题已经由系统自动判分。
+	GradingStatusAuto = "auto"
+	// GradingStatusPending 表示主观题等待教师人工阅卷。
+	GradingStatusPending = "pending"
+)
+
+var (
+	ErrUnsupportedQuestionType = errors.New("unsupported question type")
+	ErrInvalidQuestionScore    = errors.New("invalid question score")
+)
+
 type Answer struct {
 	TenantID          uint64 // 所属租户 ID。
 	AttemptID         uint64 // 作答 ID。
@@ -43,6 +58,22 @@ type Answer struct {
 	UpdatedAt         int64  // 更新时间，Unix 毫秒时间戳。
 	UpdatedBy         uint64 // 更新人用户 ID。
 }
+
+type AnswerForGrading struct {
+	AttemptQuestionID     uint64 // 考生题目快照 ID。
+	QuestionType          string // 题型：single / multiple / judge / fill_blank / short_text。
+	QuestionScore         string // 当前题目分值。
+	AnswerContent         string // 考生答案内容。
+	CorrectAnswerSnapshot string // 正确答案快照 JSON。
+}
+
+type AnswerGradingResult struct {
+	AttemptQuestionID uint64 // 考生题目快照 ID。
+	Score             string // 本题得分。
+	GradingStatus     string // 阅卷状态：auto / pending。
+}
+
+type ObjectiveGradingFunc func(items []AnswerForGrading) ([]AnswerGradingResult, string, error)
 
 type ExamEvent struct {
 	TenantID  uint64 // 所属租户 ID。
@@ -81,8 +112,8 @@ type TakingRepository interface {
 	FindAttemptByTokenHash(ctx context.Context, tokenHash string) (Attempt, error)
 	GetExam(ctx context.Context, tenantID uint64, examID uint64) (Exam, error)
 	UpsertAnswer(ctx context.Context, answer Answer) error
-	SubmitAttempt(ctx context.Context, tenantID uint64, attemptID uint64, version int64, submittedAt int64, status string) (int64, error)
-	GradeObjectiveQuestions(ctx context.Context, tenantID uint64, attemptID uint64) error
+	// 提交事务内先锁定作答状态，再读取本次答案快照并调用 grader，最后原子写入分数和提交事件。
+	SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, tenantID uint64, attemptID uint64, version int64, submittedAt int64, status string, grader ObjectiveGradingFunc, event ExamEvent) (int64, error)
 	AppendEvent(ctx context.Context, event ExamEvent) error
 }
 
@@ -152,21 +183,14 @@ func (s *TakingService) Submit(ctx context.Context, input SubmitInput) error {
 	if attempt.Status != AttemptStatusInProgress {
 		return ErrAttemptAlreadySubmitted
 	}
-	rowsAffected, err := s.repo.SubmitAttempt(ctx, input.TenantID, input.AttemptID, attempt.Version, s.now(), AttemptStatusSubmitted)
-	if err != nil {
-		return err
-	}
-	if rowsAffected > 0 {
-		if err := s.repo.GradeObjectiveQuestions(ctx, input.TenantID, input.AttemptID); err != nil {
-			return err
-		}
-	}
-	return s.repo.AppendEvent(ctx, ExamEvent{
+	event := ExamEvent{
 		TenantID:  input.TenantID,
 		AttemptID: input.AttemptID,
 		EventType: input.EventType,
 		EventTime: s.now(),
-	})
+	}
+	_, err = s.repo.SubmitAttemptAndGradeObjectiveQuestions(ctx, input.TenantID, input.AttemptID, attempt.Version, s.now(), AttemptStatusSubmitted, s.gradeObjectiveAnswers, event)
+	return err
 }
 
 func (s *TakingService) RecordEvent(ctx context.Context, input RecordEventInput) error {
@@ -289,8 +313,142 @@ func normalizeAnswer(input SaveAnswerInput) string {
 	}
 }
 
+func (s *TakingService) gradeObjectiveAnswers(items []AnswerForGrading) ([]AnswerGradingResult, string, error) {
+	grades := make([]AnswerGradingResult, 0, len(items))
+	objectiveScore := 0.0
+	for _, item := range items {
+		// 自动判分只处理客观题和首版单空填空题，简答题保留给人工阅卷流程。
+		result, score, err := gradeAnswer(item)
+		if err != nil {
+			return nil, "", err
+		}
+		grades = append(grades, result)
+		objectiveScore += score
+	}
+	return grades, formatGradingScore(objectiveScore), nil
+}
+
+func gradeAnswer(item AnswerForGrading) (AnswerGradingResult, float64, error) {
+	result := AnswerGradingResult{
+		AttemptQuestionID: item.AttemptQuestionID,
+		Score:             "0",
+		GradingStatus:     GradingStatusAuto,
+	}
+	correct := false
+	var err error
+	if item.QuestionType == QuestionTypeShortText {
+		result.GradingStatus = GradingStatusPending
+		return result, 0, nil
+	}
+	snapshot, err := parseCorrectAnswerSnapshot(item.CorrectAnswerSnapshot)
+	if err != nil {
+		return AnswerGradingResult{}, 0, err
+	}
+	switch item.QuestionType {
+	case QuestionTypeSingle, QuestionTypeJudge:
+		correct, err = gradeSingleOptionAnswer(item.AnswerContent, snapshot.OptionIDs)
+	case QuestionTypeMultiple:
+		correct, err = gradeMultipleOptionAnswer(item.AnswerContent, snapshot.OptionIDs)
+	case QuestionTypeFillBlank:
+		correct = strings.TrimSpace(item.AnswerContent) == strings.TrimSpace(snapshot.Text)
+	default:
+		return AnswerGradingResult{}, 0, ErrUnsupportedQuestionType
+	}
+	if err != nil {
+		return AnswerGradingResult{}, 0, err
+	}
+	score, err := parseGradingScore(item.QuestionScore)
+	if err != nil {
+		return AnswerGradingResult{}, 0, err
+	}
+	if !correct {
+		return result, 0, nil
+	}
+	result.Score = formatGradingScore(score)
+	return result, score, nil
+}
+
+func gradeSingleOptionAnswer(answer string, correctOptionIDs []uint64) (bool, error) {
+	if strings.TrimSpace(answer) == "" {
+		return false, nil
+	}
+	var selectedID uint64
+	if err := json.Unmarshal([]byte(answer), &selectedID); err != nil {
+		return false, err
+	}
+	return sameUint64Set([]uint64{selectedID}, correctOptionIDs), nil
+}
+
+func gradeMultipleOptionAnswer(answer string, correctOptionIDs []uint64) (bool, error) {
+	if strings.TrimSpace(answer) == "" {
+		return false, nil
+	}
+	var selectedIDs []uint64
+	if err := json.Unmarshal([]byte(answer), &selectedIDs); err != nil {
+		return false, err
+	}
+	// 多选题必须反序列化为数组后排序比较，避免 JSON 字符串空格或顺序差异影响判分。
+	return sameUint64Set(selectedIDs, correctOptionIDs), nil
+}
+
+func parseCorrectAnswerSnapshot(value string) (correctAnswerSnapshot, error) {
+	var snapshot correctAnswerSnapshot
+	if err := json.Unmarshal([]byte(value), &snapshot); err != nil {
+		return correctAnswerSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func sameUint64Set(left []uint64, right []uint64) bool {
+	left = sortedUint64s(left)
+	right = sortedUint64s(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedUint64s(values []uint64) []uint64 {
+	sorted := append([]uint64(nil), values...)
+	sort.Slice(sorted, func(i int, j int) bool {
+		return sorted[i] < sorted[j]
+	})
+	return sorted
+}
+
+func parseGradingScore(value string) (float64, error) {
+	if strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, ErrInvalidQuestionScore
+	}
+	return parsed, nil
+}
+
+func formatGradingScore(value float64) string {
+	text := strconv.FormatFloat(value, 'f', 6, 64)
+	text = strings.TrimRight(text, "0")
+	text = strings.TrimRight(text, ".")
+	if text == "" {
+		return "0"
+	}
+	return text
+}
+
 func isCriticalEvent(eventType string) bool {
 	return eventType == EventTypeSubmit || eventType == EventTypeAutoSubmit
+}
+
+type correctAnswerSnapshot struct {
+	OptionIDs []uint64 `json:"option_ids"`
+	Text      string   `json:"text"`
 }
 
 type eventThrottleKey struct {

@@ -1,0 +1,348 @@
+import { useEffect, useState } from "react";
+import {
+  Bookmark,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  DoorOpen,
+  TriangleAlert,
+  X,
+} from "lucide-react";
+import "./StudentExamPage.css";
+
+type QuestionState = "current" | "answered" | "blank" | "marked";
+
+type QuestionNavItem = {
+  number: number;
+  state?: QuestionState;
+};
+
+type QuestionGroup = {
+  title: string;
+  subtitle: string;
+  questions: QuestionNavItem[];
+};
+
+const narrowExamViewportQuery = "(max-width: 1100px)";
+
+function shouldCollapseQuestionListByDefault() {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia(narrowExamViewportQuery).matches;
+}
+
+const questionGroups: QuestionGroup[] = [
+  {
+    title: "一、单项选择题",
+    subtitle: "共20题，每题2分",
+    questions: Array.from({ length: 20 }, (_, index) => ({
+      number: index + 1,
+      state: index === 0 ? "current" : [2, 4, 5, 10, 16].includes(index + 1) ? "answered" : [3, 12, 18].includes(index + 1) ? "marked" : "blank",
+    })),
+  },
+  {
+    title: "二、多项选择题",
+    subtitle: "共10题，每题2分",
+    questions: Array.from({ length: 10 }, (_, index) => ({ number: index + 21 })),
+  },
+  {
+    title: "三、判断题",
+    subtitle: "共10题，每题1分",
+    questions: Array.from({ length: 10 }, (_, index) => ({ number: index + 31 })),
+  },
+  {
+    title: "四、简答题",
+    subtitle: "共5题，共30分",
+    questions: Array.from({ length: 5 }, (_, index) => ({ number: index + 41 })),
+  },
+];
+
+const optionRows = [
+  ["A.", "瞻望（zhān）", "娑娑（suō）", "岑参（cén）", "怅然（chàng）"],
+  ["B.", "棹蕴（yùn）", "弥散（mí）", "蹊跷（qī）", "摇曳（yè）"],
+  ["C.", "腌臜（yān）", "提防（dī）", "颔首（hàn）", "睥睨（pì）"],
+  ["D.", "龟裂（guī）", "谙熟（ān）", "憧憬（chōng）", "饕餮（tāo）"],
+];
+
+function QuestionButton({ item }: { item: QuestionNavItem }) {
+  const state = item.state ?? "blank";
+
+  return (
+    <button className={`exam-qnav__button exam-qnav__button--${state}`} type="button">
+      {item.number}
+      {state === "answered" && <span className="exam-qnav__dot" />}
+      {state === "marked" && <span className="exam-qnav__mark" />}
+    </button>
+  );
+}
+
+function QuestionGrid({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={compact ? "exam-qnav exam-qnav--compact" : "exam-qnav"}>
+      {questionGroups.map((group) => (
+        <section className="exam-qnav__group" key={group.title}>
+          <div className="exam-qnav__title">
+            <strong>{group.title}</strong>
+            <span>{group.subtitle}</span>
+            {compact && <ChevronDown aria-hidden="true" size={14} />}
+          </div>
+          {!compact || group.title.startsWith("一") ? (
+            <div className="exam-qnav__grid">
+              {group.questions.map((item) => (
+                <QuestionButton item={item} key={item.number} />
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+export function StudentExamPage() {
+  const [isExamDrawerOpen, setIsExamDrawerOpen] = useState(false);
+  const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
+  const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isQuestionListOpen, setIsQuestionListOpen] = useState(() => !shouldCollapseQuestionListByDefault());
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+
+    const mediaQueryList = window.matchMedia(narrowExamViewportQuery);
+    const handleViewportChange = (event: MediaQueryListEvent) => {
+      setIsQuestionListOpen(!event.matches);
+    };
+
+    mediaQueryList.addEventListener("change", handleViewportChange);
+
+    return () => {
+      mediaQueryList.removeEventListener("change", handleViewportChange);
+    };
+  }, []);
+
+  return (
+    <div className="student-exam-shell">
+      <header className="student-exam-header">
+        <div className="student-brand">
+          <span className="student-brand__mark">P</span>
+          <span>PaperMind</span>
+        </div>
+        <h1>期中考试（高一语文）</h1>
+        <div
+          className="student-tools"
+          aria-label="考生账户"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              setIsProfileMenuOpen(false);
+            }
+          }}
+        >
+          <button
+            aria-label="张三"
+            aria-controls="student-profile-menu"
+            aria-expanded={isProfileMenuOpen}
+            aria-haspopup="menu"
+            className="student-profile"
+            onClick={() => setIsProfileMenuOpen((isOpen) => !isOpen)}
+            type="button"
+          >
+            <span className="student-avatar" aria-hidden="true">张</span>
+            <strong>张三</strong>
+            <ChevronDown aria-hidden="true" size={14} />
+          </button>
+          {isProfileMenuOpen ? (
+            <div aria-label="考生信息" className="student-profile-menu" id="student-profile-menu" role="menu">
+              <span>考生编号：S1001001</span>
+            </div>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="student-exam-subbar">
+        <button
+          aria-controls="exam-question-list"
+          aria-expanded={isQuestionListOpen}
+          className="ghost-button"
+          onClick={() => setIsQuestionListOpen((isOpen) => !isOpen)}
+          type="button"
+        >
+          {isQuestionListOpen ? <ChevronLeft aria-hidden="true" size={16} /> : <ChevronRight aria-hidden="true" size={16} />}
+          {isQuestionListOpen ? "收起题目列表" : "展开题目列表"}
+        </button>
+        <div className="student-exam-subbar__actions">
+          <button
+            aria-controls="exam-helper-drawer"
+            aria-expanded={isExamDrawerOpen}
+            className="drawer-toggle"
+            onClick={() => setIsExamDrawerOpen(true)}
+            type="button"
+          >
+            考试信息与答题卡
+          </button>
+          <button className="danger-link" onClick={() => setIsLeaveDialogOpen(true)} type="button"><DoorOpen aria-hidden="true" size={16} />退出考试</button>
+        </div>
+      </div>
+
+      <main className={isQuestionListOpen ? "student-exam-layout" : "student-exam-layout student-exam-layout--qnav-collapsed"}>
+        <button
+          aria-label="关闭题目列表抽屉"
+          className={isQuestionListOpen ? "qnav-drawer-backdrop qnav-drawer-backdrop--open" : "qnav-drawer-backdrop"}
+          onClick={() => setIsQuestionListOpen(false)}
+          type="button"
+        />
+
+        <aside
+          aria-label="题目列表"
+          className={isQuestionListOpen ? "exam-card exam-left-panel exam-left-panel--drawer-open" : "exam-card exam-left-panel"}
+          hidden={!isQuestionListOpen}
+          id="exam-question-list"
+        >
+          <h2>题目列表</h2>
+          <QuestionGrid />
+          <div className="exam-legend">
+            <span><i className="legend-dot legend-dot--answered" />已答</span>
+            <span><i className="legend-dot legend-dot--blank" />未答</span>
+            <span><i className="legend-triangle" />标记</span>
+            <span><i className="legend-current" />当前</span>
+          </div>
+        </aside>
+
+        <section className="exam-card exam-question-panel">
+          <div className="exam-question-head">
+            <div>
+              <span className="section-index">一</span>
+              <strong>单项选择题（共20题，每题2分）</strong>
+            </div>
+            <span className="question-progress"><strong>1</strong> / 20</span>
+          </div>
+
+          <div className="question-toolbar">
+            <button className="question-number" type="button">1</button>
+            <button className="mark-button" type="button"><Bookmark aria-hidden="true" size={16} />标记</button>
+          </div>
+
+          <p className="question-stem">下列加点字的注音完全正确的一项是（ ）</p>
+
+          <div className="option-list">
+            {optionRows.map((row, index) => (
+              <label className={index === 0 ? "option-row option-row--selected" : "option-row"} key={row[0]}>
+                <span className="option-row__prefix">
+                  <span className="option-radio" aria-hidden="true" />
+                  <strong>{row[0]}</strong>
+                </span>
+                <span className="option-row__terms">
+                  {row.slice(1).map((text) => <span key={text}>{text}</span>)}
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <button className="clear-button" type="button">清空选择</button>
+
+          <div className="analysis-box">
+            <strong>题目解析（考后公布）</strong>
+            <p>岑参（cén），怅然（chàng）。B项：棹蕴（yùn）错误，应为棹蕴（yǔn）；C项：提防（dī）错误，应为提防（dī）；D项：龟裂（guī）错误，应为龟裂（jūn）。</p>
+          </div>
+
+          <div className="question-actions">
+            <button className="prev-button" type="button"><ChevronLeft aria-hidden="true" size={18} />上一题</button>
+            <label className="favorite-check"><input type="checkbox" />加入收藏</label>
+            <button className="next-button" type="button">下一题<ChevronRight aria-hidden="true" size={18} /></button>
+          </div>
+        </section>
+
+        <button
+          aria-label="关闭考试抽屉遮罩"
+          className={isExamDrawerOpen ? "drawer-backdrop drawer-backdrop--open" : "drawer-backdrop"}
+          onClick={() => setIsExamDrawerOpen(false)}
+          type="button"
+        />
+
+        <aside
+          aria-label="考试辅助抽屉"
+          className={isExamDrawerOpen ? "exam-right-column exam-right-column--open" : "exam-right-column"}
+          id="exam-helper-drawer"
+        >
+          <div className="exam-drawer-head">
+            <strong>考试辅助</strong>
+            <button aria-label="关闭考试抽屉" onClick={() => setIsExamDrawerOpen(false)} type="button">
+              <X aria-hidden="true" size={18} />
+            </button>
+          </div>
+          <section className="exam-card info-panel">
+            <h2>考试信息</h2>
+            <p>考试名称：期中考试（高一语文）</p>
+            <p>考试时长：120 分钟</p>
+            <p>总题目数：45 题</p>
+            <p>总分：100 分</p>
+          </section>
+
+          <section className="exam-card timer-panel">
+            <h2>剩余时间</h2>
+            <strong>01:28:36</strong>
+            <span><TriangleAlert aria-hidden="true" size={14} />考试中请勿切换页面或离开考试</span>
+          </section>
+
+          <section className="exam-card answer-card">
+            <h2>答题卡</h2>
+            <div className="exam-legend exam-legend--compact">
+              <span><i className="legend-dot legend-dot--answered" />已答</span>
+              <span><i className="legend-dot legend-dot--blank" />未答</span>
+              <span><i className="legend-triangle" />标记</span>
+            </div>
+            <QuestionGrid compact />
+            <button className="submit-button" onClick={() => setIsSubmitDialogOpen(true)} type="button">交 卷</button>
+            <p className="submit-note">交卷后将无法继续作答，请确认已完成</p>
+          </section>
+        </aside>
+      </main>
+
+      {isSubmitDialogOpen && (
+        <div className="exam-modal-layer">
+          <div
+            aria-labelledby="submit-dialog-title"
+            aria-modal="true"
+            className="mini-dialog exam-submit-dialog"
+            role="dialog"
+          >
+            <span className="alert-icon">!</span>
+            <strong id="submit-dialog-title">确认交卷</strong>
+            <p>交卷后将无法继续作答，请确认是否交卷？</p>
+            <div>
+              <button onClick={() => setIsSubmitDialogOpen(false)} type="button">取消</button>
+              <button type="button">确认交卷</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLeaveDialogOpen && (
+        <div className="exam-modal-layer">
+          <div
+            aria-labelledby="leave-dialog-title"
+            aria-modal="true"
+            className="leave-dialog exam-leave-dialog"
+            role="dialog"
+          >
+            <TriangleAlert aria-hidden="true" size={28} />
+            <strong id="leave-dialog-title">离开页面提醒</strong>
+            <p>检测到您将离开考试页面，请确认是否离开？</p>
+            <div>
+              <button onClick={() => setIsLeaveDialogOpen(false)} type="button">留在页面</button>
+              <button type="button">确认离开</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <footer className="student-exam-footer">
+        <span><i className="legend-dot legend-dot--answered" />自动保存：已开启（每30秒）</span>
+        <span>考试过程中如遇问题，请联系监考老师</span>
+        <span>当前版本：v1.0.0</span>
+      </footer>
+    </div>
+  );
+}

@@ -126,6 +126,51 @@ func TestSubmitAttemptUsesVersionedIdempotentUpdateAndWritesCriticalEvent(t *tes
 	if len(repo.events) != 2 || repo.events[1].EventType != EventTypeAutoSubmit {
 		t.Fatalf("expected auto_submit event still written, got %#v", repo.events)
 	}
+	if repo.savedGradingCount != 1 {
+		t.Fatalf("idempotent submit should not save objective grades again, got %d", repo.savedGradingCount)
+	}
+}
+
+func TestSubmitDoesNotMarkAttemptSubmittedWhenObjectiveGradingCannotBePrepared(t *testing.T) {
+	repo := newFakeTakingRepository()
+	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.attempt = Attempt{
+		ID:                 99,
+		TenantID:           10,
+		ExamID:             1,
+		UserID:             20,
+		Status:             AttemptStatusInProgress,
+		StartedAt:          fixedUnixMilli,
+		Version:            3,
+		ExamTokenHash:      HashExamToken("exam-token"),
+		ExamTokenExpiresAt: fixedUnixMilli + 35*minuteMillis,
+	}
+	repo.gradingItems = []AnswerForGrading{
+		{
+			AttemptQuestionID:     1001,
+			QuestionType:          QuestionTypeSingle,
+			QuestionScore:         "not-a-score",
+			AnswerContent:         "101",
+			CorrectAnswerSnapshot: `{"option_ids":[101],"text":""}`,
+		},
+	}
+	svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: fixedNow})
+
+	err := svc.Submit(context.Background(), SubmitInput{
+		TenantID:  10,
+		AttemptID: 99,
+		ExamToken: "exam-token",
+		EventType: EventTypeSubmit,
+	})
+	if !errors.Is(err, ErrInvalidQuestionScore) {
+		t.Fatalf("expected grading preparation error, got %v", err)
+	}
+	if repo.submittedStatus != "" {
+		t.Fatalf("attempt should not be marked submitted before grading is prepared, got %q", repo.submittedStatus)
+	}
+	if len(repo.events) != 0 {
+		t.Fatalf("submit event should not be written when submit is not persisted, got %#v", repo.events)
+	}
 }
 
 func TestExamEventsThrottleDropNonCriticalAndKeepCriticalReliable(t *testing.T) {
@@ -210,6 +255,113 @@ func TestStartEventConsumerPersistsQueuedEventsAsynchronously(t *testing.T) {
 	}
 }
 
+func TestGradeObjectiveQuestionsAppliesSnapshotRulesAndLeavesShortTextPending(t *testing.T) {
+	repo := newFakeTakingRepository()
+	repo.gradingItems = []AnswerForGrading{
+		{
+			AttemptQuestionID:     1001,
+			QuestionType:          QuestionTypeSingle,
+			QuestionScore:         "2",
+			AnswerContent:         "101",
+			CorrectAnswerSnapshot: `{"option_ids":[101],"text":""}`,
+		},
+		{
+			AttemptQuestionID:     1002,
+			QuestionType:          QuestionTypeJudge,
+			QuestionScore:         "1",
+			AnswerContent:         "202",
+			CorrectAnswerSnapshot: `{"option_ids":[202],"text":""}`,
+		},
+		{
+			AttemptQuestionID:     1003,
+			QuestionType:          QuestionTypeMultiple,
+			QuestionScore:         "3",
+			AnswerContent:         "[104, 101]",
+			CorrectAnswerSnapshot: `{"option_ids":[101,104],"text":""}`,
+		},
+		{
+			AttemptQuestionID:     1004,
+			QuestionType:          QuestionTypeFillBlank,
+			QuestionScore:         "4",
+			AnswerContent:         " go.mod ",
+			CorrectAnswerSnapshot: `{"option_ids":[],"text":"go.mod"}`,
+		},
+		{
+			AttemptQuestionID:     1005,
+			QuestionType:          QuestionTypeShortText,
+			QuestionScore:         "5",
+			AnswerContent:         "简答题需要老师人工阅卷",
+			CorrectAnswerSnapshot: "",
+		},
+		{
+			AttemptQuestionID:     1006,
+			QuestionType:          QuestionTypeMultiple,
+			QuestionScore:         "3",
+			AnswerContent:         "[101]",
+			CorrectAnswerSnapshot: `{"option_ids":[101,104],"text":""}`,
+		},
+	}
+	svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: fixedNow})
+
+	grades, objectiveScore, err := svc.gradeObjectiveAnswers(repo.gradingItems)
+	if err != nil {
+		t.Fatalf("gradeObjectiveAnswers returned error: %v", err)
+	}
+	repo.savedGrades = grades
+	repo.savedObjectiveScore = objectiveScore
+
+	want := []AnswerGradingResult{
+		{AttemptQuestionID: 1001, Score: "2", GradingStatus: GradingStatusAuto},
+		{AttemptQuestionID: 1002, Score: "1", GradingStatus: GradingStatusAuto},
+		{AttemptQuestionID: 1003, Score: "3", GradingStatus: GradingStatusAuto},
+		{AttemptQuestionID: 1004, Score: "4", GradingStatus: GradingStatusAuto},
+		{AttemptQuestionID: 1005, Score: "0", GradingStatus: GradingStatusPending},
+		{AttemptQuestionID: 1006, Score: "0", GradingStatus: GradingStatusAuto},
+	}
+	if len(repo.savedGrades) != len(want) {
+		t.Fatalf("expected %d grading results, got %#v", len(want), repo.savedGrades)
+	}
+	for index := range want {
+		if repo.savedGrades[index] != want[index] {
+			t.Fatalf("grading result %d mismatch: want %#v got %#v", index, want[index], repo.savedGrades[index])
+		}
+	}
+	if repo.savedObjectiveScore != "10" {
+		t.Fatalf("expected objective score 10, got %q", repo.savedObjectiveScore)
+	}
+}
+
+func TestGradeObjectiveQuestionsFailsFastWhenMatchedScoreIsInvalid(t *testing.T) {
+	repo := newFakeTakingRepository()
+	svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: fixedNow})
+
+	_, _, err := svc.gradeObjectiveAnswers([]AnswerForGrading{
+		{
+			AttemptQuestionID:     1001,
+			QuestionType:          QuestionTypeSingle,
+			QuestionScore:         "not-a-score",
+			AnswerContent:         "101",
+			CorrectAnswerSnapshot: `{"option_ids":[101],"text":""}`,
+		},
+	})
+	if !errors.Is(err, ErrInvalidQuestionScore) {
+		t.Fatalf("expected ErrInvalidQuestionScore for correct answer, got %v", err)
+	}
+
+	_, _, err = svc.gradeObjectiveAnswers([]AnswerForGrading{
+		{
+			AttemptQuestionID:     1002,
+			QuestionType:          QuestionTypeSingle,
+			QuestionScore:         "not-a-score",
+			AnswerContent:         "102",
+			CorrectAnswerSnapshot: `{"option_ids":[101],"text":""}`,
+		},
+	})
+	if !errors.Is(err, ErrInvalidQuestionScore) {
+		t.Fatalf("expected ErrInvalidQuestionScore for wrong answer, got %v", err)
+	}
+}
+
 func newFakeTakingRepository() *fakeTakingRepository {
 	return &fakeTakingRepository{
 		now:                fixedUnixMilli,
@@ -225,10 +377,14 @@ type fakeTakingRepository struct {
 
 	savedAnswer Answer
 
-	submittedStatus    string
-	submittedVersion   int64
-	updateRowsAffected int64
-	gradeAttemptID     uint64
+	submittedStatus     string
+	submittedVersion    int64
+	updateRowsAffected  int64
+	gradeAttemptID      uint64
+	gradingItems        []AnswerForGrading
+	savedGrades         []AnswerGradingResult
+	savedObjectiveScore string
+	savedGradingCount   int64
 
 	events []ExamEvent
 
@@ -255,15 +411,23 @@ func (r *fakeTakingRepository) UpsertAnswer(ctx context.Context, answer Answer) 
 	return nil
 }
 
-func (r *fakeTakingRepository) SubmitAttempt(ctx context.Context, tenantID uint64, attemptID uint64, version int64, submittedAt int64, status string) (int64, error) {
+func (r *fakeTakingRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, tenantID uint64, attemptID uint64, version int64, submittedAt int64, status string, grader ObjectiveGradingFunc, event ExamEvent) (int64, error) {
 	r.submittedStatus = status
 	r.submittedVersion = version
-	return r.updateRowsAffected, nil
-}
-
-func (r *fakeTakingRepository) GradeObjectiveQuestions(ctx context.Context, tenantID uint64, attemptID uint64) error {
 	r.gradeAttemptID = attemptID
-	return nil
+	if r.updateRowsAffected > 0 {
+		grades, objectiveScore, err := grader(r.gradingItems)
+		if err != nil {
+			r.submittedStatus = ""
+			r.submittedVersion = 0
+			return 0, err
+		}
+		r.savedGrades = grades
+		r.savedObjectiveScore = objectiveScore
+		r.savedGradingCount++
+	}
+	r.events = append(r.events, event)
+	return r.updateRowsAffected, nil
 }
 
 func (r *fakeTakingRepository) AppendEvent(ctx context.Context, event ExamEvent) error {

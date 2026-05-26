@@ -16,7 +16,7 @@ func TestMySQLSchemaUsesInnoDBAndUTF8MB4ForEveryTable(t *testing.T) {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 
-	sql := string(content)
+	sql := strings.ReplaceAll(string(content), "\r\n", "\n")
 	tableNames := regexp.MustCompile(`CREATE TABLE IF NOT EXISTS ([a-z_]+)`).FindAllStringSubmatch(sql, -1)
 	if len(tableNames) == 0 {
 		t.Fatalf("%s has no CREATE TABLE statements", path)

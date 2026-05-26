@@ -1,0 +1,30 @@
+:root {
+  --font-heading: "Noto Sans SC", "Noto Sans SC Fallback", "Inter",
+    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-body: "Noto Sans SC", "Noto Sans SC Fallback", "Inter",
+    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", "Google Sans Code", "Consolas", "Monaco",
+    monospace;
+  --nav-rail: #f4f2ea;
+  --nav-panel: #f4f2ea;
+  --nav-text: #15171d;
+  --nav-text-muted: #6f7480;
+  --surface-canvas: #eeece4;
+  --surface-panel: #ffffff;
+  --surface-muted: #f6f5f1;
+  --surface-wash: #fbfaf7;
+  --border-subtle: #e4e1d8;
+  --border-strong: #d4d0c6;
+  --brand-accent: #dc7556;
+  --brand-accent-strong: #ff6b2a;
+  --brand-soft: #fff2ec;
+  --brand-ink: #9e4328;
+  --text-primary: #171c28;
+  --text-secondary: #4e5868;
+  --text-muted: #828a98;
+  --shadow-card: 0 1px 2px rgb(23 28 40 / 8%);
+  --status-success: #00a842;
+  --status-warning: #ff6b2a;
+  --status-danger: #d54b3d;
+  --status-info: #64748b;
+}

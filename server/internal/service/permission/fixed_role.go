@@ -46,6 +46,14 @@ func (FixedRoleChecker) CanPublishExam(ctx PermissionContext, paperID uint64) er
 	return canManageSpaceResource(ctx, spaceID)
 }
 
+func (FixedRoleChecker) CanGradeExam(ctx PermissionContext, examID uint64) error {
+	spaceID, ok := ctx.ExamScope[examID]
+	if !ok {
+		return ErrForbidden
+	}
+	return canManageSpaceResource(ctx, spaceID)
+}
+
 func (FixedRoleChecker) CanGradeAttempt(ctx PermissionContext, attemptID uint64) error {
 	spaceID, ok := ctx.AttemptScope[attemptID]
 	if !ok {

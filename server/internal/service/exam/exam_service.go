@@ -47,21 +47,22 @@ const (
 )
 
 var (
-	ErrDurationExceedsExamWindow    = errors.New("duration exceeds exam window")
-	ErrShortTextCannotRepeatAttempt = errors.New("short text exam cannot repeat attempt")
-	ErrDuplicateExamTarget          = errors.New("duplicate exam target")
-	ErrLoginRequiredForInvite       = errors.New("login or register required for invite")
-	ErrExamNotEligible              = errors.New("exam not eligible")
-	ErrExamNotStarted               = errors.New("exam not started")
-	ErrExamEnded                    = errors.New("exam ended")
-	ErrAttemptNotFound              = errors.New("attempt not found")
-	ErrMaxAttemptsReached           = errors.New("max attempts reached")
-	ErrAttemptUniqueConflict        = errors.New("attempt unique conflict")
-	ErrExamTokenAttemptMismatch     = errors.New("exam token attempt mismatch")
-	ErrExamTokenInvalid             = errors.New("exam token invalid")
-	ErrInviteCodeCollision          = errors.New("invite code collision")
-	ErrAnswerDeadlineExceeded       = errors.New("answer deadline exceeded")
-	ErrAttemptAlreadySubmitted      = errors.New("attempt already submitted")
+	ErrDurationExceedsExamWindow     = errors.New("duration exceeds exam window")
+	ErrShortTextCannotRepeatAttempt  = errors.New("short text exam cannot repeat attempt")
+	ErrShortTextCannotImmediateScore = errors.New("short text exam cannot immediate score")
+	ErrDuplicateExamTarget           = errors.New("duplicate exam target")
+	ErrLoginRequiredForInvite        = errors.New("login or register required for invite")
+	ErrExamNotEligible               = errors.New("exam not eligible")
+	ErrExamNotStarted                = errors.New("exam not started")
+	ErrExamEnded                     = errors.New("exam ended")
+	ErrAttemptNotFound               = errors.New("attempt not found")
+	ErrMaxAttemptsReached            = errors.New("max attempts reached")
+	ErrAttemptUniqueConflict         = errors.New("attempt unique conflict")
+	ErrExamTokenAttemptMismatch      = errors.New("exam token attempt mismatch")
+	ErrExamTokenInvalid              = errors.New("exam token invalid")
+	ErrInviteCodeCollision           = errors.New("invite code collision")
+	ErrAnswerDeadlineExceeded        = errors.New("answer deadline exceeded")
+	ErrAttemptAlreadySubmitted       = errors.New("attempt already submitted")
 )
 
 const (
@@ -137,6 +138,7 @@ type SnapshotSourceQuestion struct {
 	SectionName      string   // 大题名称。
 	Instructions     string   // 作答说明。
 	QuestionID       uint64   // 题目 ID。
+	QuestionType     string   // 题型，判分时必须使用快照值避免题库变更影响考试。
 	Title            string   // 题干。
 	Score            string   // 分值。
 	OptionIDs        []uint64 // 最终展示选项 ID 顺序。
@@ -271,6 +273,9 @@ func (s *Service) Publish(ctx context.Context, input PublishInput) (Exam, error)
 	}
 	if paper.ContainsShortText && input.MaxAttempts > 1 {
 		return Exam{}, ErrShortTextCannotRepeatAttempt
+	}
+	if paper.ContainsShortText && input.PublishMode == PublishModeImmediateScore {
+		return Exam{}, ErrShortTextCannotImmediateScore
 	}
 	inviteCode, err := s.nextUniqueInviteCode(ctx, input.TenantID)
 	if err != nil {
@@ -407,7 +412,7 @@ func (s *Service) GenerateAttemptSnapshots(ctx context.Context, input GenerateSn
 			SectionSnapshot:       mustJSON(map[string]any{"name": source.SectionName, "instructions": source.Instructions}),
 			SortOrder:             index + 1,
 			Score:                 source.Score,
-			QuestionSnapshot:      mustJSON(map[string]any{"title": source.Title}),
+			QuestionSnapshot:      mustJSON(map[string]any{"title": source.Title, "type": source.QuestionType}),
 			OptionSnapshot:        mustJSON(map[string]any{"option_ids": source.OptionIDs}),
 			CorrectAnswerSnapshot: mustJSON(map[string]any{"option_ids": source.CorrectOptionIDs, "text": source.CorrectText}),
 		})

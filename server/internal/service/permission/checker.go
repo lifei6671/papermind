@@ -7,6 +7,7 @@ type PermissionChecker interface {
 	CanManageSpace(ctx PermissionContext, spaceID uint64) error
 	CanManageQuestion(ctx PermissionContext, questionID uint64) error
 	CanPublishExam(ctx PermissionContext, paperID uint64) error
+	CanGradeExam(ctx PermissionContext, examID uint64) error
 	CanGradeAttempt(ctx PermissionContext, attemptID uint64) error
 	CanTakeExam(ctx PermissionContext, examID uint64) error
 }
