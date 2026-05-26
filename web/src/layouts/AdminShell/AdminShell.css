@@ -233,6 +233,7 @@
 .workspace__content {
   min-width: 0;
   max-width: 1520px;
+  overflow-x: auto;
   padding: 42px 40px 64px;
 }
 

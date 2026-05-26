@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sort"
 	"strings"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 const (
@@ -54,6 +56,8 @@ type Question struct {
 	ReferenceAnswer    string  // 简答题参考答案。
 	GradingMode        string  // 阅卷方式。
 	Status             string  // 题目状态。
+	Options            []QuestionOption
+	Tags               []string
 }
 
 type QuestionOption struct {
@@ -80,6 +84,13 @@ type CreateQuestionInput struct {
 	ReferenceAnswer    string                // 简答题参考答案。
 	BlankCount         int                   // 填空数量，首版只允许 0 或 1。
 	Tags               []string              // 题目标签名称。
+}
+
+type ListQuestionsInput struct {
+	TenantID uint64
+	SpaceID  *uint64
+	Page     int
+	PageSize int
 }
 
 type QuestionOptionInput struct {
@@ -139,7 +150,7 @@ type ImportError struct {
 
 type QuestionRepository interface {
 	CreateQuestion(ctx context.Context, item Question, options []QuestionOption, tags []string) (Question, error)
-	ListVisibleQuestions(ctx context.Context, tenantID uint64, spaceID *uint64) ([]Question, error)
+	ListVisibleQuestions(ctx context.Context, input ListQuestionsInput) (pagination.Result[Question], error)
 	ReplaceOptionsInTransaction(ctx context.Context, tenantID uint64, questionID uint64, options []QuestionOption) error
 }
 
@@ -180,8 +191,8 @@ func (s *QuestionService) CreateQuestion(ctx context.Context, input CreateQuesti
 	return s.repo.CreateQuestion(ctx, item, options, input.Tags)
 }
 
-func (s *QuestionService) ListVisibleQuestions(ctx context.Context, tenantID uint64, spaceID *uint64) ([]Question, error) {
-	return s.repo.ListVisibleQuestions(ctx, tenantID, spaceID)
+func (s *QuestionService) ListVisibleQuestions(ctx context.Context, input ListQuestionsInput) (pagination.Result[Question], error) {
+	return s.repo.ListVisibleQuestions(ctx, input)
 }
 
 func (s *QuestionService) GradeChoiceAnswer(snapshot ChoiceSnapshot, selectedIDs []uint64) bool {

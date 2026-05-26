@@ -1,42 +1,18 @@
 import { Button } from "../../components/ui/Button";
 import { RefreshCw, Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { tenantApi } from "../../api/tenants";
+import type { TenantManagementAPI, TenantRow } from "../../api/tenants";
 
-type Tenant = {
-  id: number;
-  name: string;
-  description: string;
-  code: string;
-  logoFileName: string;
-  allowRegister: boolean;
-  registerClosedLabel?: string;
+type TenantManagementPageProps = {
+  api?: TenantManagementAPI;
 };
 
-const initialTenants: Tenant[] = [
-  {
-    id: 1,
-    name: "青藤一中",
-    description: "统一管理月考、联考和补测",
-    code: "PM-QT01",
-    logoFileName: "qingteng.png",
-    allowRegister: true,
-  },
-  {
-    id: 2,
-    name: "知行培训",
-    description: "企业知识课堂和阶段测评",
-    code: "PM-ZX01",
-    logoFileName: "zhixing.png",
-    allowRegister: false,
-    registerClosedLabel: "暂停注册",
-  },
-];
-
-export function TenantManagementPage() {
-  const [tenants, setTenants] = useState<Tenant[]>(initialTenants);
+export function TenantManagementPage({ api = tenantApi }: TenantManagementPageProps) {
+  const [tenants, setTenants] = useState<TenantRow[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [logoFileName, setLogoFileName] = useState("");
@@ -44,8 +20,30 @@ export function TenantManagementPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
+  const [editingTenant, setEditingTenant] = useState<TenantRow | null>(null);
   const [editingDescription, setEditingDescription] = useState("");
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let ignore = false;
+
+    api.listTenants()
+      .then((data) => {
+        if (!ignore) {
+          setTenants(data.items);
+          setLoadError("");
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setLoadError("租户列表加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api]);
 
   const filteredTenants = tenants.filter((tenant) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
@@ -57,18 +55,14 @@ export function TenantManagementPage() {
     return [tenant.name, tenant.description, tenant.code].some((value) => value.toLowerCase().includes(keyword));
   });
 
-  function handleCreateTenant(event: React.FormEvent<HTMLFormElement>) {
+  async function handleCreateTenant(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    // 新租户创建时立即生成租户码，方便平台管理员复制给租户负责人。
-    const nextTenant: Tenant = {
-      id: Date.now(),
+    const nextTenant = await api.createTenant({
       name,
       description,
-      code: buildTenantCode(name, tenants.length + 1),
       logoFileName: logoFileName || "未上传",
-      allowRegister: true,
-    };
+    });
 
     setTenants((items) => [...items, nextTenant]);
     setName("");
@@ -78,7 +72,7 @@ export function TenantManagementPage() {
     setIsCreateDialogOpen(false);
   }
 
-  function openDescriptionEditor(tenant: Tenant) {
+  function openDescriptionEditor(tenant: TenantRow) {
     setEditingTenant(tenant);
     setEditingDescription(tenant.description);
   }
@@ -161,6 +155,7 @@ export function TenantManagementPage() {
               </Button>
             </div>
           </div>
+          {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
           <div className="table-wrap">
             <table className="data-table tenant-table">
               <thead>
@@ -285,14 +280,6 @@ export function TenantManagementPage() {
       )}
     </section>
   );
-}
-
-function buildTenantCode(tenantName: string, index: number) {
-  if (tenantName.includes("星海")) {
-    return "PM-XH01";
-  }
-
-  return `PM-T${String(index).padStart(2, "0")}`;
 }
 
 function nextTenantCode(currentCode: string) {

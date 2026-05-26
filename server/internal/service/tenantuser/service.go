@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 const (
@@ -11,6 +13,13 @@ const (
 	StatusEnabled = "enabled"
 	// StatusDisabled 表示租户或用户已被禁用。
 	StatusDisabled = "disabled"
+
+	// RoleTenantAdmin 表示租户管理员。
+	RoleTenantAdmin = "tenant_admin"
+	// RoleTeacher 表示教师。
+	RoleTeacher = "teacher"
+	// RoleStudent 表示学生。
+	RoleStudent = "student"
 
 	// LoginFailureInvalidCredential 表示登录名或密码不正确。
 	LoginFailureInvalidCredential = "invalid_credential"
@@ -48,6 +57,7 @@ type User struct {
 	PasswordHash string // 密码哈希。
 	LastLoginIP  string // 最后登录 IP。
 	LastLoginAt  int64  // 最后登录时间，Unix 毫秒时间戳。
+	Role         string // 租户固定角色：tenant_admin / teacher / student。
 	Status       string // 用户状态：enabled / disabled。
 }
 
@@ -58,6 +68,23 @@ type RegisterInput struct {
 	PasswordHash string // 密码哈希。
 	Phone        string // 手机号。
 	Email        string // 邮箱。
+}
+
+type CreateInput struct {
+	TenantID     uint64 // 所属租户 ID。
+	Username     string // 租户内登录名。
+	RealName     string // 真实姓名。
+	AvatarURL    string // 用户头像地址。
+	PasswordHash string // 密码哈希。
+	Phone        string // 手机号。
+	Email        string // 邮箱。
+	Role         string // 租户固定角色。
+}
+
+type ListInput struct {
+	TenantID uint64
+	Page     int
+	PageSize int
 }
 
 type LoginInput struct {
@@ -102,8 +129,11 @@ type DisableImpact struct {
 }
 
 type Repository interface {
+	ListUsers(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[User], error)
+	FindUserByID(ctx context.Context, tenantID uint64, userID uint64) (User, error)
 	FindTenantByCode(ctx context.Context, tenantCode string) (Tenant, error)
 	CreateUser(ctx context.Context, user User) (User, error)
+	CreateUserRole(ctx context.Context, tenantID uint64, userID uint64, role string) error
 	FindUserByUsername(ctx context.Context, tenantID uint64, username string) (User, error)
 	UpdateLoginAudit(ctx context.Context, tenantID uint64, userID uint64, ip string, at int64) error
 	UpdateAvatarURL(ctx context.Context, tenantID uint64, userID uint64, url string) error
@@ -164,6 +194,40 @@ func NewService(options ServiceOptions) *Service {
 		allowedAvatarContentTypes:  options.AllowedAvatarContentTypes,
 		now:                        now,
 	}
+}
+
+func (s *Service) List(ctx context.Context, input ListInput) (pagination.Result[User], error) {
+	return s.repo.ListUsers(ctx, input.TenantID, pagination.Input{Page: input.Page, PageSize: input.PageSize})
+}
+
+func (s *Service) Get(ctx context.Context, tenantID uint64, userID uint64) (User, error) {
+	return s.repo.FindUserByID(ctx, tenantID, userID)
+}
+
+func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
+	role := input.Role
+	if role == "" {
+		role = RoleStudent
+	}
+	user, err := s.repo.CreateUser(ctx, User{
+		TenantID:     input.TenantID,
+		Username:     input.Username,
+		RealName:     input.RealName,
+		AvatarURL:    input.AvatarURL,
+		PasswordHash: input.PasswordHash,
+		Phone:        input.Phone,
+		Email:        input.Email,
+		Role:         role,
+		Status:       StatusEnabled,
+	})
+	if err != nil {
+		return User{}, err
+	}
+	if err := s.repo.CreateUserRole(ctx, user.TenantID, user.ID, role); err != nil {
+		return User{}, err
+	}
+	user.Role = role
+	return user, nil
 }
 
 func (s *Service) RegisterWithTenantCode(ctx context.Context, input RegisterInput) (User, error) {
@@ -251,15 +315,24 @@ func (s *Service) register(ctx context.Context, input RegisterInput) (User, erro
 	if !tenant.AllowRegister {
 		return User{}, ErrRegisterNotAllowed
 	}
-	return s.repo.CreateUser(ctx, User{
+	user, err := s.repo.CreateUser(ctx, User{
 		TenantID:     tenant.ID,
 		Username:     input.Username,
 		RealName:     input.RealName,
 		PasswordHash: input.PasswordHash,
 		Phone:        input.Phone,
 		Email:        input.Email,
+		Role:         RoleStudent,
 		Status:       StatusEnabled,
 	})
+	if err != nil {
+		return User{}, err
+	}
+	if err := s.repo.CreateUserRole(ctx, user.TenantID, user.ID, RoleStudent); err != nil {
+		return User{}, err
+	}
+	user.Role = RoleStudent
+	return user, nil
 }
 
 func (s *Service) isAllowedAvatarContentType(contentType string) bool {

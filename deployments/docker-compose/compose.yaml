@@ -1,0 +1,53 @@
+name: papermind
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: papermind
+      POSTGRES_USER: papermind
+      POSTGRES_PASSWORD: ${PAPERMIND_POSTGRES_PASSWORD:?set PAPERMIND_POSTGRES_PASSWORD in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U papermind -d papermind"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  server:
+    build:
+      context: ../..
+      dockerfile: deployments/docker-compose/server.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PAPERMIND_APP_ENV: ${PAPERMIND_APP_ENV:-docker}
+      PAPERMIND_APP_HTTP_PORT: 8080
+      PAPERMIND_APP_PUBLIC_URL: ${PAPERMIND_APP_PUBLIC_URL:-http://localhost:8080}
+      PAPERMIND_DATABASE_DRIVER: postgres
+      PAPERMIND_DATABASE_DSN: postgres://papermind:${PAPERMIND_POSTGRES_PASSWORD:?set PAPERMIND_POSTGRES_PASSWORD in .env}@postgres:5432/papermind?sslmode=disable
+      PAPERMIND_DATABASE_MAX_OPEN_CONNS: ${PAPERMIND_DATABASE_MAX_OPEN_CONNS:-20}
+      PAPERMIND_DATABASE_MAX_IDLE_CONNS: ${PAPERMIND_DATABASE_MAX_IDLE_CONNS:-10}
+      PAPERMIND_STORAGE_TEMP_DIR: /var/lib/papermind/tmp
+      PAPERMIND_STORAGE_IMPORT_DIR: /var/lib/papermind/imports
+      PAPERMIND_STORAGE_EXPORT_DIR: /var/lib/papermind/exports
+      PAPERMIND_SECURITY_CORS_ORIGINS: ${PAPERMIND_SECURITY_CORS_ORIGINS:-http://localhost}
+    ports:
+      - "${PAPERMIND_SERVER_PORT:-8080}:8080"
+    volumes:
+      - server-data:/var/lib/papermind
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deployments/docker-compose/web.Dockerfile
+    depends_on:
+      - server
+    ports:
+      - "${PAPERMIND_WEB_PORT:-80}:80"
+
+volumes:
+  postgres-data:
+  server-data:

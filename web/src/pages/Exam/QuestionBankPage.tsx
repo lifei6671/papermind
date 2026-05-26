@@ -1,34 +1,20 @@
 import { Button } from "../../components/ui/Button";
 import { RefreshCw, Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { questionApi } from "../../api/questions";
+import type { QuestionBankAPI, QuestionRow } from "../../api/questions";
 
-type Question = {
-  id: number;
-  title: string;
-  stem: string;
-  options: string[];
-  analysis: string;
-  tag: string;
-  status: "draft" | "ready";
+type QuestionBankPageProps = {
+  api?: QuestionBankAPI;
+  tenantID?: number;
+  spaceID?: number;
 };
 
-const initialQuestions: Question[] = [
-  {
-    id: 1,
-    title: "现代文阅读主旨题",
-    stem: "下列选项最能概括文章中心的是哪一项？",
-    options: ["把握中心句", "复述细节", "替换概念", "扩展背景"],
-    analysis: "定位中心句并排除以偏概全选项。",
-    tag: "阅读理解",
-    status: "ready",
-  },
-];
-
-export function QuestionBankPage() {
-  const [questions, setQuestions] = useState<Question[]>(initialQuestions);
+export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: QuestionBankPageProps) {
+  const [questions, setQuestions] = useState<QuestionRow[]>([]);
   const [tags, setTags] = useState(["选择题", "语言文字"]);
   const [title, setTitle] = useState("");
   const [stem, setStem] = useState("");
@@ -44,6 +30,29 @@ export function QuestionBankPage() {
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let ignore = false;
+
+    api.listQuestions({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) })
+      .then((data) => {
+        if (!ignore) {
+          setQuestions(data.items);
+          setTags((items) => mergeTags(items, data.items.map((item) => item.tag)));
+          setLoadError("");
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setLoadError("题目列表加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api, tenantID, spaceID]);
 
   const filteredQuestions = questions.filter((item) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
@@ -57,22 +66,20 @@ export function QuestionBankPage() {
     );
   });
 
-  function handleSaveQuestion(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSaveQuestion(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     // 在线出题同时保存选项、解析和标签，题目进入题库后可直接被组卷页选择。
-    setQuestions((items) => [
-      ...items,
-      {
-        id: Date.now(),
-        title,
-        stem,
-        options: [optionA, optionB],
-        analysis,
-        tag: questionTag,
-        status: "draft",
-      },
-    ]);
+    const nextQuestion = await api.createQuestion({
+      tenantID,
+      title,
+      stem,
+      options: [optionA, optionB],
+      analysis,
+      tag: questionTag,
+    });
+    setQuestions((items) => [...items, nextQuestion]);
+    setTags((items) => mergeTags(items, [nextQuestion.tag]));
     setTitle("");
     setStem("");
     setOptionA("选项 A");
@@ -163,6 +170,7 @@ export function QuestionBankPage() {
             <span className="exam-tag" key={item}>{item}</span>
           ))}
         </div>
+        {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
         {importMessage && <div className="tenant-admin-status" role="status">{importMessage}</div>}
         <div className="table-wrap">
           <table className="data-table tenant-admin-table">
@@ -288,4 +296,14 @@ export function QuestionBankPage() {
       )}
     </section>
   );
+}
+
+function mergeTags(current: string[], incoming: string[]) {
+  const next = [...current];
+  for (const tag of incoming) {
+    if (tag && !next.includes(tag)) {
+      next.push(tag);
+    }
+  }
+  return next;
 }

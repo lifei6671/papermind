@@ -1,10 +1,45 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { TenantManagementPage } from "./TenantManagementPage";
 
-test("租户管理页展示租户列表和租户码", () => {
-  render(<TenantManagementPage />);
+function createTenantAPI() {
+  return {
+    listTenants: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          name: "青藤一中",
+          description: "统一管理月考、联考和补测",
+          code: "PM-QT01",
+          logoFileName: "qingteng.png",
+          allowRegister: true,
+        },
+        {
+          id: 2,
+          name: "知行培训",
+          description: "企业知识课堂和阶段测评",
+          code: "PM-ZX01",
+          logoFileName: "zhixing.png",
+          allowRegister: false,
+          registerClosedLabel: "暂停注册",
+        },
+      ],
+    }),
+    createTenant: vi.fn().mockResolvedValue({
+      id: 3,
+      name: "星海大学",
+      description: "面向公共课和企业培训的考试空间",
+      code: "PM-XH01",
+      logoFileName: "xinghai.png",
+      allowRegister: true,
+    }),
+  };
+}
+
+test("租户管理页展示租户列表和租户码", async () => {
+  const api = createTenantAPI();
+  render(<TenantManagementPage api={api} />);
 
   const platformMenu = screen.getByRole("tablist", { name: "平台运营菜单" });
   expect(within(platformMenu).getAllByRole("tab")).toHaveLength(1);
@@ -13,14 +48,18 @@ test("租户管理页展示租户列表和租户码", () => {
   expect(within(platformMenu).queryByRole("tab", { name: "平台配置" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "租户列表" })).not.toBeInTheDocument();
   expect(screen.queryByText("租户码用于注册链接和手动注册归属。")).not.toBeInTheDocument();
-  expect(screen.getByText("青藤一中")).toBeInTheDocument();
+  expect(await screen.findByText("青藤一中")).toBeInTheDocument();
   expect(screen.getByText("PM-QT01")).toBeInTheDocument();
   expect(screen.getByText("允许注册")).toBeInTheDocument();
+  expect(api.listTenants).toHaveBeenCalled();
 });
 
 test("平台管理员可以创建租户并上传 logo", async () => {
   const user = userEvent.setup();
-  render(<TenantManagementPage />);
+  const api = createTenantAPI();
+  render(<TenantManagementPage api={api} />);
+
+  await screen.findByText("青藤一中");
 
   await user.click(screen.getByRole("button", { name: "创建租户" }));
 
@@ -31,14 +70,21 @@ test("平台管理员可以创建租户并上传 logo", async () => {
   await user.upload(screen.getByLabelText("租户 Logo"), new File(["logo"], "xinghai.png", { type: "image/png" }));
   await user.click(screen.getByRole("button", { name: "确认创建" }));
 
-  expect(screen.getByText("星海大学")).toBeInTheDocument();
+  expect(api.createTenant).toHaveBeenCalledWith({
+    description: "面向公共课和企业培训的考试空间",
+    logoFileName: "xinghai.png",
+    name: "星海大学",
+  });
+  expect(await screen.findByText("星海大学")).toBeInTheDocument();
   expect(screen.getByText("xinghai.png")).toBeInTheDocument();
-  expect(screen.getByText(/PM-XH/)).toBeInTheDocument();
+  expect(screen.getByText("PM-XH01")).toBeInTheDocument();
 });
 
 test("租户列表上方提供搜索输入和创建操作区", async () => {
   const user = userEvent.setup();
-  render(<TenantManagementPage />);
+  render(<TenantManagementPage api={createTenantAPI()} />);
+
+  await screen.findByText("青藤一中");
 
   expect(screen.getByLabelText("搜索租户")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "创建租户" })).toHaveClass("tenant-create-button");
@@ -59,7 +105,9 @@ test("租户列表上方提供搜索输入和创建操作区", async () => {
 
 test("平台管理员可以编辑描述、重置租户码并切换注册开关", async () => {
   const user = userEvent.setup();
-  render(<TenantManagementPage />);
+  render(<TenantManagementPage api={createTenantAPI()} />);
+
+  await screen.findByText("青藤一中");
 
   const row = screen.getByRole("row", { name: /青藤一中/ });
   const editButton = within(row).getByRole("button", { name: "编辑描述" });

@@ -1,10 +1,56 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { UserManagementPage } from "./UserManagementPage";
 
-test("用户管理页展示用户列表和角色状态", () => {
-  render(<UserManagementPage />);
+function createUserAPI() {
+  return {
+    listUsers: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 20,
+          tenantID: 10,
+          name: "李老师",
+          username: "li.teacher",
+          role: "teacher",
+          avatarFileName: "li.png",
+          status: "enabled",
+        },
+        {
+          id: 21,
+          tenantID: 10,
+          name: "张同学",
+          username: "zhang.student",
+          role: "student",
+          avatarFileName: "zhang.png",
+          status: "disabled",
+        },
+      ],
+    }),
+    createUser: vi.fn().mockResolvedValue({
+      id: 22,
+      tenantID: 10,
+      name: "王同学",
+      username: "wang.student",
+      role: "student",
+      avatarFileName: "wang.png",
+      status: "enabled",
+    }),
+    disableUser: vi.fn().mockResolvedValue({
+      id: 20,
+      tenantID: 10,
+      name: "李老师",
+      username: "li.teacher",
+      role: "teacher",
+      avatarFileName: "li.png",
+      status: "disabled",
+    }),
+  };
+}
+
+test("用户管理页展示用户列表和角色状态", async () => {
+  const api = createUserAPI();
+  render(<UserManagementPage api={api} tenantID={10} />);
 
   expect(screen.getAllByRole("tab")).toHaveLength(1);
   expect(screen.getByRole("tab", { name: "用户管理" })).toHaveAttribute("aria-selected", "true");
@@ -15,9 +61,10 @@ test("用户管理页展示用户列表和角色状态", () => {
   expect(screen.getByRole("button", { name: "刷新用户列表" })).toBeInTheDocument();
   expect(screen.queryByLabelText("姓名")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("用户导入文件")).not.toBeInTheDocument();
-  expect(screen.getByText("李老师")).toBeInTheDocument();
+  expect(await screen.findByText("李老师")).toBeInTheDocument();
   expect(screen.getByText("教师")).toBeInTheDocument();
   expect(screen.getByText("启用")).toBeInTheDocument();
+  expect(api.listUsers).toHaveBeenCalledWith(10);
   expect(within(screen.getByRole("row", { name: /李老师/ })).getByRole("button", { name: "禁用用户" })).toHaveClass(
     "tenant-action-button",
     "tenant-action--close",
@@ -26,7 +73,10 @@ test("用户管理页展示用户列表和角色状态", () => {
 
 test("租户管理员可以创建用户并上传头像", async () => {
   const user = userEvent.setup();
-  render(<UserManagementPage />);
+  const api = createUserAPI();
+  render(<UserManagementPage api={api} tenantID={10} />);
+
+  await screen.findByText("李老师");
 
   await user.click(screen.getByRole("button", { name: "创建用户" }));
 
@@ -38,14 +88,23 @@ test("租户管理员可以创建用户并上传头像", async () => {
   await user.upload(screen.getByLabelText("用户头像"), new File(["avatar"], "wang.png", { type: "image/png" }));
   await user.click(screen.getByRole("button", { name: "确认创建" }));
 
-  expect(screen.getByText("王同学")).toBeInTheDocument();
+  expect(api.createUser).toHaveBeenCalledWith({
+    tenantID: 10,
+    name: "王同学",
+    username: "wang.student",
+    role: "student",
+    avatarFileName: "wang.png",
+  });
+  expect(await screen.findByText("王同学")).toBeInTheDocument();
   expect(screen.getByText("wang.student")).toBeInTheDocument();
   expect(screen.getByText("wang.png")).toBeInTheDocument();
 });
 
 test("租户管理员可以搜索和刷新用户列表", async () => {
   const user = userEvent.setup();
-  render(<UserManagementPage />);
+  render(<UserManagementPage api={createUserAPI()} tenantID={10} />);
+
+  await screen.findByText("李老师");
 
   await user.type(screen.getByLabelText("搜索用户"), "zhang.student");
   await user.click(screen.getByRole("button", { name: "搜索" }));
@@ -61,7 +120,9 @@ test("租户管理员可以搜索和刷新用户列表", async () => {
 
 test("租户管理员可以导入用户文件", async () => {
   const user = userEvent.setup();
-  render(<UserManagementPage />);
+  render(<UserManagementPage api={createUserAPI()} tenantID={10} />);
+
+  await screen.findByText("李老师");
 
   await user.click(screen.getByRole("button", { name: "导入用户" }));
 
@@ -76,7 +137,10 @@ test("租户管理员可以导入用户文件", async () => {
 
 test("禁用用户前展示影响范围并确认禁用", async () => {
   const user = userEvent.setup();
-  render(<UserManagementPage />);
+  const api = createUserAPI();
+  render(<UserManagementPage api={api} tenantID={10} actorID={99} />);
+
+  await screen.findByText("李老师");
 
   await user.click(within(screen.getByRole("row", { name: /李老师/ })).getByRole("button", { name: "禁用用户" }));
 
@@ -85,5 +149,6 @@ test("禁用用户前展示影响范围并确认禁用", async () => {
 
   await user.click(screen.getByRole("button", { name: "确认禁用" }));
 
-  expect(within(screen.getByRole("row", { name: /李老师/ })).getByText("禁用")).toBeInTheDocument();
+  expect(api.disableUser).toHaveBeenCalledWith({ tenantID: 10, actorID: 99, userID: 20 });
+  expect(await within(screen.getByRole("row", { name: /李老师/ })).findByText("禁用")).toBeInTheDocument();
 });

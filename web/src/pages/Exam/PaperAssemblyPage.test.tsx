@@ -6,18 +6,21 @@ import { PaperAssemblyPage } from "./PaperAssemblyPage";
 test("组卷页展示试卷列表和大题结构", () => {
   render(<PaperAssemblyPage />);
 
-  expect(screen.getAllByRole("tab")).toHaveLength(1);
+  expect(screen.getAllByRole("tab")).toHaveLength(3);
   expect(screen.getByRole("tab", { name: "试卷" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tab", { name: "题目" })).toHaveAttribute("aria-selected", "false");
+  expect(screen.getByRole("tab", { name: "组卷规则" })).toHaveAttribute("aria-selected", "false");
   expect(screen.queryByRole("heading", { name: "试卷" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "新增大题" })).toHaveClass("tenant-create-button");
-  expect(screen.getByRole("button", { name: "生成 rule_fixed 试卷" })).toHaveClass("tenant-create-button");
-  expect(screen.getByRole("button", { name: "保存 rule_live 规则" })).toHaveClass("tenant-create-button");
+  expect(screen.queryByRole("button", { name: "生成固定规则试卷" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "保存 rule_live 规则" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("搜索试卷")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "刷新试卷列表" })).toBeInTheDocument();
   expect(screen.queryByLabelText("大题名称")).not.toBeInTheDocument();
   expect(screen.getByText("高一语文月考试卷")).toBeInTheDocument();
   expect(screen.getByText("一、现代文阅读")).toBeInTheDocument();
   expect(screen.getByText("rule_fixed")).toBeInTheDocument();
+  expect(screen.queryByText("现代文阅读主旨题")).not.toBeInTheDocument();
 });
 
 test("教师可以创建大题并手动选题", async () => {
@@ -34,6 +37,7 @@ test("教师可以创建大题并手动选题", async () => {
 
   expect(screen.getByText("三、函数综合")).toBeInTheDocument();
 
+  await user.click(screen.getByRole("tab", { name: "题目" }));
   await user.click(within(screen.getByRole("row", { name: /现代文阅读主旨题/ })).getByRole("button", { name: "加入试卷" }));
 
   expect(screen.getByRole("status")).toHaveTextContent("已手动加入 1 道题");
@@ -57,7 +61,8 @@ test("rule_fixed 可以配置、生成、审题并替换题目", async () => {
   const user = userEvent.setup();
   render(<PaperAssemblyPage />);
 
-  await user.click(screen.getByRole("button", { name: "生成 rule_fixed 试卷" }));
+  await user.click(screen.getByRole("tab", { name: "组卷规则" }));
+  await user.click(screen.getByRole("button", { name: "生成固定规则试卷" }));
 
   expect(screen.getByRole("dialog", { name: "rule_fixed 弹窗" })).toBeInTheDocument();
 
@@ -77,6 +82,7 @@ test("rule_live 配置和组卷预检查展示风险提示", async () => {
   const user = userEvent.setup();
   render(<PaperAssemblyPage />);
 
+  await user.click(screen.getByRole("tab", { name: "组卷规则" }));
   await user.click(screen.getByRole("button", { name: "保存 rule_live 规则" }));
 
   expect(screen.getByRole("dialog", { name: "rule_live 弹窗" })).toBeInTheDocument();

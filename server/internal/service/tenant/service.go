@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 const (
@@ -37,7 +39,13 @@ type CreateInput struct {
 	Description string // 企业或机构描述。
 }
 
+type ListInput struct {
+	Page     int
+	PageSize int
+}
+
 type Repository interface {
+	List(ctx context.Context, page pagination.Input) (pagination.Result[Tenant], error)
 	Create(ctx context.Context, tenant Tenant) (Tenant, error)
 	FindByID(ctx context.Context, tenantID uint64) (Tenant, error)
 	TenantCodeExists(ctx context.Context, code string) (bool, error)
@@ -101,6 +109,10 @@ func NewService(options ServiceOptions) *Service {
 		allowRegisterDefault:    options.AllowRegisterDefault,
 		maxCodeGenerateAttempts: attempts,
 	}
+}
+
+func (s *Service) List(ctx context.Context, input ListInput) (pagination.Result[Tenant], error) {
+	return s.repo.List(ctx, pagination.Input{Page: input.Page, PageSize: input.PageSize})
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Tenant, error) {

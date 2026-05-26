@@ -43,6 +43,21 @@ type QuestionGroup = {
   questions: QuestionNavItem[];
 };
 
+type ExamQuestionType = "single" | "multiple" | "judge" | "fill_blank" | "short_text";
+
+type ExamQuestion = {
+  number: number;
+  type: ExamQuestionType;
+  sectionTitle: string;
+  sectionSubtitle: string;
+  stem: string;
+  score: number;
+  options?: string[];
+  analysis: string;
+};
+
+type ExamAnswer = string | string[];
+
 const narrowExamViewportQuery = "(max-width: 1100px)";
 
 function shouldCollapseQuestionListByDefault() {
@@ -67,8 +82,13 @@ const questionGroups: QuestionGroup[] = [
   },
   {
     title: "三、判断题",
-    subtitle: "共10题，每题1分",
-    questions: Array.from({ length: 10 }, (_, index) => ({ number: index + 31 })),
+    subtitle: "共5题，每题1分",
+    questions: Array.from({ length: 5 }, (_, index) => ({ number: index + 31 })),
+  },
+  {
+    title: "三、填空题",
+    subtitle: "共5题，每题2分",
+    questions: Array.from({ length: 5 }, (_, index) => ({ number: index + 36 })),
   },
   {
     title: "四、简答题",
@@ -84,11 +104,100 @@ const optionRows = [
   ["D.", "龟裂（guī）", "谙熟（ān）", "憧憬（chōng）", "饕餮（tāo）"],
 ];
 
-function QuestionButton({ item }: { item: QuestionNavItem }) {
-  const state = item.state ?? "blank";
+const desktopQuestionSamples: Record<number, ExamQuestion> = {
+  1: {
+    number: 1,
+    type: "single",
+    sectionTitle: "一、单项选择题",
+    sectionSubtitle: "共20题，每题2分",
+    stem: "下列加点字的注音完全正确的一项是（ ）",
+    score: 2,
+    options: optionRows.map((row) => row.join(" ")),
+    analysis: "岑参（cén），怅然（chàng）。",
+  },
+  21: {
+    number: 21,
+    type: "multiple",
+    sectionTitle: "二、多项选择题",
+    sectionSubtitle: "共10题，每题2分",
+    stem: "下列属于李白诗歌艺术特色的有（ ）",
+    score: 2,
+    options: ["A. 豪放飘逸", "B. 沉郁顿挫", "C. 想象奇特", "D. 语言质朴无华"],
+    analysis: "李白诗歌以豪放飘逸和想象奇特见长。",
+  },
+  31: {
+    number: 31,
+    type: "judge",
+    sectionTitle: "三、判断题",
+    sectionSubtitle: "共5题，每题1分",
+    stem: "《岳阳楼记》的作者是范仲淹。",
+    score: 1,
+    options: ["正确", "错误"],
+    analysis: "《岳阳楼记》作者为范仲淹。",
+  },
+  36: {
+    number: 36,
+    type: "fill_blank",
+    sectionTitle: "三、填空题",
+    sectionSubtitle: "共5题，每题2分",
+    stem: "补写名句：________，后天下之乐而乐。",
+    score: 2,
+    analysis: "标准答案：先天下之忧而忧。",
+  },
+  41: {
+    number: 41,
+    type: "short_text",
+    sectionTitle: "四、简答题",
+    sectionSubtitle: "共5题，共30分",
+    stem: "请简要分析《岳阳楼记》中“先天下之忧而忧，后天下之乐而乐”的思想内涵。",
+    score: 10,
+    analysis: "本题重点考查忧乐观、士大夫责任意识和家国情怀。",
+  },
+};
+
+function getDesktopQuestion(number: number): ExamQuestion {
+  if (desktopQuestionSamples[number]) {
+    return desktopQuestionSamples[number];
+  }
+
+  if (number >= 21 && number <= 30) {
+    return { ...desktopQuestionSamples[21], number };
+  }
+
+  if (number >= 31 && number <= 35) {
+    return { ...desktopQuestionSamples[31], number };
+  }
+
+  if (number >= 36 && number <= 40) {
+    return { ...desktopQuestionSamples[36], number };
+  }
+
+  if (number >= 41 && number <= 45) {
+    return { ...desktopQuestionSamples[41], number };
+  }
+
+  return { ...desktopQuestionSamples[1], number };
+}
+
+function hasAnswer(answer: ExamAnswer | undefined) {
+  return Array.isArray(answer) ? answer.length > 0 : Boolean(answer);
+}
+
+function QuestionButton({
+  item,
+  onSelect,
+  selectedNumber,
+  answers = {},
+}: {
+  item: QuestionNavItem;
+  onSelect?: (number: number) => void;
+  selectedNumber?: number;
+  answers?: Record<number, ExamAnswer>;
+}) {
+  const state = selectedNumber === item.number ? "current" : hasAnswer(answers[item.number]) ? "answered" : item.state ?? "blank";
 
   return (
-    <Button className={`exam-qnav__button exam-qnav__button--${state}`} type="button">
+    <Button className={`exam-qnav__button exam-qnav__button--${state}`} onClick={() => onSelect?.(item.number)} type="button">
       {item.number}
       {state === "answered" && <span className="exam-qnav__dot" />}
       {state === "marked" && <span className="exam-qnav__mark" />}
@@ -96,7 +205,17 @@ function QuestionButton({ item }: { item: QuestionNavItem }) {
   );
 }
 
-function QuestionGrid({ compact = false }: { compact?: boolean }) {
+function QuestionGrid({
+  compact = false,
+  onSelect,
+  selectedNumber,
+  answers,
+}: {
+  compact?: boolean;
+  onSelect?: (number: number) => void;
+  selectedNumber?: number;
+  answers?: Record<number, ExamAnswer>;
+}) {
   return (
     <div className={compact ? "exam-qnav exam-qnav--compact" : "exam-qnav"}>
       {questionGroups.map((group) => (
@@ -109,7 +228,7 @@ function QuestionGrid({ compact = false }: { compact?: boolean }) {
           {!compact || group.title.startsWith("一") ? (
             <div className="exam-qnav__grid">
               {group.questions.map((item) => (
-                <QuestionButton item={item} key={item.number} />
+                <QuestionButton answers={answers} item={item} key={item.number} onSelect={onSelect} selectedNumber={selectedNumber} />
               ))}
             </div>
           ) : null}
@@ -425,12 +544,121 @@ function MobileExamExperience() {
   );
 }
 
+function DesktopQuestionBody({
+  answer,
+  onAnswer,
+  question,
+}: {
+  answer: ExamAnswer | undefined;
+  onAnswer: (value: ExamAnswer) => void;
+  question: ExamQuestion;
+}) {
+  const answerValue = Array.isArray(answer) ? answer : typeof answer === "string" ? answer : "";
+
+  if (question.type === "fill_blank") {
+    return (
+      <div className="written-answer">
+        <label htmlFor="fill-blank-answer">填空题答案</label>
+        <input
+          id="fill-blank-answer"
+          onChange={(event) => onAnswer(event.target.value)}
+          placeholder="请输入答案"
+          value={answerValue}
+        />
+      </div>
+    );
+  }
+
+  if (question.type === "short_text") {
+    return (
+      <div className="written-answer written-answer--essay">
+        <label htmlFor="short-text-answer">简答题答案</label>
+        <textarea
+          id="short-text-answer"
+          onChange={(event) => onAnswer(event.target.value)}
+          placeholder="请输入作答内容..."
+          value={answerValue}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="option-list">
+      {question.options?.map((option) => {
+        const optionValue = option.replace(/^\s*([A-D]\.|正确|错误).*$/, "$1");
+        const checked = Array.isArray(answer)
+          ? answer.includes(optionValue)
+          : answer === optionValue;
+
+        return (
+          <label className={checked ? "option-row option-row--selected" : "option-row"} key={option}>
+            <span className="option-row__prefix">
+              <input
+                checked={checked}
+                name={`question-${question.number}`}
+                onChange={() => {
+                  if (question.type === "multiple") {
+                    const currentValues = Array.isArray(answer) ? answer : [];
+                    onAnswer(currentValues.includes(optionValue)
+                      ? currentValues.filter((value) => value !== optionValue)
+                      : [...currentValues, optionValue].sort());
+                    return;
+                  }
+
+                  onAnswer(optionValue);
+                }}
+                type={question.type === "multiple" ? "checkbox" : "radio"}
+              />
+              <strong>{optionValue}</strong>
+            </span>
+            <span className="option-row__terms">{option.replace(optionValue, "").trim()}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function DesktopResultView() {
+  return (
+    <div className="student-exam-shell">
+      <header className="student-exam-header">
+        <div className="student-brand">
+          <span className="student-brand__mark">P</span>
+          <span>PaperMind</span>
+        </div>
+        <h1>期中考试（高一语文）</h1>
+      </header>
+      <main className="exam-result-page">
+        <section className="exam-card exam-result-card">
+          <span className="mobile-status-pill"><CheckCircle2 aria-hidden="true" size={16} />已交卷</span>
+          <h2>成绩可见页</h2>
+          <strong>总分 86 分</strong>
+          <p>客观题 56 分，主观题 30 分。成绩已按统一公布策略展示。</p>
+          <div className="analysis-box">
+            <strong>题目解析</strong>
+            <p>岑参（cén），怅然（chàng）。</p>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function DesktopStudentExamPage() {
   const [isExamDrawerOpen, setIsExamDrawerOpen] = useState(false);
   const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
   const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isQuestionListOpen, setIsQuestionListOpen] = useState(() => !shouldCollapseQuestionListByDefault());
+  const [answers, setAnswers] = useState<Record<number, ExamAnswer>>({});
+  const [currentQuestionNumber, setCurrentQuestionNumber] = useState(1);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [eventReportMessage, setEventReportMessage] = useState("");
+  const [isSubmitted, setIsSubmitted] = useState(false);
+
+  const currentQuestion = getDesktopQuestion(currentQuestionNumber);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -448,6 +676,27 @@ function DesktopStudentExamPage() {
       mediaQueryList.removeEventListener("change", handleViewportChange);
     };
   }, []);
+
+  useEffect(() => {
+    const reportTabSwitch = () => {
+      setEventReportMessage("已上报切屏事件：blur");
+    };
+
+    window.addEventListener("blur", reportTabSwitch);
+
+    return () => {
+      window.removeEventListener("blur", reportTabSwitch);
+    };
+  }, []);
+
+  const saveAnswer = (value: ExamAnswer) => {
+    setAnswers((currentAnswers) => ({ ...currentAnswers, [currentQuestionNumber]: value }));
+    setSaveMessage(`第 ${currentQuestionNumber} 题已自动保存`);
+  };
+
+  if (isSubmitted) {
+    return <DesktopResultView />;
+  }
 
   return (
     <div className="student-exam-shell">
@@ -527,7 +776,7 @@ function DesktopStudentExamPage() {
           id="exam-question-list"
         >
           <h2>题目列表</h2>
-          <QuestionGrid />
+          <QuestionGrid answers={answers} onSelect={setCurrentQuestionNumber} selectedNumber={currentQuestionNumber} />
           <div className="exam-legend">
             <span><i className="legend-dot legend-dot--answered" />已答</span>
             <span><i className="legend-dot legend-dot--blank" />未答</span>
@@ -539,39 +788,30 @@ function DesktopStudentExamPage() {
         <section className="exam-card exam-question-panel">
           <div className="exam-question-head">
             <div>
-              <span className="section-index">一</span>
-              <strong>单项选择题（共20题，每题2分）</strong>
+              <span className="section-index">{currentQuestion.sectionTitle.slice(0, 1)}</span>
+              <h2>{currentQuestion.sectionTitle}</h2>
+              <strong>{currentQuestion.sectionSubtitle}</strong>
             </div>
-            <span className="question-progress"><strong>1</strong> / 20</span>
+            <span className="question-progress"><strong>{currentQuestion.number}</strong> / 45</span>
           </div>
 
           <div className="question-toolbar">
-            <Button className="question-number" type="button">1</Button>
+            <Button className="question-number" type="button">{currentQuestion.number}</Button>
             <Button className="mark-button" type="button"><Bookmark aria-hidden="true" size={16} />标记</Button>
           </div>
 
-          <p className="question-stem">下列加点字的注音完全正确的一项是（ ）</p>
+          <p className="question-stem">{currentQuestion.stem}<span>（{currentQuestion.score}分）</span></p>
 
-          <div className="option-list">
-            {optionRows.map((row, index) => (
-              <label className={index === 0 ? "option-row option-row--selected" : "option-row"} key={row[0]}>
-                <span className="option-row__prefix">
-                  <span className="option-radio" aria-hidden="true" />
-                  <strong>{row[0]}</strong>
-                </span>
-                <span className="option-row__terms">
-                  {row.slice(1).map((text) => <span key={text}>{text}</span>)}
-                </span>
-              </label>
-            ))}
-          </div>
+          <DesktopQuestionBody
+            answer={answers[currentQuestionNumber]}
+            onAnswer={saveAnswer}
+            question={currentQuestion}
+          />
 
           <Button className="clear-button" type="button">清空选择</Button>
 
-          <div className="analysis-box">
-            <strong>题目解析（考后公布）</strong>
-            <p>岑参（cén），怅然（chàng）。B项：棹蕴（yùn）错误，应为棹蕴（yǔn）；C项：提防（dī）错误，应为提防（dī）；D项：龟裂（guī）错误，应为龟裂（jūn）。</p>
-          </div>
+          {saveMessage ? <div aria-label="自动保存提示" className="save-status" role="status"><CheckCircle2 aria-hidden="true" size={16} />{saveMessage}</div> : null}
+          {eventReportMessage ? <div aria-label="切屏事件上报" className="event-status" role="status"><TriangleAlert aria-hidden="true" size={16} />{eventReportMessage}</div> : null}
 
           <div className="question-actions">
             <Button className="prev-button" type="button"><ChevronLeft aria-hidden="true" size={18} />上一题</Button>
@@ -619,7 +859,7 @@ function DesktopStudentExamPage() {
               <span><i className="legend-dot legend-dot--blank" />未答</span>
               <span><i className="legend-triangle" />标记</span>
             </div>
-            <QuestionGrid compact />
+            <QuestionGrid answers={answers} compact onSelect={setCurrentQuestionNumber} selectedNumber={currentQuestionNumber} />
             <Button className="submit-button" onClick={() => setIsSubmitDialogOpen(true)} type="button">交 卷</Button>
             <p className="submit-note">交卷后将无法继续作答，请确认已完成</p>
           </section>
@@ -639,7 +879,7 @@ function DesktopStudentExamPage() {
             <p>交卷后将无法继续作答，请确认是否交卷？</p>
             <div>
               <Button onClick={() => setIsSubmitDialogOpen(false)} type="button">取消</Button>
-              <Button type="button">确认交卷</Button>
+              <Button onClick={() => setIsSubmitted(true)} type="button">确认交卷</Button>
             </div>
           </div>
         </div>

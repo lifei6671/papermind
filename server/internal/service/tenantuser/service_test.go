@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 func TestRegisterWithTenantCodeCreatesEnabledUserWithoutSpaceMembership(t *testing.T) {
@@ -36,6 +38,9 @@ func TestRegisterWithTenantCodeCreatesEnabledUserWithoutSpaceMembership(t *testi
 	}
 	if repo.created.RealName != "张三" {
 		t.Fatalf("expected real name saved, got %q", repo.created.RealName)
+	}
+	if repo.createdRole != RoleStudent {
+		t.Fatalf("expected student role saved, got %q", repo.createdRole)
 	}
 	if repo.addedSpaceMembership {
 		t.Fatalf("expected self-registered user not to be added to any space")
@@ -321,6 +326,7 @@ func fixedNow() int64 {
 type fakeRepository struct {
 	tenantsByCode map[string]Tenant
 	created       User
+	createdRole   string
 
 	addedSpaceMembership bool
 
@@ -342,6 +348,20 @@ type fakeRepository struct {
 	updatedStatus         string
 }
 
+func (r *fakeRepository) ListUsers(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[User], error) {
+	page = pagination.Normalize(page)
+	return pagination.Result[User]{
+		Items:    nil,
+		Page:     page.Page,
+		PageSize: page.PageSize,
+		Total:    0,
+	}, nil
+}
+
+func (r *fakeRepository) FindUserByID(ctx context.Context, tenantID uint64, userID uint64) (User, error) {
+	return User{}, ErrUserNotFound
+}
+
 func (r *fakeRepository) FindTenantByCode(ctx context.Context, tenantCode string) (Tenant, error) {
 	tenant, ok := r.tenantsByCode[tenantCode]
 	if !ok {
@@ -354,6 +374,11 @@ func (r *fakeRepository) CreateUser(ctx context.Context, user User) (User, error
 	user.ID = 1
 	r.created = user
 	return user, nil
+}
+
+func (r *fakeRepository) CreateUserRole(ctx context.Context, tenantID uint64, userID uint64, role string) error {
+	r.createdRole = role
+	return nil
 }
 
 func (r *fakeRepository) FindUserByUsername(ctx context.Context, tenantID uint64, username string) (User, error) {

@@ -1,10 +1,40 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { QuestionBankPage } from "./QuestionBankPage";
 
-test("题库页展示题目列表、标签和解析摘要", () => {
-  render(<QuestionBankPage />);
+function createQuestionAPI() {
+  return {
+    listQuestions: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 100,
+          tenantID: 10,
+          title: "现代文阅读主旨题",
+          stem: "下列选项最能概括文章中心的是哪一项？",
+          options: ["把握中心句", "复述细节"],
+          analysis: "定位中心句并排除以偏概全选项。",
+          tag: "阅读理解",
+          status: "ready",
+        },
+      ],
+    }),
+    createQuestion: vi.fn().mockResolvedValue({
+      id: 101,
+      tenantID: 10,
+      title: "函数单调性判断",
+      stem: "下列函数在 R 上单调递增的是哪一项？",
+      options: ["y = x", "y = -x"],
+      analysis: "一次函数斜率为正时单调递增。",
+      tag: "函数",
+      status: "ready",
+    }),
+  };
+}
+
+test("题库页展示题目列表、标签和解析摘要", async () => {
+  const api = createQuestionAPI();
+  render(<QuestionBankPage api={api} tenantID={10} />);
 
   expect(screen.getAllByRole("tab")).toHaveLength(1);
   expect(screen.getByRole("tab", { name: "题库" })).toHaveAttribute("aria-selected", "true");
@@ -16,14 +46,18 @@ test("题库页展示题目列表、标签和解析摘要", () => {
   expect(screen.getByRole("button", { name: "刷新题目列表" })).toBeInTheDocument();
   expect(screen.queryByLabelText("题目标题")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("题目导入文件")).not.toBeInTheDocument();
-  expect(screen.getByText("现代文阅读主旨题")).toBeInTheDocument();
-  expect(screen.getByText("阅读理解")).toBeInTheDocument();
+  expect(await screen.findByText("现代文阅读主旨题")).toBeInTheDocument();
+  expect(screen.getAllByText("阅读理解").length).toBeGreaterThan(0);
   expect(screen.getByText("解析：定位中心句并排除以偏概全选项。")).toBeInTheDocument();
+  expect(api.listQuestions).toHaveBeenCalledWith({ tenantID: 10 });
 });
 
 test("教师可以在线创建选择题并编辑选项和解析", async () => {
   const user = userEvent.setup();
-  render(<QuestionBankPage />);
+  const api = createQuestionAPI();
+  render(<QuestionBankPage api={api} tenantID={10} />);
+
+  await screen.findByText("现代文阅读主旨题");
 
   await user.click(screen.getByRole("button", { name: "保存题目" }));
 
@@ -39,14 +73,24 @@ test("教师可以在线创建选择题并编辑选项和解析", async () => {
   await user.type(screen.getByLabelText("题目标签"), "函数");
   await user.click(screen.getByRole("button", { name: "确认保存" }));
 
-  const row = screen.getByRole("row", { name: /函数单调性判断/ });
+  expect(api.createQuestion).toHaveBeenCalledWith({
+    tenantID: 10,
+    title: "函数单调性判断",
+    stem: "下列函数在 R 上单调递增的是哪一项？",
+    options: ["y = x", "y = -x"],
+    analysis: "一次函数斜率为正时单调递增。",
+    tag: "函数",
+  });
+  const row = await screen.findByRole("row", { name: /函数单调性判断/ });
   expect(within(row).getByText("函数")).toBeInTheDocument();
   expect(within(row).getByText("解析：一次函数斜率为正时单调递增。")).toBeInTheDocument();
 });
 
 test("教师可以搜索和刷新题目列表", async () => {
   const user = userEvent.setup();
-  render(<QuestionBankPage />);
+  render(<QuestionBankPage api={createQuestionAPI()} tenantID={10} />);
+
+  await screen.findByText("现代文阅读主旨题");
 
   await user.type(screen.getByLabelText("搜索题目"), "语言文字");
   await user.click(screen.getByRole("button", { name: "搜索" }));
@@ -60,7 +104,9 @@ test("教师可以搜索和刷新题目列表", async () => {
 
 test("教师可以新增标签并导入题目文件", async () => {
   const user = userEvent.setup();
-  render(<QuestionBankPage />);
+  render(<QuestionBankPage api={createQuestionAPI()} tenantID={10} />);
+
+  await screen.findByText("现代文阅读主旨题");
 
   await user.click(screen.getByRole("button", { name: "新增标签" }));
 

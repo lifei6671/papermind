@@ -3,6 +3,8 @@ package space
 import (
 	"context"
 	"errors"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 const (
@@ -53,6 +55,12 @@ type CreateInput struct {
 	AdminUserIDs []uint64 // 初始空间管理员用户 ID。
 }
 
+type ListInput struct {
+	TenantID uint64
+	Page     int
+	PageSize int
+}
+
 type JoinMemberInput struct {
 	TenantID uint64 // 所属租户 ID。
 	SpaceID  uint64 // 空间 ID。
@@ -74,6 +82,7 @@ type ChangeRoleInput struct {
 }
 
 type Repository interface {
+	ListSpaces(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[Space], error)
 	CreateSpace(ctx context.Context, space Space, adminUserIDs []uint64) (Space, error)
 	AddMember(ctx context.Context, member Member) (Member, error)
 	ListEffectiveMembers(ctx context.Context, tenantID uint64, spaceID uint64) ([]Member, error)
@@ -94,6 +103,10 @@ type Service struct {
 
 func NewService(options ServiceOptions) *Service {
 	return &Service{repo: options.Repo}
+}
+
+func (s *Service) List(ctx context.Context, input ListInput) (pagination.Result[Space], error) {
+	return s.repo.ListSpaces(ctx, input.TenantID, pagination.Input{Page: input.Page, PageSize: input.PageSize})
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Space, error) {

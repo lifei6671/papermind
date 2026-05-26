@@ -1,20 +1,11 @@
 import { Button } from "../../components/ui/Button";
 import { RefreshCw, Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-
-type UserRole = "tenant_admin" | "teacher" | "student";
-
-type TenantUser = {
-  id: number;
-  name: string;
-  username: string;
-  role: UserRole;
-  avatarFileName: string;
-  status: "enabled" | "disabled";
-};
+import { userApi } from "../../api/users";
+import type { TenantUserRow, UserManagementAPI, UserRole } from "../../api/users";
 
 const roleLabels: Record<UserRole, string> = {
   tenant_admin: "租户管理员",
@@ -22,27 +13,14 @@ const roleLabels: Record<UserRole, string> = {
   student: "学生",
 };
 
-const initialUsers: TenantUser[] = [
-  {
-    id: 1,
-    name: "李老师",
-    username: "li.teacher",
-    role: "teacher",
-    avatarFileName: "li.png",
-    status: "enabled",
-  },
-  {
-    id: 2,
-    name: "张同学",
-    username: "zhang.student",
-    role: "student",
-    avatarFileName: "zhang.png",
-    status: "disabled",
-  },
-];
+type UserManagementPageProps = {
+  api?: UserManagementAPI;
+  tenantID?: number;
+  actorID?: number;
+};
 
-export function UserManagementPage() {
-  const [users, setUsers] = useState<TenantUser[]>(initialUsers);
+export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }: UserManagementPageProps) {
+  const [users, setUsers] = useState<TenantUserRow[]>([]);
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [role, setRole] = useState<UserRole>("student");
@@ -50,11 +28,33 @@ export function UserManagementPage() {
   const [avatarResetKey, setAvatarResetKey] = useState(0);
   const [importFileName, setImportFileName] = useState("");
   const [importMessage, setImportMessage] = useState("");
-  const [disableTarget, setDisableTarget] = useState<TenantUser | null>(null);
+  const [disableTarget, setDisableTarget] = useState<TenantUserRow | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let ignore = false;
+
+    api.listUsers(tenantID)
+      .then((data) => {
+        if (!ignore) {
+          setUsers(data.items);
+          setLoadError("");
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setLoadError("用户列表加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api, tenantID]);
 
   const filteredUsers = users.filter((item) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
@@ -72,21 +72,19 @@ export function UserManagementPage() {
     ].some((value) => value.toLowerCase().includes(keyword));
   });
 
-  function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
+  async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     // 租户管理员创建用户时先写入基础身份和角色，空间归属后续在空间成员管理中维护。
-    setUsers((items) => [
-      ...items,
-      {
-        id: Date.now(),
-        name,
-        username,
-        role,
-        avatarFileName: avatarFileName || "未上传",
-        status: "enabled",
-      },
-    ]);
+    const nextUser = await api.createUser({
+      tenantID,
+      name,
+      username,
+      role,
+      avatarFileName: avatarFileName || "未上传",
+    });
+
+    setUsers((items) => [...items, nextUser]);
     setName("");
     setUsername("");
     setRole("student");
@@ -106,14 +104,20 @@ export function UserManagementPage() {
     setIsImportDialogOpen(false);
   }
 
-  function confirmDisableUser() {
+  async function confirmDisableUser() {
     if (!disableTarget) {
       return;
     }
 
+    const disabledUser = await api.disableUser({
+      tenantID,
+      actorID,
+      userID: disableTarget.id,
+    });
+
     setUsers((items) =>
       items.map((item) =>
-        item.id === disableTarget.id ? { ...item, status: "disabled" } : item,
+        item.id === disableTarget.id ? disabledUser : item,
       ),
     );
     setDisableTarget(null);
@@ -176,6 +180,7 @@ export function UserManagementPage() {
               </Button>
             </div>
           </div>
+        {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
         {importMessage && <div className="tenant-admin-status" role="status">{importMessage}</div>}
         <div className="table-wrap">
           <table className="data-table tenant-admin-table">

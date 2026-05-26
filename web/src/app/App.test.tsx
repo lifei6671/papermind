@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
+import { act } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "./App";
 import { AppProviders } from "./providers";
@@ -170,6 +171,54 @@ test("自动保存提示不作为页面正文静态展示", () => {
   expect(screen.queryByText("答案已自动保存")).not.toBeInTheDocument();
 });
 
+test("考试端支持全局题号切换和五类题型作答", async () => {
+  const user = userEvent.setup();
+
+  renderApp(["/student/exam"]);
+
+  await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "21" }));
+  expect(screen.getByRole("heading", { name: "二、多项选择题" })).toBeInTheDocument();
+  expect(screen.getByText((_content, node) => node?.textContent === "21 / 45")).toBeInTheDocument();
+  await user.click(screen.getByLabelText("A.豪放飘逸"));
+  await user.click(screen.getByLabelText("C.想象奇特"));
+
+  await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "31" }));
+  expect(screen.getByRole("heading", { name: "三、判断题" })).toBeInTheDocument();
+  await user.click(screen.getByLabelText("正确"));
+
+  await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "36" }));
+  expect(screen.getByRole("heading", { name: "三、填空题" })).toBeInTheDocument();
+  await user.type(screen.getByLabelText("填空题答案"), "先天下之忧而忧");
+
+  await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "41" }));
+  expect(screen.getByRole("heading", { name: "四、简答题" })).toBeInTheDocument();
+  await user.type(screen.getByLabelText("简答题答案"), "体现了士大夫以天下为己任的担当。");
+
+  expect(screen.getByRole("status", { name: "自动保存提示" })).toHaveTextContent("已自动保存");
+});
+
+test("考试端上报切屏事件并在交卷后展示成绩和解析", async () => {
+  const user = userEvent.setup();
+
+  renderApp(["/student/exam"]);
+
+  act(() => {
+    window.dispatchEvent(new Event("blur"));
+  });
+
+  expect(screen.getByRole("status", { name: "切屏事件上报" })).toHaveTextContent("已上报切屏事件");
+  expect(screen.queryByText("岑参（cén），怅然（chàng）。")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "交 卷" }));
+
+  const dialog = screen.getByRole("dialog", { name: "确认交卷" });
+  await user.click(within(dialog).getByRole("button", { name: "确认交卷" }));
+
+  expect(screen.getByRole("heading", { name: "成绩可见页" })).toBeInTheDocument();
+  expect(screen.getByText("总分 86 分")).toBeInTheDocument();
+  expect(screen.getByText("岑参（cén），怅然（chàng）。")).toBeInTheDocument();
+});
+
 test("简答题作答效果不作为当前考试页面正文展示", () => {
   renderApp(["/student/exam"]);
 
@@ -193,4 +242,70 @@ test("离开页面提醒通过确认弹窗展示", async () => {
   await user.click(screen.getByRole("button", { name: "留在页面" }));
 
   expect(screen.queryByRole("dialog", { name: "离开页面提醒" })).not.toBeInTheDocument();
+});
+
+test("考试入口支持邀请码进入并跳转到考试端", async () => {
+  const user = userEvent.setup();
+
+  renderApp(["/exam-entry"]);
+
+  expect(screen.getByRole("heading", { name: "考试入口" })).toBeInTheDocument();
+  expect(screen.getByLabelText("邀请码")).toBeInTheDocument();
+  expect(screen.getByText("考试说明")).toBeInTheDocument();
+  await user.type(screen.getByLabelText("邀请码"), "PM2026");
+  await user.click(screen.getByRole("button", { name: "进入考试" }));
+
+  expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "交 卷" })).toBeInTheDocument();
+});
+
+test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async () => {
+  const user = userEvent.setup();
+
+  renderApp(["/grading"]);
+
+  expect(screen.getByRole("heading", { name: "阅卷中心" })).toBeInTheDocument();
+  expect(screen.getByText("张三")).toBeInTheDocument();
+  expect(screen.getByText("岳阳楼记思想内涵")).toBeInTheDocument();
+
+  await user.click(within(screen.getByRole("row", { name: /张三/ })).getByRole("button", { name: "开始阅卷" }));
+  await user.clear(screen.getByLabelText("评分"));
+  await user.type(screen.getByLabelText("评分"), "8");
+  await user.type(screen.getByLabelText("阅卷评语"), "观点完整，表达清楚。");
+  await user.click(screen.getByRole("button", { name: "保存阅卷" }));
+
+  expect(screen.getByRole("status", { name: "grading-save-result" })).toHaveTextContent("8 分");
+
+  await user.click(screen.getByRole("button", { name: "完成阅卷" }));
+
+  expect(screen.getByRole("status", { name: "grading-complete-result" })).toHaveTextContent("已完成");
+  expect(screen.getByRole("row", { name: /张三/ })).toHaveTextContent("已完成");
+  expect(screen.getByText("待阅卷 1")).toBeInTheDocument();
+});
+
+test("成绩页支持发布配置和成绩导出", async () => {
+  const user = userEvent.setup();
+
+  renderApp(["/results"]);
+
+  expect(screen.getByRole("heading", { name: "成绩" })).toBeInTheDocument();
+  expect(screen.getByText("高一语文期中考试")).toBeInTheDocument();
+  expect(screen.getByText("张三")).toBeInTheDocument();
+  expect(screen.getByText("客观题分")).toBeInTheDocument();
+  expect(screen.getByText("主观题分")).toBeInTheDocument();
+
+  await user.selectOptions(screen.getByLabelText("成绩发布模式"), "scheduled_publish");
+  await user.click(screen.getByRole("button", { name: "保存发布配置" }));
+
+  expect(screen.getByRole("alert")).toHaveTextContent("统一公布时间不能为空");
+
+  await user.type(screen.getByLabelText("统一公布时间"), "2026-05-30T10:00");
+  await user.click(screen.getByRole("button", { name: "保存发布配置" }));
+
+  expect(screen.getByRole("status", { name: "result-publish-config" })).toHaveTextContent("2026-05-30 10:00");
+
+  await user.click(screen.getByRole("button", { name: "导出成绩" }));
+
+  expect(screen.getByRole("status", { name: "result-export" })).toHaveTextContent("server/data/exports");
+  expect(screen.getByRole("link", { name: "下载导出文件" })).toHaveAttribute("download", "papermind-results.csv");
 });

@@ -1,26 +1,11 @@
 import { Button } from "../../components/ui/Button";
 import { RefreshCw, Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-
-type MemberRole = "space_admin" | "teacher" | "student";
-
-type SpaceMember = {
-  id: number;
-  name: string;
-  role: MemberRole;
-  status: "enabled" | "disabled";
-};
-
-type Space = {
-  id: number;
-  name: string;
-  description: string;
-  logoFileName: string;
-  members: SpaceMember[];
-};
+import { spaceApi } from "../../api/spaces";
+import type { MemberRole, SpaceManagementAPI, SpaceRow } from "../../api/spaces";
 
 const roleLabels: Record<MemberRole, string> = {
   space_admin: "空间管理员",
@@ -28,38 +13,24 @@ const roleLabels: Record<MemberRole, string> = {
   student: "学生",
 };
 
-const initialSpaces: Space[] = [
-  {
-    id: 1,
-    name: "高一 1 班",
-    description: "高一语文月考主空间",
-    logoFileName: "class1.png",
-    members: [
-      { id: 1, name: "李老师", role: "space_admin", status: "enabled" },
-      { id: 2, name: "张同学", role: "student", status: "enabled" },
-    ],
-  },
-  {
-    id: 2,
-    name: "高一 2 班",
-    description: "阶段测评与补测空间",
-    logoFileName: "class2.png",
-    members: [{ id: 3, name: "周老师", role: "space_admin", status: "enabled" }],
-  },
-];
+type SpaceManagementPageProps = {
+  api?: SpaceManagementAPI;
+  tenantID?: number;
+};
 
-export function SpaceManagementPage() {
-  const [spaces, setSpaces] = useState<Space[]>(initialSpaces);
+export function SpaceManagementPage({ api = spaceApi, tenantID = 10 }: SpaceManagementPageProps) {
+  const [spaces, setSpaces] = useState<SpaceRow[]>([]);
   const [spaceName, setSpaceName] = useState("");
   const [spaceDescription, setSpaceDescription] = useState("");
   const [spaceAdminName, setSpaceAdminName] = useState("");
   const [spaceLogoFileName, setSpaceLogoFileName] = useState("");
   const [logoResetKey, setLogoResetKey] = useState(0);
-  const [editingSpace, setEditingSpace] = useState<Space | null>(null);
+  const [editingSpace, setEditingSpace] = useState<SpaceRow | null>(null);
   const [editingDescription, setEditingDescription] = useState("");
   const [memberName, setMemberName] = useState("");
   const [memberRole, setMemberRole] = useState<MemberRole>("student");
   const [invariantError, setInvariantError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [defaultDuration, setDefaultDuration] = useState(60);
   const [showPracticeAnalysis, setShowPracticeAnalysis] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -69,6 +40,28 @@ export function SpaceManagementPage() {
   const [selectedMemberSpaceID, setSelectedMemberSpaceID] = useState<number | null>(null);
 
   const selectedMemberSpace = spaces.find((space) => space.id === selectedMemberSpaceID) ?? null;
+
+  useEffect(() => {
+    let ignore = false;
+
+    api.listSpaces(tenantID)
+      .then((data) => {
+        if (!ignore) {
+          setSpaces(data.items);
+          setLoadError("");
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setLoadError("空间列表加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api, tenantID]);
+
   const filteredSpaces = spaces.filter((space) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
     if (!keyword) {
@@ -81,27 +74,19 @@ export function SpaceManagementPage() {
     );
   });
 
-  function handleCreateSpace(event: React.FormEvent<HTMLFormElement>) {
+  async function handleCreateSpace(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     // 创建空间时必须指定空间管理员，保证空间成员管理从一开始满足管理员不变式。
-    setSpaces((items) => [
-      ...items,
-      {
-        id: Date.now(),
-        name: spaceName,
-        description: spaceDescription,
-        logoFileName: spaceLogoFileName || "未上传",
-        members: [
-          {
-            id: Date.now() + 1,
-            name: spaceAdminName,
-            role: "space_admin",
-            status: "enabled",
-          },
-        ],
-      },
-    ]);
+    const nextSpace = await api.createSpace({
+      tenantID,
+      name: spaceName,
+      description: spaceDescription,
+      logoFileName: spaceLogoFileName || "未上传",
+      adminName: spaceAdminName,
+    });
+
+    setSpaces((items) => [...items, nextSpace]);
     setSpaceName("");
     setSpaceDescription("");
     setSpaceAdminName("");
@@ -110,7 +95,7 @@ export function SpaceManagementPage() {
     setIsCreateDialogOpen(false);
   }
 
-  function openDescriptionEditor(space: Space) {
+  function openDescriptionEditor(space: SpaceRow) {
     setEditingSpace(space);
     setEditingDescription(space.description);
   }
@@ -255,6 +240,7 @@ export function SpaceManagementPage() {
             </div>
           </div>
 
+          {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
           <div className="table-wrap">
             <table className="data-table tenant-admin-table">
               <thead>
@@ -473,7 +459,7 @@ export function SpaceManagementPage() {
   );
 }
 
-function adminSummary(space: Space) {
+function adminSummary(space: SpaceRow) {
   const admins = space.members
     .filter((member) => member.role === "space_admin" && member.status === "enabled")
     .map((member) => member.name)

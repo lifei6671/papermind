@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 func TestCreateDraftAndPublishExamValidatesSettingsAndFreezesRuleLivePool(t *testing.T) {
@@ -361,6 +363,22 @@ type fakeRepository struct {
 	liveQuestions      []SnapshotSourceQuestion
 	usedFixedQuestions bool
 	usedFrozenPool     bool
+}
+
+func (r *fakeRepository) ListExams(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[Exam], error) {
+	exams := make([]Exam, 0, len(r.exams))
+	for _, exam := range r.exams {
+		if exam.TenantID == tenantID {
+			exams = append(exams, exam)
+		}
+	}
+	page = pagination.Normalize(page)
+	return pagination.Result[Exam]{
+		Items:    exams,
+		Page:     page.Page,
+		PageSize: page.PageSize,
+		Total:    int64(len(exams)),
+	}, nil
 }
 
 func (r *fakeRepository) CreateExam(ctx context.Context, exam Exam) (Exam, error) {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 func TestCreateTenantGeneratesUniqueCodeAndInheritsDefaultRegisterSetting(t *testing.T) {
@@ -165,6 +167,20 @@ type fakeRepository struct {
 
 	updatedStatusTenantID uint64
 	updatedStatus         string
+}
+
+func (r *fakeRepository) List(ctx context.Context, page pagination.Input) (pagination.Result[Tenant], error) {
+	tenants := make([]Tenant, 0, len(r.tenantsByID))
+	for _, tenant := range r.tenantsByID {
+		tenants = append(tenants, tenant)
+	}
+	page = pagination.Normalize(page)
+	return pagination.Result[Tenant]{
+		Items:    tenants,
+		Page:     page.Page,
+		PageSize: page.PageSize,
+		Total:    int64(len(tenants)),
+	}, nil
 }
 
 func (r *fakeRepository) Create(ctx context.Context, tenant Tenant) (Tenant, error) {

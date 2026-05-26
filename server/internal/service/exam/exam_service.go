@@ -10,6 +10,8 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 const (
@@ -194,7 +196,14 @@ type GenerateSnapshotInput struct {
 	AttemptID uint64 // 作答 ID。
 }
 
+type ListInput struct {
+	TenantID uint64 // 所属租户 ID。
+	Page     int    // 页码，从 1 开始。
+	PageSize int    // 每页数量。
+}
+
 type Repository interface {
+	ListExams(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[Exam], error)
 	CreateExam(ctx context.Context, exam Exam) (Exam, error)
 	GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (Paper, error)
 	InviteCodeExists(ctx context.Context, tenantID uint64, code string) (bool, error)
@@ -250,6 +259,10 @@ func NewService(options ServiceOptions) *Service {
 		tokenIssuer:   tokenIssuer,
 		now:           now,
 	}
+}
+
+func (s *Service) List(ctx context.Context, input ListInput) (pagination.Result[Exam], error) {
+	return s.repo.ListExams(ctx, input.TenantID, pagination.Input{Page: input.Page, PageSize: input.PageSize})
 }
 
 func (s *Service) CreateDraft(ctx context.Context, input CreateDraftInput) (Exam, error) {

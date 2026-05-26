@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 func TestCreateSpaceRequiresAtLeastOneSpaceAdmin(t *testing.T) {
@@ -228,6 +230,17 @@ type fakeRepository struct {
 	changedRole             string
 	changedRoleUserID       uint64
 	changedRoleUpdatedSpace uint64
+}
+
+func (r *fakeRepository) ListSpaces(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[Space], error) {
+	page = pagination.Normalize(page)
+	items := []Space{r.createdSpace}
+	return pagination.Result[Space]{
+		Items:    items,
+		Page:     page.Page,
+		PageSize: page.PageSize,
+		Total:    int64(len(items)),
+	}, nil
 }
 
 func (r *fakeRepository) CreateSpace(ctx context.Context, space Space, adminUserIDs []uint64) (Space, error) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 )
 
 func TestCreateQuestionSupportsAllTypesAndBaseFields(t *testing.T) {
@@ -123,15 +125,15 @@ func TestListVisibleQuestionsUsesPublicAndSpaceScope(t *testing.T) {
 	}
 	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
 
-	questions, err := svc.ListVisibleQuestions(context.Background(), 10, &spaceID)
+	result, err := svc.ListVisibleQuestions(context.Background(), ListQuestionsInput{TenantID: 10, SpaceID: &spaceID})
 	if err != nil {
 		t.Fatalf("ListVisibleQuestions returned error: %v", err)
 	}
 	if !repo.listVisibleCalled {
 		t.Fatalf("expected visibility repository query to be called")
 	}
-	if len(questions) != 2 {
-		t.Fatalf("expected public and space questions, got %#v", questions)
+	if len(result.Items) != 2 {
+		t.Fatalf("expected public and space questions, got %#v", result.Items)
 	}
 }
 
@@ -345,9 +347,15 @@ func (r *fakeQuestionRepository) CreateQuestion(ctx context.Context, item Questi
 	return item, nil
 }
 
-func (r *fakeQuestionRepository) ListVisibleQuestions(ctx context.Context, tenantID uint64, spaceID *uint64) ([]Question, error) {
+func (r *fakeQuestionRepository) ListVisibleQuestions(ctx context.Context, input ListQuestionsInput) (pagination.Result[Question], error) {
 	r.listVisibleCalled = true
-	return r.visibleQuestions, nil
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
+	return pagination.Result[Question]{
+		Items:    r.visibleQuestions,
+		Page:     page.Page,
+		PageSize: page.PageSize,
+		Total:    int64(len(r.visibleQuestions)),
+	}, nil
 }
 
 func (r *fakeQuestionRepository) ReplaceOptionsInTransaction(ctx context.Context, tenantID uint64, questionID uint64, options []QuestionOption) error {

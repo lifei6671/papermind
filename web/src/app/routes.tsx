@@ -15,12 +15,16 @@ import {
   Users,
 } from "lucide-react";
 import { DashboardPage } from "../pages/Dashboard/DashboardPage";
+import { ExamEntryPage } from "../pages/Exam/ExamEntryPage";
+import { ExamManagementPage } from "../pages/Exam/ExamManagementPage";
 import { PaperAssemblyPage } from "../pages/Exam/PaperAssemblyPage";
 import { QuestionBankPage } from "../pages/Exam/QuestionBankPage";
 import { QuestionImportPage } from "../pages/Exam/QuestionImportPage";
+import { GradingPage } from "../pages/Grading/GradingPage";
 import { PlaceholderPage } from "../pages/Placeholder/PlaceholderPage";
 import { PlatformSettingsPage } from "../pages/Platform/PlatformSettingsPage";
 import { TenantManagementPage } from "../pages/Platform/TenantManagementPage";
+import { ResultsPage } from "../pages/Results/ResultsPage";
 import { SpaceManagementPage } from "../pages/Tenant/SpaceManagementPage";
 import { UserManagementPage } from "../pages/Tenant/UserManagementPage";
 
@@ -106,7 +110,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "考试",
     description: "发布考试、配置范围、邀请码和结果策略",
     icon: ClipboardList,
-    element: <PlaceholderPage title="考试" description="考试草稿、发布范围、邀请码和时间窗口将在这里形成闭环。" />,
+    element: <ExamManagementPage />,
     group: "exam",
   },
   {
@@ -114,7 +118,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "阅卷中心",
     description: "处理简答题待阅卷、评语和成绩重算",
     icon: PenLine,
-    element: <PlaceholderPage title="阅卷中心" description="待阅卷列表和简答题评分会接入 P8 阅卷服务。" />,
+    element: <GradingPage />,
     group: "exam",
     badge: "P8 已就绪",
   },
@@ -123,7 +127,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "成绩",
     description: "查看成绩、配置发布、导出 CSV",
     icon: Trophy,
-    element: <PlaceholderPage title="成绩" description="成绩发布可见性、latest/highest 和导出文件会在这里呈现。" />,
+    element: <ResultsPage />,
     group: "exam",
   },
   {
@@ -131,7 +135,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "考试端入口",
     description: "考生入口、邀请码、说明页和答题流程",
     icon: GraduationCap,
-    element: <PlaceholderPage title="考试端入口" description="考试端会独立承载倒计时、自动保存和提交确认。" />,
+    element: <ExamEntryPage />,
     group: "exam",
   },
   {
