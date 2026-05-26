@@ -1,3 +1,4 @@
+import { Button } from "./Button";
 import { ThumbsUp } from "lucide-react";
 import { CodeTerminal } from "./CodeTerminal";
 
@@ -20,10 +21,10 @@ export function GuideSteps({ title, steps, supportLabel = "有疑问? 技术支�
     <article className="panel guide-steps-card">
       <div className="guide-steps-card__head">
         <h2>{title}</h2>
-        <button className="secondary-button" type="button">
+        <Button variant="secondary" type="button">
           <ThumbsUp aria-hidden="true" size={16} />
           {supportLabel}
-        </button>
+        </Button>
       </div>
       <ol className="guide-steps">
         {steps.map((step, index) => (

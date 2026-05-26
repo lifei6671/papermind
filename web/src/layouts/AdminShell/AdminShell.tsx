@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { Home, LogOut, Settings } from "lucide-react";
 import { useSession } from "../../auth/session-context";
@@ -76,11 +77,11 @@ export function AdminShell({ routes }: AdminShellProps) {
             </NavLink>
           </div>
 
-          <button className="sidebar__home" onClick={() => navigate("/")} type="button">
+          <Button className="sidebar__home" onClick={() => navigate("/")} type="button">
             <Home aria-hidden="true" size={15} />
             回到概览
-          </button>
-          <button
+          </Button>
+          <Button
             className="sidebar__logout"
             onClick={() => {
               signOut();
@@ -90,7 +91,7 @@ export function AdminShell({ routes }: AdminShellProps) {
           >
             <LogOut aria-hidden="true" size={15} />
             退出登录
-          </button>
+          </Button>
         </div>
       </aside>
 

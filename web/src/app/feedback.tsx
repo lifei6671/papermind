@@ -1,3 +1,4 @@
+import { Button } from "../components/ui/Button";
 import { X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -34,9 +35,9 @@ export function FeedbackProvider({ children }: FeedbackProviderProps) {
       {message && (
         <div className={`feedback-toast feedback-toast--${message.tone}`} role="alert">
           <span>{message.text}</span>
-          <button aria-label="关闭提示" onClick={clear} type="button">
+          <Button aria-label="关闭提示" onClick={clear} type="button">
             <X aria-hidden="true" size={16} />
-          </button>
+          </Button>
         </div>
       )}
     </FeedbackContext.Provider>

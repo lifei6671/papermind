@@ -1,3 +1,4 @@
+import { Button } from "./Button";
 type SegmentTabsProps = {
   items: string[];
   active?: string;
@@ -19,7 +20,7 @@ export function SegmentTabs({
         const isActive = item === active;
 
         return (
-          <button
+          <Button
             aria-selected={isActive}
             className={isActive ? "segment-tabs__item segment-tabs__item--active" : "segment-tabs__item"}
             key={item}
@@ -28,7 +29,7 @@ export function SegmentTabs({
             type="button"
           >
             {item}
-          </button>
+          </Button>
         );
       })}
     </div>

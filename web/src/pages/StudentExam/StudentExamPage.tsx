@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
@@ -87,11 +88,11 @@ function QuestionButton({ item }: { item: QuestionNavItem }) {
   const state = item.state ?? "blank";
 
   return (
-    <button className={`exam-qnav__button exam-qnav__button--${state}`} type="button">
+    <Button className={`exam-qnav__button exam-qnav__button--${state}`} type="button">
       {item.number}
       {state === "answered" && <span className="exam-qnav__dot" />}
       {state === "marked" && <span className="exam-qnav__mark" />}
-    </button>
+    </Button>
   );
 }
 
@@ -205,8 +206,8 @@ function MobileExamStart({ onStart }: { onStart: () => void }) {
         </label>
       </main>
       <footer className="mobile-start-actions">
-        <button className="mobile-secondary-button" type="button"><ClipboardList aria-hidden="true" />查看考试说明</button>
-        <button className="mobile-primary-button" onClick={onStart} type="button">开始考试</button>
+        <Button className="mobile-secondary-button" type="button"><ClipboardList aria-hidden="true" />查看考试说明</Button>
+        <Button className="mobile-primary-button" onClick={onStart} type="button">开始考试</Button>
         <span><ShieldCheck aria-hidden="true" size={18} />建议在稳定网络环境下完成考试</span>
       </footer>
     </section>
@@ -245,7 +246,7 @@ function MobileChoiceQuestion({ onAnswerCard, onEssay }: { onAnswerCard: () => v
         <section className="mobile-question-card">
           <header>
             <h2>一、单项选择题 <span>（共20题，每题2分）</span></h2>
-            <button type="button"><Bookmark aria-hidden="true" />标记本题</button>
+            <Button type="button"><Bookmark aria-hidden="true" />标记本题</Button>
           </header>
           <p className="mobile-question-stem">下列加点字的注音完全正确的一项是（ ）</p>
           <MobileQuestionOptions />
@@ -283,7 +284,7 @@ function MobileEssayQuestion({ onAnswerCard, onChoice }: { onAnswerCard: () => v
         <section className="mobile-question-card">
           <header>
             <h2>四、简答题 <span>（共5题，共30分）</span></h2>
-            <button type="button"><Bookmark aria-hidden="true" />标记本题</button>
+            <Button type="button"><Bookmark aria-hidden="true" />标记本题</Button>
           </header>
           <div className="mobile-reading-box">
             <strong>阅读材料</strong>
@@ -292,19 +293,19 @@ function MobileEssayQuestion({ onAnswerCard, onChoice }: { onAnswerCard: () => v
           <p className="mobile-essay-stem">41. 请简要分析《岳阳楼记》中“先天下之忧而忧，后天下之乐而乐”的思想内涵。（10分）</p>
           <div className="mobile-editor">
             <div className="mobile-editor-toolbar">
-              <button type="button">B</button>
-              <button type="button">I</button>
-              <button type="button"><Underline aria-hidden="true" /></button>
+              <Button type="button">B</Button>
+              <Button type="button">I</Button>
+              <Button type="button"><Underline aria-hidden="true" /></Button>
               <i />
-              <button type="button"><List aria-hidden="true" /></button>
-              <button type="button"><ListOrdered aria-hidden="true" /></button>
+              <Button type="button"><List aria-hidden="true" /></Button>
+              <Button type="button"><ListOrdered aria-hidden="true" /></Button>
               <i />
-              <button type="button"><Link aria-hidden="true" /></button>
-              <button type="button"><Eraser aria-hidden="true" /></button>
-              <button type="button">清除格式</button>
+              <Button type="button"><Link aria-hidden="true" /></Button>
+              <Button type="button"><Eraser aria-hidden="true" /></Button>
+              <Button type="button">清除格式</Button>
             </div>
             <textarea placeholder="请输入作答内容..." defaultValue="" />
-            <footer><span>已输入 <strong>126</strong> 字</span><button type="button"><Save aria-hidden="true" />保存</button></footer>
+            <footer><span>已输入 <strong>126</strong> 字</span><Button type="button"><Save aria-hidden="true" />保存</Button></footer>
           </div>
         </section>
       </main>
@@ -317,13 +318,13 @@ function MobileExamNav({ onAnswerCard, onNext, onPrev }: { onAnswerCard: () => v
   return (
     <footer className="mobile-bottom-nav">
       <div className="mobile-nav-buttons">
-        <button onClick={onPrev} type="button"><ChevronLeft aria-hidden="true" />上一题</button>
-        <button onClick={onAnswerCard} type="button"><Grid2X2 aria-hidden="true" />答题卡</button>
-        <button className="mobile-nav-primary" onClick={onNext} type="button">下一题<ChevronRight aria-hidden="true" /></button>
+        <Button onClick={onPrev} type="button"><ChevronLeft aria-hidden="true" />上一题</Button>
+        <Button onClick={onAnswerCard} type="button"><Grid2X2 aria-hidden="true" />答题卡</Button>
+        <Button className="mobile-nav-primary" onClick={onNext} type="button">下一题<ChevronRight aria-hidden="true" /></Button>
       </div>
       <div className="mobile-tool-row">
-        <button type="button"><Calculator aria-hidden="true" />计算器</button>
-        <button type="button"><ClipboardPenLine aria-hidden="true" />草稿纸</button>
+        <Button type="button"><Calculator aria-hidden="true" />计算器</Button>
+        <Button type="button"><ClipboardPenLine aria-hidden="true" />草稿纸</Button>
       </div>
     </footer>
   );
@@ -342,7 +343,7 @@ function MobileAnswerCard({ onBack, onSubmit }: { onBack: () => void; onSubmit: 
       <MobileExamHeader />
       <main className="mobile-answer-main">
         <div className="mobile-answer-title">
-          <button aria-label="返回作答" onClick={onBack} type="button"><ChevronLeft aria-hidden="true" /></button>
+          <Button aria-label="返回作答" onClick={onBack} type="button"><ChevronLeft aria-hidden="true" /></Button>
           <div><h1>答题卡</h1><p>期中考试（高一语文）</p></div>
         </div>
         <section aria-label="答题统计" className="mobile-answer-stats">
@@ -362,8 +363,8 @@ function MobileAnswerCard({ onBack, onSubmit }: { onBack: () => void; onSubmit: 
         <MobileAnswerGroups />
       </main>
       <footer className="mobile-answer-actions">
-        <button onClick={onBack} type="button">返回作答</button>
-        <button onClick={onSubmit} type="button">提交试卷</button>
+        <Button onClick={onBack} type="button">返回作答</Button>
+        <Button onClick={onSubmit} type="button">提交试卷</Button>
       </footer>
     </section>
   );
@@ -378,7 +379,7 @@ function MobileAnswerGroups() {
           <div>
             {group.questions.map((item) => {
               const state = item.number === 6 ? "current" : [9, 15, 37, 43].includes(item.number) ? "marked" : [1, 2, 3, 4, 5, 7, 10, 11, 12, 13, 16, 18, 19, 21, 31, 32, 38, 40, 41, 44].includes(item.number) ? "answered" : "blank";
-              return <button className={`mobile-answer-number mobile-answer-number--${state}`} key={item.number} type="button">{item.number}{state === "marked" ? <Star aria-hidden="true" size={12} /> : null}</button>;
+              return <Button className={`mobile-answer-number mobile-answer-number--${state}`} key={item.number} type="button">{item.number}{state === "marked" ? <Star aria-hidden="true" size={12} /> : null}</Button>;
             })}
           </div>
         </section>
@@ -394,7 +395,7 @@ function MobileSubmitDialog({ onCancel }: { onCancel: () => void }) {
         <span>!</span>
         <h2 id="mobile-submit-title">确认交卷</h2>
         <p>交卷后将无法继续作答，请确认是否提交？</p>
-        <div><button onClick={onCancel} type="button">取消</button><button type="button">确认交卷</button></div>
+        <div><Button onClick={onCancel} type="button">取消</Button><Button type="button">确认交卷</Button></div>
       </div>
     </div>
   );
@@ -465,7 +466,7 @@ function DesktopStudentExamPage() {
             }
           }}
         >
-          <button
+          <Button
             aria-label="张三"
             aria-controls="student-profile-menu"
             aria-expanded={isProfileMenuOpen}
@@ -477,7 +478,7 @@ function DesktopStudentExamPage() {
             <span className="student-avatar" aria-hidden="true">张</span>
             <strong>张三</strong>
             <ChevronDown aria-hidden="true" size={14} />
-          </button>
+          </Button>
           {isProfileMenuOpen ? (
             <div aria-label="考生信息" className="student-profile-menu" id="student-profile-menu" role="menu">
               <span>考生编号：S1001001</span>
@@ -487,7 +488,7 @@ function DesktopStudentExamPage() {
       </header>
 
       <div className="student-exam-subbar">
-        <button
+        <Button
           aria-controls="exam-question-list"
           aria-expanded={isQuestionListOpen}
           className="ghost-button"
@@ -496,9 +497,9 @@ function DesktopStudentExamPage() {
         >
           {isQuestionListOpen ? <ChevronLeft aria-hidden="true" size={16} /> : <ChevronRight aria-hidden="true" size={16} />}
           {isQuestionListOpen ? "收起题目列表" : "展开题目列表"}
-        </button>
+        </Button>
         <div className="student-exam-subbar__actions">
-          <button
+          <Button
             aria-controls="exam-helper-drawer"
             aria-expanded={isExamDrawerOpen}
             className="drawer-toggle"
@@ -506,13 +507,13 @@ function DesktopStudentExamPage() {
             type="button"
           >
             考试信息与答题卡
-          </button>
-          <button className="danger-link" onClick={() => setIsLeaveDialogOpen(true)} type="button"><DoorOpen aria-hidden="true" size={16} />退出考试</button>
+          </Button>
+          <Button className="danger-link" onClick={() => setIsLeaveDialogOpen(true)} type="button"><DoorOpen aria-hidden="true" size={16} />退出考试</Button>
         </div>
       </div>
 
       <main className={isQuestionListOpen ? "student-exam-layout" : "student-exam-layout student-exam-layout--qnav-collapsed"}>
-        <button
+        <Button
           aria-label="关闭题目列表抽屉"
           className={isQuestionListOpen ? "qnav-drawer-backdrop qnav-drawer-backdrop--open" : "qnav-drawer-backdrop"}
           onClick={() => setIsQuestionListOpen(false)}
@@ -545,8 +546,8 @@ function DesktopStudentExamPage() {
           </div>
 
           <div className="question-toolbar">
-            <button className="question-number" type="button">1</button>
-            <button className="mark-button" type="button"><Bookmark aria-hidden="true" size={16} />标记</button>
+            <Button className="question-number" type="button">1</Button>
+            <Button className="mark-button" type="button"><Bookmark aria-hidden="true" size={16} />标记</Button>
           </div>
 
           <p className="question-stem">下列加点字的注音完全正确的一项是（ ）</p>
@@ -565,7 +566,7 @@ function DesktopStudentExamPage() {
             ))}
           </div>
 
-          <button className="clear-button" type="button">清空选择</button>
+          <Button className="clear-button" type="button">清空选择</Button>
 
           <div className="analysis-box">
             <strong>题目解析（考后公布）</strong>
@@ -573,13 +574,13 @@ function DesktopStudentExamPage() {
           </div>
 
           <div className="question-actions">
-            <button className="prev-button" type="button"><ChevronLeft aria-hidden="true" size={18} />上一题</button>
+            <Button className="prev-button" type="button"><ChevronLeft aria-hidden="true" size={18} />上一题</Button>
             <label className="favorite-check"><input type="checkbox" />加入收藏</label>
-            <button className="next-button" type="button">下一题<ChevronRight aria-hidden="true" size={18} /></button>
+            <Button className="next-button" type="button">下一题<ChevronRight aria-hidden="true" size={18} /></Button>
           </div>
         </section>
 
-        <button
+        <Button
           aria-label="关闭考试抽屉遮罩"
           className={isExamDrawerOpen ? "drawer-backdrop drawer-backdrop--open" : "drawer-backdrop"}
           onClick={() => setIsExamDrawerOpen(false)}
@@ -593,9 +594,9 @@ function DesktopStudentExamPage() {
         >
           <div className="exam-drawer-head">
             <strong>考试辅助</strong>
-            <button aria-label="关闭考试抽屉" onClick={() => setIsExamDrawerOpen(false)} type="button">
+            <Button aria-label="关闭考试抽屉" onClick={() => setIsExamDrawerOpen(false)} type="button">
               <X aria-hidden="true" size={18} />
-            </button>
+            </Button>
           </div>
           <section className="exam-card info-panel">
             <h2>考试信息</h2>
@@ -619,7 +620,7 @@ function DesktopStudentExamPage() {
               <span><i className="legend-triangle" />标记</span>
             </div>
             <QuestionGrid compact />
-            <button className="submit-button" onClick={() => setIsSubmitDialogOpen(true)} type="button">交 卷</button>
+            <Button className="submit-button" onClick={() => setIsSubmitDialogOpen(true)} type="button">交 卷</Button>
             <p className="submit-note">交卷后将无法继续作答，请确认已完成</p>
           </section>
         </aside>
@@ -637,8 +638,8 @@ function DesktopStudentExamPage() {
             <strong id="submit-dialog-title">确认交卷</strong>
             <p>交卷后将无法继续作答，请确认是否交卷？</p>
             <div>
-              <button onClick={() => setIsSubmitDialogOpen(false)} type="button">取消</button>
-              <button type="button">确认交卷</button>
+              <Button onClick={() => setIsSubmitDialogOpen(false)} type="button">取消</Button>
+              <Button type="button">确认交卷</Button>
             </div>
           </div>
         </div>
@@ -656,8 +657,8 @@ function DesktopStudentExamPage() {
             <strong id="leave-dialog-title">离开页面提醒</strong>
             <p>检测到您将离开考试页面，请确认是否离开？</p>
             <div>
-              <button onClick={() => setIsLeaveDialogOpen(false)} type="button">留在页面</button>
-              <button type="button">确认离开</button>
+              <Button onClick={() => setIsLeaveDialogOpen(false)} type="button">留在页面</Button>
+              <Button type="button">确认离开</Button>
             </div>
           </div>
         </div>

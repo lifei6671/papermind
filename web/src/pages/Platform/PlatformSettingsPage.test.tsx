@@ -6,7 +6,9 @@ import { PlatformSettingsPage } from "./PlatformSettingsPage";
 test("平台配置页展示注册、安全和跨域配置", () => {
   render(<PlatformSettingsPage />);
 
-  expect(screen.getByRole("heading", { name: "平台配置" })).toBeInTheDocument();
+  expect(screen.getAllByRole("tab")).toHaveLength(1);
+  expect(screen.getByRole("tab", { name: "平台配置" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByRole("heading", { name: "平台配置" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("新租户默认允许自注册")).toBeChecked();
   expect(screen.getByLabelText("密码最小长度")).toHaveValue(8);
   expect(screen.getByLabelText("CORS 允许来源")).toHaveValue("http://localhost:5173");

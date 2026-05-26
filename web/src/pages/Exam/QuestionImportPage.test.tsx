@@ -1,0 +1,41 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { expect, test } from "vitest";
+import { QuestionImportPage } from "./QuestionImportPage";
+
+test("题目导入页可以上传文件并展示解析结果", async () => {
+  const user = userEvent.setup();
+  render(<QuestionImportPage />);
+
+  expect(screen.getAllByRole("tab")).toHaveLength(1);
+  expect(screen.getByRole("tab", { name: "题目导入" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByRole("heading", { name: "题目导入" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "导入题目" })).toHaveClass("tenant-create-button");
+  expect(screen.getByLabelText("搜索导入记录")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "刷新导入记录" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("题目导入文件")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+
+  expect(screen.getByRole("dialog", { name: "导入题目弹窗" })).toBeInTheDocument();
+
+  await user.upload(screen.getByLabelText("题目导入文件"), new File(["title,type"], "questions.csv", { type: "text/csv" }));
+  await user.click(screen.getByRole("button", { name: "确认导入" }));
+
+  expect(screen.getByRole("status")).toHaveTextContent("questions.csv");
+  expect(screen.getByRole("status")).toHaveTextContent("已解析 18 道题");
+});
+
+test("题目导入页可以搜索和刷新导入记录", async () => {
+  const user = userEvent.setup();
+  render(<QuestionImportPage />);
+
+  await user.type(screen.getByLabelText("搜索导入记录"), "不存在");
+  await user.click(screen.getByRole("button", { name: "搜索" }));
+
+  expect(screen.queryByText("sample-questions.csv")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "刷新导入记录" }));
+
+  expect(screen.getByText("sample-questions.csv")).toBeInTheDocument();
+});

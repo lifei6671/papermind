@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BookOpenCheck } from "lucide-react";
@@ -73,7 +74,7 @@ export function PlatformLoginPage() {
             />
           </label>
 
-          <button className="auth-submit" type="submit">登录平台</button>
+          <Button className="auth-submit" type="submit">登录平台</Button>
         </form>
       </section>
 

@@ -1,3 +1,4 @@
+import { Button } from "./Button";
 import { useState } from "react";
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 
@@ -180,7 +181,7 @@ export function DateRangePicker({
   return (
     <div className="soft-select usage-date-filter">
       <span>{label}</span>
-      <button
+      <Button
         aria-expanded={isOpen}
         aria-haspopup="dialog"
         className="usage-date-filter__trigger"
@@ -195,27 +196,27 @@ export function DateRangePicker({
         <CalendarDays aria-hidden="true" size={15} />
         {triggerLabel}
         <ChevronDown aria-hidden="true" size={14} />
-      </button>
+      </Button>
 
       {isOpen && (
         <div aria-label="时间区间选择" className="date-range-popover" role="dialog">
           <div className="date-range-calendar">
-            <button
+            <Button
               aria-label="上个月"
               className="date-range-nav"
               onClick={() => setVisibleMonth((current) => addMonths(current, -1))}
               type="button"
             >
               <ChevronLeft aria-hidden="true" size={16} />
-            </button>
-            <button
+            </Button>
+            <Button
               aria-label="下个月"
               className="date-range-nav date-range-nav--next"
               onClick={() => setVisibleMonth((current) => addMonths(current, 1))}
               type="button"
             >
               <ChevronRight aria-hidden="true" size={16} />
-            </button>
+            </Button>
 
             {calendarMonths.map((month) => (
               <div className="date-range-month" key={month.key}>
@@ -235,7 +236,7 @@ export function DateRangePicker({
                     const isRangeMiddle = isWithinRange(day.display, draftRange) && !isRangeStart && !isRangeEnd;
 
                     return (
-                      <button
+                      <Button
                         aria-label={day.display}
                         aria-pressed={isRangeStart || isRangeMiddle || isRangeEnd}
                         className={[
@@ -251,7 +252,7 @@ export function DateRangePicker({
                         type="button"
                       >
                         {day.label}
-                      </button>
+                      </Button>
                     );
                   })}
                   {Array.from({ length: month.trailing }).map((_, index) => (
@@ -284,23 +285,23 @@ export function DateRangePicker({
           {presets.length > 0 && (
             <div className="date-range-presets">
               {presets.map((preset) => (
-                <button
+                <Button
                   className={preset.label === draftRange.label ? "date-range-preset date-range-preset--active" : "date-range-preset"}
                   key={preset.label}
                   onClick={() => selectPreset(preset)}
                   type="button"
                 >
                   {preset.label}
-                </button>
+                </Button>
               ))}
             </div>
           )}
 
           <div className="date-range-actions">
-            <button className="date-range-clear" onClick={clearRange} type="button">清除</button>
-            <button className="date-range-confirm" onClick={confirmRange} type="button">
+            <Button className="date-range-clear" onClick={clearRange} type="button">清除</Button>
+            <Button className="date-range-confirm" onClick={confirmRange} type="button">
               确认查询
-            </button>
+            </Button>
           </div>
         </div>
       )}

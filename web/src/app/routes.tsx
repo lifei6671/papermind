@@ -15,9 +15,14 @@ import {
   Users,
 } from "lucide-react";
 import { DashboardPage } from "../pages/Dashboard/DashboardPage";
+import { PaperAssemblyPage } from "../pages/Exam/PaperAssemblyPage";
+import { QuestionBankPage } from "../pages/Exam/QuestionBankPage";
+import { QuestionImportPage } from "../pages/Exam/QuestionImportPage";
 import { PlaceholderPage } from "../pages/Placeholder/PlaceholderPage";
 import { PlatformSettingsPage } from "../pages/Platform/PlatformSettingsPage";
 import { TenantManagementPage } from "../pages/Platform/TenantManagementPage";
+import { SpaceManagementPage } from "../pages/Tenant/SpaceManagementPage";
+import { UserManagementPage } from "../pages/Tenant/UserManagementPage";
 
 export type AdminRouteGroup = "platform" | "tenant" | "exam" | "hidden";
 
@@ -61,7 +66,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "空间管理",
     description: "管理空间、成员、空间管理员和空间配置",
     icon: School,
-    element: <PlaceholderPage title="空间管理" description="空间列表、成员角色和空间管理员不变式提示将在这里实现。" />,
+    element: <SpaceManagementPage />,
     group: "tenant",
   },
   {
@@ -69,7 +74,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "用户管理",
     description: "维护租户用户、导入用户和禁用提示",
     icon: Users,
-    element: <PlaceholderPage title="用户管理" description="用户创建、导入、头像和禁用影响范围后续接入真实接口。" />,
+    element: <UserManagementPage />,
     group: "tenant",
   },
   {
@@ -77,7 +82,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "题库",
     description: "维护题目、选项、解析、标签和导入任务",
     icon: LibraryBig,
-    element: <PlaceholderPage title="题库" description="题目列表、在线出题、标签管理和题目导入将在这里推进。" />,
+    element: <QuestionBankPage />,
     group: "exam",
   },
   {
@@ -85,7 +90,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "题目导入",
     description: "上传 CSV/Excel 模板并查看导入错误行",
     icon: Upload,
-    element: <PlaceholderPage title="题目导入" description="文件上传组件和导入结果反馈属于 P9.1/P9.4 后续任务。" />,
+    element: <QuestionImportPage />,
     group: "exam",
   },
   {
@@ -93,7 +98,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "试卷",
     description: "维护大题、手动组卷和规则组卷",
     icon: FileStack,
-    element: <PlaceholderPage title="试卷" description="手动组卷、rule_fixed、rule_live 和预检查后续在这里展开。" />,
+    element: <PaperAssemblyPage />,
     group: "exam",
   },
   {

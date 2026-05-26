@@ -1,3 +1,4 @@
+import { Button } from "./Button";
 type PaginationProps = {
   page: number;
   pageSize: number;
@@ -14,15 +15,15 @@ export function Pagination({ page, pageSize, total, onPageChange }: PaginationPr
     <nav aria-label="分页" className="pagination">
       <span>共 {total} 条</span>
       <div className="pagination__controls">
-        <button disabled={!canGoPrevious} onClick={() => onPageChange(page - 1)} type="button">
+        <Button disabled={!canGoPrevious} onClick={() => onPageChange(page - 1)} type="button">
           上一页
-        </button>
+        </Button>
         <strong>
           第 {page} / {totalPages} 页
         </strong>
-        <button disabled={!canGoNext} onClick={() => onPageChange(page + 1)} type="button">
+        <Button disabled={!canGoNext} onClick={() => onPageChange(page + 1)} type="button">
           下一页
-        </button>
+        </Button>
       </div>
     </nav>
   );

@@ -1,6 +1,6 @@
+import { Button } from "../../components/ui/Button";
 import { useState } from "react";
 import { Panel } from "../../components/ui/Panel";
-import { SectionHeader } from "../../components/ui/SectionHeader";
 
 export function PlatformSettingsPage() {
   const [allowRegisterDefault, setAllowRegisterDefault] = useState(true);
@@ -25,12 +25,13 @@ export function PlatformSettingsPage() {
 
   return (
     <section className="page platform-page">
-      <SectionHeader
-        description="维护新租户默认注册策略、基础密码策略和前端跨域来源。"
-        title="平台配置"
-      />
+      <nav aria-label="平台配置菜单" className="platform-tabbar" role="tablist">
+        <a className="platform-tab platform-tab--active" href="/platform-settings" role="tab" aria-selected="true">
+          平台配置
+        </a>
+      </nav>
 
-      <Panel title="首版平台配置" subtitle="配置变更会影响后续创建租户和前端请求边界。">
+      <Panel>
         <form className="platform-settings-form" onSubmit={handleSave}>
           <label className="platform-check">
             <input
@@ -59,7 +60,7 @@ export function PlatformSettingsPage() {
             />
           </label>
 
-          <button className="primary-button" type="submit">保存平台配置</button>
+          <Button variant="primary" type="submit">保存平台配置</Button>
         </form>
       </Panel>
 

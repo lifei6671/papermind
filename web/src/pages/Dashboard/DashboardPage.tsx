@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { DataTable } from "../../components/ui/DataTable";
 import { MetricCard } from "../../components/ui/MetricCard";
 import { Panel } from "../../components/ui/Panel";
@@ -29,7 +30,7 @@ export function DashboardPage() {
   return (
     <section className="page">
       <SectionHeader
-        action={<button className="primary-button" type="button">新建考试</button>}
+        action={<Button variant="primary" type="button">新建考试</Button>}
         description="围绕租户、题库、组卷、考试、阅卷和成绩发布组织首版管理端。"
         title="考试平台概览"
       />
