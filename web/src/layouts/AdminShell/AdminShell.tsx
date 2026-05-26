@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { Home, LogOut, Settings } from "lucide-react";
+import { useSession } from "../../auth/session-context";
 import type { AdminRoute, AdminRouteGroup } from "../../app/routes";
 import "./AdminShell.css";
 
@@ -15,6 +16,7 @@ const groupLabels: Record<Exclude<AdminRouteGroup, "hidden">, string> = {
 
 export function AdminShell({ routes }: AdminShellProps) {
   const navigate = useNavigate();
+  const { signOut } = useSession();
   const visibleGroups = Object.keys(groupLabels) as Array<Exclude<AdminRouteGroup, "hidden">>;
 
   const renderRouteLink = (route: AdminRoute) => {
@@ -80,7 +82,10 @@ export function AdminShell({ routes }: AdminShellProps) {
           </button>
           <button
             className="sidebar__logout"
-            onClick={() => navigate("/login", { replace: true })}
+            onClick={() => {
+              signOut();
+              navigate("/login", { replace: true });
+            }}
             type="button"
           >
             <LogOut aria-hidden="true" size={15} />

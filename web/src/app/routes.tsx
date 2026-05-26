@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { DashboardPage } from "../pages/Dashboard/DashboardPage";
 import { PlaceholderPage } from "../pages/Placeholder/PlaceholderPage";
+import { PlatformSettingsPage } from "../pages/Platform/PlatformSettingsPage";
+import { TenantManagementPage } from "../pages/Platform/TenantManagementPage";
 
 export type AdminRouteGroup = "platform" | "tenant" | "exam" | "hidden";
 
@@ -43,7 +45,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "租户管理",
     description: "创建租户、维护租户码、配置注册开关",
     icon: Building2,
-    element: <PlaceholderPage title="租户管理" description="租户列表、创建租户、Logo、描述和租户码将在这里收口。" />,
+    element: <TenantManagementPage />,
     group: "platform",
   },
   {
@@ -51,7 +53,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "平台配置",
     description: "维护注册开关、平台公告和首版安全配置",
     icon: Settings,
-    element: <PlaceholderPage title="平台配置" description="平台配置后续会接入 P3 已完成的配置服务。" />,
+    element: <PlatformSettingsPage />,
     group: "platform",
   },
   {

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "./App";
+import { AppProviders } from "./providers";
 
 const originalMatchMedia = window.matchMedia;
 
@@ -29,12 +30,18 @@ function mockExamViewport(matchesNarrow: boolean) {
   });
 }
 
-test("渲染 Papermind 管理端基础骨架", () => {
-  render(
-    <MemoryRouter initialEntries={["/"]}>
-      <App />
-    </MemoryRouter>,
+function renderApp(initialEntries: string[]) {
+  return render(
+    <AppProviders>
+      <MemoryRouter initialEntries={initialEntries}>
+        <App />
+      </MemoryRouter>
+    </AppProviders>,
   );
+}
+
+test("渲染 Papermind 管理端基础骨架", () => {
+  renderApp(["/"]);
 
   expect(screen.getByText("Papermind")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /租户管理/ })).toBeInTheDocument();
@@ -43,11 +50,7 @@ test("渲染 Papermind 管理端基础骨架", () => {
 });
 
 test("学生考试端与管理员后台路由隔离", () => {
-  render(
-    <MemoryRouter initialEntries={["/student/exam"]}>
-      <App />
-    </MemoryRouter>,
-  );
+  renderApp(["/student/exam"]);
 
   expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
   expect(screen.getByText("PaperMind")).toBeInTheDocument();
@@ -65,11 +68,7 @@ test("学生考试端与管理员后台路由隔离", () => {
 test("考生编号折叠在右侧用户菜单中", async () => {
   const user = userEvent.setup();
 
-  render(
-    <MemoryRouter initialEntries={["/student/exam"]}>
-      <App />
-    </MemoryRouter>,
-  );
+  renderApp(["/student/exam"]);
 
   const profileButton = screen.getByRole("button", { name: "张三" });
   expect(profileButton).toHaveAttribute("aria-expanded", "false");
@@ -89,11 +88,7 @@ test("考生编号折叠在右侧用户菜单中", async () => {
 test("学生考试端窄屏辅助信息使用抽屉展开", async () => {
   const user = userEvent.setup();
 
-  render(
-    <MemoryRouter initialEntries={["/student/exam"]}>
-      <App />
-    </MemoryRouter>,
-  );
+  renderApp(["/student/exam"]);
 
   const drawerToggle = screen.getByRole("button", { name: "考试信息与答题卡" });
   expect(drawerToggle).toHaveAttribute("aria-expanded", "false");
@@ -112,11 +107,7 @@ test("H5 开考前页面进入移动端作答流程", async () => {
   const user = userEvent.setup();
   mockExamViewport(true);
 
-  render(
-    <MemoryRouter initialEntries={["/student/exam"]}>
-      <App />
-    </MemoryRouter>,
-  );
+  renderApp(["/student/exam"]);
 
   expect(screen.getByLabelText("开考前说明")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
@@ -135,11 +126,7 @@ test("H5 答题卡通过底部入口展示并弹出确认交卷", async () => {
   const user = userEvent.setup();
   mockExamViewport(true);
 
-  render(
-    <MemoryRouter initialEntries={["/student/exam"]}>
-      <App />
-    </MemoryRouter>,
-  );
+  renderApp(["/student/exam"]);
 
   await user.click(screen.getByRole("button", { name: "开始考试" }));
   await user.click(screen.getByRole("button", { name: "答题卡" }));
@@ -162,11 +149,7 @@ test("H5 答题卡通过底部入口展示并弹出确认交卷", async () => {
 test("确认交卷通过交互弹窗展示", async () => {
   const user = userEvent.setup();
 
-  render(
-    <MemoryRouter initialEntries={["/student/exam"]}>
-      <App />
-    </MemoryRouter>,
-  );
+  renderApp(["/student/exam"]);
 
   expect(screen.queryByRole("dialog", { name: "确认交卷" })).not.toBeInTheDocument();
 
@@ -181,22 +164,14 @@ test("确认交卷通过交互弹窗展示", async () => {
 });
 
 test("自动保存提示不作为页面正文静态展示", () => {
-  render(
-    <MemoryRouter initialEntries={["/student/exam"]}>
-      <App />
-    </MemoryRouter>,
-  );
+  renderApp(["/student/exam"]);
 
   expect(screen.queryByRole("status", { name: "自动保存提示" })).not.toBeInTheDocument();
   expect(screen.queryByText("答案已自动保存")).not.toBeInTheDocument();
 });
 
 test("简答题作答效果不作为当前考试页面正文展示", () => {
-  render(
-    <MemoryRouter initialEntries={["/student/exam"]}>
-      <App />
-    </MemoryRouter>,
-  );
+  renderApp(["/student/exam"]);
 
   expect(screen.queryByText("四、简答题（共30分）")).not.toBeInTheDocument();
   expect(screen.queryByPlaceholderText("请输入作答内容...")).not.toBeInTheDocument();
@@ -206,11 +181,7 @@ test("简答题作答效果不作为当前考试页面正文展示", () => {
 test("离开页面提醒通过确认弹窗展示", async () => {
   const user = userEvent.setup();
 
-  render(
-    <MemoryRouter initialEntries={["/student/exam"]}>
-      <App />
-    </MemoryRouter>,
-  );
+  renderApp(["/student/exam"]);
 
   expect(screen.queryByRole("dialog", { name: "离开页面提醒" })).not.toBeInTheDocument();
 

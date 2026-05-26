@@ -673,6 +673,118 @@ code {
   cursor: pointer;
 }
 
+.feedback-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(420px, calc(100vw - 48px));
+  padding: 13px 14px 13px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  box-shadow: 0 12px 28px rgb(23 28 40 / 14%);
+  color: var(--text-primary);
+}
+
+.feedback-toast--error {
+  border-color: #f1d0cb;
+  background: #fff1ef;
+  color: #9d3c32;
+}
+
+.feedback-toast--success {
+  border-color: #cdebd8;
+  background: #eef8f1;
+  color: #257144;
+}
+
+.feedback-toast button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.pagination__controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pagination__controls button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.pagination__controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.pagination__controls strong {
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
+.file-upload-field {
+  display: grid;
+  gap: 8px;
+}
+
+.file-upload-field__label {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.file-upload-field__control {
+  position: relative;
+  min-height: 92px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-wash);
+  color: var(--text-secondary);
+}
+
+.file-upload-field__control input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.file-upload-field small {
+  color: var(--text-muted);
+}
+
 .primary-button.api-search__button {
   min-height: 34px;
   height: 34px;
@@ -2555,6 +2667,223 @@ code {
 
 .auth-submit:hover {
   background: #191919;
+}
+
+.platform-login {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(380px, 0.8fr) minmax(520px, 1.2fr);
+  background: var(--surface-canvas);
+}
+
+.platform-login__form-pane {
+  display: grid;
+  place-items: center;
+  padding: 42px;
+  background: var(--surface-wash);
+}
+
+.platform-login__form {
+  width: min(390px, 100%);
+  display: grid;
+  gap: 18px;
+}
+
+.platform-login__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--brand-ink);
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.platform-login__form h1 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 34px;
+  line-height: 1.1;
+}
+
+.platform-login__form p {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.platform-login__error {
+  padding: 12px 14px;
+  border: 1px solid #f1d0cb;
+  border-radius: 6px;
+  background: #fff1ef;
+  color: #9d3c32;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.platform-login__visual {
+  display: grid;
+  place-items: center;
+  padding: 56px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.platform-login__visual div {
+  width: min(540px, 100%);
+  display: grid;
+  gap: 18px;
+  padding: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-card);
+}
+
+.platform-login__visual span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.platform-login__visual strong {
+  color: var(--text-primary);
+  font-size: 30px;
+  line-height: 1.18;
+}
+
+.platform-login__visual p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
+
+.platform-page {
+  max-width: 1520px;
+}
+
+.platform-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 220px));
+  gap: 16px;
+}
+
+.platform-summary div,
+.platform-settings-summary {
+  display: grid;
+  gap: 8px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-card);
+}
+
+.platform-summary span,
+.platform-settings-summary span {
+  color: var(--text-secondary);
+}
+
+.platform-summary strong {
+  color: var(--text-primary);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.platform-grid {
+  align-items: start;
+}
+
+.platform-form,
+.platform-settings-form {
+  display: grid;
+  gap: 16px;
+}
+
+.field textarea,
+.platform-settings-form textarea {
+  min-height: 86px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 10px;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  resize: vertical;
+}
+
+.tenant-table td:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.tenant-table td:first-child span {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.tenant-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tenant-actions button {
+  min-height: 30px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.platform-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(23 28 40 / 34%);
+}
+
+.platform-dialog__card {
+  width: min(480px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  border-radius: 8px;
+  background: var(--surface-panel);
+}
+
+.platform-dialog__card h2 {
+  margin: 0;
+}
+
+.platform-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.platform-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.platform-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand-accent);
+}
+
+.platform-settings-summary {
+  align-content: start;
+}
+
+.platform-settings-summary strong {
+  color: var(--text-primary);
 }
 
 .auth-visual-inner {
