@@ -1,11 +1,30 @@
 import { useEffect, useState } from "react";
 import {
+  AlertTriangle,
+  Award,
   Bookmark,
+  Calculator,
+  CalendarDays,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
+  ClipboardPenLine,
+  Clock,
   DoorOpen,
+  Eraser,
+  FileText,
+  Grid2X2,
+  Link,
+  List,
+  ListOrdered,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+  Star,
   TriangleAlert,
+  Underline,
   X,
 } from "lucide-react";
 import "./StudentExamPage.css";
@@ -99,7 +118,313 @@ function QuestionGrid({ compact = false }: { compact?: boolean }) {
   );
 }
 
-export function StudentExamPage() {
+function useExamViewportMode() {
+  const [isNarrowViewport, setIsNarrowViewport] = useState(() => shouldCollapseQuestionListByDefault());
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+
+    const mediaQueryList = window.matchMedia(narrowExamViewportQuery);
+    const handleViewportChange = (event: MediaQueryListEvent) => {
+      setIsNarrowViewport(event.matches);
+    };
+
+    mediaQueryList.addEventListener("change", handleViewportChange);
+
+    return () => {
+      mediaQueryList.removeEventListener("change", handleViewportChange);
+    };
+  }, []);
+
+  return isNarrowViewport;
+}
+
+function MobileExamHeader({ remainingTime = "01:28:36" }: { remainingTime?: string }) {
+  return (
+    <header className="mobile-exam-header">
+      <div className="mobile-brand">
+        <span className="mobile-brand__mark">P</span>
+        <span>PaperMind</span>
+      </div>
+      <div className="mobile-timer">
+        <Clock aria-hidden="true" size={22} />
+        <span>剩余时间</span>
+        <strong>{remainingTime}</strong>
+      </div>
+    </header>
+  );
+}
+
+function MobileExamStart({ onStart }: { onStart: () => void }) {
+  const noticeItems = [
+    "开考后系统自动开始计时；",
+    "答案将自动保存；",
+    "考试过程中请勿频繁切换页面；",
+    "到达截止时间将自动交卷；",
+    "成绩公布后可查看解析。",
+  ];
+
+  return (
+    <section className="mobile-start-view" aria-label="开考前说明">
+      <MobileExamHeader />
+      <main className="mobile-start-main">
+        <h1>期中考试（高一语文）</h1>
+        <span className="mobile-status-pill"><Clock aria-hidden="true" size={16} />开考前</span>
+        <p className="mobile-muted">请仔细阅读考试须知，确认后开始考试</p>
+
+        <section className="mobile-info-card" aria-label="考试信息">
+          <div><CalendarDays aria-hidden="true" /><span>考试时间</span><strong>2025-05-28 09:00 - 11:00</strong></div>
+          <div><Clock aria-hidden="true" /><span>作答时长</span><strong>120 分钟</strong></div>
+          <div><FileText aria-hidden="true" /><span>总题数</span><strong>45 题</strong></div>
+          <div><Award aria-hidden="true" /><span>总分</span><strong>100 分</strong></div>
+          <div><RefreshCw aria-hidden="true" /><span>作答次数</span><strong>1 次</strong></div>
+        </section>
+
+        <section className="mobile-notice-card">
+          <h2>考试须知</h2>
+          <ol>
+            {noticeItems.map((item, index) => (
+              <li key={item}><span>{index + 1}</span>{item}</li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="mobile-tip-card">
+          <ShieldCheck aria-hidden="true" size={32} />
+          <div>
+            <strong>温馨提示</strong>
+            <p>为保障考试的稳定进行，建议使用稳定的网络环境，如遇网络异常，请不要刷新或关闭页面。</p>
+          </div>
+        </section>
+
+        <label className="mobile-agree-check">
+          <input type="checkbox" />
+          <span>我已阅读并同意<strong>考试规则</strong></span>
+        </label>
+      </main>
+      <footer className="mobile-start-actions">
+        <button className="mobile-secondary-button" type="button"><ClipboardList aria-hidden="true" />查看考试说明</button>
+        <button className="mobile-primary-button" onClick={onStart} type="button">开始考试</button>
+        <span><ShieldCheck aria-hidden="true" size={18} />建议在稳定网络环境下完成考试</span>
+      </footer>
+    </section>
+  );
+}
+
+function MobileQuestionOptions() {
+  return (
+    <div className="mobile-option-list">
+      {optionRows.map((row, index) => (
+        <label className={index === 0 ? "mobile-option mobile-option--selected" : "mobile-option"} key={row[0]}>
+          <span className="mobile-option__radio" aria-hidden="true" />
+          <strong>{row[0]}</strong>
+          <span className="mobile-option__terms">
+            {row.slice(1).map((text) => <span key={text}>{text}</span>)}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function MobileChoiceQuestion({ onAnswerCard, onEssay }: { onAnswerCard: () => void; onEssay: () => void }) {
+  return (
+    <section className="mobile-exam-view" aria-label="移动端单选题作答">
+      <MobileExamHeader />
+      <main className="mobile-question-main">
+        <div className="mobile-question-title">
+          <div>
+            <h1>期中考试（高一语文）</h1>
+            <span><CheckCircle2 aria-hidden="true" size={18} />已自动保存&nbsp;&nbsp;14:32:18</span>
+          </div>
+          <p><strong>1</strong> / 45</p>
+        </div>
+
+        <section className="mobile-question-card">
+          <header>
+            <h2>一、单项选择题 <span>（共20题，每题2分）</span></h2>
+            <button type="button"><Bookmark aria-hidden="true" />标记本题</button>
+          </header>
+          <p className="mobile-question-stem">下列加点字的注音完全正确的一项是（ ）</p>
+          <MobileQuestionOptions />
+          <div className="mobile-analysis">
+            <strong>题目解析（考后公布）</strong>
+            <p>岑参（cén）、怅然（chàng）。</p>
+            <p>B项：棹蕴（yún）错误，应为棹蕴（yǔn）；C项：提防（dī）错误，应为提防（dī）；D项：龟裂（guī）错误，应为龟裂（jūn）。</p>
+          </div>
+        </section>
+
+        <div className="mobile-warning-toast">
+          <AlertTriangle aria-hidden="true" />
+          <span>考试中请勿切换页面或离开考试</span>
+          <X aria-hidden="true" size={18} />
+        </div>
+      </main>
+      <MobileExamNav onAnswerCard={onAnswerCard} onNext={onEssay} />
+    </section>
+  );
+}
+
+function MobileEssayQuestion({ onAnswerCard, onChoice }: { onAnswerCard: () => void; onChoice: () => void }) {
+  return (
+    <section className="mobile-exam-view" aria-label="移动端简答题作答">
+      <MobileExamHeader remainingTime="00:36:12" />
+      <main className="mobile-question-main">
+        <div className="mobile-question-title">
+          <div>
+            <h1>期中考试（高一语文）</h1>
+            <span><CheckCircle2 aria-hidden="true" size={18} />已自动保存&nbsp;&nbsp;14:45:09</span>
+          </div>
+          <p><strong>41</strong> / 45</p>
+        </div>
+
+        <section className="mobile-question-card">
+          <header>
+            <h2>四、简答题 <span>（共5题，共30分）</span></h2>
+            <button type="button"><Bookmark aria-hidden="true" />标记本题</button>
+          </header>
+          <div className="mobile-reading-box">
+            <strong>阅读材料</strong>
+            <p>庆历四年春，滕子京谪守巴陵郡。越明年，政通人和，百废具兴。乃重修岳阳楼，增其旧制，刻唐贤今人诗赋于其上。属予作文以记之。</p>
+          </div>
+          <p className="mobile-essay-stem">41. 请简要分析《岳阳楼记》中“先天下之忧而忧，后天下之乐而乐”的思想内涵。（10分）</p>
+          <div className="mobile-editor">
+            <div className="mobile-editor-toolbar">
+              <button type="button">B</button>
+              <button type="button">I</button>
+              <button type="button"><Underline aria-hidden="true" /></button>
+              <i />
+              <button type="button"><List aria-hidden="true" /></button>
+              <button type="button"><ListOrdered aria-hidden="true" /></button>
+              <i />
+              <button type="button"><Link aria-hidden="true" /></button>
+              <button type="button"><Eraser aria-hidden="true" /></button>
+              <button type="button">清除格式</button>
+            </div>
+            <textarea placeholder="请输入作答内容..." defaultValue="" />
+            <footer><span>已输入 <strong>126</strong> 字</span><button type="button"><Save aria-hidden="true" />保存</button></footer>
+          </div>
+        </section>
+      </main>
+      <MobileExamNav onAnswerCard={onAnswerCard} onPrev={onChoice} />
+    </section>
+  );
+}
+
+function MobileExamNav({ onAnswerCard, onNext, onPrev }: { onAnswerCard: () => void; onNext?: () => void; onPrev?: () => void }) {
+  return (
+    <footer className="mobile-bottom-nav">
+      <div className="mobile-nav-buttons">
+        <button onClick={onPrev} type="button"><ChevronLeft aria-hidden="true" />上一题</button>
+        <button onClick={onAnswerCard} type="button"><Grid2X2 aria-hidden="true" />答题卡</button>
+        <button className="mobile-nav-primary" onClick={onNext} type="button">下一题<ChevronRight aria-hidden="true" /></button>
+      </div>
+      <div className="mobile-tool-row">
+        <button type="button"><Calculator aria-hidden="true" />计算器</button>
+        <button type="button"><ClipboardPenLine aria-hidden="true" />草稿纸</button>
+      </div>
+    </footer>
+  );
+}
+
+function MobileAnswerCard({ onBack, onSubmit }: { onBack: () => void; onSubmit: () => void }) {
+  const stats = [
+    ["已答", "28", "answered"],
+    ["未答", "15", "blank"],
+    ["标记", "2", "marked"],
+    ["总题数", "45", "total"],
+  ];
+
+  return (
+    <section className="mobile-answer-view" aria-label="移动端答题卡">
+      <MobileExamHeader />
+      <main className="mobile-answer-main">
+        <div className="mobile-answer-title">
+          <button aria-label="返回作答" onClick={onBack} type="button"><ChevronLeft aria-hidden="true" /></button>
+          <div><h1>答题卡</h1><p>期中考试（高一语文）</p></div>
+        </div>
+        <section aria-label="答题统计" className="mobile-answer-stats">
+          {stats.map(([label, value, type]) => (
+            <div className={`mobile-answer-stat mobile-answer-stat--${type}`} key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
+        </section>
+        <div className="mobile-answer-legend">
+          <span><i className="is-answered" />已答</span>
+          <span><i />未答</span>
+          <span><Star aria-hidden="true" size={18} />标记</span>
+          <span><i className="is-current" />当前</span>
+        </div>
+        <MobileAnswerGroups />
+      </main>
+      <footer className="mobile-answer-actions">
+        <button onClick={onBack} type="button">返回作答</button>
+        <button onClick={onSubmit} type="button">提交试卷</button>
+      </footer>
+    </section>
+  );
+}
+
+function MobileAnswerGroups() {
+  return (
+    <div className="mobile-answer-groups">
+      {questionGroups.map((group) => (
+        <section key={group.title}>
+          <h2>{group.title} <span>({group.questions[0].number}-{group.questions[group.questions.length - 1].number})</span></h2>
+          <div>
+            {group.questions.map((item) => {
+              const state = item.number === 6 ? "current" : [9, 15, 37, 43].includes(item.number) ? "marked" : [1, 2, 3, 4, 5, 7, 10, 11, 12, 13, 16, 18, 19, 21, 31, 32, 38, 40, 41, 44].includes(item.number) ? "answered" : "blank";
+              return <button className={`mobile-answer-number mobile-answer-number--${state}`} key={item.number} type="button">{item.number}{state === "marked" ? <Star aria-hidden="true" size={12} /> : null}</button>;
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function MobileSubmitDialog({ onCancel }: { onCancel: () => void }) {
+  return (
+    <div className="mobile-submit-layer">
+      <div aria-labelledby="mobile-submit-title" aria-modal="true" className="mobile-submit-dialog" role="dialog">
+        <span>!</span>
+        <h2 id="mobile-submit-title">确认交卷</h2>
+        <p>交卷后将无法继续作答，请确认是否提交？</p>
+        <div><button onClick={onCancel} type="button">取消</button><button type="button">确认交卷</button></div>
+      </div>
+    </div>
+  );
+}
+
+function MobileExamExperience() {
+  const [screen, setScreen] = useState<"start" | "choice" | "essay" | "answerCard">("start");
+  const [answerCardReturnScreen, setAnswerCardReturnScreen] = useState<"choice" | "essay">("choice");
+  const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
+
+  const openAnswerCard = (returnScreen: "choice" | "essay") => {
+    setAnswerCardReturnScreen(returnScreen);
+    setScreen("answerCard");
+  };
+
+  if (screen === "start") {
+    return <MobileExamStart onStart={() => setScreen("choice")} />;
+  }
+
+  return (
+    <>
+      {screen === "choice" ? <MobileChoiceQuestion onAnswerCard={() => openAnswerCard("choice")} onEssay={() => setScreen("essay")} /> : null}
+      {screen === "essay" ? <MobileEssayQuestion onAnswerCard={() => openAnswerCard("essay")} onChoice={() => setScreen("choice")} /> : null}
+      {screen === "answerCard" ? <MobileAnswerCard onBack={() => setScreen(answerCardReturnScreen)} onSubmit={() => setIsSubmitDialogOpen(true)} /> : null}
+      {isSubmitDialogOpen ? <MobileSubmitDialog onCancel={() => setIsSubmitDialogOpen(false)} /> : null}
+    </>
+  );
+}
+
+function DesktopStudentExamPage() {
   const [isExamDrawerOpen, setIsExamDrawerOpen] = useState(false);
   const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
   const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
@@ -345,4 +670,10 @@ export function StudentExamPage() {
       </footer>
     </div>
   );
+}
+
+export function StudentExamPage() {
+  const isMobileExam = useExamViewportMode();
+
+  return isMobileExam ? <MobileExamExperience /> : <DesktopStudentExamPage />;
 }
