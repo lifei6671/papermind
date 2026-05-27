@@ -15,6 +15,7 @@ go.work.sum
 .idea/
 .vscode/
 pnpm-lock.yaml
+server/conf/app.yaml
 
 # 生产配置和本地私有配置不进入仓库，避免密钥、数据库地址等敏感信息进入 Git 历史。
 server/conf_online/
