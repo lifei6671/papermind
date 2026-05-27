@@ -84,6 +84,7 @@ test("租户管理员可以创建用户并上传头像", async () => {
 
   await user.type(screen.getByLabelText("姓名"), "王同学");
   await user.type(screen.getByLabelText("账号"), "wang.student");
+  await user.type(screen.getByLabelText("初始密码"), "student-secure-123");
   await user.selectOptions(screen.getByLabelText("角色"), "student");
   await user.upload(screen.getByLabelText("用户头像"), new File(["avatar"], "wang.png", { type: "image/png" }));
   await user.click(screen.getByRole("button", { name: "确认创建" }));
@@ -92,6 +93,7 @@ test("租户管理员可以创建用户并上传头像", async () => {
     tenantID: 10,
     name: "王同学",
     username: "wang.student",
+    password: "student-secure-123",
     role: "student",
     avatarFileName: "wang.png",
   });

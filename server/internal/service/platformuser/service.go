@@ -2,9 +2,10 @@ package platformuser
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"time"
+
+	"github.com/lifei6671/papermind/server/library/crypto"
 )
 
 const (
@@ -234,8 +235,7 @@ func (s *Service) isAllowedAvatarContentType(contentType string) bool {
 type plainPasswordVerifier struct{}
 
 func (plainPasswordVerifier) Verify(hash string, password string) bool {
-	// 首版 seed 只保存开发环境口令字面量；这里用常量时间比较，后续接入专用哈希器时替换该默认实现。
-	return subtle.ConstantTimeCompare([]byte(hash), []byte(password)) == 1
+	return crypto.VerifyPassword(hash, password)
 }
 
 type noopSecurityLogger struct{}

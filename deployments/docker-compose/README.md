@@ -33,8 +33,14 @@ docker compose --env-file deployments\docker-compose\.env -f deployments\docker-
 ## 服务组成
 
 - `postgres`：PostgreSQL 16，使用 `postgres-data` volume 保存数据。
-- `server`：Go 后端，使用环境变量注入数据库、端口、存储目录和 CORS。
-- `web`：React 静态资源，由 Nginx 提供；`/api/` 代理到 server。
+- `server`：Go 后端，镜像内使用 `/app/conf/app.yaml` 默认配置，并通过环境变量注入数据库、端口、存储目录和 CORS。
+- `web`：React 静态资源，由 Nginx 提供；`/api/` 和 `/uploads/` 代理到 server。
+
+## 注意事项
+
+- server 构建阶段会安装 Alpine `build-base`，用于编译 SQLite CGO 依赖。
+- Nginx 会转发 `/uploads/`，确保上传后的 Logo、头像等资源在 Compose 环境可访问。
+- 仓库只跟踪 `server/conf/app.example.yaml`，真实 `server/conf/app.yaml` 和 `.env` 均不应提交。
 
 ## 空库迁移验证
 

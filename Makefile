@@ -21,10 +21,10 @@ help:
 	@echo "  make server-dev      = backend-dev"
 
 frontend-build:
-	cd web && pnpm build
+	cd web && npm run build
 
 frontend-dev:
-	cd web && pnpm dev
+	cd web && npm run dev
 
 backend-build:
 	cd server && if not exist bin mkdir bin && go build -tags $(GO_TAGS) -o $(BACKEND_BIN) ./cmd/papermind

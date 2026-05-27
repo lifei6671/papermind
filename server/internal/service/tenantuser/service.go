@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
+	"github.com/lifei6671/papermind/server/library/crypto"
 )
 
 const (
@@ -134,6 +135,7 @@ type Repository interface {
 	FindTenantByCode(ctx context.Context, tenantCode string) (Tenant, error)
 	CreateUser(ctx context.Context, user User) (User, error)
 	CreateUserRole(ctx context.Context, tenantID uint64, userID uint64, role string) error
+	CreateUserWithRole(ctx context.Context, user User, role string) (User, error)
 	FindUserByUsername(ctx context.Context, tenantID uint64, username string) (User, error)
 	UpdateLoginAudit(ctx context.Context, tenantID uint64, userID uint64, ip string, at int64) error
 	UpdateAvatarURL(ctx context.Context, tenantID uint64, userID uint64, url string) error
@@ -184,10 +186,18 @@ func NewService(options ServiceOptions) *Service {
 	if now == nil {
 		now = func() int64 { return time.Now().UnixMilli() }
 	}
+	passwordVerifier := options.PasswordVerifier
+	if passwordVerifier == nil {
+		passwordVerifier = defaultPasswordVerifier{}
+	}
+	securityLogger := options.SecurityLogger
+	if securityLogger == nil {
+		securityLogger = noopSecurityLogger{}
+	}
 	return &Service{
 		repo:                       options.Repo,
-		passwordVerifier:           options.PasswordVerifier,
-		securityLogger:             options.SecurityLogger,
+		passwordVerifier:           passwordVerifier,
+		securityLogger:             securityLogger,
 		avatarStorage:              options.AvatarStorage,
 		spaceAdminInvariantChecker: options.SpaceAdminInvariantChecker,
 		maxAvatarSize:              options.MaxAvatarSize,
@@ -209,7 +219,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 	if role == "" {
 		role = RoleStudent
 	}
-	user, err := s.repo.CreateUser(ctx, User{
+	user, err := s.repo.CreateUserWithRole(ctx, User{
 		TenantID:     input.TenantID,
 		Username:     input.Username,
 		RealName:     input.RealName,
@@ -219,11 +229,8 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 		Email:        input.Email,
 		Role:         role,
 		Status:       StatusEnabled,
-	})
+	}, role)
 	if err != nil {
-		return User{}, err
-	}
-	if err := s.repo.CreateUserRole(ctx, user.TenantID, user.ID, role); err != nil {
 		return User{}, err
 	}
 	user.Role = role
@@ -315,7 +322,7 @@ func (s *Service) register(ctx context.Context, input RegisterInput) (User, erro
 	if !tenant.AllowRegister {
 		return User{}, ErrRegisterNotAllowed
 	}
-	user, err := s.repo.CreateUser(ctx, User{
+	user, err := s.repo.CreateUserWithRole(ctx, User{
 		TenantID:     tenant.ID,
 		Username:     input.Username,
 		RealName:     input.RealName,
@@ -324,11 +331,8 @@ func (s *Service) register(ctx context.Context, input RegisterInput) (User, erro
 		Email:        input.Email,
 		Role:         RoleStudent,
 		Status:       StatusEnabled,
-	})
+	}, RoleStudent)
 	if err != nil {
-		return User{}, err
-	}
-	if err := s.repo.CreateUserRole(ctx, user.TenantID, user.ID, RoleStudent); err != nil {
 		return User{}, err
 	}
 	user.Role = RoleStudent
@@ -342,4 +346,16 @@ func (s *Service) isAllowedAvatarContentType(contentType string) bool {
 		}
 	}
 	return false
+}
+
+type defaultPasswordVerifier struct{}
+
+func (defaultPasswordVerifier) Verify(hash string, password string) bool {
+	return crypto.VerifyPassword(hash, password)
+}
+
+type noopSecurityLogger struct{}
+
+func (noopSecurityLogger) LoginFailed(ctx context.Context, tenantID uint64, username string, ip string, reason string) error {
+	return nil
 }

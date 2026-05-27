@@ -62,6 +62,7 @@ describe("user api", () => {
       tenantID: 10,
       name: "张三",
       username: "student01",
+      password: "student-secure-123",
       role: "student",
       avatarFileName: "avatar.png",
     })).resolves.toMatchObject({
@@ -79,6 +80,7 @@ describe("user api", () => {
           username: "student01",
           real_name: "张三",
           avatar_url: "avatar.png",
+          password: "student-secure-123",
           role: "student",
         }),
       }),

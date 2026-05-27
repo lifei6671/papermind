@@ -381,6 +381,18 @@ func (r *fakeRepository) CreateUserRole(ctx context.Context, tenantID uint64, us
 	return nil
 }
 
+func (r *fakeRepository) CreateUserWithRole(ctx context.Context, user User, role string) (User, error) {
+	created, err := r.CreateUser(ctx, user)
+	if err != nil {
+		return User{}, err
+	}
+	if err := r.CreateUserRole(ctx, created.TenantID, created.ID, role); err != nil {
+		return User{}, err
+	}
+	created.Role = role
+	return created, nil
+}
+
 func (r *fakeRepository) FindUserByUsername(ctx context.Context, tenantID uint64, username string) (User, error) {
 	user, ok := r.usersByTenantAndUsername[userLookupKey{tenantID: tenantID, username: username}]
 	if !ok {

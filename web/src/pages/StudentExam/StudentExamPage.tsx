@@ -1,5 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { examApi } from "../../api/exams";
 import type { StudentExamAPI, StudentExamOption, StudentExamQuestion as APIStudentExamQuestion } from "../../api/exams";
 import {
@@ -61,7 +62,7 @@ function mapAPIQuestion(question: APIStudentExamQuestion): ExamQuestion {
     sectionSubtitle: question.sectionSubtitle || `第 ${question.number} 题 / ${question.score} 分`,
     stem: question.stem,
     score: question.score,
-    options: question.options.map((option) => `${option.key}. ${option.content}`),
+    options: question.options.map(formatOptionLabel),
     optionMeta: question.options,
     analysis: "题目解析将在成绩公布后展示。",
   };
@@ -72,10 +73,16 @@ function answerToOptionIDs(question: ExamQuestion, answer: ExamAnswer) {
     return [];
   }
   const values = Array.isArray(answer) ? answer : [answer];
-  const normalizedValues = values.map((value) => value.replace(/\.$/, ""));
   return question.optionMeta
-    .filter((option) => normalizedValues.includes(option.key))
+    .filter((option) => values.includes(option.key))
     .map((option) => option.id);
+}
+
+function formatOptionLabel(option: StudentExamOption) {
+  if (option.content === "") {
+    return option.key;
+  }
+  return `${option.key}. ${option.content}`;
 }
 
 function hasAnswer(answer: ExamAnswer | undefined) {
@@ -198,14 +205,15 @@ function DesktopQuestionBody({
 
   return (
     <div className="option-list">
-      {question.options?.map((option) => {
-        const optionValue = option.replace(/^\s*([A-D]\.|正确|错误).*$/, "$1");
+      {question.optionMeta?.map((option) => {
+        const optionValue = option.key;
+        const optionPrefix = option.content === "" ? optionValue : `${optionValue}.`;
         const checked = Array.isArray(answer)
           ? answer.includes(optionValue)
           : answer === optionValue;
 
         return (
-          <label className={checked ? "option-row option-row--selected" : "option-row"} key={option}>
+          <label className={checked ? "option-row option-row--selected" : "option-row"} key={option.id}>
             <span className="option-row__prefix">
               <input
                 checked={checked}
@@ -223,9 +231,9 @@ function DesktopQuestionBody({
                 }}
                 type={question.type === "multiple" ? "checkbox" : "radio"}
               />
-              <strong>{optionValue}</strong>
+              <strong>{optionPrefix}</strong>
             </span>
-            <span className="option-row__terms">{option.replace(optionValue, "").trim()}</span>
+            <span className="option-row__terms">{option.content}</span>
           </label>
         );
       })}
@@ -271,11 +279,15 @@ type ExamSession = {
   examToken: string;
 };
 
+type StudentExamRouteParams = {
+  tenantID: number;
+  examID: number;
+};
+
 function DesktopStudentExamPage({
   api,
   tenantID,
   examID,
-  userID,
 }: Required<StudentExamPageProps>) {
   const [isExamDrawerOpen, setIsExamDrawerOpen] = useState(false);
   const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
@@ -289,6 +301,8 @@ function DesktopStudentExamPage({
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [apiQuestions, setApiQuestions] = useState<ExamQuestion[]>([]);
   const [examSession, setExamSession] = useState<ExamSession | null>(null);
+  const [answerDeadline, setAnswerDeadline] = useState<number | null>(null);
+  const [remainingMillis, setRemainingMillis] = useState<number | null>(null);
   const [loadError, setLoadError] = useState("");
 
   const questionGroups = buildQuestionGroups(apiQuestions);
@@ -315,18 +329,22 @@ function DesktopStudentExamPage({
     let isCancelled = false;
     async function startAttempt() {
       try {
-        const started = await api.startAttempt({ tenantID, examID, userID });
+        const started = await api.startAttempt({ tenantID, examID });
         if (isCancelled) {
           return;
         }
         const questions = started.questions.map(mapAPIQuestion);
         setApiQuestions(questions);
         setExamSession({ attemptID: started.attemptID, examToken: started.examToken });
+        setAnswerDeadline(started.answerDeadline);
+        setRemainingMillis(Math.max(0, started.answerDeadline - Date.now()));
         setLoadError("");
         setCurrentQuestionNumber(questions[0]?.number ?? 1);
       } catch {
         setApiQuestions([]);
         setExamSession(null);
+        setAnswerDeadline(null);
+        setRemainingMillis(null);
         setLoadError("考试加载失败，请稍后重试。");
       }
     }
@@ -334,7 +352,19 @@ function DesktopStudentExamPage({
     return () => {
       isCancelled = true;
     };
-  }, [api, tenantID, examID, userID]);
+  }, [api, tenantID, examID]);
+
+  useEffect(() => {
+    if (!answerDeadline) {
+      return undefined;
+    }
+    const updateRemainingTime = () => {
+      setRemainingMillis(Math.max(0, answerDeadline - Date.now()));
+    };
+    updateRemainingTime();
+    const timer = window.setInterval(updateRemainingTime, 1000);
+    return () => window.clearInterval(timer);
+  }, [answerDeadline]);
 
   useEffect(() => {
     const reportTabSwitch = () => {
@@ -573,7 +603,7 @@ function DesktopStudentExamPage({
 
           <section className="exam-card timer-panel">
             <h2>剩余时间</h2>
-            <strong>01:28:36</strong>
+            <strong>{formatRemainingTime(remainingMillis)}</strong>
             <span><TriangleAlert aria-hidden="true" size={14} />考试中请勿切换页面或离开考试</span>
           </section>
 
@@ -646,9 +676,64 @@ function DesktopStudentExamPage({
 
 export function StudentExamPage({
   api = examApi,
-  tenantID = 10,
-  examID = 1,
-  userID = 20,
+  tenantID,
+  examID,
+  userID,
 }: StudentExamPageProps) {
-  return <DesktopStudentExamPage api={api} tenantID={tenantID} examID={examID} userID={userID} />;
+  const [searchParams] = useSearchParams();
+  const routeParams = readStudentExamRouteParams(searchParams);
+  const resolvedParams = {
+    tenantID: tenantID ?? routeParams?.tenantID,
+    examID: examID ?? routeParams?.examID,
+  };
+  if (!resolvedParams.tenantID || !resolvedParams.examID) {
+    return <StudentExamLoadError message="考试入口参数缺失，请重新通过邀请码进入考试。" />;
+  }
+  return (
+    <DesktopStudentExamPage
+      api={api}
+      tenantID={resolvedParams.tenantID}
+      examID={resolvedParams.examID}
+      userID={userID ?? 0}
+    />
+  );
+}
+
+function readStudentExamRouteParams(searchParams: URLSearchParams): StudentExamRouteParams | null {
+  const tenantID = Number(searchParams.get("tenant_id"));
+  const examID = Number(searchParams.get("exam_id"));
+  if (!Number.isInteger(tenantID) || !Number.isInteger(examID)) {
+    return null;
+  }
+  if (tenantID <= 0 || examID <= 0) {
+    return null;
+  }
+  return { tenantID, examID };
+}
+
+function formatRemainingTime(remainingMillis: number | null) {
+  const totalSeconds = Math.max(0, Math.floor((remainingMillis ?? 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+function StudentExamLoadError({ message }: { message: string }) {
+  return (
+    <div className="student-exam-shell">
+      <header className="student-exam-header">
+        <div className="student-brand">
+          <span className="student-brand__mark">P</span>
+          <span>PaperMind</span>
+        </div>
+        <h1>期中考试（高一语文）</h1>
+      </header>
+      <main className="exam-result-page">
+        <section aria-live="polite" className="exam-card exam-result-card">
+          <strong>{message}</strong>
+        </section>
+      </main>
+    </div>
+  );
 }

@@ -21,14 +21,18 @@ import (
 func TestUploadAPIRouteStoresMultipartFile(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	uploadDir := t.TempDir()
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
 	router := NewRouter(RouterOptions{
-		DB:        openExamAPITestDB(t),
+		DB:        gormDB,
 		UploadDir: uploadDir,
 	})
+	authHeader := platformAuthHeader(t, router)
 
-	requestBody, contentType := buildUploadMultipart(t, "tenant-logos", "logo.png", "image/png", "logo")
+	pngContent := "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+	requestBody, contentType := buildUploadMultipart(t, "tenant-logos", "logo.png", "image/png", pngContent)
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/uploads", requestBody)
+	request := authorizedRequest(http.MethodPost, "/api/v1/uploads", requestBody.Bytes(), authHeader)
 	request.Header.Set("Content-Type", contentType)
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
@@ -40,14 +44,14 @@ func TestUploadAPIRouteStoresMultipartFile(t *testing.T) {
 	if !expectedKey.MatchString(body.Data.Key) || body.Data.URL != "/uploads/"+body.Data.Key {
 		t.Fatalf("unexpected upload response: %#v", body.Data)
 	}
-	if !strings.HasSuffix(body.Data.FileName, ".png") || body.Data.ContentType != "image/png" || body.Data.Size != 4 {
+	if !strings.HasSuffix(body.Data.FileName, ".png") || body.Data.ContentType != "image/png" || body.Data.Size != int64(len(pngContent)) {
 		t.Fatalf("unexpected upload metadata: %#v", body.Data)
 	}
 	content, err := os.ReadFile(filepath.Join(uploadDir, filepath.FromSlash(body.Data.Key)))
 	if err != nil {
 		t.Fatalf("read uploaded file: %v", err)
 	}
-	if string(content) != "logo" {
+	if string(content) != pngContent {
 		t.Fatalf("uploaded content = %q", string(content))
 	}
 }
@@ -68,17 +72,60 @@ func TestBuildUploadObjectKeyUsesTimestampMD5AndExtension(t *testing.T) {
 
 func TestUploadAPIRouteRejectsMissingFile(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
 	router := NewRouter(RouterOptions{
-		DB:        openExamAPITestDB(t),
+		DB:        gormDB,
 		UploadDir: t.TempDir(),
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/uploads", bytes.NewReader(nil))
+	request := authorizedRequest(http.MethodPost, "/api/v1/uploads", nil, authHeader)
 	request.Header.Set("Content-Type", "multipart/form-data")
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("missing file status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestUploadAPIRouteRejectsOversizedFile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:        gormDB,
+		UploadDir: t.TempDir(),
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	requestBody, contentType := buildUploadMultipart(t, "tenant-logos", "large.png", "image/png", strings.Repeat("x", 10*1024*1024+1))
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/uploads", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized upload status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestUploadAPIRouteRejectsSpoofedImageContentType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:        gormDB,
+		UploadDir: t.TempDir(),
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	requestBody, contentType := buildUploadMultipart(t, "tenant-logos", "attack.html", "image/png", "<!doctype html><script>alert(1)</script>")
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/uploads", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("spoofed upload status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

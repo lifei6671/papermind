@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-contrib/sessions"
@@ -67,6 +68,9 @@ func TestNewSessionStoreSupportsRedisProvider(t *testing.T) {
 		},
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "connectex") || strings.Contains(err.Error(), "connection refused") {
+			t.Skipf("redis is not available for provider smoke test: %v", err)
+		}
 		t.Fatalf("NewSessionStore() error = %v", err)
 	}
 	if store == nil {
@@ -78,5 +82,16 @@ func TestNewSessionStoreRejectsUnsupportedProvider(t *testing.T) {
 	_, err := NewSessionStore(SessionStoreOptions{Provider: "unknown"})
 	if !errors.Is(err, errAuthSessionProviderUnsupported) {
 		t.Fatalf("NewSessionStore() error = %v, want errAuthSessionProviderUnsupported", err)
+	}
+}
+
+func TestPermissionContextFromSessionRequiresAuthenticatedPrincipal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	_, err := (examHandler{}).permissionContextFromSession(c, 10, 0)
+	if err == nil {
+		t.Fatalf("expected missing authenticated principal to be rejected")
 	}
 }

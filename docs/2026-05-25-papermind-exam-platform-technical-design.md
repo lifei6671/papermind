@@ -496,6 +496,7 @@ space_configs
 - 平台管理员可以查看、复制、重置租户码。
 - 平台管理员可以控制租户是否允许用户自注册。
 - 用户通过租户专属注册链接或手动输入租户码注册。
+- 租户自注册和管理端创建租户用户时，明文密码必须满足 `security.password_min_length` 后再写入哈希。
 - 自注册用户默认属于租户，但不属于任何空间。
 - 管理员或教师将用户加入空间后，用户才能参加对应空间考试。
 - 创建空间时可以上传空间 Logo 和填写空间描述，但这两个字段不是必填项。
@@ -630,7 +631,8 @@ user_roles
 - 文件上传统一走 `/api/v1/uploads`，业务表只保存上传接口返回的 URL 或对象 key。
 - 服务端通过 `ObjectStore` 抽象写入对象存储；本地开发使用本地文件系统实现，后续 S3、OSS、MinIO 等远端协议只新增实现，不修改业务 handler。
 - 上传接口负责生成对象 key，不信任客户端原始文件名作为存储路径。
-- 服务端保存文件名统一使用 `{yyyyMMddHHmmss}_{文件内容 MD5 前 16 位}{后缀}`，同一天上传的文件按日期目录归档。
+- 服务端必须基于文件内容识别真实 MIME，不信任 multipart `Content-Type` 或扩展名；保存后缀由识别结果派生。
+- 服务端保存文件名统一使用 `{yyyyMMddHHmmss}_{文件内容 MD5 前 16 位}{安全后缀}`，同一天上传的文件按日期目录归档。
 - 本地存储返回 `/uploads/{category}/{date}/{object}` 形式地址，并由 HTTP server 挂载静态读取路由。
 - 浏览器端上传图片前优先转为 WebP；转换失败、浏览器能力不足或非图片文件时上传原始文件。
 
@@ -922,6 +924,8 @@ exams
 ├── version               # 数据版本号，用于乐观锁
 └── ext_json              # JSON 扩展字段，保存非主流程元数据
 
+`invite_code` 必须全局唯一。公开入口只按邀请码解析考试，数据库唯一约束和服务端生成碰撞检查都必须避免两个租户生成相同邀请码。
+
 exam_targets
 ├── id                    # 考试发布范围主键 ID
 ├── tenant_id             # 所属租户 ID
@@ -1054,10 +1058,12 @@ UNIQUE (tenant_id, exam_id, user_id, attempt_no)
 
 开始考试必须按幂等流程实现：
 
-1. 如果当前用户在该考试下已有 `in_progress` attempt，直接返回该 attempt 和题目快照。
-2. 如果没有进行中的 attempt，统计已创建 attempt 数量，不能超过 `max_attempts`。
-3. 生成下一个 `attempt_no`，先尝试插入 `exam_attempts`。
-4. 如果遇到唯一约束冲突，只重新查询并返回已有 `in_progress` attempt；不能在同一次开始考试请求中继续递增创建新 attempt。
+1. 开考接口必须先校验当前请求已通过邀请码解析写入考试入口 session，`user_id` 从租户用户 session 派生，不能信任开考请求体。
+2. 开考前必须按 `exam_targets` 校验考生是否命中直接用户目标，或命中空间目标中的启用学生成员关系。
+3. 如果当前用户在该考试下已有 `in_progress` attempt，直接返回该 attempt 和题目快照。
+4. 如果没有进行中的 attempt，统计已创建 attempt 数量，不能超过 `max_attempts`。
+5. 生成下一个 `attempt_no`，先尝试插入 `exam_attempts`。
+6. 如果遇到唯一约束冲突，只重新查询并返回已有 `in_progress` attempt；不能在同一次开始考试请求中继续递增创建新 attempt。
 
 不能只依赖应用层先查后写，否则并发重试可能生成两份语义相同的答卷。
 
@@ -1182,7 +1188,7 @@ auto_submit
 - API 接收到非关键事件后，成功进入队列即可返回成功，不同步等待落库。
 - 队列满时可以丢弃非关键事件，但必须记录 WARN 日志，日志中包含 `tenant_id`、`attempt_id`、`event_type`。
 - `submit`、`auto_submit` 这类关键事件不能静默丢弃，必须跟随提交主流程可靠记录；记录失败时至少写错误日志。
-- 异步事件消费者由 `bootstrap` 启动，支持批量或逐条落库。
+- 异步事件消费者随 HTTP router 初始化启动，支持批量或逐条落库。
 - SQLite 模式下，异步事件队列可以降低 `exam_events` 与 `exam_answers` 自动保存争抢唯一写锁的风险。
 
 ### 6.8 后续演进边界
@@ -1257,7 +1263,7 @@ API 分组：
 ├── 发布考试
 ├── 考试目标范围
 ├── 邀请码
-├── 开始考试并返回 exam_token
+├── 基于邀请码入口 session 开始考试并返回 exam_token
 ├── 使用 exam_token 自动保存
 ├── 使用 exam_token 提交答卷
 └── 使用 exam_token 记录切屏事件
@@ -1276,22 +1282,28 @@ API 分组：
 └── 通用文件上传
 ```
 
-平台管理员登录成功后使用 `github.com/gin-contrib/sessions` 写入服务端 session。当前 provider 支持进程内 `memstore` 和组件自带 Redis store，可通过 `auth.session.provider` 切换。登录响应返回的 `access_token` 是同一次 `Set-Cookie` 中已签名的 session cookie 值，前端仍可用 `Authorization: Bearer <token>` 调用 API；HTTP 中间件会把 Bearer 值回填为 session cookie，再由 Gin session middleware 解析当前主体。
+平台管理员和租户用户登录成功后都使用 `github.com/gin-contrib/sessions` 写入服务端 session。当前 provider 支持进程内 `memstore` 和组件自带 Redis store，可通过 `auth.session.provider` 切换。登录响应返回的 `access_token` 是同一次 `Set-Cookie` 中已签名的 session cookie 值，前端仍可用 `Authorization: Bearer <token>` 调用 API；HTTP 中间件会把 Bearer 值回填为 session cookie，再由 Gin session middleware 解析当前主体。
 
 认证上下文规则：
 
 - session 中只保存当前主体类型、用户 ID、租户 ID 和角色，不保存密码、密码哈希或业务表快照。
+- HTTP Router 必须接收启动配置中的 `security.allow_register_default` 和 `security.password_min_length`，避免配置只被加载但不影响运行行为。
+- 登录页同时提供平台管理员和租户用户模式；租户学生登录成功后进入考试入口，再通过邀请码进入考试端。
+- 平台侧租户管理查询和写操作必须携带有效平台管理员 Bearer token 或 session cookie。
+- 后台考试、空间、用户、题库、试卷、组卷规则、组卷预检查和上传接口必须携带平台管理员或本租户 `tenant_admin` 登录态；租户用户只能操作 session 所属 `tenant_id`，禁止信任请求体跨租户切换。
 - 平台侧写操作统一从当前主体上下文获取平台管理员用户 ID，禁止再从请求体信任 `actor_id` 写审计字段。
-- 未携带有效平台管理员 Bearer token 或 session cookie 时，平台侧写操作返回未登录错误。
+- 邀请码解析必须从租户用户 session 派生 `user_id` 和 `tenant_id`，禁止信任请求体里的考生 ID。
+- 未携带有效平台管理员 Bearer token 或 session cookie 时，平台侧接口返回未登录错误。
 - `auth.session.secret` 留空时启动进程随机生成签名密钥；生产环境应通过环境变量注入稳定密钥。
 
-租户管理写操作的审计规则：
+租户管理操作的鉴权和审计规则：
 
 - 创建租户时，`created_by` 和 `updated_by` 写入当前平台管理员用户 ID。
 - 编辑租户资料、重置租户码、修改注册开关时，`updated_by` 写入当前平台管理员用户 ID。
-- 未携带有效平台管理员 Bearer token 或 session cookie 时，租户管理写操作返回未登录错误。
+- 列表、创建、编辑租户资料、重置租户码和修改注册开关都只允许平台管理员访问。
+- 管理端创建租户用户时必须显式提交初始密码并写入哈希；后端不得使用固定默认密码或固定临时密码。
 
-首版阅卷和成绩 API 仍使用显式权限上下文字段承载调用人身份，后续接入统一认证中间件后再收敛到登录态解析：
+阅卷和成绩 API 必须从登录态解析调用人身份。教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。成绩发布配置属于考试级管理操作，只允许平台管理员或本租户 `tenant_admin` 修改。
 
 ```text
 POST /api/v1/auth/tenant/register
@@ -1313,19 +1325,19 @@ POST /api/v1/uploads
      response: key, url, file_name, content_type, size
 
 GET  /api/v1/grading/pending
-     query: tenant_id, exam_id, actor_id, actor_role, space_id?
+     query: tenant_id, exam_id, space_id?
 
 POST /api/v1/exam-attempts/:attempt_id/questions/:attempt_question_id/grade
-     body: tenant_id, exam_id, actor_id, actor_role, space_id?, answer_version, score, comment?
+     body: tenant_id, exam_id, space_id?, answer_version, score, comment?
 
 GET  /api/v1/results
-     query: tenant_id, exam_id, actor_id, actor_role, space_id?
+     query: tenant_id, exam_id, space_id?
 
 POST /api/v1/results/publish-config
-     body: tenant_id, exam_id, actor_id, actor_role, space_id?, publish_mode, score_publish_time?
+     body: tenant_id, exam_id, publish_mode, score_publish_time?
 
 POST /api/v1/results/export
-     body: tenant_id, exam_id, actor_id, actor_role, space_id?
+     body: tenant_id, exam_id, space_id?
 ```
 
 列表接口统一分页参数：

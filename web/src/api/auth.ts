@@ -16,6 +16,12 @@ export type TenantRegisterInput = {
   email?: string;
 };
 
+export type TenantLoginInput = {
+  tenantID: number;
+  username: string;
+  password: string;
+};
+
 export type TenantRegisterResult = {
   id: number;
   tenantID: number;
@@ -28,6 +34,7 @@ export type TenantRegisterResult = {
 
 export type AuthAPI = {
   platformLogin(input: PlatformLoginInput): Promise<AuthSession>;
+  tenantLogin(input: TenantLoginInput): Promise<AuthSession>;
   tenantRegister(input: TenantRegisterInput): Promise<TenantRegisterResult>;
 };
 
@@ -62,6 +69,14 @@ export function createAuthAPI(apiClient: ApiClient): AuthAPI {
   return {
     async platformLogin(input) {
       const data = await apiClient.post<AuthSessionAPIResponse>("/api/v1/auth/platform/login", {
+        username: input.username,
+        password: input.password,
+      });
+      return mapAuthSessionResponse(data);
+    },
+    async tenantLogin(input) {
+      const data = await apiClient.post<AuthSessionAPIResponse>("/api/v1/auth/tenant/login", {
+        tenant_id: input.tenantID,
         username: input.username,
         password: input.password,
       });

@@ -24,6 +24,7 @@ export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }
   const [users, setUsers] = useState<TenantUserRow[]>([]);
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("student");
   const [avatarFileName, setAvatarFileName] = useState("");
   const [avatarResetKey, setAvatarResetKey] = useState(0);
@@ -81,6 +82,7 @@ export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }
       tenantID,
       name,
       username,
+      password,
       role,
       avatarFileName: avatarFileName || "未上传",
     });
@@ -88,6 +90,7 @@ export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }
     setUsers((items) => [...items, nextUser]);
     setName("");
     setUsername("");
+    setPassword("");
     setRole("student");
     setAvatarFileName("");
     setAvatarResetKey((value) => value + 1);
@@ -237,6 +240,16 @@ export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }
               <label className="field">
                 <span>账号</span>
                 <input onChange={(event) => setUsername(event.target.value)} required value={username} />
+              </label>
+              <label className="field">
+                <span>初始密码</span>
+                <input
+                  minLength={8}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  type="password"
+                  value={password}
+                />
               </label>
               <label className="field">
                 <span>角色</span>

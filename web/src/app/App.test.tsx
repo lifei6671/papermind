@@ -10,6 +10,7 @@ const originalMatchMedia = window.matchMedia;
 
 afterEach(() => {
   vi.restoreAllMocks();
+  window.localStorage.clear();
   Object.defineProperty(window, "matchMedia", {
     value: originalMatchMedia,
     writable: true,
@@ -40,6 +41,22 @@ function renderApp(initialEntries: string[]) {
       </MemoryRouter>
     </AppProviders>,
   );
+}
+
+function storePlatformSession() {
+  window.localStorage.setItem("papermind.session.v1", JSON.stringify({
+    accessToken: "session-token",
+    refreshToken: "session-token",
+    user: { userID: 1, displayName: "admin", role: "platform_admin" },
+  }));
+}
+
+function storeTenantStudentSession() {
+  window.localStorage.setItem("papermind.session.v1", JSON.stringify({
+    accessToken: "tenant-session-token",
+    refreshToken: "tenant-session-token",
+    user: { userID: 20, displayName: "目标考生", role: "student", tenantID: 77 },
+  }));
 }
 
 function mockStudentExamFetch() {
@@ -118,6 +135,8 @@ function createAttemptQuestion(
 }
 
 test("渲染 Papermind 管理端基础骨架", () => {
+  storePlatformSession();
+
   renderApp(["/"]);
 
   expect(screen.getByText("Papermind")).toBeInTheDocument();
@@ -126,9 +145,17 @@ test("渲染 Papermind 管理端基础骨架", () => {
   expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
 });
 
+test("未登录访问后台路由会跳转登录页", () => {
+  window.localStorage.removeItem("papermind.session.v1");
+
+  renderApp(["/tenants"]);
+
+  expect(screen.getByRole("heading", { name: "平台管理员登录" })).toBeInTheDocument();
+});
+
 test("学生考试端与管理员后台路由隔离", async () => {
   mockStudentExamFetch();
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
   expect(screen.getByText("PaperMind")).toBeInTheDocument();
@@ -147,7 +174,7 @@ test("考生编号折叠在右侧用户菜单中", async () => {
   const user = userEvent.setup();
   mockStudentExamFetch();
 
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   const profileButton = await screen.findByRole("button", { name: "张三" });
   expect(profileButton).toHaveAttribute("aria-expanded", "false");
@@ -168,7 +195,7 @@ test("学生考试端窄屏辅助信息使用抽屉展开", async () => {
   const user = userEvent.setup();
   mockStudentExamFetch();
 
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   const drawerToggle = await screen.findByRole("button", { name: "考试信息与答题卡" });
   expect(drawerToggle).toHaveAttribute("aria-expanded", "false");
@@ -187,7 +214,7 @@ test("H5 窄屏考试端直接使用真实 API 作答页", async () => {
   mockExamViewport(true);
   mockStudentExamFetch();
 
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
   expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
@@ -200,7 +227,7 @@ test("H5 窄屏答题卡通过考试抽屉展示并弹出确认交卷", async ()
   mockExamViewport(true);
   mockStudentExamFetch();
 
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   await user.click(await screen.findByRole("button", { name: "考试信息与答题卡" }));
 
@@ -220,7 +247,7 @@ test("确认交卷通过交互弹窗展示", async () => {
   const user = userEvent.setup();
   mockStudentExamFetch();
 
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   expect(screen.queryByRole("dialog", { name: "确认交卷" })).not.toBeInTheDocument();
 
@@ -236,7 +263,7 @@ test("确认交卷通过交互弹窗展示", async () => {
 
 test("自动保存提示不作为页面正文静态展示", () => {
   mockStudentExamFetch();
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   expect(screen.queryByRole("status", { name: "自动保存提示" })).not.toBeInTheDocument();
   expect(screen.queryByText("答案已自动保存")).not.toBeInTheDocument();
@@ -246,7 +273,7 @@ test("考试端支持全局题号切换和五类题型作答", async () => {
   const user = userEvent.setup();
   mockStudentExamFetch();
 
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
   await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "21" }));
@@ -274,7 +301,7 @@ test("考试端上报切屏事件并在交卷后展示成绩和解析", async ()
   const user = userEvent.setup();
   mockStudentExamFetch();
 
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
   act(() => {
@@ -296,7 +323,7 @@ test("考试端上报切屏事件并在交卷后展示成绩和解析", async ()
 
 test("简答题作答效果不作为当前考试页面正文展示", () => {
   mockStudentExamFetch();
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   expect(screen.queryByText("四、简答题（共30分）")).not.toBeInTheDocument();
   expect(screen.queryByPlaceholderText("请输入作答内容...")).not.toBeInTheDocument();
@@ -307,7 +334,7 @@ test("离开页面提醒通过确认弹窗展示", async () => {
   const user = userEvent.setup();
   mockStudentExamFetch();
 
-  renderApp(["/student/exam"]);
+  renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
   expect(screen.queryByRole("dialog", { name: "离开页面提醒" })).not.toBeInTheDocument();
 
@@ -323,6 +350,7 @@ test("离开页面提醒通过确认弹窗展示", async () => {
 
 test("考试入口支持邀请码进入并跳转到考试端", async () => {
   const user = userEvent.setup();
+  storeTenantStudentSession();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/exams/invite/resolve" && init?.method === "POST") {
@@ -330,8 +358,8 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
         code: 0,
         message: "ok",
         data: {
-          id: 1,
-          tenant_id: 10,
+          id: 42,
+          tenant_id: 77,
           paper_id: 100,
           name: "高一语文期中考试",
           start_time: 1779792000000,
@@ -345,7 +373,8 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
         },
       }));
     }
-    if (url === "/api/v1/exams/1/attempts/start" && init?.method === "POST") {
+    if (url === "/api/v1/exams/42/attempts/start" && init?.method === "POST") {
+      expect(init.body).toBe(JSON.stringify({ tenant_id: 77 }));
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
@@ -366,7 +395,10 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
   await waitFor(() => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/v1/exams/invite/resolve",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ invite_code: "PM2026" }),
+      }),
     );
   });
   expect(await screen.findByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
@@ -375,6 +407,7 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
 
 test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async () => {
   const user = userEvent.setup();
+  storePlatformSession();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.startsWith("/api/v1/grading/pending")) {
@@ -425,6 +458,7 @@ test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async ()
 
 test("成绩页支持发布配置和成绩导出", async () => {
   const user = userEvent.setup();
+  storePlatformSession();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.startsWith("/api/v1/results?")) {

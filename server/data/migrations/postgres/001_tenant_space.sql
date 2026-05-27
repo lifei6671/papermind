@@ -577,7 +577,7 @@ COMMENT ON COLUMN exams.updated_by IS '更新人用户 ID';
 COMMENT ON COLUMN exams.version IS '数据版本号，用于乐观锁';
 COMMENT ON COLUMN exams.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
 COMMENT ON COLUMN exams.deleted_at IS '软删除时间，0 表示未删除';
-CREATE UNIQUE INDEX IF NOT EXISTS uk_exams_invite_code ON exams (tenant_id, invite_code);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exams_invite_code ON exams (invite_code);
 
 CREATE TABLE IF NOT EXISTS exam_targets (
     id BIGSERIAL PRIMARY KEY,

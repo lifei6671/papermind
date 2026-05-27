@@ -6,13 +6,13 @@
 本地端到端联调时保持 `VITE_API_BASE_URL` 为空，让浏览器请求同源的 `/api/v1/...` 和 `/uploads/...`，再由 Vite 转发到后端，避免跨域问题和上传图片预览地址失效。
 
 ```bash
-pnpm dev
+npm run dev
 ```
 
 如需代理到其他后端地址，可以设置：
 
 ```bash
-VITE_API_PROXY_TARGET=http://localhost:8081 pnpm dev
+VITE_API_PROXY_TARGET=http://localhost:8081 npm run dev
 ```
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

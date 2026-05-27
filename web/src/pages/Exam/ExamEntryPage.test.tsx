@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { expect, test, vi } from "vitest";
 import type { ExamEntryAPI } from "../../api/exams";
+import { SessionContext } from "../../auth/session-context";
 import { ExamEntryPage } from "./ExamEntryPage";
 
 test("考试入口提交邀请码前先调用真实 API 校验", async () => {
@@ -25,7 +26,17 @@ test("考试入口提交邀请码前先调用真实 API 校验", async () => {
 
   render(
     <MemoryRouter>
-      <ExamEntryPage api={api} userID={20} />
+      <SessionContext.Provider value={{
+        session: {
+          accessToken: "tenant-token",
+          refreshToken: "tenant-token",
+          user: { userID: 20, displayName: "目标考生", role: "student", tenantID: 10 },
+        },
+        signIn: vi.fn(),
+        signOut: vi.fn(),
+      }}>
+        <ExamEntryPage api={api} />
+      </SessionContext.Provider>
     </MemoryRouter>,
   );
 
@@ -33,7 +44,7 @@ test("考试入口提交邀请码前先调用真实 API 校验", async () => {
   await user.click(screen.getByRole("button", { name: "进入考试" }));
 
   await waitFor(() => {
-    expect(api.resolveInvite).toHaveBeenCalledWith({ inviteCode: "PM2026", userID: 20 });
+    expect(api.resolveInvite).toHaveBeenCalledWith({ inviteCode: "PM2026" });
   });
   expect(screen.getByRole("status", { name: "entry-resolve-result" })).toHaveTextContent("高一语文期中考试");
 });
@@ -48,7 +59,17 @@ test("考试入口邀请码校验失败时停留在入口页", async () => {
 
   render(
     <MemoryRouter>
-      <ExamEntryPage api={api} userID={0} />
+      <SessionContext.Provider value={{
+        session: {
+          accessToken: "tenant-token",
+          refreshToken: "tenant-token",
+          user: { userID: 20, displayName: "目标考生", role: "student", tenantID: 10 },
+        },
+        signIn: vi.fn(),
+        signOut: vi.fn(),
+      }}>
+        <ExamEntryPage api={api} />
+      </SessionContext.Provider>
     </MemoryRouter>,
   );
 

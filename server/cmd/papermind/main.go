@@ -14,6 +14,7 @@ import (
 	dbdao "github.com/lifei6671/papermind/server/internal/dao/db"
 	"github.com/lifei6671/papermind/server/library/config"
 	"github.com/lifei6671/papermind/server/library/utils"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -45,25 +46,35 @@ func main() {
 		slog.Error("seed development data failed", "error", err)
 		os.Exit(1)
 	}
-	server := buildHTTPServer(cfg, v1.NewRouter(v1.RouterOptions{
-		DB:                   gormDB,
-		AuthSessionProvider:  cfg.Auth.Session.Provider,
-		AuthSessionSecret:    cfg.Auth.Session.Secret,
-		AuthSessionKeyPrefix: cfg.Auth.Session.KeyPrefix,
-		AuthSessionRedisAddr: cfg.Auth.Session.Redis.Addr,
-		AuthSessionRedisUser: cfg.Auth.Session.Redis.Username,
-		AuthSessionRedisPass: cfg.Auth.Session.Redis.Password,
-		AuthSessionRedisDB:   cfg.Auth.Session.Redis.DB,
-		AuthSessionTTL:       authSessionTTL(cfg),
-		ExportDir:            cfg.Storage.ExportDir,
-		UploadDir:            filepath.Join(cfg.Storage.ImportDir, "uploads"),
-	}))
+	server := buildHTTPServer(cfg, v1.NewRouter(routerOptionsFromConfig(cfg, gormDB)))
 	defer utils.SafeClose(server)
 	slog.Info("papermind http server starting", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("papermind http server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func routerOptionsFromConfig(cfg *config.Config, gormDB *gorm.DB) v1.RouterOptions {
+	options := v1.RouterOptions{
+		DB:             gormDB,
+		AuthSessionTTL: authSessionTTL(cfg),
+	}
+	if cfg == nil {
+		return options
+	}
+	options.AuthSessionProvider = cfg.Auth.Session.Provider
+	options.AuthSessionSecret = cfg.Auth.Session.Secret
+	options.AuthSessionKeyPrefix = cfg.Auth.Session.KeyPrefix
+	options.AuthSessionRedisAddr = cfg.Auth.Session.Redis.Addr
+	options.AuthSessionRedisUser = cfg.Auth.Session.Redis.Username
+	options.AuthSessionRedisPass = cfg.Auth.Session.Redis.Password
+	options.AuthSessionRedisDB = cfg.Auth.Session.Redis.DB
+	options.ExportDir = cfg.Storage.ExportDir
+	options.UploadDir = filepath.Join(cfg.Storage.ImportDir, "uploads")
+	options.AllowRegisterDefault = cfg.Security.AllowRegisterDefault
+	options.PasswordMinLength = cfg.Security.PasswordMinLength
+	return options
 }
 
 func configureConsoleLogger() {
@@ -95,7 +106,7 @@ func resolveConfigPath() string {
 	if path := os.Getenv("PAPERMIND_CONFIG"); path != "" {
 		return path
 	}
-	return firstExistingPath("conf/app.yaml", "server/conf/app.yaml")
+	return firstExistingPath("conf/app.yaml", "server/conf/app.yaml", "conf/app.example.yaml", "server/conf/app.example.yaml")
 }
 
 func resolveMigrationRoot() string {

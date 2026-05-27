@@ -17,14 +17,16 @@ func TestQuestionAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedQuestionAPITestData(t, gormDB)
+	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	listRecorder := httptest.NewRecorder()
-	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/questions?tenant_id=10", nil))
+	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/questions?tenant_id=10", nil, authHeader))
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
@@ -54,7 +56,7 @@ func TestQuestionAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 		]
 	}`, constant.QuestionTypeSingle))
 	createRecorder := httptest.NewRecorder()
-	router.ServeHTTP(createRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/questions", bytes.NewReader(payload)))
+	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/questions", payload, authHeader))
 	if createRecorder.Code != http.StatusOK {
 		t.Fatalf("create status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
 	}
@@ -70,17 +72,19 @@ func TestQuestionAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 func TestQuestionImportAPIRouteParsesCSVAndReturnsRowErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	requestBody, contentType := buildQuestionImportMultipart(t, fmt.Sprintf(`type,title,options,correct_answer,analysis,difficulty,tags
 %s,函数单调性判断,A.y = x|B.y = -x,A,一次函数斜率为正时单调递增。,medium,函数
 %s,无正确选项,A.正确|B.错误,,缺少正确答案。,medium,基础
 `, constant.QuestionTypeSingle, constant.QuestionTypeSingle))
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/questions/import", requestBody)
+	request := authorizedRequest(http.MethodPost, "/api/v1/questions/import", requestBody.Bytes(), authHeader)
 	request.Header.Set("Content-Type", contentType)
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {

@@ -37,7 +37,7 @@ description: Use when PaperMind changes affect docs, execution checklist progres
 
 - `web/README.md`
   - 前端开发、构建、测试和本地运行说明。
-  - 只在 Vite/React/pnpm 命令、环境变量、前端启动方式变化时更新。
+  - 只在 Vite/React/npm 命令、环境变量、前端启动方式变化时更新。
 
 - `AGENTS.md` / `AGENTS.override.md`
   - 长期协作规则、项目级编码规则、验证规则。
@@ -165,12 +165,12 @@ description: Use when PaperMind changes affect docs, execution checklist progres
 - 前端验证，工作目录 `web`：
 
   ```powershell
-  pnpm test
-  pnpm lint
-  pnpm build
+  npm test
+  npm run lint
+  npm run build
   ```
 
-- Windows 下如果 `pnpm build` 因 `node_modules/.pnpm/lock.yaml` 权限问题失败，可以改用：
+- Windows 下如果 `npm run build` 因本地工具链权限问题失败，可以改用：
 
   ```powershell
   .\node_modules\.bin\tsc.cmd -b
@@ -198,7 +198,7 @@ description: Use when PaperMind changes affect docs, execution checklist progres
 - 不要把 TODO、计划中、待验证的事项写成已完成。
 - 不要为了小改动大面积重写技术方案。
 - 不要提交密钥、Token、密码、私有配置或无关生成文件。
-- 不要把 `web/pnpm-lock.yaml` 这类意外副产物纳入提交，除非任务明确要求并已确认。
+- 不要把非当前包管理器生成的锁文件这类意外副产物纳入提交，除非任务明确要求并已确认。
 
 ## 输出要求
 

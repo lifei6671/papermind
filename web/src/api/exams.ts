@@ -34,7 +34,6 @@ export type PublishExamInput = {
 
 export type ResolveExamInviteInput = {
   inviteCode: string;
-  userID: number;
 };
 
 export type ExamListResult = {
@@ -72,7 +71,6 @@ export type StudentExamQuestion = {
 export type StartAttemptInput = {
   tenantID: number;
   examID: number;
-  userID: number;
 };
 
 export type StartAttemptResult = {
@@ -189,14 +187,12 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
     async resolveInvite(input) {
       const data = await apiClient.post<ExamAPIResponse>("/api/v1/exams/invite/resolve", {
         invite_code: input.inviteCode,
-        user_id: input.userID,
       });
       return mapExamResponse(data);
     },
     async startAttempt(input) {
       const data = await apiClient.post<StartAttemptAPIResponse>(`/api/v1/exams/${input.examID}/attempts/start`, {
         tenant_id: input.tenantID,
-        user_id: input.userID,
       });
       return {
         attemptID: data.attempt.id,

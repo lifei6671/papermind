@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lifei6671/papermind/server/library/crypto"
 	"gorm.io/gorm"
 )
 
@@ -141,20 +142,118 @@ func TestTenantRegisterAPIRouteCreatesStudentByTenantCode(t *testing.T) {
 		Scan(&row).Error; err != nil {
 		t.Fatalf("query registered user: %v", err)
 	}
-	if row.PasswordHash != "papermind123" || row.Role != "student" {
+	if row.PasswordHash == "papermind123" || !crypto.VerifyPassword(row.PasswordHash, "papermind123") || row.Role != "student" {
 		t.Fatalf("unexpected registered persistence: %#v", row)
+	}
+}
+
+func TestTenantRegisterAPIRouteRejectsShortPassword(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedTenantRegisterAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:                gormDB,
+		Now:               func() int64 { return fixedAPINow },
+		PasswordMinLength: 8,
+	})
+
+	payload := []byte(`{
+		"tenant_code": "PM-QT01",
+		"username": "student01",
+		"real_name": "张同学",
+		"password": "1234567"
+	}`)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/auth/tenant/register", bytes.NewReader(payload)))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("register status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte("密码至少需要 8 位")) {
+		t.Fatalf("expected password length message, body = %s", recorder.Body.String())
+	}
+}
+
+func TestProtectedWriteAPIRoutesRejectAnonymousRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:            gormDB,
+		Now:           func() int64 { return fixedAPINow },
+		CodeGenerator: fixedCodeGenerator{code: "PM2027"},
+	})
+
+	payload := []byte(`{
+		"tenant_id": 10,
+		"paper_id": 100,
+		"name": "高一语文月考试卷",
+		"target_type": "space",
+		"target_id": 200,
+		"start_time": 1772269200000,
+		"end_time": 1772276400000,
+		"duration_minutes": 120,
+		"max_attempts": 1,
+		"result_strategy": "latest",
+		"publish_mode": "manual_publish"
+	}`)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams", bytes.NewReader(payload)))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous publish status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestProtectedReadAPIRoutesRejectAnonymousRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+
+	cases := []struct {
+		name   string
+		method string
+		target string
+		body   []byte
+	}{
+		{name: "exams", method: http.MethodGet, target: "/api/v1/exams?tenant_id=10"},
+		{name: "spaces", method: http.MethodGet, target: "/api/v1/spaces?tenant_id=10"},
+		{name: "users", method: http.MethodGet, target: "/api/v1/users?tenant_id=10"},
+		{name: "questions", method: http.MethodGet, target: "/api/v1/questions?tenant_id=10"},
+		{name: "papers", method: http.MethodGet, target: "/api/v1/papers?tenant_id=10"},
+		{name: "paper rules", method: http.MethodGet, target: "/api/v1/papers/100/rules?tenant_id=10"},
+		{name: "paper sections", method: http.MethodGet, target: "/api/v1/papers/100/sections?tenant_id=10"},
+		{name: "rule live precheck", method: http.MethodPost, target: "/api/v1/papers/100/rule-live/precheck", body: []byte(`{"tenant_id":10}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.target, bytes.NewReader(tc.body)))
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("anonymous %s status = %d, body = %s", tc.name, recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
 func seedPlatformLoginAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash platform password: %v", err)
+	}
 
 	if err := gormDB.Exec(`
 		INSERT INTO platform_users (
 			id, username, avatar_url, phone, email, password_hash, last_login_ip, last_login_at, status,
 			created_at, updated_at, ext_json
 		) VALUES (?, ?, '', ?, ?, ?, '', 0, 'enabled', ?, ?, '{}')
-	`, 1, "admin", "admin-phone", "admin@example.test", "papermind123", fixedAPINow, fixedAPINow).Error; err != nil {
+	`, 1, "admin", "admin-phone", "admin@example.test", passwordHash, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed platform user: %v", err)
 	}
 }

@@ -21,6 +21,9 @@ func (FixedRoleChecker) CanManageTenant(ctx PermissionContext, tenantID uint64) 
 }
 
 func (FixedRoleChecker) CanManageSpace(ctx PermissionContext, spaceID uint64) error {
+	if ctx.SubjectType == SubjectPlatformUser {
+		return nil
+	}
 	if ctx.SubjectType != SubjectTenantUser {
 		return ErrForbidden
 	}
@@ -31,6 +34,9 @@ func (FixedRoleChecker) CanManageSpace(ctx PermissionContext, spaceID uint64) er
 }
 
 func (FixedRoleChecker) CanManageQuestion(ctx PermissionContext, questionID uint64) error {
+	if ctx.SubjectType == SubjectPlatformUser {
+		return nil
+	}
 	spaceID, ok := ctx.QuestionScope[questionID]
 	if !ok {
 		return ErrForbidden
@@ -39,6 +45,9 @@ func (FixedRoleChecker) CanManageQuestion(ctx PermissionContext, questionID uint
 }
 
 func (FixedRoleChecker) CanPublishExam(ctx PermissionContext, paperID uint64) error {
+	if ctx.SubjectType == SubjectPlatformUser {
+		return nil
+	}
 	spaceID, ok := ctx.PaperScope[paperID]
 	if !ok {
 		return ErrForbidden
@@ -47,6 +56,9 @@ func (FixedRoleChecker) CanPublishExam(ctx PermissionContext, paperID uint64) er
 }
 
 func (FixedRoleChecker) CanGradeExam(ctx PermissionContext, examID uint64) error {
+	if ctx.SubjectType == SubjectPlatformUser {
+		return nil
+	}
 	spaceID, ok := ctx.ExamScope[examID]
 	if !ok {
 		return ErrForbidden
@@ -55,6 +67,9 @@ func (FixedRoleChecker) CanGradeExam(ctx PermissionContext, examID uint64) error
 }
 
 func (FixedRoleChecker) CanGradeAttempt(ctx PermissionContext, attemptID uint64) error {
+	if ctx.SubjectType == SubjectPlatformUser {
+		return nil
+	}
 	spaceID, ok := ctx.AttemptScope[attemptID]
 	if !ok {
 		return ErrForbidden
@@ -77,6 +92,9 @@ func (FixedRoleChecker) CanTakeExam(ctx PermissionContext, examID uint64) error 
 }
 
 func canManageSpaceResource(ctx PermissionContext, spaceID uint64) error {
+	if ctx.SubjectType == SubjectPlatformUser {
+		return nil
+	}
 	if ctx.SubjectType != SubjectTenantUser {
 		return ErrForbidden
 	}

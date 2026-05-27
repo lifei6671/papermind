@@ -1,6 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import type { ReactElement } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { StudentExamPage } from "./StudentExamPage";
 import type { StudentExamAPI } from "../../api/exams";
 
@@ -18,7 +20,7 @@ describe("StudentExamPage", () => {
     const user = userEvent.setup();
     const api = createStudentExamApiDouble();
 
-    render(<StudentExamPage api={api} tenantID={10} examID={1} userID={20} />);
+    renderStudentExam(<StudentExamPage api={api} tenantID={10} examID={1} userID={20} />);
 
     expect(await screen.findByText("服务端题干")).toBeInTheDocument();
     await user.click(screen.getByLabelText(/A\./));
@@ -31,7 +33,7 @@ describe("StudentExamPage", () => {
         examToken: "exam-token",
         questionType: "single",
         optionIDs: [101],
-        text: "A.",
+        text: "A",
       });
     });
 
@@ -53,11 +55,32 @@ describe("StudentExamPage", () => {
     mockExamViewport(true);
     const api = createStudentExamApiDouble();
 
-    render(<StudentExamPage api={api} tenantID={10} examID={1} userID={20} />);
+    renderStudentExam(<StudentExamPage api={api} tenantID={10} examID={1} userID={20} />);
 
     expect(await screen.findByText("服务端题干")).toBeInTheDocument();
-    expect(api.startAttempt).toHaveBeenCalledWith({ tenantID: 10, examID: 1, userID: 20 });
+    expect(api.startAttempt).toHaveBeenCalledWith({ tenantID: 10, examID: 1 });
     expect(screen.queryByLabelText("开考前说明")).not.toBeInTheDocument();
+  });
+
+  test("选项作答按 optionMeta 提交 optionIDs 而不是反解析展示文案", async () => {
+    const user = userEvent.setup();
+    const api = createStudentExamApiDouble({
+      options: [
+        { id: 101, key: "A", content: "第一个选项" },
+        { id: 105, key: "E", content: "第五个选项" },
+      ],
+    });
+
+    renderStudentExam(<StudentExamPage api={api} tenantID={10} examID={1} userID={20} />);
+
+    await user.click(await screen.findByLabelText("E.第五个选项"));
+
+    await waitFor(() => {
+      expect(api.saveAnswer).toHaveBeenCalledWith(expect.objectContaining({
+        optionIDs: [105],
+        text: "E",
+      }));
+    });
   });
 });
 
@@ -77,7 +100,11 @@ function mockExamViewport(matchesNarrow: boolean) {
   });
 }
 
-function createStudentExamApiDouble(): StudentExamAPI {
+function renderStudentExam(element: ReactElement) {
+  return render(<MemoryRouter>{element}</MemoryRouter>);
+}
+
+function createStudentExamApiDouble(options: { options?: Array<{ id: number; key: string; content: string }> } = {}): StudentExamAPI {
   return {
     startAttempt: vi.fn(async () => ({
       attemptID: 99,
@@ -91,7 +118,7 @@ function createStudentExamApiDouble(): StudentExamAPI {
         type: "single" as const,
         stem: "服务端题干",
         score: 2,
-        options: [
+        options: options.options ?? [
           { id: 101, key: "A", content: "正确选项" },
           { id: 102, key: "B", content: "干扰项" },
         ],

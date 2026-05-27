@@ -3,6 +3,7 @@ package exam
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -253,6 +254,36 @@ func TestStartEventConsumerPersistsQueuedEventsAsynchronously(t *testing.T) {
 	if len(repo.events) != 1 || repo.events[0].EventType != EventTypeFocus {
 		t.Fatalf("expected focus event persisted by consumer, got %#v", repo.events)
 	}
+}
+
+func TestRecordEventConcurrentThrottleIsRaceFree(t *testing.T) {
+	repo := newFakeTakingRepository()
+	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.attempt = Attempt{
+		ID:                 99,
+		TenantID:           10,
+		ExamID:             1,
+		Status:             AttemptStatusInProgress,
+		StartedAt:          fixedUnixMilli,
+		ExamTokenHash:      HashExamToken("exam-token"),
+		ExamTokenExpiresAt: fixedUnixMilli + 35*minuteMillis,
+	}
+	svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: repo.currentTime, EventBufferSize: 128})
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := svc.RecordEvent(context.Background(), RecordEventInput{TenantID: 10, AttemptID: 99, ExamToken: "exam-token", EventType: EventTypeBlur}); err != nil {
+				t.Errorf("RecordEvent returned error: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
 }
 
 func TestGradeObjectiveQuestionsAppliesSnapshotRulesAndLeavesShortTextPending(t *testing.T) {

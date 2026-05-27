@@ -1,7 +1,6 @@
 package v1
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,14 +15,16 @@ func TestPaperAPIRoutesListSectionsAndAddManualQuestionWithSQLite(t *testing.T) 
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedPaperAPITestData(t, gormDB)
+	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	listRecorder := httptest.NewRecorder()
-	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/papers?tenant_id=10", nil))
+	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers?tenant_id=10", nil, authHeader))
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
@@ -33,7 +34,7 @@ func TestPaperAPIRoutesListSectionsAndAddManualQuestionWithSQLite(t *testing.T) 
 	}
 
 	sectionsRecorder := httptest.NewRecorder()
-	router.ServeHTTP(sectionsRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/papers/100/sections?tenant_id=10", nil))
+	router.ServeHTTP(sectionsRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers/100/sections?tenant_id=10", nil, authHeader))
 	if sectionsRecorder.Code != http.StatusOK {
 		t.Fatalf("sections status = %d, body = %s", sectionsRecorder.Code, sectionsRecorder.Body.String())
 	}
@@ -49,7 +50,7 @@ func TestPaperAPIRoutesListSectionsAndAddManualQuestionWithSQLite(t *testing.T) 
 		"instructions": "请完成语言文字基础题"
 	}`, constant.QuestionTypeSingle))
 	createSectionRecorder := httptest.NewRecorder()
-	router.ServeHTTP(createSectionRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/papers/100/sections", bytes.NewReader(createSectionPayload)))
+	router.ServeHTTP(createSectionRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/sections", createSectionPayload, authHeader))
 	if createSectionRecorder.Code != http.StatusOK {
 		t.Fatalf("create section status = %d, body = %s", createSectionRecorder.Code, createSectionRecorder.Body.String())
 	}
@@ -64,7 +65,7 @@ func TestPaperAPIRoutesListSectionsAndAddManualQuestionWithSQLite(t *testing.T) 
 		"score": "4"
 	}`)
 	addQuestionRecorder := httptest.NewRecorder()
-	router.ServeHTTP(addQuestionRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/papers/100/sections/1/questions", bytes.NewReader(addQuestionPayload)))
+	router.ServeHTTP(addQuestionRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/sections/1/questions", addQuestionPayload, authHeader))
 	if addQuestionRecorder.Code != http.StatusOK {
 		t.Fatalf("add question status = %d, body = %s", addQuestionRecorder.Code, addQuestionRecorder.Body.String())
 	}
@@ -90,11 +91,13 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 	gormDB := openExamAPITestDB(t)
 	seedPaperAPITestData(t, gormDB)
 	seedPaperRuleAPITestData(t, gormDB)
+	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	createRulePayload := []byte(`{
 		"tenant_id": 10,
@@ -105,7 +108,7 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 		"score_per_question": "4"
 	}`)
 	createRuleRecorder := httptest.NewRecorder()
-	router.ServeHTTP(createRuleRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/papers/100/sections/1/rules", bytes.NewReader(createRulePayload)))
+	router.ServeHTTP(createRuleRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/sections/1/rules", createRulePayload, authHeader))
 	if createRuleRecorder.Code != http.StatusOK {
 		t.Fatalf("create rule status = %d, body = %s", createRuleRecorder.Code, createRuleRecorder.Body.String())
 	}
@@ -115,7 +118,7 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 	}
 
 	listRulesRecorder := httptest.NewRecorder()
-	router.ServeHTTP(listRulesRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/papers/100/rules?tenant_id=10", nil))
+	router.ServeHTTP(listRulesRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers/100/rules?tenant_id=10", nil, authHeader))
 	if listRulesRecorder.Code != http.StatusOK {
 		t.Fatalf("list rules status = %d, body = %s", listRulesRecorder.Code, listRulesRecorder.Body.String())
 	}
@@ -126,7 +129,7 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 
 	generatePayload := []byte(`{"tenant_id": 10}`)
 	generateRecorder := httptest.NewRecorder()
-	router.ServeHTTP(generateRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/papers/100/rule-fixed/generate", bytes.NewReader(generatePayload)))
+	router.ServeHTTP(generateRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/rule-fixed/generate", generatePayload, authHeader))
 	if generateRecorder.Code != http.StatusOK {
 		t.Fatalf("generate rule_fixed status = %d, body = %s", generateRecorder.Code, generateRecorder.Body.String())
 	}
@@ -147,7 +150,7 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 	}
 
 	precheckRecorder := httptest.NewRecorder()
-	router.ServeHTTP(precheckRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/papers/100/rule-live/precheck", bytes.NewReader(generatePayload)))
+	router.ServeHTTP(precheckRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/rule-live/precheck", generatePayload, authHeader))
 	if precheckRecorder.Code != http.StatusOK {
 		t.Fatalf("precheck rule_live status = %d, body = %s", precheckRecorder.Code, precheckRecorder.Body.String())
 	}

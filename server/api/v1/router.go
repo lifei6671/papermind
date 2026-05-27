@@ -25,8 +25,15 @@ import (
 	"github.com/lifei6671/papermind/server/internal/storage"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/constant"
+	"github.com/lifei6671/papermind/server/library/crypto"
 	"github.com/lifei6671/papermind/server/library/response"
 	"gorm.io/gorm"
+)
+
+const (
+	examEntrySessionTenantIDKey = "exam_entry_tenant_id"
+	examEntrySessionExamIDKey   = "exam_entry_exam_id"
+	examEntrySessionUserIDKey   = "exam_entry_user_id"
 )
 
 type RouterOptions struct {
@@ -46,6 +53,7 @@ type RouterOptions struct {
 	ExportDir            string
 	UploadDir            string
 	UploadStore          storage.ObjectStore
+	PasswordMinLength    int
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -64,6 +72,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		Repo: examRepository,
 		Now:  options.Now,
 	})
+	takingService.StartEventConsumer(context.Background())
 	reviewService := serviceexam.NewReviewService(serviceexam.ReviewServiceOptions{
 		Repo:              examRepository,
 		PermissionChecker: permission.NewFixedRoleChecker(),
@@ -93,13 +102,13 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		SpaceAdminInvariantChecker: spaceRepository,
 		Now:                        options.Now,
 	})
-	examHandler := examHandler{service: examService, taking: takingService, review: reviewService, export: exportService, now: defaultRouterNow(options.Now)}
+	examHandler := examHandler{service: examService, taking: takingService, review: reviewService, export: exportService, members: spaceRepository, now: defaultRouterNow(options.Now)}
 	tenantHandler := tenantHandler{service: tenantService}
 	spaceHandler := spaceHandler{service: spaceService, members: spaceRepository}
-	userHandler := userHandler{service: userService}
+	userHandler := userHandler{service: userService, passwordMinLength: options.PasswordMinLength}
 	questionHandler := questionHandler{service: questionService}
 	paperHandler := paperHandler{service: paperService}
-	authHandler := authHandler{platformUsers: platformUserService, tenantUsers: userService, sessionMaxAgeSeconds: options.AuthSessionTTL}
+	authHandler := authHandler{platformUsers: platformUserService, tenantUsers: userService, sessionMaxAgeSeconds: options.AuthSessionTTL, passwordMinLength: options.PasswordMinLength}
 	uploadDir := defaultUploadDir(options.UploadDir)
 	uploadHandler := uploadHandler{store: defaultUploadStore(options.UploadStore, uploadDir), now: time.Now}
 	sessionStore := defaultAuthSessionStore(options)
@@ -110,41 +119,42 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	router.StaticFS("/uploads", gin.Dir(uploadDir, false))
 	api := router.Group("/api/v1")
 	api.POST("/auth/platform/login", authHandler.platformLogin)
+	api.POST("/auth/tenant/login", authHandler.tenantLogin)
 	api.POST("/auth/tenant/register", authHandler.tenantRegister)
-	api.GET("/exams", examHandler.list)
-	api.POST("/exams", examHandler.publish)
+	api.GET("/exams", requireTenantAdminOrPlatformPrincipalMiddleware(), examHandler.list)
+	api.POST("/exams", requireTenantAdminOrPlatformPrincipalMiddleware(), examHandler.publish)
 	api.POST("/exams/invite/resolve", examHandler.resolveInvite)
 	api.POST("/exams/:id/attempts/start", examHandler.startAttempt)
 	api.POST("/exam-attempts/:attempt_id/answers/:attempt_question_id", examHandler.saveAnswer)
 	api.POST("/exam-attempts/:attempt_id/submit", examHandler.submitAttempt)
 	api.POST("/exam-attempts/:attempt_id/events", examHandler.recordEvent)
-	api.GET("/grading/pending", examHandler.listPendingReviews)
-	api.POST("/exam-attempts/:attempt_id/questions/:attempt_question_id/grade", examHandler.gradeShortText)
-	api.GET("/results", examHandler.listResults)
-	api.POST("/results/publish-config", examHandler.saveResultPublishConfig)
-	api.POST("/results/export", examHandler.exportResults)
-	api.GET("/tenants", tenantHandler.list)
-	api.POST("/tenants", tenantHandler.create)
-	api.POST("/tenants/:id/profile", tenantHandler.updateProfile)
-	api.POST("/tenants/:id/reset-code", tenantHandler.resetCode)
-	api.POST("/tenants/:id/register-setting", tenantHandler.updateRegisterSetting)
-	api.POST("/uploads", uploadHandler.create)
-	api.GET("/spaces", spaceHandler.list)
-	api.POST("/spaces", spaceHandler.create)
-	api.GET("/users", userHandler.list)
-	api.POST("/users", userHandler.create)
-	api.POST("/users/:id/disable", userHandler.disable)
-	api.GET("/questions", questionHandler.list)
-	api.POST("/questions", questionHandler.create)
-	api.POST("/questions/import", questionHandler.importQuestions)
-	api.GET("/papers", paperHandler.list)
-	api.GET("/papers/:id/rules", paperHandler.listRules)
-	api.POST("/papers/:id/rule-fixed/generate", paperHandler.generateRuleFixed)
-	api.POST("/papers/:id/rule-live/precheck", paperHandler.precheckRuleLive)
-	api.GET("/papers/:id/sections", paperHandler.listSections)
-	api.POST("/papers/:id/sections", paperHandler.createSection)
-	api.POST("/papers/:id/sections/:section_id/questions", paperHandler.addManualQuestion)
-	api.POST("/papers/:id/sections/:section_id/rules", paperHandler.createRule)
+	api.GET("/grading/pending", requireAuthPrincipalMiddleware(), examHandler.listPendingReviews)
+	api.POST("/exam-attempts/:attempt_id/questions/:attempt_question_id/grade", requireAuthPrincipalMiddleware(), examHandler.gradeShortText)
+	api.GET("/results", requireAuthPrincipalMiddleware(), examHandler.listResults)
+	api.POST("/results/publish-config", requireAuthPrincipalMiddleware(), examHandler.saveResultPublishConfig)
+	api.POST("/results/export", requireAuthPrincipalMiddleware(), examHandler.exportResults)
+	api.GET("/tenants", requirePlatformPrincipalMiddleware(), tenantHandler.list)
+	api.POST("/tenants", requirePlatformPrincipalMiddleware(), tenantHandler.create)
+	api.POST("/tenants/:id/profile", requirePlatformPrincipalMiddleware(), tenantHandler.updateProfile)
+	api.POST("/tenants/:id/reset-code", requirePlatformPrincipalMiddleware(), tenantHandler.resetCode)
+	api.POST("/tenants/:id/register-setting", requirePlatformPrincipalMiddleware(), tenantHandler.updateRegisterSetting)
+	api.POST("/uploads", requireTenantAdminOrPlatformPrincipalMiddleware(), uploadHandler.create)
+	api.GET("/spaces", requireTenantAdminOrPlatformPrincipalMiddleware(), spaceHandler.list)
+	api.POST("/spaces", requireTenantAdminOrPlatformPrincipalMiddleware(), spaceHandler.create)
+	api.GET("/users", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.list)
+	api.POST("/users", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.create)
+	api.POST("/users/:id/disable", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.disable)
+	api.GET("/questions", requireTenantAdminOrPlatformPrincipalMiddleware(), questionHandler.list)
+	api.POST("/questions", requireTenantAdminOrPlatformPrincipalMiddleware(), questionHandler.create)
+	api.POST("/questions/import", requireTenantAdminOrPlatformPrincipalMiddleware(), questionHandler.importQuestions)
+	api.GET("/papers", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.list)
+	api.GET("/papers/:id/rules", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.listRules)
+	api.POST("/papers/:id/rule-fixed/generate", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.generateRuleFixed)
+	api.POST("/papers/:id/rule-live/precheck", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.precheckRuleLive)
+	api.GET("/papers/:id/sections", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.listSections)
+	api.POST("/papers/:id/sections", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.createSection)
+	api.POST("/papers/:id/sections/:section_id/questions", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.addManualQuestion)
+	api.POST("/papers/:id/sections/:section_id/rules", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.createRule)
 	return router
 }
 
@@ -202,7 +212,12 @@ type examHandler struct {
 	taking  *serviceexam.TakingService
 	review  *serviceexam.ReviewService
 	export  *serviceexam.ExportService
+	members spaceMemberFinder
 	now     func() int64
+}
+
+type spaceMemberFinder interface {
+	FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (servicespace.Member, error)
 }
 
 type publishExamRequest struct {
@@ -416,6 +431,9 @@ func (h examHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
+	if !authorizeTenantManagement(c, tenantID) {
+		return
+	}
 	page, pageSize, err := readPaginationQuery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
@@ -447,6 +465,9 @@ func (h examHandler) publish(c *gin.Context) {
 	}
 	if err := request.validate(); err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeTenantManagement(c, request.TenantID) {
 		return
 	}
 	draft, err := h.service.CreateDraft(c.Request.Context(), serviceexam.CreateDraftInput{
@@ -499,16 +520,64 @@ func (h examHandler) resolveInvite(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录或注册后进入考试"))
+		return
+	}
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID == 0 {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "只有租户用户可以进入考试"))
+		return
+	}
 	// 邀请码入口先解析考试基础信息；真正创建 attempt 和 exam token 放在答题页 API 中处理。
 	exam, err := h.service.ResolveInvite(c.Request.Context(), serviceexam.ResolveInviteInput{
 		InviteCode: request.InviteCode,
-		UserID:     request.UserID,
+		UserID:     principal.UserID,
 	})
 	if err != nil {
 		writeExamServiceError(c, err)
 		return
 	}
+	if principal.TenantID != exam.TenantID {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "当前登录用户不属于该考试租户"))
+		return
+	}
+	if err := saveExamEntrySession(c, exam, principal.UserID); err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存考试入口会话失败"))
+		return
+	}
 	c.JSON(http.StatusOK, response.OK(examToResponse(exam)))
+}
+
+func saveExamEntrySession(c *gin.Context, exam serviceexam.Exam, userID uint64) error {
+	session := sessions.Default(c)
+	session.Set(examEntrySessionTenantIDKey, exam.TenantID)
+	session.Set(examEntrySessionExamIDKey, exam.ID)
+	session.Set(examEntrySessionUserIDKey, userID)
+	session.Options(sessions.Options{
+		Path:     "/",
+		MaxAge:   int(24 * time.Hour / time.Second),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return session.Save()
+}
+
+func examEntrySessionUser(c *gin.Context, tenantID uint64, examID uint64) (uint64, bool) {
+	session := sessions.Default(c)
+	sessionTenantID, ok := sessionUint64(session.Get(examEntrySessionTenantIDKey))
+	if !ok || sessionTenantID != tenantID {
+		return 0, false
+	}
+	sessionExamID, ok := sessionUint64(session.Get(examEntrySessionExamIDKey))
+	if !ok || sessionExamID != examID {
+		return 0, false
+	}
+	userID, ok := sessionUint64(session.Get(examEntrySessionUserIDKey))
+	if !ok || userID == 0 {
+		return 0, false
+	}
+	return userID, true
 }
 
 func (h examHandler) startAttempt(c *gin.Context) {
@@ -522,14 +591,23 @@ func (h examHandler) startAttempt(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
 		return
 	}
-	if request.TenantID == 0 || request.UserID == 0 {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 和 user_id 必须是正整数"))
+	if request.TenantID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	userID, ok := examEntrySessionUser(c, request.TenantID, examID)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先通过邀请码进入考试"))
+		return
+	}
+	if request.UserID != 0 && request.UserID != userID {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "考试入口身份不匹配"))
 		return
 	}
 	started, err := h.service.StartExam(c.Request.Context(), serviceexam.StartInput{
 		TenantID: request.TenantID,
 		ExamID:   examID,
-		UserID:   request.UserID,
+		UserID:   userID,
 	})
 	if err != nil {
 		writeExamServiceError(c, err)
@@ -676,7 +754,7 @@ func (h examHandler) listPendingReviews(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "exam_id 必须是正整数"))
 		return
 	}
-	permissionContext, err := readActorPermissionQuery(c, tenantID, examID, 0)
+	permissionContext, err := h.readActorPermissionQuery(c, tenantID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
@@ -717,7 +795,7 @@ func (h examHandler) gradeShortText(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、exam_id、answer_version 和 score 不能为空"))
 		return
 	}
-	permissionContext, err := request.actorPermissionRequest.toPermissionContext(request.TenantID, request.ExamID, attemptID)
+	permissionContext, err := h.permissionContextFromSession(c, request.TenantID, request.SpaceID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
@@ -753,7 +831,7 @@ func (h examHandler) listResults(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "exam_id 必须是正整数"))
 		return
 	}
-	permissionContext, err := readActorPermissionQuery(c, tenantID, examID, 0)
+	permissionContext, err := h.readActorPermissionQuery(c, tenantID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
@@ -784,12 +862,12 @@ func (h examHandler) saveResultPublishConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、exam_id 和 publish_mode 不能为空"))
 		return
 	}
-	permissionContext, err := request.actorPermissionRequest.toPermissionContext(request.TenantID, request.ExamID, 0)
+	permissionContext, err := h.permissionContextFromSession(c, request.TenantID, request.SpaceID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if err := permission.NewFixedRoleChecker().CanGradeExam(permissionContext, request.ExamID); err != nil {
+	if err := permission.NewFixedRoleChecker().CanManageTenant(permissionContext, request.TenantID); err != nil {
 		writePermissionOrInternalError(c, err, "保存成绩发布配置失败")
 		return
 	}
@@ -817,7 +895,7 @@ func (h examHandler) exportResults(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 和 exam_id 不能为空"))
 		return
 	}
-	permissionContext, err := request.actorPermissionRequest.toPermissionContext(request.TenantID, request.ExamID, 0)
+	permissionContext, err := h.permissionContextFromSession(c, request.TenantID, request.SpaceID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
@@ -880,6 +958,7 @@ func writeExamServiceError(c *gin.Context, err error) {
 		errors.Is(err, serviceexam.ErrShortTextCannotRepeatAttempt) ||
 		errors.Is(err, serviceexam.ErrShortTextCannotImmediateScore) ||
 		errors.Is(err, serviceexam.ErrDuplicateExamTarget) ||
+		errors.Is(err, serviceexam.ErrRuleLiveQuestionPoolInsufficient) ||
 		errors.Is(err, serviceexam.ErrLoginRequiredForInvite) ||
 		errors.Is(err, serviceexam.ErrMaxAttemptsReached) ||
 		errors.Is(err, serviceexam.ErrExamNotStarted) ||
@@ -902,20 +981,12 @@ func writeTakingServiceError(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "作答操作失败"))
 }
 
-func readActorPermissionQuery(c *gin.Context, tenantID uint64, examID uint64, attemptID uint64) (permission.PermissionContext, error) {
-	actorID, err := readOptionalUintQueryValue(c, "actor_id")
-	if err != nil {
-		return permission.PermissionContext{}, errors.New("actor_id 必须是正整数")
-	}
+func (h examHandler) readActorPermissionQuery(c *gin.Context, tenantID uint64) (permission.PermissionContext, error) {
 	spaceID, err := readOptionalUintQueryValue(c, "space_id")
 	if err != nil {
 		return permission.PermissionContext{}, errors.New("space_id 必须是正整数")
 	}
-	return actorPermissionRequest{
-		ActorID:   actorID,
-		ActorRole: c.Query("actor_role"),
-		SpaceID:   spaceID,
-	}.toPermissionContext(tenantID, examID, attemptID)
+	return h.permissionContextFromSession(c, tenantID, spaceID)
 }
 
 func readOptionalUintQueryValue(c *gin.Context, key string) (uint64, error) {
@@ -930,39 +1001,45 @@ func readOptionalUintQueryValue(c *gin.Context, key string) (uint64, error) {
 	return value, nil
 }
 
-func (r actorPermissionRequest) toPermissionContext(tenantID uint64, examID uint64, attemptID uint64) (permission.PermissionContext, error) {
-	actorID := r.ActorID
-	if actorID == 0 {
-		actorID = 1
-	}
-	role := r.ActorRole
-	if role == "" {
-		role = permission.RoleTenantAdmin
-	}
-	if role != permission.RoleTenantAdmin && role != permission.RoleSpaceAdmin && role != permission.RoleTeacher && role != permission.RoleStudent {
-		return permission.PermissionContext{}, errors.New("actor_role 只能是 tenant_admin、space_admin、teacher 或 student")
-	}
-	if role != permission.RoleTenantAdmin && r.SpaceID == 0 {
-		return permission.PermissionContext{}, errors.New("space_id 必须是正整数")
+func (h examHandler) permissionContextFromSession(c *gin.Context, tenantID uint64, spaceID uint64) (permission.PermissionContext, error) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		return permission.PermissionContext{}, errors.New("请先登录")
 	}
 	ctx := permission.PermissionContext{
-		SubjectType:  permission.SubjectTenantUser,
-		UserID:       actorID,
+		SubjectType:  principal.SubjectType,
+		UserID:       principal.UserID,
 		TenantID:     tenantID,
 		SpaceRoles:   map[uint64]string{},
 		ExamScope:    map[uint64]uint64{},
 		AttemptScope: map[uint64]uint64{},
 	}
-	if role == permission.RoleTenantAdmin {
+	if principal.SubjectType == permission.SubjectPlatformUser {
+		return ctx, nil
+	}
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
+		return permission.PermissionContext{}, permission.ErrForbidden
+	}
+	switch principal.Role {
+	case permission.RoleTenantAdmin:
 		ctx.TenantRoles = []string{permission.RoleTenantAdmin}
-	} else {
-		ctx.SpaceRoles[r.SpaceID] = role
-	}
-	if examID != 0 {
-		ctx.ExamScope[examID] = r.SpaceID
-	}
-	if attemptID != 0 {
-		ctx.AttemptScope[attemptID] = r.SpaceID
+	case permission.RoleSpaceAdmin, permission.RoleTeacher, permission.RoleStudent:
+		if spaceID == 0 {
+			return permission.PermissionContext{}, errors.New("space_id 必须是正整数")
+		}
+		member, err := h.members.FindMember(c.Request.Context(), tenantID, spaceID, principal.UserID)
+		if errors.Is(err, servicespace.ErrMemberNotFound) {
+			return permission.PermissionContext{}, permission.ErrForbidden
+		}
+		if err != nil {
+			return permission.PermissionContext{}, err
+		}
+		if member.Status != servicespace.StatusEnabled {
+			return permission.PermissionContext{}, permission.ErrForbidden
+		}
+		ctx.SpaceRoles[spaceID] = member.Role
+	default:
+		return permission.PermissionContext{}, permission.ErrForbidden
 	}
 	return ctx, nil
 }
@@ -973,6 +1050,24 @@ func writePermissionOrInternalError(c *gin.Context, err error, fallback string) 
 		return
 	}
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, fallback))
+}
+
+func authorizeTenantManagement(c *gin.Context, tenantID uint64) bool {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return false
+	}
+	if principal.SubjectType == permission.SubjectPlatformUser {
+		return true
+	}
+	if principal.SubjectType == permission.SubjectTenantUser &&
+		principal.Role == permission.RoleTenantAdmin &&
+		principal.TenantID == tenantID {
+		return true
+	}
+	c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+	return false
 }
 
 func readUintQuery(c *gin.Context, key string) (uint64, error) {
@@ -1367,6 +1462,9 @@ func (h spaceHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
+	if !authorizeTenantManagement(c, tenantID) {
+		return
+	}
 	page, pageSize, err := readPaginationQuery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
@@ -1403,6 +1501,9 @@ func (h spaceHandler) create(c *gin.Context) {
 	}
 	if err := request.validate(); err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeTenantManagement(c, request.TenantID) {
 		return
 	}
 	space, err := h.service.Create(c.Request.Context(), servicespace.CreateInput{
@@ -1481,7 +1582,8 @@ func writeSpaceServiceError(c *gin.Context, err error) {
 }
 
 type userHandler struct {
-	service *servicetenantuser.Service
+	service           *servicetenantuser.Service
+	passwordMinLength int
 }
 
 type createUserRequest struct {
@@ -1489,6 +1591,7 @@ type createUserRequest struct {
 	Username  string `json:"username"`
 	RealName  string `json:"real_name"`
 	AvatarURL string `json:"avatar_url"`
+	Password  string `json:"password"`
 	Role      string `json:"role"`
 }
 
@@ -1520,6 +1623,9 @@ func (h userHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
+	if !authorizeTenantManagement(c, tenantID) {
+		return
+	}
 	page, pageSize, err := readPaginationQuery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
@@ -1549,8 +1655,16 @@ func (h userHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
 		return
 	}
-	if err := request.validate(); err != nil {
+	if err := request.validate(h.passwordMinLength); err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeTenantManagement(c, request.TenantID) {
+		return
+	}
+	passwordHash, err := crypto.HashPassword(request.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "生成密码失败"))
 		return
 	}
 	user, err := h.service.Create(c.Request.Context(), servicetenantuser.CreateInput{
@@ -1558,7 +1672,7 @@ func (h userHandler) create(c *gin.Context) {
 		Username:     request.Username,
 		RealName:     request.RealName,
 		AvatarURL:    request.AvatarURL,
-		PasswordHash: "temporary-password-hash",
+		PasswordHash: passwordHash,
 		Role:         request.Role,
 	})
 	if err != nil {
@@ -1583,6 +1697,9 @@ func (h userHandler) disable(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
+	if !authorizeTenantManagement(c, request.TenantID) {
+		return
+	}
 	if err := h.service.Disable(c.Request.Context(), servicetenantuser.DisableInput{
 		TenantID: request.TenantID,
 		ActorID:  request.ActorID,
@@ -1599,7 +1716,7 @@ func (h userHandler) disable(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
 }
 
-func (r createUserRequest) validate() error {
+func (r createUserRequest) validate(passwordMinLength int) error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
 	}
@@ -1608,6 +1725,12 @@ func (r createUserRequest) validate() error {
 	}
 	if r.RealName == "" {
 		return errors.New("real_name 不能为空")
+	}
+	if r.Password == "" {
+		return errors.New("password 不能为空")
+	}
+	if err := validatePasswordMinLength(r.Password, passwordMinLength); err != nil {
+		return err
 	}
 	if r.Role != servicetenantuser.RoleTenantAdmin && r.Role != servicetenantuser.RoleTeacher && r.Role != servicetenantuser.RoleStudent {
 		return errors.New("role 只能是 tenant_admin、teacher 或 student")
@@ -1708,6 +1831,9 @@ func (h questionHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
+	if !authorizeTenantManagement(c, tenantID) {
+		return
+	}
 	spaceID, err := readOptionalUintQuery(c, "space_id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
@@ -1749,6 +1875,9 @@ func (h questionHandler) create(c *gin.Context) {
 	}
 	if err := request.validate(); err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeTenantManagement(c, request.TenantID) {
 		return
 	}
 	created, err := h.service.CreateQuestion(c.Request.Context(), servicequestion.CreateQuestionInput{

@@ -17,6 +17,7 @@ func TestExportServiceWritesExamScoresWithRequiredFields(t *testing.T) {
 		rows: []ScoreExportRow{
 			{
 				StudentName:     "张三",
+				SpaceID:         301,
 				SpaceName:       "高一一班",
 				AttemptNo:       2,
 				ObjectiveScore:  "8",
@@ -62,6 +63,28 @@ func TestExportServiceCreatesConfiguredExportDir(t *testing.T) {
 	}
 	if _, err := os.Stat(result.FilePath); err != nil {
 		t.Fatalf("expected export file created: %v", err)
+	}
+}
+
+func TestExportServiceFiltersRowsByActualSpaceScope(t *testing.T) {
+	repo := &fakeExportRepository{
+		rows: []ScoreExportRow{
+			{StudentName: "张三", SpaceID: 301, SpaceName: "一班", TotalScore: "10"},
+			{StudentName: "李四", SpaceID: 302, SpaceName: "二班", TotalScore: "12"},
+		},
+	}
+	svc := NewExportService(ExportServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), ExportDir: t.TempDir(), Now: fixedNow})
+
+	rows, err := svc.ListExamScores(context.Background(), ListExamScoresInput{
+		Permission: exportPermissionContext(),
+		TenantID:   10,
+		ExamID:     20,
+	})
+	if err != nil {
+		t.Fatalf("ListExamScores returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].StudentName != "张三" {
+		t.Fatalf("expected only rows in actual allowed space, got %#v", rows)
 	}
 }
 

@@ -2,6 +2,8 @@ FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 
+RUN apk add --no-cache build-base
+
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 
@@ -17,7 +19,7 @@ RUN addgroup -S papermind && adduser -S papermind -G papermind \
   && chown -R papermind:papermind /var/lib/papermind
 
 COPY --from=build /out/papermind /app/papermind
-COPY server/conf/app.example.yaml /app/conf/app.example.yaml
+COPY server/conf/app.example.yaml /app/conf/app.yaml
 COPY server/data/migrations /app/data/migrations
 
 USER papermind

@@ -11,8 +11,8 @@ import (
 func TestReviewServiceListsPendingAttemptsByAttempt(t *testing.T) {
 	repo := newFakeReviewRepository()
 	repo.pendingAttempts = []PendingAttempt{
-		{AttemptID: 1001, ExamID: 10, UserID: 201, StudentName: "张三", PendingShortTextCount: 2, SubmittedAt: fixedUnixMilli},
-		{AttemptID: 1002, ExamID: 10, UserID: 202, StudentName: "李四", PendingShortTextCount: 1, SubmittedAt: fixedUnixMilli + minuteMillis},
+		{AttemptID: 1001, ExamID: 10, UserID: 201, StudentName: "张三", SpaceID: 301, PendingShortTextCount: 2, SubmittedAt: fixedUnixMilli},
+		{AttemptID: 1002, ExamID: 10, UserID: 202, StudentName: "李四", SpaceID: 301, PendingShortTextCount: 1, SubmittedAt: fixedUnixMilli + minuteMillis},
 	}
 	svc := NewReviewService(ReviewServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
 
@@ -32,11 +32,10 @@ func TestReviewServiceListsPendingAttemptsByAttempt(t *testing.T) {
 func TestReviewServiceFiltersPendingAttemptsByGradePermission(t *testing.T) {
 	repo := newFakeReviewRepository()
 	repo.pendingAttempts = []PendingAttempt{
-		{AttemptID: 1001, ExamID: 10, UserID: 201, StudentName: "张三", PendingShortTextCount: 2, SubmittedAt: fixedUnixMilli},
-		{AttemptID: 1002, ExamID: 10, UserID: 202, StudentName: "李四", PendingShortTextCount: 1, SubmittedAt: fixedUnixMilli + minuteMillis},
+		{AttemptID: 1001, ExamID: 10, UserID: 201, StudentName: "张三", SpaceID: 301, PendingShortTextCount: 2, SubmittedAt: fixedUnixMilli},
+		{AttemptID: 1002, ExamID: 10, UserID: 202, StudentName: "李四", SpaceID: 302, PendingShortTextCount: 1, SubmittedAt: fixedUnixMilli + minuteMillis},
 	}
 	limited := teacherPermissionContext()
-	delete(limited.AttemptScope, 1002)
 	svc := NewReviewService(ReviewServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
 
 	items, err := svc.ListPendingAttempts(context.Background(), ListPendingAttemptsInput{
@@ -54,6 +53,7 @@ func TestReviewServiceFiltersPendingAttemptsByGradePermission(t *testing.T) {
 
 func TestReviewServiceGradesShortTextWithVersionAndRecalculatesScores(t *testing.T) {
 	repo := newFakeReviewRepository()
+	repo.attemptSpaces = map[uint64]uint64{1001: 301}
 	svc := NewReviewService(ReviewServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
 
 	err := svc.GradeShortText(context.Background(), GradeShortTextInput{
@@ -79,8 +79,30 @@ func TestReviewServiceGradesShortTextWithVersionAndRecalculatesScores(t *testing
 	}
 }
 
+func TestReviewServiceRejectsClientClaimedAttemptScope(t *testing.T) {
+	repo := newFakeReviewRepository()
+	repo.attemptSpaces = map[uint64]uint64{1001: 302}
+	svc := NewReviewService(ReviewServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
+
+	err := svc.GradeShortText(context.Background(), GradeShortTextInput{
+		Permission:        teacherPermissionContext(),
+		TenantID:          10,
+		AttemptID:         1001,
+		AttemptQuestionID: 9001,
+		AnswerVersion:     7,
+		Score:             "4",
+	})
+	if !errors.Is(err, permission.ErrForbidden) {
+		t.Fatalf("expected permission denied for mismatched attempt space, got %v", err)
+	}
+	if repo.graded.AttemptQuestionID != 0 {
+		t.Fatalf("repository should not be called without permission, got %#v", repo.graded)
+	}
+}
+
 func TestReviewServiceRejectsStaleShortTextGradeVersion(t *testing.T) {
 	repo := newFakeReviewRepository()
+	repo.attemptSpaces = map[uint64]uint64{1001: 301}
 	repo.gradeErr = ErrAnswerVersionConflict
 	svc := NewReviewService(ReviewServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
 
@@ -136,6 +158,7 @@ func teacherPermissionContext() permission.PermissionContext {
 
 type fakeReviewRepository struct {
 	pendingAttempts []PendingAttempt
+	attemptSpaces   map[uint64]uint64
 	graded          ShortTextGrade
 	recalculated    bool
 	gradeErr        error
@@ -143,6 +166,10 @@ type fakeReviewRepository struct {
 
 func (r *fakeReviewRepository) ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64) ([]PendingAttempt, error) {
 	return append([]PendingAttempt(nil), r.pendingAttempts...), nil
+}
+
+func (r *fakeReviewRepository) AttemptSpaceIDs(ctx context.Context, tenantID uint64, attemptID uint64) ([]uint64, error) {
+	return []uint64{r.attemptSpaces[attemptID]}, nil
 }
 
 func (r *fakeReviewRepository) GradeShortTextAndRecalculate(ctx context.Context, grade ShortTextGrade) error {

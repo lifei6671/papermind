@@ -99,7 +99,7 @@ P0 文档与项目骨架
 - [x] 引入 `gorm.io/driver/sqlite`。
 - [x] 引入 `gorm.io/datatypes`。
 - [x] 引入 `gorm.io/plugin/soft_delete`。
-- [x] 创建 `server/conf/app.yaml` 开发配置模板。
+- [x] 创建 `server/conf/app.example.yaml` 开发配置模板；本地私有 `server/conf/app.yaml` 不进入仓库。
 - [x] 创建 `server/conf/app.example.yaml` 示例配置，并为每一项提供中文注释。
 - [x] 确认 `.gitignore` 排除 `server/conf_online/`、私有配置、SQLite 数据库文件、导入导出临时文件、构建产物。
 - [x] 初始化 `web` 为 React + Vite + TypeScript 项目。
@@ -140,6 +140,7 @@ P0 文档与项目骨架
 - [x] 支持 `storage.export_dir`。
 - [x] 支持 `security.allow_register_default`。
 - [x] 支持 `security.password_min_length`。
+- [x] HTTP Router 启动时透传 `security.allow_register_default` 和 `security.password_min_length`。
 - [x] 支持 `security.cors_origins`。
 - [x] 支持环境变量覆盖敏感配置。
 - [x] 启动时校验存储目录存在且可写。
@@ -299,7 +300,7 @@ P0 文档与项目骨架
 - [x] `exams.max_attempts` 默认 1。
 - [x] `exams.result_strategy` 支持 `latest`。
 - [x] `exams.result_strategy` 支持 `highest`。
-- [x] `exams.invite_code` 建立 `UNIQUE (tenant_id, invite_code)`。
+- [x] `exams.invite_code` 建立全局唯一约束。
 - [x] 创建 `exam_targets`。
 - [x] `exam_targets` 建立 `UNIQUE (tenant_id, exam_id, target_type, target_id)`。
 - [x] 创建 `exam_live_question_pools`。
@@ -378,6 +379,7 @@ P0 文档与项目骨架
 - [x] 支持租户注册链接注册。
 - [x] 支持手动输入租户码注册。
 - [x] 自注册用户默认不属于任何空间。
+- [x] 自注册密码遵守 `security.password_min_length`。
 - [x] 实现租户用户登录。
 - [x] 登录成功更新 `last_login_ip`。
 - [x] 登录成功更新 `last_login_at`。
@@ -593,7 +595,8 @@ P0 文档与项目骨架
 - [x] 设置成绩发布模式。
 - [x] 设置成绩公布时间。
 - [x] 生成考试邀请码。
-- [x] `invite_code` 在同租户唯一。
+- [x] `invite_code` 全局唯一。
+- [x] 邀请码生成时全局避冲突，保证公开入口按邀请码解析不会跨租户误命中。
 - [x] `rule_live` 发布时冻结题池。
 
 ### P6.2 考试范围
@@ -607,6 +610,7 @@ P0 文档与项目骨架
 ### P6.3 开始考试
 
 - [x] 校验考试资格。
+- [x] 开始考试按 `exam_targets` 校验直接用户目标和空间学生成员目标。
 - [x] 校验考试时间。
 - [x] 若存在 `in_progress` attempt，直接返回已有 attempt。
 - [x] 若无 `in_progress` attempt，校验未超过 `max_attempts`。
@@ -726,6 +730,7 @@ P0 文档与项目骨架
 - [x] 阅卷使用 `version` 乐观锁。
 - [x] 阅卷完成后重算主观题得分。
 - [x] 阅卷完成后重算总分。
+- [x] 阅卷权限按作答记录真实空间校验，不能信任请求体 `space_id` 伪造 `attempt` 范围。
 
 ### P8.3 成绩发布
 
@@ -751,6 +756,7 @@ P0 文档与项目骨架
 - [x] 支持导出总分。
 - [x] 支持导出提交时间。
 - [x] 导出文件写入 `server/data/exports` 或配置目录。
+- [x] 成绩列表和导出按成绩行真实空间过滤，不能信任请求体 `space_id` 伪造 `exam` 范围。
 
 **验收标准**：
 
@@ -759,6 +765,7 @@ P0 文档与项目骨架
 - [x] 简答题阅卷乐观锁测试通过。
 - [x] 成绩发布时间可见性测试通过。
 - [x] 成绩导出字段完整。
+- [x] 跨空间伪造阅卷/成绩导出权限回归测试通过。
 
 ---
 
@@ -780,6 +787,7 @@ P0 文档与项目骨架
 ### P9.2 平台管理端
 
 - [x] 平台管理员登录页。
+- [x] 登录页支持切换到租户用户登录，学生登录后进入考试入口。
 - [x] 租户列表。
 - [x] 创建租户表单。
 - [x] 创建租户表单必填项显示红色 `*`。
@@ -888,10 +896,17 @@ P0 文档与项目骨架
 - [x] API 错误码映射到统一错误提示。
 - [x] 考试发布 API handler 使用 SQLite 覆盖列表和发布链路。
 - [x] 租户管理 API handler 使用 SQLite 覆盖列表、创建、资料更新、租户码重置和注册开关链路。
+- [x] 租户管理列表和写接口要求平台管理员登录态。
 - [x] 租户管理写接口从 Bearer 登录态解析平台管理员 ID，并写入 `created_by` / `updated_by`。
-- [x] 文件上传 API handler 覆盖 multipart 上传和缺少文件错误。
+- [x] 后台考试、空间、用户、题库、试卷和组卷规则读取接口拒绝匿名访问。
+- [x] 后台管理写接口要求平台管理员或本租户 `tenant_admin`，并拒绝学生越权访问。
+- [x] 管理端创建用户必须提交初始密码，不再写入固定临时密码。
+- [x] 管理端创建用户密码遵守 `security.password_min_length`。
+- [x] 开始考试 API 从邀请码入口 session 派生考生身份，不再信任开考请求体里的 `user_id`。
+- [x] 文件上传 API handler 覆盖 multipart 上传、缺少文件错误和伪造图片 MIME 拒绝。
 - [x] 空间管理 API handler 使用 SQLite 覆盖列表和创建链路。
 - [x] 用户管理 API handler 使用 SQLite 覆盖列表、创建和禁用链路。
+- [x] 用户管理 API handler 覆盖租户管理员仅能管理本租户、学生不能创建用户。
 - [x] 题库 API handler 使用 SQLite 覆盖列表和在线保存题目链路。
 - [x] 覆盖主要 API handler 测试。
 - [x] 覆盖前端 API client 集成测试。
@@ -923,6 +938,8 @@ P0 文档与项目骨架
 - [x] 编写 web/Nginx Compose。
 - [x] 配置环境变量注入。
 - [x] 不提交生产密钥。
+- [x] server 镜像内复制默认配置并安装 SQLite CGO 构建工具链。
+- [x] Nginx 同时代理 `/api/` 与 `/uploads/`。
 - [ ] 验证从空库迁移启动。
 
 ### P10.2 SQLite 单机
@@ -944,12 +961,12 @@ P0 文档与项目骨架
 - [ ] 空间管理员不变式测试。
 - [ ] 题库可见性测试。
 - [ ] rule_fixed 生成测试。
-- [ ] rule_live 题池冻结测试。
+- [x] rule_live 题池冻结测试。
 - [ ] 开始考试幂等测试。
 - [ ] 自动保存 upsert 测试。
 - [ ] 多选判分测试。
 - [ ] 业务截止时间测试。
-- [ ] 事件异步队列测试。
+- [x] 事件异步队列测试。
 - [ ] 成绩发布测试。
 
 ### P10.4 100 人在线链路验证
@@ -1034,13 +1051,13 @@ P0 文档与项目骨架
 - [ ] 平台配置和空间配置已覆盖。
 - [ ] 题库、标签、选项、导入已覆盖。
 - [ ] 大题结构和三种组卷模式已覆盖。
-- [ ] `rule_live` 发布态题池冻结已覆盖。
+- [x] `rule_live` 发布态题池冻结已覆盖。
 - [ ] 考试发布、范围、邀请码已覆盖。
 - [ ] attempt 幂等和 exam token 已覆盖。
 - [ ] 业务截止时间硬校验已覆盖。
 - [ ] 自动保存 upsert 已覆盖。
 - [ ] 多选答案排序和反序列化判分已覆盖。
-- [ ] 防作弊事件异步写入已覆盖。
+- [x] 防作弊事件异步写入已覆盖。
 - [x] 阅卷、成绩发布、导出已覆盖。
 - [x] React 页面闭环已覆盖。
 - [ ] 前后端 API 接入已覆盖。

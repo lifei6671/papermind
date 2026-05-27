@@ -14,6 +14,7 @@ import (
 
 type ScoreExportRow struct {
 	StudentName     string // 考生姓名。
+	SpaceID         uint64 // 考生所属空间 ID，用于权限范围判断。
 	SpaceName       string // 空间名称。
 	AttemptNo       int    // attempt 次数。
 	ObjectiveScore  string // 客观题分。
@@ -83,10 +84,20 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 }
 
 func (s *ExportService) ListExamScores(ctx context.Context, input ListExamScoresInput) ([]ScoreExportRow, error) {
-	if err := s.permissionChecker.CanGradeExam(input.Permission, input.ExamID); err != nil {
+	if !hasPossibleGradeRole(input.Permission) {
+		return nil, permission.ErrForbidden
+	}
+	rows, err := s.repo.ListScoreExportRows(ctx, input.TenantID, input.ExamID)
+	if err != nil {
 		return nil, err
 	}
-	return s.repo.ListScoreExportRows(ctx, input.TenantID, input.ExamID)
+	allowed := make([]ScoreExportRow, 0, len(rows))
+	for _, row := range rows {
+		if err := s.permissionChecker.CanGradeExam(permissionWithExamScope(input.Permission, input.ExamID, row.SpaceID), input.ExamID); err == nil {
+			allowed = append(allowed, row)
+		}
+	}
+	return allowed, nil
 }
 
 func writeScoreExportCSV(writer *csv.Writer, rows []ScoreExportRow) error {

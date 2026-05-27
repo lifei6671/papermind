@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS exams (
     ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
     deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_exams_invite_code (tenant_id, invite_code)
+    UNIQUE KEY uk_exams_invite_code (invite_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='考试表，保存试卷发布后的考试安排';
 
 CREATE TABLE IF NOT EXISTS exam_targets (

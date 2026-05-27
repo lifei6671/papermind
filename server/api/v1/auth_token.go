@@ -273,6 +273,62 @@ func requirePlatformActor(c *gin.Context) (uint64, bool) {
 	return 0, false
 }
 
+func requireAuthPrincipalMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if _, ok := currentAuthPrincipal(c); !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+			return
+		}
+		c.Next()
+	}
+}
+
+func requirePlatformPrincipalMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := currentAuthPrincipal(c)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录平台管理员账号"))
+			return
+		}
+		if principal.SubjectType != permission.SubjectPlatformUser {
+			c.AbortWithStatusJSON(http.StatusForbidden, response.Fail(code.InvalidParam, "仅平台管理员可操作"))
+			return
+		}
+		c.Next()
+	}
+}
+
+func requireTenantAdminOrPlatformPrincipalMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := currentAuthPrincipal(c)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+			return
+		}
+		if principal.SubjectType == permission.SubjectPlatformUser {
+			c.Next()
+			return
+		}
+		if principal.SubjectType == permission.SubjectTenantUser && principal.Role == permission.RoleTenantAdmin {
+			c.Next()
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+	}
+}
+
+func currentAuthPrincipal(c *gin.Context) (AuthPrincipal, bool) {
+	if value, ok := c.Get(authPrincipalGinKey); ok {
+		if principal, ok := value.(AuthPrincipal); ok && principal.UserID != 0 {
+			return principal, true
+		}
+	}
+	if principal, ok := authPrincipalFromContext(c.Request.Context()); ok && principal.UserID != 0 {
+		return principal, true
+	}
+	return AuthPrincipal{}, false
+}
+
 func defaultSessionMaxAgeSeconds(value int) int {
 	if value > 0 {
 		return value

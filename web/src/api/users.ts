@@ -18,6 +18,7 @@ export type CreateTenantUserInput = {
   tenantID: number;
   name: string;
   username: string;
+  password: string;
   role: UserRole;
   avatarFileName: string;
 };
@@ -67,6 +68,7 @@ export function createUserAPI(apiClient: ApiClient): UserManagementAPI {
         username: input.username,
         real_name: input.name,
         avatar_url: input.avatarFileName,
+        password: input.password,
         role: input.role,
       });
       return mapUserResponse(data);

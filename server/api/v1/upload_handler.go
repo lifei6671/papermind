@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"mime"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -23,6 +22,8 @@ type uploadHandler struct {
 	now   func() time.Time
 }
 
+const maxUploadFileBytes = 10 * 1024 * 1024
+
 type uploadResponse struct {
 	Key         string `json:"key"`
 	URL         string `json:"url"`
@@ -32,8 +33,13 @@ type uploadResponse struct {
 }
 
 func (h uploadHandler) create(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadFileBytes)
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
+		if strings.Contains(err.Error(), "request body too large") {
+			c.JSON(http.StatusRequestEntityTooLarge, response.Fail(code.InvalidParam, "上传文件不能超过 10MB"))
+			return
+		}
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "file 不能为空"))
 		return
 	}
@@ -54,7 +60,11 @@ func (h uploadHandler) create(c *gin.Context) {
 		return
 	}
 
-	contentType := detectUploadContentType(fileHeader.Header.Get("Content-Type"), fileHeader.Filename)
+	contentType := detectUploadContentType(fileContent)
+	if !isAllowedUploadContentType(contentType) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "不支持的上传文件类型"))
+		return
+	}
 	objectKey, err := buildUploadObjectKey(category, fileHeader.Filename, contentType, fileContent, h.now())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "生成上传文件名失败"))
@@ -73,6 +83,15 @@ func (h uploadHandler) create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(uploadToResponse(result)))
+}
+
+func isAllowedUploadContentType(contentType string) bool {
+	switch contentType {
+	case "image/png", "image/jpeg", "image/webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func uploadToResponse(result storage.PutObjectResult) uploadResponse {
@@ -108,18 +127,17 @@ func buildUploadObjectKey(category string, fileName string, contentType string, 
 	return category + "/" + now.Format("20060102") + "/" + fileTime + "_" + hex.EncodeToString(fileHash[:])[:16] + extension, nil
 }
 
-func detectUploadContentType(headerValue string, fileName string) string {
-	if headerValue != "" {
-		return headerValue
-	}
-	if contentType := mime.TypeByExtension(filepath.Ext(fileName)); contentType != "" {
-		return contentType
-	}
-	return "application/octet-stream"
+func detectUploadContentType(fileContent []byte) string {
+	return http.DetectContentType(fileContent)
 }
 
 func detectUploadExtension(fileName string, contentType string) string {
-	if contentType == "image/webp" {
+	switch contentType {
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
 		return ".webp"
 	}
 	extension := strings.ToLower(filepath.Ext(fileName))

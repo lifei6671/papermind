@@ -103,6 +103,35 @@ func (r *TenantUserRepository) FindTenantByCode(ctx context.Context, tenantCode 
 }
 
 func (r *TenantUserRepository) CreateUser(ctx context.Context, user servicetenantuser.User) (servicetenantuser.User, error) {
+	return r.createUser(ctx, r.db, user)
+}
+
+func (r *TenantUserRepository) CreateUserRole(ctx context.Context, tenantID uint64, userID uint64, role string) error {
+	return r.createUserRole(ctx, r.db, tenantID, userID, role)
+}
+
+func (r *TenantUserRepository) CreateUserWithRole(ctx context.Context, user servicetenantuser.User, role string) (servicetenantuser.User, error) {
+	var created servicetenantuser.User
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		user.Role = role
+		nextUser, err := r.createUser(ctx, tx, user)
+		if err != nil {
+			return err
+		}
+		if err := r.createUserRole(ctx, tx, nextUser.TenantID, nextUser.ID, role); err != nil {
+			return err
+		}
+		created = nextUser
+		created.Role = role
+		return nil
+	})
+	if err != nil {
+		return servicetenantuser.User{}, err
+	}
+	return created, nil
+}
+
+func (r *TenantUserRepository) createUser(ctx context.Context, gormDB *gorm.DB, user servicetenantuser.User) (servicetenantuser.User, error) {
 	now := r.now()
 	row := UserDO{
 		BaseFields: BaseFields{
@@ -126,13 +155,13 @@ func (r *TenantUserRepository) CreateUser(ctx context.Context, user servicetenan
 	if row.Email == "" {
 		row.Email = generatedUserEmail(user.TenantID, user.Username)
 	}
-	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+	if err := gormDB.WithContext(ctx).Create(&row).Error; err != nil {
 		return servicetenantuser.User{}, err
 	}
 	return tenantUserFromDO(row, user.Role), nil
 }
 
-func (r *TenantUserRepository) CreateUserRole(ctx context.Context, tenantID uint64, userID uint64, role string) error {
+func (r *TenantUserRepository) createUserRole(ctx context.Context, gormDB *gorm.DB, tenantID uint64, userID uint64, role string) error {
 	now := r.now()
 	row := UserRoleDO{
 		BaseFields: BaseFields{
@@ -145,7 +174,7 @@ func (r *TenantUserRepository) CreateUserRole(ctx context.Context, tenantID uint
 		UserID:   userID,
 		Role:     role,
 	}
-	return r.db.WithContext(ctx).Create(&row).Error
+	return gormDB.WithContext(ctx).Create(&row).Error
 }
 
 func (r *TenantUserRepository) FindUserByUsername(ctx context.Context, tenantID uint64, username string) (servicetenantuser.User, error) {
@@ -161,7 +190,11 @@ func (r *TenantUserRepository) FindUserByUsername(ctx context.Context, tenantID 
 	if err != nil {
 		return servicetenantuser.User{}, err
 	}
-	return tenantUserFromDO(row, ""), nil
+	role, err := r.findRoleByUserID(ctx, tenantID, row.ID)
+	if err != nil {
+		return servicetenantuser.User{}, err
+	}
+	return tenantUserFromDO(row, roleOrStudent(role)), nil
 }
 
 func (r *TenantUserRepository) UpdateLoginAudit(ctx context.Context, tenantID uint64, userID uint64, ip string, at int64) error {

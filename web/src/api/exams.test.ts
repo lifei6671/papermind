@@ -8,7 +8,6 @@ describe("examApi", () => {
       expect(init?.method).toBe("POST");
       expect(JSON.parse(init?.body as string)).toEqual({
         invite_code: "PM2026",
-        user_id: 20,
       });
       return new Response(JSON.stringify({
         code: 0,
@@ -31,7 +30,7 @@ describe("examApi", () => {
     });
     const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
 
-    const exam = await api.resolveInvite({ inviteCode: "PM2026", userID: 20 });
+    const exam = await api.resolveInvite({ inviteCode: "PM2026" });
 
     expect(fetcher).toHaveBeenCalledWith(
       "/api/v1/exams/invite/resolve",
@@ -57,7 +56,7 @@ describe("examApi", () => {
       const url = String(input);
       if (url.endsWith("/api/v1/exams/1/attempts/start")) {
         expect(init?.method).toBe("POST");
-        expect(JSON.parse(init?.body as string)).toEqual({ tenant_id: 10, user_id: 20 });
+        expect(JSON.parse(init?.body as string)).toEqual({ tenant_id: 10 });
         return jsonResponse({
           attempt: { id: 99, answer_deadline: 1779795600000 },
           exam_token: "exam-token",
@@ -95,7 +94,7 @@ describe("examApi", () => {
     });
     const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
 
-    const started = await api.startAttempt({ tenantID: 10, examID: 1, userID: 20 });
+    const started = await api.startAttempt({ tenantID: 10, examID: 1 });
     await api.saveAnswer({
       tenantID: 10,
       attemptID: started.attemptID,

@@ -7,6 +7,7 @@ import { useState } from "react";
 import { examApi } from "../../api/exams";
 import type { ExamEntryAPI } from "../../api/exams";
 import { formatApiErrorMessage } from "../../api/client";
+import { useSession } from "../../auth/session-context";
 
 const examNotices = [
   "开考后系统自动开始计时，到达截止时间将自动交卷。",
@@ -17,11 +18,11 @@ const examNotices = [
 
 type ExamEntryPageProps = {
   api?: ExamEntryAPI;
-  userID?: number;
 };
 
-export function ExamEntryPage({ api = examApi, userID = 20 }: ExamEntryPageProps) {
+export function ExamEntryPage({ api = examApi }: ExamEntryPageProps) {
   const navigate = useNavigate();
+  const { session } = useSession();
   const [inviteCode, setInviteCode] = useState("");
   const [resolveMessage, setResolveMessage] = useState("");
   const [entryError, setEntryError] = useState("");
@@ -29,12 +30,18 @@ export function ExamEntryPage({ api = examApi, userID = 20 }: ExamEntryPageProps
   async function handleEnterExam(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (!session || session.user.role !== "student" || !session.user.tenantID) {
+      setResolveMessage("");
+      setEntryError("请先使用租户学生账号登录后再进入考试");
+      return;
+    }
+
     try {
       // 邀请码进入考试前必须先由服务端解析，避免前端仅凭本地表单直接打开考试端。
-      const exam = await api.resolveInvite({ inviteCode, userID });
+      const exam = await api.resolveInvite({ inviteCode });
       setResolveMessage(`${exam.name} 已校验，正在进入考试端`);
       setEntryError("");
-      navigate("/student/exam");
+      navigate(`/student/exam?tenant_id=${exam.tenantID}&exam_id=${exam.id}`);
     } catch (err) {
       setResolveMessage("");
       setEntryError(formatApiErrorMessage(err, "邀请码校验失败"));

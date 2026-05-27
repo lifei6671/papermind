@@ -1,7 +1,6 @@
 package v1
 
 import (
-	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,14 +13,16 @@ func TestSpaceAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedSpaceAPITestData(t, gormDB)
+	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	listRecorder := httptest.NewRecorder()
-	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/spaces?tenant_id=10", nil))
+	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/spaces?tenant_id=10", nil, authHeader))
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
@@ -46,7 +47,7 @@ func TestSpaceAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 		"admin_user_ids": [22]
 	}`)
 	createRecorder := httptest.NewRecorder()
-	router.ServeHTTP(createRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/spaces", bytes.NewReader(payload)))
+	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/spaces", payload, authHeader))
 	if createRecorder.Code != http.StatusOK {
 		t.Fatalf("create status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
 	}

@@ -95,4 +95,48 @@ describe("authApi", () => {
       status: "enabled",
     });
   });
+
+  test("租户用户登录会映射租户身份字段", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        username: "student20",
+        password: "papermind123",
+      });
+
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          access_token: "tenant-access-token",
+          refresh_token: "tenant-refresh-token",
+          user: {
+            user_id: 20,
+            display_name: "目标考生",
+            role: "student",
+            tenant_id: 10,
+          },
+        },
+      }));
+    });
+    const api = createAuthAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const session = await api.tenantLogin({ tenantID: 10, username: "student20", password: "papermind123" });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/auth/tenant/login",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(session).toEqual({
+      accessToken: "tenant-access-token",
+      refreshToken: "tenant-refresh-token",
+      user: {
+        userID: 20,
+        displayName: "目标考生",
+        role: "student",
+        tenantID: 10,
+      },
+    });
+  });
 });

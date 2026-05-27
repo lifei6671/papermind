@@ -2748,6 +2748,33 @@ code {
   font-weight: 900;
 }
 
+.platform-login__mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: #e6e1d7;
+}
+
+.platform-login__mode-switch button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.platform-login__mode-switch button[aria-selected="true"] {
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(13, 17, 23, 0.08);
+}
+
 .platform-login__form h1 {
   margin: 0;
   color: var(--text-primary);

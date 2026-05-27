@@ -122,7 +122,6 @@ func (r *ExamRepository) GetPaper(ctx context.Context, tenantID uint64, paperID 
 func (r *ExamRepository) InviteCodeExists(ctx context.Context, tenantID uint64, code string) (bool, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&ExamDO{}).
-		Where(ExamColumns.TenantID+" = ?", tenantID).
 		Where(ExamColumns.InviteCode+" = ?", code).
 		Where(ExamColumns.DeletedAt+" = ?", 0).
 		Count(&count).Error; err != nil {
@@ -132,7 +131,76 @@ func (r *ExamRepository) InviteCodeExists(ctx context.Context, tenantID uint64, 
 }
 
 func (r *ExamRepository) ListRuleLiveCandidates(ctx context.Context, tenantID uint64, paperID uint64) ([]serviceexam.LivePoolItem, error) {
-	return []serviceexam.LivePoolItem{}, nil
+	var rules []PaperSectionRuleDO
+	if err := r.db.WithContext(ctx).
+		Where(PaperSectionRuleColumns.TenantID+" = ?", tenantID).
+		Where(PaperSectionRuleColumns.PaperID+" = ?", paperID).
+		Order(PaperSectionRuleColumns.SortOrder + " ASC").
+		Find(&rules).Error; err != nil {
+		return nil, err
+	}
+	items := make([]serviceexam.LivePoolItem, 0)
+	usedQuestionIDs := make(map[uint64]struct{})
+	for _, rule := range rules {
+		questionIDs, err := r.matchRuleLiveQuestionIDs(ctx, tenantID, rule)
+		if err != nil {
+			return nil, err
+		}
+		selected := 0
+		for _, questionID := range questionIDs {
+			if _, exists := usedQuestionIDs[questionID]; exists {
+				continue
+			}
+			items = append(items, serviceexam.LivePoolItem{
+				SectionID:  rule.SectionID,
+				RuleID:     rule.ID,
+				QuestionID: questionID,
+			})
+			usedQuestionIDs[questionID] = struct{}{}
+			selected++
+			if selected == rule.QuestionCount {
+				break
+			}
+		}
+		if selected < rule.QuestionCount {
+			return nil, serviceexam.ErrRuleLiveQuestionPoolInsufficient
+		}
+	}
+	return items, nil
+}
+
+func (r *ExamRepository) matchRuleLiveQuestionIDs(ctx context.Context, tenantID uint64, rule PaperSectionRuleDO) ([]uint64, error) {
+	var section PaperSectionDO
+	if err := r.db.WithContext(ctx).
+		Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+		Where(PaperSectionColumns.ID+" = ?", rule.SectionID).
+		Where(PaperSectionColumns.PaperID+" = ?", rule.PaperID).
+		Where(PaperSectionColumns.DeletedAt+" = ?", 0).
+		First(&section).Error; err != nil {
+		return nil, err
+	}
+
+	tagIDs := tagIDsFromFilter(rule.TagFilter)
+	query := r.db.WithContext(ctx).Table(QuestionDO{}.TableName()+" AS questions").
+		Select("questions."+QuestionColumns.ID).
+		Where("questions."+QuestionColumns.TenantID+" = ?", tenantID).
+		Where("questions."+QuestionColumns.Type+" = ?", section.QuestionType).
+		Where("questions."+QuestionColumns.Status+" = ?", "enabled").
+		Where("questions."+QuestionColumns.DeletedAt+" = ?", 0)
+	if rule.Difficulty != nil {
+		query = query.Where("questions."+QuestionColumns.Difficulty+" = ?", *rule.Difficulty)
+	}
+	if len(tagIDs) > 0 {
+		query = query.Joins("JOIN "+QuestionTagDO{}.TableName()+" AS question_tags ON question_tags."+QuestionTagColumns.TenantID+" = questions."+QuestionColumns.TenantID+" AND question_tags."+QuestionTagColumns.QuestionID+" = questions."+QuestionColumns.ID).
+			Where("question_tags."+QuestionTagColumns.TagID+" IN ?", tagIDs).
+			Group("questions."+QuestionColumns.ID).
+			Having("COUNT(DISTINCT question_tags."+QuestionTagColumns.TagID+") = ?", len(tagIDs))
+	}
+	var ids []uint64
+	if err := query.Order("questions." + QuestionColumns.ID + " ASC").Scan(&ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam serviceexam.Exam, pool []serviceexam.LivePoolItem) (serviceexam.Exam, error) {
@@ -240,7 +308,46 @@ func (r *ExamRepository) GetExam(ctx context.Context, tenantID uint64, examID ui
 }
 
 func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (bool, error) {
-	return true, nil
+	var directCount int64
+	if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
+		Joins("JOIN users ON users."+UserColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
+			" AND users."+UserColumns.ID+" = exam_targets."+ExamTargetColumns.TargetID+
+			" AND users."+UserColumns.ID+" = ?"+
+			" AND users."+UserColumns.Status+" = ?"+
+			" AND users."+UserColumns.DeletedAt+" = ?", userID, "enabled", 0).
+		Joins("JOIN user_roles ON user_roles."+UserRoleColumns.TenantID+" = users."+UserColumns.TenantID+
+			" AND user_roles."+UserRoleColumns.UserID+" = users."+UserColumns.ID+
+			" AND user_roles."+UserRoleColumns.Role+" = ?", "student").
+		Where("exam_targets."+ExamTargetColumns.TenantID+" = ?", tenantID).
+		Where("exam_targets."+ExamTargetColumns.ExamID+" = ?", examID).
+		Where("exam_targets."+ExamTargetColumns.TargetType+" = ?", serviceexam.TargetTypeUser).
+		Where("exam_targets."+ExamTargetColumns.TargetID+" = ?", userID).
+		Count(&directCount).Error; err != nil {
+		return false, err
+	}
+	if directCount > 0 {
+		return true, nil
+	}
+
+	var spaceCount int64
+	if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
+		Joins("JOIN space_members ON space_members."+SpaceMemberColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
+			" AND space_members."+SpaceMemberColumns.SpaceID+" = exam_targets."+ExamTargetColumns.TargetID+
+			" AND space_members."+SpaceMemberColumns.UserID+" = ?"+
+			" AND space_members."+SpaceMemberColumns.RoleInSpace+" = ?"+
+			" AND space_members."+SpaceMemberColumns.Status+" = ?"+
+			" AND space_members."+SpaceMemberColumns.DeletedAt+" = ?", userID, "student", "enabled", 0).
+		Joins("JOIN users ON users."+UserColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
+			" AND users."+UserColumns.ID+" = space_members."+SpaceMemberColumns.UserID+
+			" AND users."+UserColumns.Status+" = ?"+
+			" AND users."+UserColumns.DeletedAt+" = ?", "enabled", 0).
+		Where("exam_targets."+ExamTargetColumns.TenantID+" = ?", tenantID).
+		Where("exam_targets."+ExamTargetColumns.ExamID+" = ?", examID).
+		Where("exam_targets."+ExamTargetColumns.TargetType+" = ?", serviceexam.TargetTypeSpace).
+		Count(&spaceCount).Error; err != nil {
+		return false, err
+	}
+	return spaceCount > 0, nil
 }
 
 func (r *ExamRepository) FindInProgressAttempt(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (serviceexam.Attempt, error) {
@@ -370,7 +477,47 @@ func (r *ExamRepository) ListFixedSnapshotQuestions(ctx context.Context, tenantI
 }
 
 func (r *ExamRepository) ListFrozenLiveSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.SnapshotSourceQuestion, error) {
-	return []serviceexam.SnapshotSourceQuestion{}, nil
+	var rows []struct {
+		SectionID    uint64
+		SectionName  string
+		Instructions string
+		QuestionID   uint64
+		QuestionType string
+		Title        string
+		Score        string
+	}
+	if err := r.db.WithContext(ctx).
+		Table(ExamLiveQuestionPoolDO{}.TableName()+" AS pool").
+		Select("sections.id AS section_id, sections.name AS section_name, sections.instructions AS instructions, questions.id AS question_id, questions.type AS question_type, questions.title AS title, rules.score_per_question AS score").
+		Joins("JOIN "+PaperSectionRuleDO{}.TableName()+" AS rules ON rules.tenant_id = pool.tenant_id AND rules.id = pool.rule_id").
+		Joins("JOIN "+PaperSectionDO{}.TableName()+" AS sections ON sections.tenant_id = pool.tenant_id AND sections.id = pool.section_id AND sections.deleted_at = 0").
+		Joins("JOIN "+QuestionDO{}.TableName()+" AS questions ON questions.tenant_id = pool.tenant_id AND questions.id = pool.question_id AND questions.deleted_at = 0").
+		Where("pool."+ExamLiveQuestionPoolColumns.TenantID+" = ?", tenantID).
+		Where("pool."+ExamLiveQuestionPoolColumns.ExamID+" = ?", examID).
+		Order("sections." + PaperSectionColumns.SortOrder + " ASC, rules." + PaperSectionRuleColumns.SortOrder + " ASC, pool." + RelationColumns.ID + " ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	items := make([]serviceexam.SnapshotSourceQuestion, 0, len(rows))
+	for _, row := range rows {
+		options, err := r.listSnapshotOptions(ctx, tenantID, row.QuestionID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, serviceexam.SnapshotSourceQuestion{
+			SectionID:        row.SectionID,
+			SectionName:      row.SectionName,
+			Instructions:     row.Instructions,
+			QuestionID:       row.QuestionID,
+			QuestionType:     row.QuestionType,
+			Title:            row.Title,
+			Score:            row.Score,
+			Options:          options.options,
+			OptionIDs:        options.optionIDs,
+			CorrectOptionIDs: options.correctOptionIDs,
+		})
+	}
+	return items, nil
 }
 
 func (r *ExamRepository) SaveAttemptQuestions(ctx context.Context, questions []serviceexam.AttemptQuestion) ([]serviceexam.AttemptQuestion, error) {
@@ -477,6 +624,29 @@ func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint6
 	return items, nil
 }
 
+func (r *ExamRepository) AttemptSpaceIDs(ctx context.Context, tenantID uint64, attemptID uint64) ([]uint64, error) {
+	var rows []struct {
+		SpaceID uint64
+	}
+	result := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
+		Distinct("COALESCE(members.space_id, 0) AS space_id").
+		Joins("LEFT JOIN space_members AS members ON members.tenant_id = attempts.tenant_id AND members.user_id = attempts.user_id AND members.status = 'enabled' AND members.deleted_at = 0").
+		Where("attempts.tenant_id = ?", tenantID).
+		Where("attempts.id = ?", attemptID).
+		Scan(&rows)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, serviceexam.ErrAttemptNotFound
+	}
+	spaces := make([]uint64, 0, len(rows))
+	for _, row := range rows {
+		spaces = append(spaces, row.SpaceID)
+	}
+	return spaces, nil
+}
+
 func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade serviceexam.ShortTextGrade) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := grade.GradedAt
@@ -533,6 +703,7 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 	if err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
 		Select(`
 			COALESCE(users.real_name, users.username) AS student_name,
+			COALESCE(spaces.id, 0) AS space_id,
 			COALESCE(spaces.name, '') AS space_name,
 			attempts.attempt_no AS attempt_no,
 			attempts.objective_score AS objective_score,
@@ -554,6 +725,7 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 	for _, row := range rows {
 		items = append(items, serviceexam.ScoreExportRow{
 			StudentName:     row.StudentName,
+			SpaceID:         row.SpaceID,
 			SpaceName:       row.SpaceName,
 			AttemptNo:       row.AttemptNo,
 			ObjectiveScore:  row.ObjectiveScore,
@@ -933,6 +1105,7 @@ func (r pendingReviewRow) SubmittedAtValue() int64 {
 
 type scoreExportRow struct {
 	StudentName     string
+	SpaceID         uint64
 	SpaceName       string
 	AttemptNo       int
 	ObjectiveScore  string

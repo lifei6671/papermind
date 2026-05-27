@@ -364,8 +364,8 @@ CREATE TABLE IF NOT EXISTS exams (
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
 );
--- 同一租户内考试邀请码唯一。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_exams_invite_code ON exams (tenant_id, invite_code);
+-- 考试邀请码用于公开入口解析，必须全局唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exams_invite_code ON exams (invite_code);
 
 -- exam_targets：考试发布范围表，保存考试面向的空间或用户。
 CREATE TABLE IF NOT EXISTS exam_targets (

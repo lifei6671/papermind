@@ -38,5 +38,10 @@ function readStoredSession() {
     return null;
   }
 
-  return JSON.parse(rawSession) as AuthSession;
+  try {
+    return JSON.parse(rawSession) as AuthSession;
+  } catch {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    return null;
+  }
 }

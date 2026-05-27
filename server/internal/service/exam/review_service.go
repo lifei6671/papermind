@@ -58,6 +58,7 @@ type GradeShortTextInput struct {
 
 type ReviewRepository interface {
 	ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64) ([]PendingAttempt, error)
+	AttemptSpaceIDs(ctx context.Context, tenantID uint64, attemptID uint64) ([]uint64, error)
 	GradeShortTextAndRecalculate(ctx context.Context, grade ShortTextGrade) error
 }
 
@@ -86,16 +87,16 @@ func NewReviewService(options ReviewServiceOptions) *ReviewService {
 }
 
 func (s *ReviewService) ListPendingAttempts(ctx context.Context, input ListPendingAttemptsInput) ([]PendingAttempt, error) {
+	if !hasPossibleGradeRole(input.Permission) {
+		return nil, permission.ErrForbidden
+	}
 	items, err := s.repo.ListPendingAttempts(ctx, input.TenantID, input.ExamID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.permissionChecker.CanGradeExam(input.Permission, input.ExamID); err == nil {
-		return items, nil
-	}
 	allowed := make([]PendingAttempt, 0, len(items))
 	for _, item := range items {
-		if err := s.permissionChecker.CanGradeAttempt(input.Permission, item.AttemptID); err == nil {
+		if err := s.permissionChecker.CanGradeAttempt(permissionWithAttemptScope(input.Permission, item.AttemptID, item.SpaceID), item.AttemptID); err == nil {
 			allowed = append(allowed, item)
 		}
 	}
@@ -103,8 +104,12 @@ func (s *ReviewService) ListPendingAttempts(ctx context.Context, input ListPendi
 }
 
 func (s *ReviewService) GradeShortText(ctx context.Context, input GradeShortTextInput) error {
-	if err := s.permissionChecker.CanGradeAttempt(input.Permission, input.AttemptID); err != nil {
+	spaces, err := s.repo.AttemptSpaceIDs(ctx, input.TenantID, input.AttemptID)
+	if err != nil {
 		return err
+	}
+	if !s.canGradeAttemptInAnySpace(input.Permission, input.AttemptID, spaces) {
+		return permission.ErrForbidden
 	}
 	// 简答题阅卷和主观题/总分重算必须由仓储在同一事务内完成，避免成绩短暂不一致。
 	return s.repo.GradeShortTextAndRecalculate(ctx, ShortTextGrade{
@@ -117,4 +122,57 @@ func (s *ReviewService) GradeShortText(ctx context.Context, input GradeShortText
 		GradedBy:          input.Permission.UserID,
 		GradedAt:          s.now(),
 	})
+}
+
+func (s *ReviewService) canGradeAttemptInAnySpace(ctx permission.PermissionContext, attemptID uint64, spaces []uint64) bool {
+	for _, spaceID := range spaces {
+		if err := s.permissionChecker.CanGradeAttempt(permissionWithAttemptScope(ctx, attemptID, spaceID), attemptID); err == nil {
+			return true
+		}
+	}
+	if len(spaces) == 0 {
+		if err := s.permissionChecker.CanGradeAttempt(permissionWithAttemptScope(ctx, attemptID, 0), attemptID); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func permissionWithAttemptScope(ctx permission.PermissionContext, attemptID uint64, spaceID uint64) permission.PermissionContext {
+	next := ctx
+	next.AttemptScope = cloneScope(ctx.AttemptScope)
+	next.AttemptScope[attemptID] = spaceID
+	return next
+}
+
+func permissionWithExamScope(ctx permission.PermissionContext, examID uint64, spaceID uint64) permission.PermissionContext {
+	next := ctx
+	next.ExamScope = cloneScope(ctx.ExamScope)
+	next.ExamScope[examID] = spaceID
+	return next
+}
+
+func cloneScope(scope map[uint64]uint64) map[uint64]uint64 {
+	next := make(map[uint64]uint64, len(scope)+1)
+	for key, value := range scope {
+		next[key] = value
+	}
+	return next
+}
+
+func hasPossibleGradeRole(ctx permission.PermissionContext) bool {
+	if ctx.SubjectType == permission.SubjectPlatformUser {
+		return true
+	}
+	for _, role := range ctx.TenantRoles {
+		if role == permission.RoleTenantAdmin {
+			return true
+		}
+	}
+	for _, role := range ctx.SpaceRoles {
+		if role == permission.RoleSpaceAdmin || role == permission.RoleTeacher {
+			return true
+		}
+	}
+	return false
 }

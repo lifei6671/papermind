@@ -7,6 +7,7 @@ import (
 
 	dbmodel "github.com/lifei6671/papermind/server/internal/dao/db"
 	"github.com/lifei6671/papermind/server/library/constant"
+	"github.com/lifei6671/papermind/server/library/crypto"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -69,12 +70,16 @@ func isSQLiteDev(driver string, appEnv string) bool {
 
 func seedIdentityAndSpace(tx *gorm.DB, now int64) error {
 	// 前端默认以平台管理员 1、租户 10、考生 20 进入页面，本地种子数据固定这些 ID。
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		return fmt.Errorf("hash demo password: %w", err)
+	}
 	if err := insertIgnore(tx, []dbmodel.PlatformUserDO{{
 		BaseFields:   baseFields(demoPlatformAdminID, now),
 		Username:     "admin",
 		Phone:        "13800000001",
 		Email:        "admin@example.test",
-		PasswordHash: "papermind123",
+		PasswordHash: passwordHash,
 		Status:       "enabled",
 	}}); err != nil {
 		return fmt.Errorf("seed platform user: %w", err)
@@ -99,7 +104,7 @@ func seedIdentityAndSpace(tx *gorm.DB, now int64) error {
 			RealName:     "租户管理员",
 			Phone:        "13800000010",
 			Email:        "tenant-admin@example.test",
-			PasswordHash: "papermind123",
+			PasswordHash: passwordHash,
 			Status:       "enabled",
 		},
 		{
@@ -109,7 +114,7 @@ func seedIdentityAndSpace(tx *gorm.DB, now int64) error {
 			RealName:     "张同学",
 			Phone:        "13800000020",
 			Email:        "student01@example.test",
-			PasswordHash: "papermind123",
+			PasswordHash: passwordHash,
 			Status:       "enabled",
 		},
 		{
@@ -119,7 +124,7 @@ func seedIdentityAndSpace(tx *gorm.DB, now int64) error {
 			RealName:     "李老师",
 			Phone:        "13800000021",
 			Email:        "teacher01@example.test",
-			PasswordHash: "papermind123",
+			PasswordHash: passwordHash,
 			Status:       "enabled",
 		},
 	}); err != nil {

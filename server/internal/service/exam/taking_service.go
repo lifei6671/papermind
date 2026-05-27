@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lifei6671/papermind/server/library/constant"
@@ -136,6 +137,7 @@ type TakingService struct {
 	events      chan ExamEvent
 	logger      TakingLogger
 	lastEventAt map[eventThrottleKey]int64
+	throttleMu  sync.Mutex
 }
 
 func NewTakingService(options TakingServiceOptions) *TakingService {
@@ -289,6 +291,8 @@ func (s *TakingService) shouldThrottle(event ExamEvent) bool {
 		return false
 	}
 	key := eventThrottleKey{tenantID: event.TenantID, attemptID: event.AttemptID, eventType: event.EventType}
+	s.throttleMu.Lock()
+	defer s.throttleMu.Unlock()
 	lastAt, exists := s.lastEventAt[key]
 	if exists && event.EventTime-lastAt < eventThrottleMillis {
 		return true

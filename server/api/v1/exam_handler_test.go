@@ -11,9 +11,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lifei6671/papermind/server/library/constant"
+	"github.com/lifei6671/papermind/server/library/crypto"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -24,15 +26,17 @@ func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedExamAPITestData(t, gormDB)
+	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:            gormDB,
 		Now:           func() int64 { return fixedAPINow },
 		CodeGenerator: fixedCodeGenerator{code: "PM2027"},
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	listRecorder := httptest.NewRecorder()
-	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/exams?tenant_id=10", nil))
+	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/exams?tenant_id=10", nil, authHeader))
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
@@ -58,7 +62,7 @@ func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 		"publish_mode": "manual_publish"
 	}`)
 	publishRecorder := httptest.NewRecorder()
-	router.ServeHTTP(publishRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams", bytes.NewReader(payload)))
+	router.ServeHTTP(publishRecorder, authorizedRequest(http.MethodPost, "/api/v1/exams", payload, authHeader))
 	if publishRecorder.Code != http.StatusOK {
 		t.Fatalf("publish status = %d, body = %s", publishRecorder.Code, publishRecorder.Body.String())
 	}
@@ -86,33 +90,31 @@ func TestExamEntryResolveInviteWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
 
-	payload := []byte(`{
-		"invite_code": "PM2026",
-		"user_id": 20
-	}`)
+	anonymousRecorder := httptest.NewRecorder()
+	router.ServeHTTP(anonymousRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams/invite/resolve", bytes.NewReader([]byte(`{
+		"invite_code": "PM2026"
+	}`))))
+	if anonymousRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous resolve status = %d, body = %s", anonymousRecorder.Code, anonymousRecorder.Body.String())
+	}
+
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+	payload := []byte(`{"invite_code": "PM2026", "user_id": 21}`)
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams/invite/resolve", bytes.NewReader(payload)))
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/exams/invite/resolve", payload, authHeader))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("resolve invite status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	body := decodeExamAPIResponse[examInviteResponse](t, recorder.Body.Bytes())
 	if body.Data.ID != 1 || body.Data.InviteCode != "PM2026" || body.Data.Name != "高一语文期中考试" {
 		t.Fatalf("unexpected invite response: %#v", body.Data)
-	}
-
-	anonymousRecorder := httptest.NewRecorder()
-	router.ServeHTTP(anonymousRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams/invite/resolve", bytes.NewReader([]byte(`{
-		"invite_code": "PM2026",
-		"user_id": 0
-	}`))))
-	if anonymousRecorder.Code != http.StatusBadRequest {
-		t.Fatalf("anonymous resolve status = %d, body = %s", anonymousRecorder.Code, anonymousRecorder.Body.String())
 	}
 }
 
@@ -126,12 +128,33 @@ func TestStudentTakingAPIRoutesStartSaveAndSubmitWithSQLite(t *testing.T) {
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
 
-	startRecorder := httptest.NewRecorder()
-	router.ServeHTTP(startRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams/1/attempts/start", bytes.NewReader([]byte(`{
+	anonymousStartRecorder := httptest.NewRecorder()
+	router.ServeHTTP(anonymousStartRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams/1/attempts/start", bytes.NewReader([]byte(`{
 		"tenant_id": 10,
 		"user_id": 20
 	}`))))
+	if anonymousStartRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous start status = %d, body = %s", anonymousStartRecorder.Code, anonymousStartRecorder.Body.String())
+	}
+
+	resolveRecorder := httptest.NewRecorder()
+	router.ServeHTTP(resolveRecorder, authorizedRequest(http.MethodPost, "/api/v1/exams/invite/resolve", []byte(`{
+		"invite_code": "PM2026"
+	}`), authHeader))
+	if resolveRecorder.Code != http.StatusOK {
+		t.Fatalf("resolve invite before start status = %d, body = %s", resolveRecorder.Code, resolveRecorder.Body.String())
+	}
+
+	startRecorder := httptest.NewRecorder()
+	startRequest := httptest.NewRequest(http.MethodPost, "/api/v1/exams/1/attempts/start", bytes.NewReader([]byte(`{
+		"tenant_id": 10
+	}`)))
+	for _, cookie := range resolveRecorder.Result().Cookies() {
+		startRequest.AddCookie(cookie)
+	}
+	router.ServeHTTP(startRecorder, startRequest)
 	if startRecorder.Code != http.StatusOK {
 		t.Fatalf("start status = %d, body = %s", startRecorder.Code, startRecorder.Body.String())
 	}
@@ -193,20 +216,112 @@ func TestStudentTakingAPIRoutesStartSaveAndSubmitWithSQLite(t *testing.T) {
 	}
 }
 
+func TestStudentTakingAPIRoutesPersistNonCriticalEvents(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+	resolveRecorder := httptest.NewRecorder()
+	router.ServeHTTP(resolveRecorder, authorizedRequest(http.MethodPost, "/api/v1/exams/invite/resolve", []byte(`{
+		"invite_code": "PM2026"
+	}`), authHeader))
+	if resolveRecorder.Code != http.StatusOK {
+		t.Fatalf("resolve invite status = %d, body = %s", resolveRecorder.Code, resolveRecorder.Body.String())
+	}
+	startRecorder := httptest.NewRecorder()
+	startRequest := httptest.NewRequest(http.MethodPost, "/api/v1/exams/1/attempts/start", bytes.NewReader([]byte(`{"tenant_id":10}`)))
+	for _, cookie := range resolveRecorder.Result().Cookies() {
+		startRequest.AddCookie(cookie)
+	}
+	router.ServeHTTP(startRecorder, startRequest)
+	if startRecorder.Code != http.StatusOK {
+		t.Fatalf("start status = %d, body = %s", startRecorder.Code, startRecorder.Body.String())
+	}
+	startBody := decodeExamAPIResponse[startAttemptResponse](t, startRecorder.Body.Bytes())
+
+	eventRecorder := httptest.NewRecorder()
+	router.ServeHTTP(eventRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-attempts/"+
+		strconv.FormatUint(startBody.Data.Attempt.ID, 10)+"/events", bytes.NewReader([]byte(`{
+		"tenant_id": 10,
+		"exam_token": "`+startBody.Data.ExamToken+`",
+		"event_type": "blur",
+		"payload": "{\"reason\":\"switch_tab\"}"
+	}`))))
+	if eventRecorder.Code != http.StatusOK {
+		t.Fatalf("event status = %d, body = %s", eventRecorder.Code, eventRecorder.Body.String())
+	}
+	var eventCount int64
+	for attempt := 0; attempt < 20; attempt++ {
+		if err := gormDB.Table("exam_events").
+			Where("tenant_id = ? AND attempt_id = ? AND event_type = ?", 10, startBody.Data.Attempt.ID, constant.ExamEventTypeBlur).
+			Count(&eventCount).Error; err != nil {
+			t.Fatalf("count event: %v", err)
+		}
+		if eventCount == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if eventCount != 1 {
+		t.Fatalf("expected non-critical event to be persisted, got %d", eventCount)
+	}
+}
+
+func TestStudentTakingAPIRoutesRejectsUserOutsideExamTargets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student21", "papermind123")
+
+	resolveRecorder := httptest.NewRecorder()
+	router.ServeHTTP(resolveRecorder, authorizedRequest(http.MethodPost, "/api/v1/exams/invite/resolve", []byte(`{
+		"invite_code": "PM2026"
+	}`), authHeader))
+	if resolveRecorder.Code != http.StatusOK {
+		t.Fatalf("resolve invite status = %d, body = %s", resolveRecorder.Code, resolveRecorder.Body.String())
+	}
+
+	startRecorder := httptest.NewRecorder()
+	startRequest := httptest.NewRequest(http.MethodPost, "/api/v1/exams/1/attempts/start", bytes.NewReader([]byte(`{
+		"tenant_id": 10
+	}`)))
+	for _, cookie := range resolveRecorder.Result().Cookies() {
+		startRequest.AddCookie(cookie)
+	}
+	router.ServeHTTP(startRecorder, startRequest)
+	if startRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("outside target start status = %d, body = %s", startRecorder.Code, startRecorder.Body.String())
+	}
+}
+
 func TestReviewAndResultAPIRoutesWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedExamAPITestData(t, gormDB)
 	seedReviewResultAPITestData(t, gormDB)
+	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:        gormDB,
 		Now:       func() int64 { return fixedAPINow },
 		ExportDir: t.TempDir(),
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	listReviewRecorder := httptest.NewRecorder()
-	router.ServeHTTP(listReviewRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/grading/pending?tenant_id=10&exam_id=1&actor_id=501&actor_role=teacher&space_id=301", nil))
+	router.ServeHTTP(listReviewRecorder, authorizedRequest(http.MethodGet, "/api/v1/grading/pending?tenant_id=10&exam_id=1&space_id=301", nil, authHeader))
 	if listReviewRecorder.Code != http.StatusOK {
 		t.Fatalf("list review status = %d, body = %s", listReviewRecorder.Code, listReviewRecorder.Body.String())
 	}
@@ -220,16 +335,14 @@ func TestReviewAndResultAPIRoutesWithSQLite(t *testing.T) {
 	}
 
 	gradeRecorder := httptest.NewRecorder()
-	router.ServeHTTP(gradeRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-attempts/900/questions/901/grade", bytes.NewReader([]byte(`{
+	router.ServeHTTP(gradeRecorder, authorizedRequest(http.MethodPost, "/api/v1/exam-attempts/900/questions/901/grade", []byte(`{
 		"tenant_id": 10,
 		"exam_id": 1,
-		"actor_id": 501,
-		"actor_role": "teacher",
 		"space_id": 301,
 		"answer_version": 7,
 		"score": "4.5",
 		"comment": "要点完整"
-	}`))))
+	}`), authHeader))
 	if gradeRecorder.Code != http.StatusOK {
 		t.Fatalf("grade status = %d, body = %s", gradeRecorder.Code, gradeRecorder.Body.String())
 	}
@@ -262,21 +375,19 @@ func TestReviewAndResultAPIRoutesWithSQLite(t *testing.T) {
 	}
 
 	configRecorder := httptest.NewRecorder()
-	router.ServeHTTP(configRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/results/publish-config", bytes.NewReader([]byte(`{
+	router.ServeHTTP(configRecorder, authorizedRequest(http.MethodPost, "/api/v1/results/publish-config", []byte(`{
 		"tenant_id": 10,
 		"exam_id": 1,
-		"actor_id": 501,
-		"actor_role": "teacher",
 		"space_id": 301,
 		"publish_mode": "manual_publish",
 		"score_publish_time": 1779795600000
-	}`))))
+	}`), authHeader))
 	if configRecorder.Code != http.StatusOK {
 		t.Fatalf("publish config status = %d, body = %s", configRecorder.Code, configRecorder.Body.String())
 	}
 
 	listResultsRecorder := httptest.NewRecorder()
-	router.ServeHTTP(listResultsRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/results?tenant_id=10&exam_id=1&actor_id=501&actor_role=teacher&space_id=301", nil))
+	router.ServeHTTP(listResultsRecorder, authorizedRequest(http.MethodGet, "/api/v1/results?tenant_id=10&exam_id=1&space_id=301", nil, authHeader))
 	if listResultsRecorder.Code != http.StatusOK {
 		t.Fatalf("list results status = %d, body = %s", listResultsRecorder.Code, listResultsRecorder.Body.String())
 	}
@@ -286,13 +397,11 @@ func TestReviewAndResultAPIRoutesWithSQLite(t *testing.T) {
 	}
 
 	exportRecorder := httptest.NewRecorder()
-	router.ServeHTTP(exportRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/results/export", bytes.NewReader([]byte(`{
+	router.ServeHTTP(exportRecorder, authorizedRequest(http.MethodPost, "/api/v1/results/export", []byte(`{
 		"tenant_id": 10,
 		"exam_id": 1,
-		"actor_id": 501,
-		"actor_role": "teacher",
 		"space_id": 301
-	}`))))
+	}`), authHeader))
 	if exportRecorder.Code != http.StatusOK {
 		t.Fatalf("export status = %d, body = %s", exportRecorder.Code, exportRecorder.Body.String())
 	}
@@ -346,6 +455,37 @@ func seedExamAPITestData(t *testing.T, gormDB *gorm.DB) {
 
 func seedTakingAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash tenant password: %v", err)
+	}
+
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, tenant_id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 'student20', '目标考生', '13800000020', 'student20@example.test', ?, 'enabled', ?, ?, '{}'),
+			(21, 10, 'student21', '非目标考生', '13800000021', 'student21@example.test', ?, 'enabled', ?, ?, '{}')
+	`, passwordHash, fixedAPINow, fixedAPINow, passwordHash, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed taking users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO user_roles (
+			id, tenant_id, user_id, role, created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 20, 'student', ?, ?, '{}'),
+			(21, 10, 21, 'student', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed taking user roles: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_targets (
+			id, tenant_id, exam_id, target_type, target_id, created_at, ext_json
+		) VALUES (20, 10, 1, 'user', 20, ?, '{}')
+	`, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed taking exam target: %v", err)
+	}
 
 	if err := gormDB.Exec(`
 		INSERT INTO paper_sections (
@@ -474,4 +614,21 @@ type fixedCodeGenerator struct {
 
 func (g fixedCodeGenerator) NextCode() (string, error) {
 	return g.code, nil
+}
+
+func tenantAuthHeader(t *testing.T, router *gin.Engine, tenantID uint64, username string, password string) string {
+	t.Helper()
+
+	loginRecorder := httptest.NewRecorder()
+	body := fmt.Sprintf(`{"tenant_id":%d,"username":%q,"password":%q}`, tenantID, username, password)
+	router.ServeHTTP(loginRecorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/auth/tenant/login",
+		bytes.NewReader([]byte(body)),
+	))
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("tenant login status = %d, body = %s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+	responseBody := decodeExamAPIResponse[authSessionResponse](t, loginRecorder.Body.Bytes())
+	return "Bearer " + responseBody.Data.AccessToken
 }

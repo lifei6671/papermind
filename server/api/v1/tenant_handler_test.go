@@ -22,9 +22,10 @@ func TestTenantAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 		CodeGenerator:        fixedCodeGenerator{code: "PM-XH01"},
 		AllowRegisterDefault: true,
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	listRecorder := httptest.NewRecorder()
-	router.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/tenants", nil))
+	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/tenants", nil, authHeader))
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
@@ -42,7 +43,6 @@ func TestTenantAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 		"description": "面向公共课和企业培训的考试空间",
 		"allow_register": false
 	}`)
-	authHeader := platformAuthHeader(t, router)
 	createRecorder := httptest.NewRecorder()
 	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/tenants", payload, authHeader))
 	if createRecorder.Code != http.StatusOK {
@@ -81,9 +81,10 @@ func TestTenantAPIListFiltersByKeywordWithSQLite(t *testing.T) {
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
+	authHeader := platformAuthHeader(t, router)
 
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/tenants?keyword=知行", nil))
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/tenants?keyword=知行", nil, authHeader))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -93,6 +94,39 @@ func TestTenantAPIListFiltersByKeywordWithSQLite(t *testing.T) {
 	}
 	if body.Data.Items[0].Name != "知行培训" || body.Data.Items[0].TenantCode != "PM-ZX01" {
 		t.Fatalf("unexpected filtered tenant: %#v", body.Data.Items[0])
+	}
+}
+
+func TestTenantManagementRoutesRejectAnonymousRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedTenantAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+
+	cases := []struct {
+		name   string
+		method string
+		target string
+		body   []byte
+	}{
+		{name: "list", method: http.MethodGet, target: "/api/v1/tenants"},
+		{name: "create", method: http.MethodPost, target: "/api/v1/tenants", body: []byte(`{"name":"星海大学"}`)},
+		{name: "profile", method: http.MethodPost, target: "/api/v1/tenants/1/profile", body: []byte(`{"name":"青藤一中"}`)},
+		{name: "reset code", method: http.MethodPost, target: "/api/v1/tenants/1/reset-code"},
+		{name: "register setting", method: http.MethodPost, target: "/api/v1/tenants/1/register-setting", body: []byte(`{"allow_register":false}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.target, bytes.NewReader(tc.body)))
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("anonymous %s status = %d, body = %s", tc.name, recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
