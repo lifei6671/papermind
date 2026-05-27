@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
 import { act } from "react";
@@ -9,6 +9,7 @@ import { AppProviders } from "./providers";
 const originalMatchMedia = window.matchMedia;
 
 afterEach(() => {
+  vi.restoreAllMocks();
   Object.defineProperty(window, "matchMedia", {
     value: originalMatchMedia,
     writable: true,
@@ -246,6 +247,24 @@ test("离开页面提醒通过确认弹窗展示", async () => {
 
 test("考试入口支持邀请码进入并跳转到考试端", async () => {
   const user = userEvent.setup();
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+    code: 0,
+    message: "ok",
+    data: {
+      id: 1,
+      tenant_id: 10,
+      paper_id: 100,
+      name: "高一语文期中考试",
+      start_time: 1779792000000,
+      end_time: 1779799200000,
+      duration_minutes: 120,
+      max_attempts: 1,
+      result_strategy: "latest",
+      publish_mode: "manual_publish",
+      invite_code: "PM2026",
+      status: "published",
+    },
+  })));
 
   renderApp(["/exam-entry"]);
 
@@ -255,7 +274,13 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
   await user.type(screen.getByLabelText("邀请码"), "PM2026");
   await user.click(screen.getByRole("button", { name: "进入考试" }));
 
-  expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
+  await waitFor(() => {
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/v1/exams/invite/resolve",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+  expect(await screen.findByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "交 卷" })).toBeInTheDocument();
 });
 

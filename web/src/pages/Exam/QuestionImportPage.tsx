@@ -3,6 +3,8 @@ import { RefreshCw, Search } from "lucide-react";
 import { useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
+import { questionApi } from "../../api/questions";
+import type { QuestionImportAPI } from "../../api/questions";
 
 type ImportRecord = {
   id: number;
@@ -14,10 +16,17 @@ const initialImportRecords: ImportRecord[] = [
   { id: 1, fileName: "sample-questions.csv", result: "已解析 12 道题" },
 ];
 
-export function QuestionImportPage() {
+type QuestionImportPageProps = {
+  api?: QuestionImportAPI;
+  tenantID?: number;
+  spaceID?: number;
+};
+
+export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }: QuestionImportPageProps) {
   const [importRecords, setImportRecords] = useState<ImportRecord[]>(initialImportRecords);
-  const [importFileName, setImportFileName] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [importMessage, setImportMessage] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
@@ -32,19 +41,33 @@ export function QuestionImportPage() {
     return [record.fileName, record.result].some((value) => value.toLowerCase().includes(keyword));
   });
 
-  function handleImportQuestions() {
-    if (!importFileName) {
+  async function handleImportQuestions() {
+    if (!importFile) {
       setImportMessage("请选择题目导入文件");
       return;
     }
 
-    // 独立导入入口只负责文件解析反馈，解析后的审题和归类回到题库维护。
-    setImportMessage(`${importFileName} 已解析 18 道题`);
-    setImportRecords((items) => [
-      ...items,
-      { id: Date.now(), fileName: importFileName, result: "已解析 18 道题" },
-    ]);
-    setIsImportDialogOpen(false);
+    setIsImporting(true);
+    try {
+      // 题目文件由后端按统一 CSV 模板解析，前端只负责提交原始文件并展示成功数与行级错误。
+      const result = await api.importQuestions({
+        tenantID,
+        spaceID,
+        file: importFile,
+      });
+      const summary = formatImportSummary(result.successCount, result.errors.length);
+      const detail = formatImportErrors(result.errors);
+      setImportMessage(`${importFile.name} ${summary}${detail ? `：${detail}` : ""}`);
+      setImportRecords((items) => [
+        ...items,
+        { id: Date.now(), fileName: importFile.name, result: summary },
+      ]);
+      setIsImportDialogOpen(false);
+    } catch (err) {
+      setImportMessage(err instanceof Error ? err.message : "导入题目失败");
+    } finally {
+      setIsImporting(false);
+    }
   }
 
   function handleSearchImportRecords() {
@@ -54,6 +77,16 @@ export function QuestionImportPage() {
   function handleRefreshImportRecords() {
     setSearchQuery("");
     setAppliedSearchQuery("");
+  }
+
+  function openImportDialog() {
+    setImportFile(null);
+    setIsImportDialogOpen(true);
+  }
+
+  function closeImportDialog() {
+    setImportFile(null);
+    setIsImportDialogOpen(false);
   }
 
   return (
@@ -69,7 +102,7 @@ export function QuestionImportPage() {
           <div className="tenant-list-actions" aria-label="题目导入操作区">
             <Button
               variant="toolbarPrimary"
-              onClick={() => setIsImportDialogOpen(true)}
+              onClick={openImportDialog}
               type="button"
             >
               导入题目
@@ -127,14 +160,16 @@ export function QuestionImportPage() {
                 accept={["text/csv", "application/vnd.ms-excel"]}
                 label="题目导入文件"
                 maxSizeBytes={2 * 1024 * 1024}
-                onFileAccepted={(file) => setImportFileName(file.name)}
+                onFileAccepted={(file) => {
+                  setImportFile(file);
+                }}
               />
               <div className="platform-dialog__actions">
-                <Button variant="secondary" onClick={() => setIsImportDialogOpen(false)} type="button">
+                <Button variant="secondary" onClick={closeImportDialog} type="button">
                   取消
                 </Button>
-                <Button variant="primary" onClick={handleImportQuestions} type="button">
-                  确认导入
+                <Button variant="primary" disabled={isImporting} onClick={handleImportQuestions} type="button">
+                  {isImporting ? "导入中" : "确认导入"}
                 </Button>
               </div>
             </div>
@@ -143,4 +178,15 @@ export function QuestionImportPage() {
       )}
     </section>
   );
+}
+
+function formatImportSummary(successCount: number, errorCount: number) {
+  if (errorCount === 0) {
+    return `已导入 ${successCount} 道题`;
+  }
+  return `已导入 ${successCount} 道题，${errorCount} 行失败`;
+}
+
+function formatImportErrors(errors: Array<{ rowNumber: number; reason: string }>) {
+  return errors.map((error) => `第 ${error.rowNumber} 行：${error.reason}`).join("；");
 }

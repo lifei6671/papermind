@@ -4,6 +4,8 @@ import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ClipboardCheck, DoorOpen, ShieldCheck } from "lucide-react";
 import { useState } from "react";
+import { examApi } from "../../api/exams";
+import type { ExamEntryAPI } from "../../api/exams";
 
 const examNotices = [
   "开考后系统自动开始计时，到达截止时间将自动交卷。",
@@ -12,15 +14,30 @@ const examNotices = [
   "交卷后无法继续修改答案，成绩公布后按试卷设置展示解析。",
 ];
 
-export function ExamEntryPage() {
+type ExamEntryPageProps = {
+  api?: ExamEntryAPI;
+  userID?: number;
+};
+
+export function ExamEntryPage({ api = examApi, userID = 20 }: ExamEntryPageProps) {
   const navigate = useNavigate();
   const [inviteCode, setInviteCode] = useState("");
+  const [resolveMessage, setResolveMessage] = useState("");
+  const [entryError, setEntryError] = useState("");
 
-  function handleEnterExam(event: React.FormEvent<HTMLFormElement>) {
+  async function handleEnterExam(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    // 邀请码真实校验待 HTTP API 接入；当前先在校验表单通过后进入独立考试端。
-    navigate("/student/exam");
+    try {
+      // 邀请码进入考试前必须先由服务端解析，避免前端仅凭本地表单直接打开考试端。
+      const exam = await api.resolveInvite({ inviteCode, userID });
+      setResolveMessage(`${exam.name} 已校验，正在进入考试端`);
+      setEntryError("");
+      navigate("/student/exam");
+    } catch (err) {
+      setResolveMessage("");
+      setEntryError(err instanceof Error ? err.message : "邀请码校验失败");
+    }
   }
 
   return (
@@ -57,6 +74,12 @@ export function ExamEntryPage() {
                 进入考试
               </Button>
             </div>
+            {resolveMessage && (
+              <div aria-label="entry-resolve-result" className="tenant-admin-status" role="status">
+                {resolveMessage}
+              </div>
+            )}
+            {entryError && <div className="tenant-admin-warning" role="alert">{entryError}</div>}
           </form>
         </Panel>
 

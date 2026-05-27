@@ -2,6 +2,7 @@ package v1
 
 import (
 	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -64,6 +65,46 @@ func TestQuestionAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	}
 }
 
+func TestQuestionImportAPIRouteParsesCSVAndReturnsRowErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+
+	requestBody, contentType := buildQuestionImportMultipart(t, `type,title,options,correct_answer,analysis,difficulty,tags
+single,函数单调性判断,A.y = x|B.y = -x,A,一次函数斜率为正时单调递增。,medium,函数
+single,无正确选项,A.正确|B.错误,,缺少正确答案。,medium,基础
+`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/questions/import", requestBody)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("import status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	body := decodeExamAPIResponse[importQuestionsResponse](t, recorder.Body.Bytes())
+	if body.Data.SuccessCount != 1 {
+		t.Fatalf("expected one imported row, got %#v", body.Data)
+	}
+	if len(body.Data.Errors) != 1 || body.Data.Errors[0].RowNumber != 3 {
+		t.Fatalf("expected row 3 error, got %#v", body.Data.Errors)
+	}
+
+	var importedCount int64
+	if err := gormDB.Table("questions").
+		Where("tenant_id = ?", 10).
+		Where("title = ?", "函数单调性判断").
+		Count(&importedCount).Error; err != nil {
+		t.Fatalf("count imported questions: %v", err)
+	}
+	if importedCount != 1 {
+		t.Fatalf("expected imported question persisted, got %d", importedCount)
+	}
+}
+
 func seedQuestionAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
 
@@ -102,4 +143,25 @@ func seedQuestionAPITestData(t *testing.T, gormDB *gorm.DB) {
 	`, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed question tag: %v", err)
 	}
+}
+
+func buildQuestionImportMultipart(t *testing.T, csvContent string) (*bytes.Buffer, string) {
+	t.Helper()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("tenant_id", "10"); err != nil {
+		t.Fatalf("write tenant field: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "questions.csv")
+	if err != nil {
+		t.Fatalf("create import file field: %v", err)
+	}
+	if _, err := part.Write([]byte(csvContent)); err != nil {
+		t.Fatalf("write import file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	return body, writer.FormDataContentType()
 }

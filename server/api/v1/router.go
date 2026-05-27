@@ -11,6 +11,8 @@ import (
 	dbdao "github.com/lifei6671/papermind/server/internal/dao/db"
 	serviceexam "github.com/lifei6671/papermind/server/internal/service/exam"
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
+	servicepaper "github.com/lifei6671/papermind/server/internal/service/paper"
+	serviceplatformuser "github.com/lifei6671/papermind/server/internal/service/platformuser"
 	servicequestion "github.com/lifei6671/papermind/server/internal/service/question"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenant "github.com/lifei6671/papermind/server/internal/service/tenant"
@@ -25,9 +27,15 @@ type RouterOptions struct {
 	Now                  func() int64
 	CodeGenerator        serviceexam.CodeGenerator
 	AllowRegisterDefault bool
+	AuthTokenIssuer      AuthTokenIssuer
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
+	platformUserRepository := dbdao.NewPlatformUserRepository(options.DB, dbdao.PlatformUserRepositoryOptions{Now: options.Now})
+	platformUserService := serviceplatformuser.NewService(serviceplatformuser.ServiceOptions{
+		Repo: platformUserRepository,
+		Now:  options.Now,
+	})
 	examRepository := dbdao.NewExamRepository(options.DB, dbdao.ExamRepositoryOptions{Now: options.Now})
 	examService := serviceexam.NewService(serviceexam.ServiceOptions{
 		Repo:          examRepository,
@@ -44,6 +52,8 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	spaceService := servicespace.NewService(servicespace.ServiceOptions{Repo: spaceRepository})
 	questionRepository := dbdao.NewQuestionRepository(options.DB, dbdao.QuestionRepositoryOptions{Now: options.Now})
 	questionService := servicequestion.NewQuestionService(servicequestion.QuestionServiceOptions{Repo: questionRepository})
+	paperRepository := dbdao.NewPaperRepository(options.DB, dbdao.PaperRepositoryOptions{Now: options.Now})
+	paperService := servicepaper.NewService(servicepaper.ServiceOptions{Repo: paperRepository})
 	userRepository := dbdao.NewTenantUserRepository(options.DB, dbdao.TenantUserRepositoryOptions{Now: options.Now})
 	userService := servicetenantuser.NewService(servicetenantuser.ServiceOptions{
 		Repo:                       userRepository,
@@ -55,12 +65,16 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	spaceHandler := spaceHandler{service: spaceService, members: spaceRepository}
 	userHandler := userHandler{service: userService}
 	questionHandler := questionHandler{service: questionService}
+	paperHandler := paperHandler{service: paperService}
+	authHandler := authHandler{platformUsers: platformUserService, tokenIssuer: defaultAuthTokenIssuer(options.AuthTokenIssuer)}
 
 	router := gin.New()
 	router.Use(middleware.RequestID(), middleware.Recovery())
 	api := router.Group("/api/v1")
+	api.POST("/auth/platform/login", authHandler.platformLogin)
 	api.GET("/exams", examHandler.list)
 	api.POST("/exams", examHandler.publish)
+	api.POST("/exams/invite/resolve", examHandler.resolveInvite)
 	api.GET("/tenants", tenantHandler.list)
 	api.POST("/tenants", tenantHandler.create)
 	api.GET("/spaces", spaceHandler.list)
@@ -70,6 +84,15 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	api.POST("/users/:id/disable", userHandler.disable)
 	api.GET("/questions", questionHandler.list)
 	api.POST("/questions", questionHandler.create)
+	api.POST("/questions/import", questionHandler.importQuestions)
+	api.GET("/papers", paperHandler.list)
+	api.GET("/papers/:id/rules", paperHandler.listRules)
+	api.POST("/papers/:id/rule-fixed/generate", paperHandler.generateRuleFixed)
+	api.POST("/papers/:id/rule-live/precheck", paperHandler.precheckRuleLive)
+	api.GET("/papers/:id/sections", paperHandler.listSections)
+	api.POST("/papers/:id/sections", paperHandler.createSection)
+	api.POST("/papers/:id/sections/:section_id/questions", paperHandler.addManualQuestion)
+	api.POST("/papers/:id/sections/:section_id/rules", paperHandler.createRule)
 	return router
 }
 
@@ -92,6 +115,11 @@ type publishExamRequest struct {
 	ScorePublishTime *int64 `json:"score_publish_time"`
 }
 
+type resolveExamInviteRequest struct {
+	InviteCode string `json:"invite_code"`
+	UserID     uint64 `json:"user_id"`
+}
+
 type examResponse struct {
 	ID               uint64 `json:"id"`
 	TenantID         uint64 `json:"tenant_id"`
@@ -109,6 +137,8 @@ type examResponse struct {
 	TargetType       string `json:"target_type,omitempty"`
 	TargetID         uint64 `json:"target_id,omitempty"`
 }
+
+type examInviteResponse = examResponse
 
 type examListResponse struct {
 	Items    []examResponse `json:"items"`
@@ -196,6 +226,28 @@ func (h examHandler) publish(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(result))
 }
 
+func (h examHandler) resolveInvite(c *gin.Context) {
+	var request resolveExamInviteRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	// 邀请码入口先解析考试基础信息；真正创建 attempt 和 exam token 放在答题页 API 中处理。
+	exam, err := h.service.ResolveInvite(c.Request.Context(), serviceexam.ResolveInviteInput{
+		InviteCode: request.InviteCode,
+		UserID:     request.UserID,
+	})
+	if err != nil {
+		writeExamServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(examToResponse(exam)))
+}
+
 func (r publishExamRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -230,11 +282,19 @@ func (r publishExamRequest) validate() error {
 	return nil
 }
 
+func (r resolveExamInviteRequest) validate() error {
+	if r.InviteCode == "" {
+		return errors.New("invite_code 不能为空")
+	}
+	return nil
+}
+
 func writeExamServiceError(c *gin.Context, err error) {
 	if errors.Is(err, serviceexam.ErrDurationExceedsExamWindow) ||
 		errors.Is(err, serviceexam.ErrShortTextCannotRepeatAttempt) ||
 		errors.Is(err, serviceexam.ErrShortTextCannotImmediateScore) ||
-		errors.Is(err, serviceexam.ErrDuplicateExamTarget) {
+		errors.Is(err, serviceexam.ErrDuplicateExamTarget) ||
+		errors.Is(err, serviceexam.ErrLoginRequiredForInvite) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}

@@ -1,5 +1,6 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
+import { readStoredAccessToken } from "./session-token";
 
 export type ExamStatus = "draft" | "published";
 
@@ -31,6 +32,11 @@ export type PublishExamInput = {
   publishMode: "immediate_score" | "manual_publish";
 };
 
+export type ResolveExamInviteInput = {
+  inviteCode: string;
+  userID: number;
+};
+
 export type ExamListResult = {
   items: ExamRow[];
 };
@@ -38,6 +44,10 @@ export type ExamListResult = {
 export type ExamManagementAPI = {
   listExams(tenantID: number): Promise<ExamListResult>;
   publishExam(input: PublishExamInput): Promise<ExamRow>;
+};
+
+export type ExamEntryAPI = {
+  resolveInvite(input: ResolveExamInviteInput): Promise<ExamRow>;
 };
 
 type ExamAPIResponse = {
@@ -56,11 +66,12 @@ type ExamAPIResponse = {
 
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
+  getAccessToken: readStoredAccessToken,
 });
 
 export const examApi = createExamAPI(defaultApiClient);
 
-export function createExamAPI(apiClient: ApiClient): ExamManagementAPI {
+export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEntryAPI {
   return {
     async listExams(tenantID) {
       const data = await apiClient.get<PageData<ExamAPIResponse>>(`/api/v1/exams?tenant_id=${tenantID}`);
@@ -81,6 +92,13 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI {
         max_attempts: input.maxAttempts,
         result_strategy: input.resultStrategy,
         publish_mode: input.publishMode,
+      });
+      return mapExamResponse(data);
+    },
+    async resolveInvite(input) {
+      const data = await apiClient.post<ExamAPIResponse>("/api/v1/exams/invite/resolve", {
+        invite_code: input.inviteCode,
+        user_id: input.userID,
       });
       return mapExamResponse(data);
     },

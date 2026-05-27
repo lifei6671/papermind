@@ -1,5 +1,6 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
+import { readStoredAccessToken } from "./session-token";
 
 export type TenantRow = {
   id: number;
@@ -38,6 +39,7 @@ type TenantAPIResponse = {
 
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
+  getAccessToken: readStoredAccessToken,
 });
 
 export const tenantApi = createTenantAPI(defaultApiClient);

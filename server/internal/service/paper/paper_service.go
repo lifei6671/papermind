@@ -166,6 +166,7 @@ type SectionAggregate struct {
 }
 
 type Repository interface {
+	ListPapers(ctx context.Context, tenantID uint64) ([]Paper, error)
 	SectionSortOrderExists(ctx context.Context, tenantID uint64, paperID uint64, sortOrder int) (bool, error)
 	CreateSection(ctx context.Context, section Section) (Section, error)
 	UpdateSection(ctx context.Context, input UpdateSectionInput) error
@@ -200,6 +201,10 @@ func NewService(options ServiceOptions) *Service {
 	return &Service{repo: options.Repo}
 }
 
+func (s *Service) ListPapers(ctx context.Context, tenantID uint64) ([]Paper, error) {
+	return s.repo.ListPapers(ctx, tenantID)
+}
+
 func (s *Service) CreateSection(ctx context.Context, input CreateSectionInput) (Section, error) {
 	if _, err := s.repo.SectionSortOrderExists(ctx, input.TenantID, input.PaperID, input.SortOrder); err != nil {
 		return Section{}, err
@@ -229,6 +234,14 @@ func (s *Service) DeleteSection(ctx context.Context, tenantID uint64, sectionID 
 
 func (s *Service) ListSections(ctx context.Context, tenantID uint64, paperID uint64) ([]Section, error) {
 	return s.repo.ListActiveSections(ctx, tenantID, paperID)
+}
+
+func (s *Service) ListSectionQuestions(ctx context.Context, tenantID uint64, paperID uint64) ([]SectionQuestion, error) {
+	return s.repo.ListSectionQuestions(ctx, tenantID, paperID)
+}
+
+func (s *Service) ListRules(ctx context.Context, tenantID uint64, paperID uint64) ([]Rule, error) {
+	return s.repo.ListRules(ctx, tenantID, paperID)
 }
 
 func (s *Service) CreateManualPaper(ctx context.Context, input CreatePaperInput) (Paper, error) {

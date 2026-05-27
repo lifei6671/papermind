@@ -2,6 +2,7 @@ package platformuser
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"time"
 )
@@ -116,10 +117,18 @@ func NewService(options ServiceOptions) *Service {
 	if now == nil {
 		now = func() int64 { return time.Now().UnixMilli() }
 	}
+	passwordVerifier := options.PasswordVerifier
+	if passwordVerifier == nil {
+		passwordVerifier = plainPasswordVerifier{}
+	}
+	securityLogger := options.SecurityLogger
+	if securityLogger == nil {
+		securityLogger = noopSecurityLogger{}
+	}
 	return &Service{
 		repo:                      options.Repo,
-		passwordVerifier:          options.PasswordVerifier,
-		securityLogger:            options.SecurityLogger,
+		passwordVerifier:          passwordVerifier,
+		securityLogger:            securityLogger,
 		avatarStorage:             options.AvatarStorage,
 		maxAvatarSize:             options.MaxAvatarSize,
 		allowedAvatarContentTypes: options.AllowedAvatarContentTypes,
@@ -220,4 +229,17 @@ func (s *Service) isAllowedAvatarContentType(contentType string) bool {
 		}
 	}
 	return false
+}
+
+type plainPasswordVerifier struct{}
+
+func (plainPasswordVerifier) Verify(hash string, password string) bool {
+	// 首版 seed 只保存开发环境口令字面量；这里用常量时间比较，后续接入专用哈希器时替换该默认实现。
+	return subtle.ConstantTimeCompare([]byte(hash), []byte(password)) == 1
+}
+
+type noopSecurityLogger struct{}
+
+func (noopSecurityLogger) LoginFailed(ctx context.Context, username string, ip string, reason string) error {
+	return nil
 }

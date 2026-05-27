@@ -3,18 +3,24 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BookOpenCheck } from "lucide-react";
 import { useSession } from "../../auth/session-context";
+import { authApi } from "../../api/auth";
+import type { AuthAPI } from "../../api/auth";
 
-export function PlatformLoginPage() {
+type PlatformLoginPageProps = {
+  api?: AuthAPI;
+};
+
+export function PlatformLoginPage({ api = authApi }: PlatformLoginPageProps) {
   const navigate = useNavigate();
   const { signIn } = useSession();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    // 平台管理员登录页先完成前端登录态闭环，后续真实 API 接入后只替换提交动作。
     if (!username.trim()) {
       setError("请输入平台管理员账号");
       return;
@@ -25,16 +31,21 @@ export function PlatformLoginPage() {
       return;
     }
 
-    signIn({
-      accessToken: "platform-local-access-token",
-      refreshToken: "platform-local-refresh-token",
-      user: {
-        displayName: "平台管理员",
-        role: "platform_admin",
-        userID: 1,
-      },
-    });
-    navigate("/", { replace: true });
+    setIsSubmitting(true);
+    setError("");
+    try {
+      // 平台管理员登录成功后以服务端会话为准，本地只保存后续 API 鉴权需要的 token 和身份摘要。
+      const session = await api.platformLogin({
+        username: username.trim(),
+        password,
+      });
+      signIn(session);
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "平台管理员登录失败");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -74,7 +85,9 @@ export function PlatformLoginPage() {
             />
           </label>
 
-          <Button className="auth-submit" type="submit">登录平台</Button>
+          <Button className="auth-submit" disabled={isSubmitting} type="submit">
+            {isSubmitting ? "登录中" : "登录平台"}
+          </Button>
         </form>
       </section>
 

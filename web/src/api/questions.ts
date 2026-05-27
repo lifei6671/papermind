@@ -1,5 +1,6 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
+import { readStoredAccessToken } from "./session-token";
 
 export type QuestionStatus = "draft" | "ready";
 
@@ -11,6 +12,7 @@ export type QuestionRow = {
   options: string[];
   analysis: string;
   tag: string;
+  scoreDefault?: string;
   status: QuestionStatus;
 };
 
@@ -28,6 +30,22 @@ export type CreateQuestionInput = {
   tag: string;
 };
 
+export type ImportQuestionsInput = {
+  tenantID: number;
+  spaceID?: number;
+  file: File;
+};
+
+export type ImportQuestionError = {
+  rowNumber: number;
+  reason: string;
+};
+
+export type ImportQuestionsResult = {
+  successCount: number;
+  errors: ImportQuestionError[];
+};
+
 export type QuestionListResult = {
   items: QuestionRow[];
 };
@@ -37,11 +55,18 @@ export type QuestionBankAPI = {
   createQuestion(input: CreateQuestionInput): Promise<QuestionRow>;
 };
 
+export type QuestionImportAPI = {
+  importQuestions(input: ImportQuestionsInput): Promise<ImportQuestionsResult>;
+};
+
+export type QuestionAPI = QuestionBankAPI & QuestionImportAPI;
+
 type QuestionAPIResponse = {
   id: number;
   tenant_id: number;
   title: string;
   analysis: string;
+  score_default?: string;
   status: "draft" | "enabled" | "disabled";
   tag: string;
   tags: string[];
@@ -53,13 +78,22 @@ type QuestionAPIResponse = {
   }>;
 };
 
+type ImportQuestionsAPIResponse = {
+  success_count: number;
+  errors: Array<{
+    row_number: number;
+    reason: string;
+  }>;
+};
+
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
+  getAccessToken: readStoredAccessToken,
 });
 
 export const questionApi = createQuestionAPI(defaultApiClient);
 
-export function createQuestionAPI(apiClient: ApiClient): QuestionBankAPI {
+export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
   return {
     async listQuestions(input) {
       const params = new URLSearchParams({ tenant_id: String(input.tenantID) });
@@ -87,6 +121,16 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionBankAPI {
       });
       return { ...mapQuestionResponse(data), title: input.title, stem: input.stem };
     },
+    async importQuestions(input) {
+      const formData = new FormData();
+      formData.append("tenant_id", String(input.tenantID));
+      if (input.spaceID !== undefined) {
+        formData.append("space_id", String(input.spaceID));
+      }
+      formData.append("file", input.file);
+      const data = await apiClient.upload<ImportQuestionsAPIResponse>("/api/v1/questions/import", formData);
+      return mapImportQuestionsResponse(data);
+    },
   };
 }
 
@@ -99,10 +143,21 @@ function mapQuestionResponse(row: QuestionAPIResponse): QuestionRow {
     options: row.options.map((option) => option.content),
     analysis: row.analysis,
     tag: row.tag || row.tags[0] || "",
+    scoreDefault: row.score_default ?? "0",
     status: row.status === "enabled" ? "ready" : "draft",
   };
 }
 
 function optionKeyByIndex(index: number) {
   return String.fromCharCode("A".charCodeAt(0) + index);
+}
+
+function mapImportQuestionsResponse(response: ImportQuestionsAPIResponse): ImportQuestionsResult {
+  return {
+    successCount: response.success_count,
+    errors: response.errors.map((item) => ({
+      rowNumber: item.row_number,
+      reason: item.reason,
+    })),
+  };
 }

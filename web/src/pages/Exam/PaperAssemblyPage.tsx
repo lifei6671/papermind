@@ -1,49 +1,27 @@
 import { Button } from "../../components/ui/Button";
 import { RefreshCw, Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-
-type Section = {
-  id: number;
-  name: string;
-  score: number;
-};
-
-type CandidateQuestion = {
-  id: number;
-  title: string;
-  tag: string;
-  score: number;
-};
-
-type Paper = {
-  id: number;
-  name: string;
-  strategy: string;
-  status: "draft" | "ready";
-};
+import { paperApi } from "../../api/papers";
+import type { PaperAssemblyAPI, PaperRow, PaperSectionRow } from "../../api/papers";
+import { questionApi as defaultQuestionApi } from "../../api/questions";
+import type { QuestionBankAPI, QuestionRow } from "../../api/questions";
 
 type PaperSubMenu = "papers" | "questions" | "rules";
 
-const initialPapers: Paper[] = [
-  { id: 1, name: "高一语文月考试卷", strategy: "rule_fixed", status: "draft" },
-];
+type PaperAssemblyPageProps = {
+  api?: PaperAssemblyAPI;
+  questionApi?: QuestionBankAPI;
+  tenantID?: number;
+};
 
-const initialSections: Section[] = [
-  { id: 1, name: "一、现代文阅读", score: 30 },
-  { id: 2, name: "二、语言文字运用", score: 20 },
-];
-
-const candidateQuestions: CandidateQuestion[] = [
-  { id: 1, title: "现代文阅读主旨题", tag: "阅读理解", score: 6 },
-  { id: 2, title: "病句辨析题", tag: "语言文字", score: 4 },
-];
-
-export function PaperAssemblyPage() {
-  const [papers] = useState<Paper[]>(initialPapers);
+export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestionApi, tenantID = 10 }: PaperAssemblyPageProps) {
+  const [papers, setPapers] = useState<PaperRow[]>([]);
   const [activeTab, setActiveTab] = useState<PaperSubMenu>("papers");
-  const [sections, setSections] = useState<Section[]>(initialSections);
+  const [sections, setSections] = useState<PaperSectionRow[]>([]);
+  const [candidateQuestions, setCandidateQuestions] = useState<QuestionRow[]>([]);
+  const [activePaperID, setActivePaperID] = useState<number | null>(null);
   const [sectionName, setSectionName] = useState("");
   const [sectionScore, setSectionScore] = useState("");
   const [manualCount, setManualCount] = useState(0);
@@ -51,7 +29,8 @@ export function PaperAssemblyPage() {
   const [fixedTag, setFixedTag] = useState("阅读理解");
   const [fixedResult, setFixedResult] = useState("");
   const [fixedReview, setFixedReview] = useState("");
-  const [liveRule, setLiveRule] = useState("");
+  const [liveCount, setLiveCount] = useState(4);
+  const [liveTag, setLiveTag] = useState("阅读理解");
   const [liveResult, setLiveResult] = useState("");
   const [precheckMessage, setPrecheckMessage] = useState("");
   const [isSectionDialogOpen, setIsSectionDialogOpen] = useState(false);
@@ -59,6 +38,58 @@ export function PaperAssemblyPage() {
   const [isLiveDialogOpen, setIsLiveDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let ignore = false;
+
+    api.listPapers({ tenantID })
+      .then(async (data) => {
+        if (ignore) {
+          return;
+        }
+        setPapers(data.items);
+        setActivePaperID(data.items[0]?.id ?? null);
+        if (!data.items[0]) {
+          setSections([]);
+          return;
+        }
+        const sectionData = await api.listSections({ tenantID, paperID: data.items[0].id });
+        if (!ignore) {
+          setSections(sectionData.items);
+          setLoadError("");
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setLoadError("试卷数据加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api, tenantID]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    questionApi.listQuestions({ tenantID })
+      .then((data) => {
+        if (!ignore) {
+          setCandidateQuestions(data.items);
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setLoadError("候选题目加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [questionApi, tenantID]);
 
   const filteredPapers = papers.filter((paper) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
@@ -67,39 +98,126 @@ export function PaperAssemblyPage() {
     }
 
     // 试卷列表搜索只匹配当前可见字段，便于按试卷名称、策略或状态快速定位。
-    return [paper.name, paper.strategy, paper.status === "draft" ? "草稿" : "可用"].some((value) =>
+    return [paper.name, paper.buildMode, paper.status === "draft" ? "草稿" : "可用"].some((value) =>
       value.toLowerCase().includes(keyword),
     );
   });
 
-  function handleAddSection(event: React.FormEvent<HTMLFormElement>) {
+  async function handleAddSection(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (activePaperID === null) {
+      setLoadError("请先选择试卷");
+      return;
+    }
 
-    // 大题结构先维护名称和分值，题目归属后续由手动选题或规则组卷填充。
-    setSections((items) => [
-      ...items,
-      { id: Date.now(), name: sectionName, score: Number(sectionScore) },
-    ]);
-    setSectionName("");
-    setSectionScore("");
-    setIsSectionDialogOpen(false);
+    try {
+      // 新增大题写入服务端，分值仍由后续选题或规则聚合重算，前端不直接修改小计分。
+      const section = await api.createSection({
+        tenantID,
+        paperID: activePaperID,
+        name: sectionName,
+        questionType: "single",
+        instructions: sectionScore ? `计划 ${sectionScore} 分` : "",
+      });
+      setSections((items) => [...items, section]);
+      setSectionName("");
+      setSectionScore("");
+      setIsSectionDialogOpen(false);
+    } catch {
+      setLoadError("创建大题失败");
+    }
   }
 
-  function handleGenerateFixedPaper(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleAddManualQuestion(question: QuestionRow) {
+    if (activePaperID === null || sections.length === 0) {
+      setLoadError("请先创建试卷大题");
+      return;
+    }
 
-    // rule_fixed 按固定标签和题量生成，审题替换会基于生成结果继续处理。
-    setFixedResult(`已按${fixedTag}生成 ${fixedCount} 道题`);
-    setFixedReview("待替换低匹配题");
-    setIsFixedDialogOpen(false);
+    try {
+      // 手动选题必须落到当前试卷的第一个大题，后端负责防重和试卷总分重算。
+      await api.addManualQuestion({
+        tenantID,
+        paperID: activePaperID,
+        sectionID: sections[0].id,
+        questionID: question.id,
+        score: question.scoreDefault ?? "0",
+      });
+      setManualCount((value) => value + 1);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "加入试卷失败");
+    }
   }
 
-  function handleSaveLiveRule(event: React.FormEvent<HTMLFormElement>) {
+  async function handleGenerateFixedPaper(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (activePaperID === null || sections.length === 0) {
+      setLoadError("请先创建试卷大题");
+      return;
+    }
 
-    // rule_live 只保存动态规则说明，实时选题策略由后续服务端调度执行。
-    setLiveResult(`rule_live 已保存：${liveRule}`);
-    setIsLiveDialogOpen(false);
+    try {
+      // rule_fixed 先把抽题条件保存为服务端规则，再触发固化生成，生成结果由后端写入 paper_section_questions。
+      const rule = await api.createRule({
+        tenantID,
+        paperID: activePaperID,
+        sectionID: sections[0].id,
+        sortOrder: 1,
+        tagIDs: [tagIDByName(fixedTag)],
+        questionCount: fixedCount,
+        scorePerQuestion: defaultRuleScorePerQuestion(sections[0]),
+      });
+      await api.generateRuleFixed({ tenantID, paperID: activePaperID });
+      setFixedResult(`已按${tagNameByID(rule.tagIDs[0])}生成 ${rule.questionCount} 道题`);
+      setFixedReview("待替换低匹配题");
+      setIsFixedDialogOpen(false);
+      setLoadError("");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "生成固定规则试卷失败");
+    }
+  }
+
+  async function handleSaveLiveRule(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (activePaperID === null || sections.length === 0) {
+      setLoadError("请先创建试卷大题");
+      return;
+    }
+
+    try {
+      // rule_live 保存同一张规则表，考试发布前的预检查会复用这些规则计算候选题池。
+      const rule = await api.createRule({
+        tenantID,
+        paperID: activePaperID,
+        sectionID: sections[0].id,
+        sortOrder: 1,
+        tagIDs: [tagIDByName(liveTag)],
+        questionCount: liveCount,
+        scorePerQuestion: defaultRuleScorePerQuestion(sections[0]),
+      });
+      setLiveResult(`rule_live 已保存：${tagNameByID(rule.tagIDs[0])} ${rule.questionCount} 道题`);
+      setIsLiveDialogOpen(false);
+      setLoadError("");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "保存 rule_live 规则失败");
+    }
+  }
+
+  async function handlePrecheckRuleLive() {
+    if (activePaperID === null) {
+      setLoadError("请先选择试卷");
+      return;
+    }
+
+    try {
+      // 组卷预检查由后端按已保存规则跨规则去重，前端只展示候选题池规模和风险结果。
+      const result = await api.precheckRuleLive({ tenantID, paperID: activePaperID });
+      setPrecheckMessage(`预检查通过，候选题池 ${result.candidateCount} 道题`);
+      setLoadError("");
+    } catch (err) {
+      setPrecheckMessage("");
+      setLoadError(err instanceof Error ? err.message : "组卷预检查失败");
+    }
   }
 
   function handleSearchPapers() {
@@ -162,6 +280,7 @@ export function PaperAssemblyPage() {
               </Button>
             </div>
           </div>
+          {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
           <div className="table-wrap">
             <table className="data-table tenant-admin-table">
               <thead>
@@ -175,7 +294,7 @@ export function PaperAssemblyPage() {
                 {filteredPapers.map((paper) => (
                   <tr key={paper.id}>
                     <td>{paper.name}</td>
-                    <td>{paper.strategy}</td>
+                    <td>{paper.buildMode}</td>
                     <td><StatusBadge tone={paper.status === "draft" ? "info" : "success"}>{paper.status === "draft" ? "草稿" : "可用"}</StatusBadge></td>
                   </tr>
                 ))}
@@ -186,7 +305,7 @@ export function PaperAssemblyPage() {
             {sections.map((item) => (
               <li key={item.id}>
                 <span>{item.name}</span>
-                <strong>{item.score} 分</strong>
+                <strong>{item.totalScore} 分</strong>
               </li>
             ))}
           </ul>
@@ -195,6 +314,7 @@ export function PaperAssemblyPage() {
 
       {activeTab === "questions" && (
         <Panel>
+          {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
           <div className="table-wrap">
             <table className="data-table tenant-admin-table">
               <thead>
@@ -210,11 +330,11 @@ export function PaperAssemblyPage() {
                   <tr key={item.id}>
                     <td>{item.title}</td>
                     <td>{item.tag}</td>
-                    <td>{item.score}</td>
+                    <td>{item.scoreDefault ?? "0"}</td>
                     <td>
                       <Button
                         variant="actionReset"
-                        onClick={() => setManualCount((value) => value + 1)}
+                        onClick={() => void handleAddManualQuestion(item)}
                         type="button"
                       >
                         加入试卷
@@ -241,7 +361,7 @@ export function PaperAssemblyPage() {
               </Button>
               <Button
                 variant="toolbarSecondary"
-                onClick={() => setPrecheckMessage(`预检查通过，已覆盖 ${sections.length} 个大题`)}
+                onClick={() => void handlePrecheckRuleLive()}
                 type="button"
               >
                 运行组卷预检查
@@ -338,8 +458,20 @@ export function PaperAssemblyPage() {
             <h2>保存 rule_live 规则</h2>
             <form className="platform-form" onSubmit={handleSaveLiveRule}>
               <label className="field">
-                <span>动态规则说明</span>
-                <textarea onChange={(event) => setLiveRule(event.target.value)} required value={liveRule} />
+                <span>动态规则题量</span>
+                <input
+                  min={1}
+                  onChange={(event) => setLiveCount(Number(event.target.value))}
+                  type="number"
+                  value={liveCount}
+                />
+              </label>
+              <label className="field">
+                <span>动态规则标签</span>
+                <select onChange={(event) => setLiveTag(event.target.value)} value={liveTag}>
+                  <option value="阅读理解">阅读理解</option>
+                  <option value="语言文字">语言文字</option>
+                </select>
               </label>
               <div className="platform-dialog__actions">
                 <Button variant="secondary" onClick={() => setIsLiveDialogOpen(false)} type="button">
@@ -355,4 +487,24 @@ export function PaperAssemblyPage() {
       )}
     </section>
   );
+}
+
+function tagIDByName(name: string): number {
+  return name === "语言文字" ? 2 : 1;
+}
+
+function tagNameByID(id: number | undefined): string {
+  return id === 2 ? "语言文字" : "阅读理解";
+}
+
+function defaultRuleScorePerQuestion(section: PaperSectionRow): string {
+  if (section.questionCount <= 0) {
+    return "4";
+  }
+
+  const totalScore = Number(section.totalScore);
+  if (!Number.isFinite(totalScore) || totalScore <= 0) {
+    return "4";
+  }
+  return String(totalScore / section.questionCount);
 }

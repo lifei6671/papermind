@@ -327,6 +327,10 @@ func (r *fakeRepository) SectionSortOrderExists(ctx context.Context, tenantID ui
 	return false, nil
 }
 
+func (r *fakeRepository) ListPapers(ctx context.Context, tenantID uint64) ([]Paper, error) {
+	return nil, nil
+}
+
 func (r *fakeRepository) CreateSection(ctx context.Context, section Section) (Section, error) {
 	section.ID = 1
 	r.createdSection = section

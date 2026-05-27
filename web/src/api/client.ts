@@ -46,10 +46,9 @@ export type ApiClient = {
 };
 
 export function createApiClient(options: ApiClientOptions): ApiClient {
-  const fetcher = options.fetcher ?? fetch;
-
   async function request<T>(path: string, requestOptions: RequestOptions = {}): Promise<T> {
     const headers = buildHeaders(options.getAccessToken?.(), requestOptions);
+    const fetcher = options.fetcher ?? fetch;
     const response = await fetcher(buildUrl(options.baseUrl, path), {
       method: requestOptions.method ?? "GET",
       ...(requestOptions.body === undefined ? {} : { body: serializeBody(requestOptions.body, headers) }),

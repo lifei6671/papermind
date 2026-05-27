@@ -79,6 +79,40 @@ func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 	}
 }
 
+func TestExamEntryResolveInviteWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+
+	payload := []byte(`{
+		"invite_code": "PM2026",
+		"user_id": 20
+	}`)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams/invite/resolve", bytes.NewReader(payload)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("resolve invite status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[examInviteResponse](t, recorder.Body.Bytes())
+	if body.Data.ID != 1 || body.Data.InviteCode != "PM2026" || body.Data.Name != "高一语文期中考试" {
+		t.Fatalf("unexpected invite response: %#v", body.Data)
+	}
+
+	anonymousRecorder := httptest.NewRecorder()
+	router.ServeHTTP(anonymousRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams/invite/resolve", bytes.NewReader([]byte(`{
+		"invite_code": "PM2026",
+		"user_id": 0
+	}`))))
+	if anonymousRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("anonymous resolve status = %d, body = %s", anonymousRecorder.Code, anonymousRecorder.Body.String())
+	}
+}
+
 func openExamAPITestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
