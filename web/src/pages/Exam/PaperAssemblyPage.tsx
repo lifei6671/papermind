@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Panel } from "../../components/ui/Panel";
@@ -291,6 +292,7 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
                 </tr>
               </thead>
               <tbody>
+                {filteredPapers.length === 0 && <EmptyTableRow colSpan={3} />}
                 {filteredPapers.map((paper) => (
                   <tr key={paper.id}>
                     <td>{paper.name}</td>
@@ -326,6 +328,7 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
                 </tr>
               </thead>
               <tbody>
+                {candidateQuestions.length === 0 && <EmptyTableRow colSpan={4} />}
                 {candidateQuestions.map((item) => (
                   <tr key={item.id}>
                     <td>{item.title}</td>

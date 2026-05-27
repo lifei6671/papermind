@@ -118,6 +118,20 @@ test("租户管理员可以搜索和刷新用户列表", async () => {
   expect(screen.getByText("张同学")).toBeInTheDocument();
 });
 
+test("用户列表查询不到数据时显示无记录", async () => {
+  const user = userEvent.setup();
+  render(<UserManagementPage api={createUserAPI()} tenantID={10} />);
+
+  await screen.findByText("李老师");
+
+  await user.type(screen.getByLabelText("搜索用户"), "不存在的用户");
+  await user.click(screen.getByRole("button", { name: "搜索" }));
+
+  expect(screen.getByText("无记录")).toBeInTheDocument();
+  expect(screen.queryByText("李老师")).not.toBeInTheDocument();
+  expect(screen.queryByText("张同学")).not.toBeInTheDocument();
+});
+
 test("租户管理员可以导入用户文件", async () => {
   const user = userEvent.setup();
   render(<UserManagementPage api={createUserAPI()} tenantID={10} />);

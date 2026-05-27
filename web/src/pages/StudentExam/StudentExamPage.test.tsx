@@ -1,10 +1,19 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { StudentExamPage } from "./StudentExamPage";
 import type { StudentExamAPI } from "../../api/exams";
 
 describe("StudentExamPage", () => {
+  const originalMatchMedia = window.matchMedia;
+
+  afterEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      value: originalMatchMedia,
+      writable: true,
+    });
+  });
+
   test("桌面答题页通过真实 API 开考、保存答案并交卷", async () => {
     const user = userEvent.setup();
     const api = createStudentExamApiDouble();
@@ -39,7 +48,34 @@ describe("StudentExamPage", () => {
       });
     });
   });
+
+  test("窄屏答题页同样使用真实 API 题目", async () => {
+    mockExamViewport(true);
+    const api = createStudentExamApiDouble();
+
+    render(<StudentExamPage api={api} tenantID={10} examID={1} userID={20} />);
+
+    expect(await screen.findByText("服务端题干")).toBeInTheDocument();
+    expect(api.startAttempt).toHaveBeenCalledWith({ tenantID: 10, examID: 1, userID: 20 });
+    expect(screen.queryByLabelText("开考前说明")).not.toBeInTheDocument();
+  });
 });
+
+function mockExamViewport(matchesNarrow: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query === "(max-width: 1100px)" ? matchesNarrow : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+    writable: true,
+  });
+}
 
 function createStudentExamApiDouble(): StudentExamAPI {
   return {

@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
@@ -253,6 +254,7 @@ export function SpaceManagementPage({ api = spaceApi, tenantID = 10 }: SpaceMana
                 </tr>
               </thead>
               <tbody>
+                {filteredSpaces.length === 0 && <EmptyTableRow colSpan={5} />}
                 {filteredSpaces.map((space) => (
                   <tr key={space.id}>
                     <td>{space.name}</td>
@@ -329,6 +331,7 @@ export function SpaceManagementPage({ api = spaceApi, tenantID = 10 }: SpaceMana
                 </tr>
               </thead>
               <tbody>
+                {selectedMemberSpace.members.length === 0 && <EmptyTableRow colSpan={4} />}
                 {selectedMemberSpace.members.map((member) => (
                   <tr key={member.id}>
                     <td>{member.name}</td>

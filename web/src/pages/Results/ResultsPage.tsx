@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Download, Save } from "lucide-react";
@@ -176,6 +177,7 @@ export function ResultsPage({
               </tr>
             </thead>
             <tbody>
+              {resultRows.length === 0 && <EmptyTableRow colSpan={8} />}
               {resultRows.map((row) => (
                 <tr key={row.id}>
                   <td>{row.studentName}</td>

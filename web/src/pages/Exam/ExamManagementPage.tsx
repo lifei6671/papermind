@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { useEffect, useState } from "react";
@@ -133,6 +134,7 @@ export function ExamManagementPage({ api = examApi, tenantID = 10 }: ExamManagem
               </tr>
             </thead>
             <tbody>
+              {exams.length === 0 && <EmptyTableRow colSpan={6} />}
               {exams.map((exam) => (
                 <tr key={exam.id}>
                   <td>{exam.name}</td>

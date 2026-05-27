@@ -12,6 +12,7 @@ import (
 	"github.com/lifei6671/papermind/server/bootstrap/migration"
 	dbdao "github.com/lifei6671/papermind/server/internal/dao/db"
 	"github.com/lifei6671/papermind/server/library/config"
+	"github.com/lifei6671/papermind/server/library/utils"
 )
 
 func main() {
@@ -31,7 +32,7 @@ func main() {
 		slog.Error("get sql database failed", "error", err)
 		os.Exit(1)
 	}
-	defer sqlDB.Close()
+	defer utils.SafeClose(sqlDB)
 
 	if err := migration.RunForDriver(gormDB, resolveMigrationRoot(), cfg.Database.Driver); err != nil {
 		slog.Error("run database migration failed", "error", err)
@@ -42,6 +43,7 @@ func main() {
 		DB:        gormDB,
 		ExportDir: cfg.Storage.ExportDir,
 	}))
+	defer utils.SafeClose(server)
 	slog.Info("papermind http server starting", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("papermind http server stopped", "error", err)

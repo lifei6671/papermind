@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { RefreshCw, Search } from "lucide-react";
 import { useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
@@ -137,6 +138,7 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
               </tr>
             </thead>
             <tbody>
+              {filteredImportRecords.length === 0 && <EmptyTableRow colSpan={2} />}
               {filteredImportRecords.map((record) => (
                 <tr key={record.id}>
                   <td>{record.fileName}</td>

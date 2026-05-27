@@ -1,3 +1,5 @@
+import { EmptyTableRow } from "./EmptyTableRow";
+
 type DataTableProps<Row extends Record<string, React.ReactNode>> = {
   columns: Array<{
     key: keyof Row;
@@ -23,6 +25,7 @@ export function DataTable<Row extends Record<string, React.ReactNode>>({
           </tr>
         </thead>
         <tbody>
+          {rows.length === 0 && <EmptyTableRow colSpan={columns.length} />}
           {rows.map((row, index) => (
             <tr key={index}>
               {columns.map((column) => (

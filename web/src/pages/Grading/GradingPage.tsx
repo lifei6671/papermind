@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { PenLine, RefreshCw, Search } from "lucide-react";
@@ -173,6 +174,7 @@ export function GradingPage({
               </tr>
             </thead>
             <tbody>
+              {filteredAttempts.length === 0 && <EmptyTableRow colSpan={7} />}
               {filteredAttempts.map((attempt) => (
                 <tr key={`${attempt.attemptID}-${attempt.attemptQuestionID}`}>
                   <td>{attempt.studentName}</td>

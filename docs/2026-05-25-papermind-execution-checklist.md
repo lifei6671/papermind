@@ -873,8 +873,8 @@ P0 文档与项目骨架
 - [x] 空间管理 API handler 使用 SQLite 覆盖列表和创建链路。
 - [x] 用户管理 API handler 使用 SQLite 覆盖列表、创建和禁用链路。
 - [x] 题库 API handler 使用 SQLite 覆盖列表和在线保存题目链路。
-- [ ] 覆盖主要 API handler 测试。
-- [ ] 覆盖前端 API client 集成测试。
+- [x] 覆盖主要 API handler 测试。
+- [x] 覆盖前端 API client 集成测试。
 - [ ] 使用浏览器完成发布考试、进入考试、自动保存、提交、阅卷、发布成绩主链路联调。
 
 **验收标准**：

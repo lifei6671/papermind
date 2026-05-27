@@ -612,6 +612,13 @@ code {
   color: var(--text-primary);
 }
 
+.data-table .data-table__empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2759,9 +2766,11 @@ code {
 }
 
 .platform-page {
+  box-sizing: border-box;
   margin-left: -16px;
   margin-top: -14px;
-  max-width: 1520px;
+  min-width: 960px;
+  max-width: none;
   width: calc(100% + 16px);
 }
 
@@ -3078,7 +3087,7 @@ code {
 }
 
 .tenant-admin-page {
-  max-width: 1520px;
+  max-width: none;
 }
 
 .tenant-admin-table td {
@@ -3347,6 +3356,10 @@ code {
 
   .workspace__content {
     padding: 18px;
+  }
+
+  .platform-page {
+    min-width: 0;
   }
 
   .auth-page {

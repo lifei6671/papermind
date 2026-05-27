@@ -1,8 +1,8 @@
 app:
   name: papermind
   env: dev
-  http_port: 8080
-  public_url: http://localhost:8080
+  http_port: 9080
+  public_url: http://localhost:9080
 
 database:
   driver: sqlite

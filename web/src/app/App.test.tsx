@@ -42,6 +42,81 @@ function renderApp(initialEntries: string[]) {
   );
 }
 
+function mockStudentExamFetch() {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/exams/1/attempts/start" && init?.method === "POST") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: mockStartAttemptPayload(),
+      }));
+    }
+    if (url.startsWith("/api/v1/exam-attempts/99/answers/") && init?.method === "POST") {
+      return new Response(JSON.stringify({ code: 0, message: "ok", data: { saved: true } }));
+    }
+    if (url === "/api/v1/exam-attempts/99/submit" && init?.method === "POST") {
+      return new Response(JSON.stringify({ code: 0, message: "ok", data: { submitted: true } }));
+    }
+    if (url === "/api/v1/exam-attempts/99/events" && init?.method === "POST") {
+      return new Response(JSON.stringify({ code: 0, message: "ok", data: { recorded: true } }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
+}
+
+function mockStartAttemptPayload() {
+  return {
+    attempt: {
+      id: 99,
+      answer_deadline: 1779795600000,
+    },
+    exam_token: "exam-token",
+    questions: [
+      createAttemptQuestion(9001, 1, "一、单项选择题", "共20题，每题2分", "single", "服务端题干 1", "2", [
+        { id: 101, key: "A", content: "豪放飘逸" },
+        { id: 102, key: "B", content: "沉郁顿挫" },
+      ]),
+      createAttemptQuestion(9021, 21, "二、多项选择题", "共10题，每题2分", "multiple", "服务端题干 21", "2", [
+        { id: 201, key: "A", content: "豪放飘逸" },
+        { id: 202, key: "C", content: "想象奇特" },
+      ]),
+      createAttemptQuestion(9031, 31, "三、判断题", "共5题，每题1分", "judge", "服务端题干 31", "1", [
+        { id: 301, key: "正确", content: "" },
+        { id: 302, key: "错误", content: "" },
+      ]),
+      createAttemptQuestion(9036, 36, "三、填空题", "共5题，每题2分", "fill_blank", "服务端题干 36", "2", []),
+      createAttemptQuestion(9041, 41, "四、简答题", "共5题，共30分", "short_text", "服务端题干 41", "10", []),
+    ],
+  };
+}
+
+function createAttemptQuestion(
+  id: number,
+  sortOrder: number,
+  sectionName: string,
+  sectionInstructions: string,
+  type: string,
+  title: string,
+  score: string,
+  options: Array<{ id: number; key: string; content: string }>,
+) {
+  return {
+    id,
+    sort_order: sortOrder,
+    section: {
+      name: sectionName,
+      instructions: sectionInstructions,
+    },
+    question: {
+      title,
+      type,
+    },
+    options,
+    score,
+  };
+}
+
 test("渲染 Papermind 管理端基础骨架", () => {
   renderApp(["/"]);
 
@@ -51,12 +126,13 @@ test("渲染 Papermind 管理端基础骨架", () => {
   expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
 });
 
-test("学生考试端与管理员后台路由隔离", () => {
+test("学生考试端与管理员后台路由隔离", async () => {
+  mockStudentExamFetch();
   renderApp(["/student/exam"]);
 
   expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
   expect(screen.getByText("PaperMind")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "张三" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "张三" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "退出考试" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "答题卡" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "交 卷" })).toBeInTheDocument();
@@ -69,10 +145,11 @@ test("学生考试端与管理员后台路由隔离", () => {
 
 test("考生编号折叠在右侧用户菜单中", async () => {
   const user = userEvent.setup();
+  mockStudentExamFetch();
 
   renderApp(["/student/exam"]);
 
-  const profileButton = screen.getByRole("button", { name: "张三" });
+  const profileButton = await screen.findByRole("button", { name: "张三" });
   expect(profileButton).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("menu", { name: "考生信息" })).not.toBeInTheDocument();
 
@@ -89,10 +166,11 @@ test("考生编号折叠在右侧用户菜单中", async () => {
 
 test("学生考试端窄屏辅助信息使用抽屉展开", async () => {
   const user = userEvent.setup();
+  mockStudentExamFetch();
 
   renderApp(["/student/exam"]);
 
-  const drawerToggle = screen.getByRole("button", { name: "考试信息与答题卡" });
+  const drawerToggle = await screen.findByRole("button", { name: "考试信息与答题卡" });
   expect(drawerToggle).toHaveAttribute("aria-expanded", "false");
 
   await user.click(drawerToggle);
@@ -105,56 +183,29 @@ test("学生考试端窄屏辅助信息使用抽屉展开", async () => {
   expect(drawerToggle).toHaveAttribute("aria-expanded", "false");
 });
 
-test("H5 开考前页面进入移动端作答流程", async () => {
-  const user = userEvent.setup();
+test("H5 窄屏考试端直接使用真实 API 作答页", async () => {
   mockExamViewport(true);
+  mockStudentExamFetch();
 
   renderApp(["/student/exam"]);
 
-  expect(screen.getByLabelText("开考前说明")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
-  expect(screen.getByText("开考前")).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "考试须知" })).toBeInTheDocument();
-
-  await user.click(screen.getByRole("button", { name: "开始考试" }));
-
-  expect(screen.getByLabelText("移动端单选题作答")).toBeInTheDocument();
-  expect(screen.getByText((_content, node) => node?.textContent === "1 / 45")).toBeInTheDocument();
-  expect(screen.getByText("考试中请勿切换页面或离开考试")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "答题卡" })).toBeInTheDocument();
+  expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
+  expect(screen.queryByLabelText("开考前说明")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "考试信息与答题卡" })).toBeInTheDocument();
 });
 
-test("H5 答题卡通过底部入口展示并弹出确认交卷", async () => {
+test("H5 窄屏答题卡通过考试抽屉展示并弹出确认交卷", async () => {
   const user = userEvent.setup();
   mockExamViewport(true);
+  mockStudentExamFetch();
 
   renderApp(["/student/exam"]);
 
-  await user.click(screen.getByRole("button", { name: "开始考试" }));
-  await user.click(screen.getByRole("button", { name: "答题卡" }));
+  await user.click(await screen.findByRole("button", { name: "考试信息与答题卡" }));
 
-  expect(screen.getByLabelText("移动端答题卡")).toBeInTheDocument();
+  expect(screen.getByLabelText("考试辅助抽屉")).toHaveClass("exam-right-column--open");
   expect(screen.getByRole("heading", { name: "答题卡" })).toBeInTheDocument();
-  expect(within(screen.getByLabelText("答题统计")).getByText("28")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "提交试卷" })).toBeInTheDocument();
-
-  await user.click(screen.getByRole("button", { name: "提交试卷" }));
-
-  expect(screen.getByRole("dialog", { name: "确认交卷" })).toBeInTheDocument();
-  expect(screen.getByText("交卷后将无法继续作答，请确认是否提交？")).toBeInTheDocument();
-
-  await user.click(screen.getByRole("button", { name: "取消" }));
-
-  expect(screen.queryByRole("dialog", { name: "确认交卷" })).not.toBeInTheDocument();
-});
-
-test("确认交卷通过交互弹窗展示", async () => {
-  const user = userEvent.setup();
-
-  renderApp(["/student/exam"]);
-
-  expect(screen.queryByRole("dialog", { name: "确认交卷" })).not.toBeInTheDocument();
-
   await user.click(screen.getByRole("button", { name: "交 卷" }));
 
   expect(screen.getByRole("dialog", { name: "确认交卷" })).toBeInTheDocument();
@@ -165,7 +216,26 @@ test("确认交卷通过交互弹窗展示", async () => {
   expect(screen.queryByRole("dialog", { name: "确认交卷" })).not.toBeInTheDocument();
 });
 
+test("确认交卷通过交互弹窗展示", async () => {
+  const user = userEvent.setup();
+  mockStudentExamFetch();
+
+  renderApp(["/student/exam"]);
+
+  expect(screen.queryByRole("dialog", { name: "确认交卷" })).not.toBeInTheDocument();
+
+  await user.click(await screen.findByRole("button", { name: "交 卷" }));
+
+  expect(screen.getByRole("dialog", { name: "确认交卷" })).toBeInTheDocument();
+  expect(screen.getByText("交卷后将无法继续作答，请确认是否交卷？")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "取消" }));
+
+  expect(screen.queryByRole("dialog", { name: "确认交卷" })).not.toBeInTheDocument();
+});
+
 test("自动保存提示不作为页面正文静态展示", () => {
+  mockStudentExamFetch();
   renderApp(["/student/exam"]);
 
   expect(screen.queryByRole("status", { name: "自动保存提示" })).not.toBeInTheDocument();
@@ -174,18 +244,20 @@ test("自动保存提示不作为页面正文静态展示", () => {
 
 test("考试端支持全局题号切换和五类题型作答", async () => {
   const user = userEvent.setup();
+  mockStudentExamFetch();
 
   renderApp(["/student/exam"]);
 
+  expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
   await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "21" }));
   expect(screen.getByRole("heading", { name: "二、多项选择题" })).toBeInTheDocument();
-  expect(screen.getByText((_content, node) => node?.textContent === "21 / 45")).toBeInTheDocument();
+  expect(screen.getByText((_content, node) => node?.textContent === "21 / 5")).toBeInTheDocument();
   await user.click(screen.getByLabelText("A.豪放飘逸"));
   await user.click(screen.getByLabelText("C.想象奇特"));
 
   await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "31" }));
   expect(screen.getByRole("heading", { name: "三、判断题" })).toBeInTheDocument();
-  await user.click(screen.getByLabelText("正确"));
+  await user.click(screen.getByLabelText(/正确/));
 
   await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "36" }));
   expect(screen.getByRole("heading", { name: "三、填空题" })).toBeInTheDocument();
@@ -200,9 +272,11 @@ test("考试端支持全局题号切换和五类题型作答", async () => {
 
 test("考试端上报切屏事件并在交卷后展示成绩和解析", async () => {
   const user = userEvent.setup();
+  mockStudentExamFetch();
 
   renderApp(["/student/exam"]);
 
+  expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
   act(() => {
     window.dispatchEvent(new Event("blur"));
   });
@@ -221,6 +295,7 @@ test("考试端上报切屏事件并在交卷后展示成绩和解析", async ()
 });
 
 test("简答题作答效果不作为当前考试页面正文展示", () => {
+  mockStudentExamFetch();
   renderApp(["/student/exam"]);
 
   expect(screen.queryByText("四、简答题（共30分）")).not.toBeInTheDocument();
@@ -230,12 +305,13 @@ test("简答题作答效果不作为当前考试页面正文展示", () => {
 
 test("离开页面提醒通过确认弹窗展示", async () => {
   const user = userEvent.setup();
+  mockStudentExamFetch();
 
   renderApp(["/student/exam"]);
 
   expect(screen.queryByRole("dialog", { name: "离开页面提醒" })).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole("button", { name: "退出考试" }));
+  await user.click(await screen.findByRole("button", { name: "退出考试" }));
 
   expect(screen.getByRole("dialog", { name: "离开页面提醒" })).toBeInTheDocument();
   expect(screen.getByText("检测到您将离开考试页面，请确认是否离开？")).toBeInTheDocument();
@@ -247,24 +323,37 @@ test("离开页面提醒通过确认弹窗展示", async () => {
 
 test("考试入口支持邀请码进入并跳转到考试端", async () => {
   const user = userEvent.setup();
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
-    code: 0,
-    message: "ok",
-    data: {
-      id: 1,
-      tenant_id: 10,
-      paper_id: 100,
-      name: "高一语文期中考试",
-      start_time: 1779792000000,
-      end_time: 1779799200000,
-      duration_minutes: 120,
-      max_attempts: 1,
-      result_strategy: "latest",
-      publish_mode: "manual_publish",
-      invite_code: "PM2026",
-      status: "published",
-    },
-  })));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/exams/invite/resolve" && init?.method === "POST") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          id: 1,
+          tenant_id: 10,
+          paper_id: 100,
+          name: "高一语文期中考试",
+          start_time: 1779792000000,
+          end_time: 1779799200000,
+          duration_minutes: 120,
+          max_attempts: 1,
+          result_strategy: "latest",
+          publish_mode: "manual_publish",
+          invite_code: "PM2026",
+          status: "published",
+        },
+      }));
+    }
+    if (url === "/api/v1/exams/1/attempts/start" && init?.method === "POST") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: mockStartAttemptPayload(),
+      }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
 
   renderApp(["/exam-entry"]);
 

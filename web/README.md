@@ -1,5 +1,20 @@
 # React + TypeScript + Vite
 
+## 本地联调代理
+
+前端开发服务通过 Vite 将 `/api` 代理到后端，默认目标是 `http://localhost:8080`。
+本地端到端联调时保持 `VITE_API_BASE_URL` 为空，让浏览器请求同源的 `/api/v1/...`，再由 Vite 转发到后端，避免跨域问题。
+
+```bash
+pnpm dev
+```
+
+如需代理到其他后端地址，可以设置：
+
+```bash
+VITE_API_PROXY_TARGET=http://localhost:8081 pnpm dev
+```
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

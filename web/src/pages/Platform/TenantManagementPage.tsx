@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
@@ -168,6 +169,7 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
                 </tr>
               </thead>
               <tbody>
+                {filteredTenants.length === 0 && <EmptyTableRow colSpan={5} />}
                 {filteredTenants.map((tenant) => (
                   <tr key={tenant.id}>
                     <td>

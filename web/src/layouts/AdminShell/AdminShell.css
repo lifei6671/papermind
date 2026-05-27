@@ -232,7 +232,10 @@
 
 .workspace__content {
   min-width: 0;
-  max-width: 1520px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 1040px;
+  max-width: none;
   overflow-x: auto;
   padding: 42px 40px 64px;
 }
@@ -248,5 +251,9 @@
 
   .workspace {
     grid-column: 1;
+  }
+
+  .workspace__content {
+    min-width: 0;
   }
 }

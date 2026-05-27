@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
@@ -184,6 +185,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
               </tr>
             </thead>
             <tbody>
+              {filteredQuestions.length === 0 && <EmptyTableRow colSpan={5} />}
               {filteredQuestions.map((item) => (
                 <tr key={item.id}>
                   <td>
