@@ -1,5 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import { useEffect, useState } from "react";
+import { examApi } from "../../api/exams";
+import type { StudentExamAPI, StudentExamOption, StudentExamQuestion as APIStudentExamQuestion } from "../../api/exams";
 import {
   AlertTriangle,
   Award,
@@ -46,6 +48,7 @@ type QuestionGroup = {
 type ExamQuestionType = "single" | "multiple" | "judge" | "fill_blank" | "short_text";
 
 type ExamQuestion = {
+  id?: number;
   number: number;
   type: ExamQuestionType;
   sectionTitle: string;
@@ -53,6 +56,7 @@ type ExamQuestion = {
   stem: string;
   score: number;
   options?: string[];
+  optionMeta?: StudentExamOption[];
   analysis: string;
 };
 
@@ -177,6 +181,32 @@ function getDesktopQuestion(number: number): ExamQuestion {
   }
 
   return { ...desktopQuestionSamples[1], number };
+}
+
+function mapAPIQuestion(question: APIStudentExamQuestion): ExamQuestion {
+  return {
+    id: question.id,
+    number: question.number,
+    type: question.type,
+    sectionTitle: question.sectionTitle,
+    sectionSubtitle: question.sectionSubtitle || `第 ${question.number} 题 / ${question.score} 分`,
+    stem: question.stem,
+    score: question.score,
+    options: question.options.map((option) => `${option.key}. ${option.content}`),
+    optionMeta: question.options,
+    analysis: "题目解析将在成绩公布后展示。",
+  };
+}
+
+function answerToOptionIDs(question: ExamQuestion, answer: ExamAnswer) {
+  if (!question.optionMeta || question.optionMeta.length === 0) {
+    return [];
+  }
+  const values = Array.isArray(answer) ? answer : [answer];
+  const normalizedValues = values.map((value) => value.replace(/\.$/, ""));
+  return question.optionMeta
+    .filter((option) => normalizedValues.includes(option.key))
+    .map((option) => option.id);
 }
 
 function hasAnswer(answer: ExamAnswer | undefined) {
@@ -646,7 +676,24 @@ function DesktopResultView() {
   );
 }
 
-function DesktopStudentExamPage() {
+type StudentExamPageProps = {
+  api?: StudentExamAPI;
+  tenantID?: number;
+  examID?: number;
+  userID?: number;
+};
+
+type ExamSession = {
+  attemptID: number;
+  examToken: string;
+};
+
+function DesktopStudentExamPage({
+  api,
+  tenantID,
+  examID,
+  userID,
+}: Required<StudentExamPageProps>) {
   const [isExamDrawerOpen, setIsExamDrawerOpen] = useState(false);
   const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
   const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
@@ -657,8 +704,10 @@ function DesktopStudentExamPage() {
   const [saveMessage, setSaveMessage] = useState("");
   const [eventReportMessage, setEventReportMessage] = useState("");
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [apiQuestions, setApiQuestions] = useState<ExamQuestion[]>([]);
+  const [examSession, setExamSession] = useState<ExamSession | null>(null);
 
-  const currentQuestion = getDesktopQuestion(currentQuestionNumber);
+  const currentQuestion = apiQuestions.find((question) => question.number === currentQuestionNumber) ?? getDesktopQuestion(currentQuestionNumber);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -678,8 +727,41 @@ function DesktopStudentExamPage() {
   }, []);
 
   useEffect(() => {
+    let isCancelled = false;
+    async function startAttempt() {
+      try {
+        const started = await api.startAttempt({ tenantID, examID, userID });
+        if (isCancelled) {
+          return;
+        }
+        const questions = started.questions.map(mapAPIQuestion);
+        setApiQuestions(questions);
+        setExamSession({ attemptID: started.attemptID, examToken: started.examToken });
+        setCurrentQuestionNumber(questions[0]?.number ?? 1);
+      } catch {
+        // 本地样例作为离线降级视图，避免后端未启动时考试页面直接不可用。
+        setApiQuestions([]);
+        setExamSession(null);
+      }
+    }
+    void startAttempt();
+    return () => {
+      isCancelled = true;
+    };
+  }, [api, tenantID, examID, userID]);
+
+  useEffect(() => {
     const reportTabSwitch = () => {
       setEventReportMessage("已上报切屏事件：blur");
+      if (examSession) {
+        void api.recordEvent({
+          tenantID,
+          attemptID: examSession.attemptID,
+          examToken: examSession.examToken,
+          eventType: "blur",
+          payload: "{}",
+        });
+      }
     };
 
     window.addEventListener("blur", reportTabSwitch);
@@ -687,11 +769,41 @@ function DesktopStudentExamPage() {
     return () => {
       window.removeEventListener("blur", reportTabSwitch);
     };
-  }, []);
+  }, [api, examSession, tenantID]);
 
-  const saveAnswer = (value: ExamAnswer) => {
+  const saveAnswer = async (value: ExamAnswer) => {
     setAnswers((currentAnswers) => ({ ...currentAnswers, [currentQuestionNumber]: value }));
-    setSaveMessage(`第 ${currentQuestionNumber} 题已自动保存`);
+    try {
+      if (examSession && currentQuestion.id) {
+        await api.saveAnswer({
+          tenantID,
+          attemptID: examSession.attemptID,
+          attemptQuestionID: currentQuestion.id,
+          examToken: examSession.examToken,
+          questionType: currentQuestion.type,
+          optionIDs: answerToOptionIDs(currentQuestion, value),
+          text: Array.isArray(value) ? "" : value,
+        });
+      }
+      setSaveMessage(`第 ${currentQuestionNumber} 题已自动保存`);
+    } catch {
+      setSaveMessage(`第 ${currentQuestionNumber} 题保存失败`);
+    }
+  };
+
+  const submitExam = async () => {
+    try {
+      if (examSession) {
+        await api.submitAttempt({
+          tenantID,
+          attemptID: examSession.attemptID,
+          examToken: examSession.examToken,
+        });
+      }
+      setIsSubmitted(true);
+    } catch {
+      setSaveMessage("交卷失败，请稍后重试");
+    }
   };
 
   if (isSubmitted) {
@@ -879,7 +991,7 @@ function DesktopStudentExamPage() {
             <p>交卷后将无法继续作答，请确认是否交卷？</p>
             <div>
               <Button onClick={() => setIsSubmitDialogOpen(false)} type="button">取消</Button>
-              <Button onClick={() => setIsSubmitted(true)} type="button">确认交卷</Button>
+              <Button onClick={() => void submitExam()} type="button">确认交卷</Button>
             </div>
           </div>
         </div>
@@ -913,8 +1025,15 @@ function DesktopStudentExamPage() {
   );
 }
 
-export function StudentExamPage() {
+export function StudentExamPage({
+  api = examApi,
+  tenantID = 10,
+  examID = 1,
+  userID = 20,
+}: StudentExamPageProps) {
   const isMobileExam = useExamViewportMode();
 
-  return isMobileExam ? <MobileExamExperience /> : <DesktopStudentExamPage />;
+  return isMobileExam ? <MobileExamExperience /> : (
+    <DesktopStudentExamPage api={api} tenantID={tenantID} examID={examID} userID={userID} />
+  );
 }

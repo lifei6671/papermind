@@ -8,28 +8,30 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lifei6671/papermind/server/library/constant"
 )
 
 const (
 	// QuestionTypeSingle 表示单选题。
-	QuestionTypeSingle = "single"
+	QuestionTypeSingle = constant.QuestionTypeSingle
 	// QuestionTypeMultiple 表示多选题。
-	QuestionTypeMultiple = "multiple"
+	QuestionTypeMultiple = constant.QuestionTypeMultiple
 	// QuestionTypeJudge 表示判断题。
-	QuestionTypeJudge = "judge"
+	QuestionTypeJudge = constant.QuestionTypeJudge
 	// QuestionTypeFillBlank 表示填空题。
-	QuestionTypeFillBlank = "fill_blank"
+	QuestionTypeFillBlank = constant.QuestionTypeFillBlank
 	// QuestionTypeShortText 表示简答题。
-	QuestionTypeShortText = "short_text"
+	QuestionTypeShortText = constant.QuestionTypeShortText
 
 	// EventTypeBlur 表示考生窗口失焦事件。
-	EventTypeBlur = "blur"
+	EventTypeBlur = constant.ExamEventTypeBlur
 	// EventTypeFocus 表示考生窗口聚焦事件。
-	EventTypeFocus = "focus"
+	EventTypeFocus = constant.ExamEventTypeFocus
 	// EventTypeSubmit 表示手动提交事件。
-	EventTypeSubmit = "submit"
+	EventTypeSubmit = constant.ExamEventTypeSubmit
 	// EventTypeAutoSubmit 表示自动交卷事件。
-	EventTypeAutoSubmit = "auto_submit"
+	EventTypeAutoSubmit = constant.ExamEventTypeAutoSubmit
 )
 
 const (
@@ -40,9 +42,9 @@ const (
 
 const (
 	// GradingStatusAuto 表示客观题已经由系统自动判分。
-	GradingStatusAuto = "auto"
+	GradingStatusAuto = constant.GradingStatusAuto
 	// GradingStatusPending 表示主观题等待教师人工阅卷。
-	GradingStatusPending = "pending"
+	GradingStatusPending = constant.GradingStatusPending
 )
 
 var (

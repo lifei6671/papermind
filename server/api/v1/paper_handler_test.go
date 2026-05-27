@@ -2,11 +2,13 @@ package v1
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lifei6671/papermind/server/library/constant"
 	"gorm.io/gorm"
 )
 
@@ -40,12 +42,12 @@ func TestPaperAPIRoutesListSectionsAndAddManualQuestionWithSQLite(t *testing.T) 
 		t.Fatalf("unexpected sections: %#v", sectionsBody.Data.Items)
 	}
 
-	createSectionPayload := []byte(`{
+	createSectionPayload := []byte(fmt.Sprintf(`{
 		"tenant_id": 10,
 		"name": "二、语言文字运用",
-		"question_type": "single",
+		"question_type": "%s",
 		"instructions": "请完成语言文字基础题"
-	}`)
+	}`, constant.QuestionTypeSingle))
 	createSectionRecorder := httptest.NewRecorder()
 	router.ServeHTTP(createSectionRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/papers/100/sections", bytes.NewReader(createSectionPayload)))
 	if createSectionRecorder.Code != http.StatusOK {
@@ -163,15 +165,15 @@ func seedPaperAPITestData(t *testing.T, gormDB *gorm.DB) {
 			id, tenant_id, name, description, total_score, build_mode, status,
 			created_at, updated_at, ext_json
 		) VALUES (?, ?, ?, '', 0, ?, 'draft', ?, ?, '{}')
-	`, 100, 10, "高一语文月考试卷", "manual", fixedAPINow, fixedAPINow).Error; err != nil {
+	`, 100, 10, "高一语文月考试卷", constant.BuildModeManual, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed paper: %v", err)
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO paper_sections (
 			id, tenant_id, paper_id, sort_order, name, question_type, instructions,
 			total_score, question_count, created_at, updated_at, ext_json
-		) VALUES (?, ?, ?, 1, ?, 'single', '', 0, 0, ?, ?, '{}')
-	`, 1, 10, 100, "一、现代文阅读", fixedAPINow, fixedAPINow).Error; err != nil {
+		) VALUES (?, ?, ?, 1, ?, ?, '', 0, 0, ?, ?, '{}')
+	`, 1, 10, 100, "一、现代文阅读", constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed section: %v", err)
 	}
 	if err := gormDB.Exec(`
@@ -179,8 +181,8 @@ func seedPaperAPITestData(t *testing.T, gormDB *gorm.DB) {
 			id, tenant_id, type, difficulty, title, analysis, score_default, status,
 			created_at, updated_at, ext_json
 		) VALUES
-			(101, 10, 'single', 'easy', '病句辨析题', '识别语序不当。', 4, 'enabled', ?, ?, '{}')
-	`, fixedAPINow, fixedAPINow).Error; err != nil {
+			(101, 10, ?, 'easy', '病句辨析题', '识别语序不当。', 4, 'enabled', ?, ?, '{}')
+	`, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed question: %v", err)
 	}
 }

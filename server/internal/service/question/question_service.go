@@ -7,19 +7,20 @@ import (
 	"strings"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
+	"github.com/lifei6671/papermind/server/library/constant"
 )
 
 const (
 	// QuestionTypeSingle 表示单选题。
-	QuestionTypeSingle = "single"
+	QuestionTypeSingle = constant.QuestionTypeSingle
 	// QuestionTypeMultiple 表示多选题。
-	QuestionTypeMultiple = "multiple"
+	QuestionTypeMultiple = constant.QuestionTypeMultiple
 	// QuestionTypeJudge 表示判断题。
-	QuestionTypeJudge = "judge"
+	QuestionTypeJudge = constant.QuestionTypeJudge
 	// QuestionTypeFillBlank 表示填空题。
-	QuestionTypeFillBlank = "fill_blank"
+	QuestionTypeFillBlank = constant.QuestionTypeFillBlank
 	// QuestionTypeShortText 表示简答题。
-	QuestionTypeShortText = "short_text"
+	QuestionTypeShortText = constant.QuestionTypeShortText
 
 	// DifficultyEasy 表示简单难度。
 	DifficultyEasy = "easy"
@@ -29,10 +30,10 @@ const (
 	DifficultyHard = "hard"
 
 	// QuestionStatusEnabled 表示题目可用。
-	QuestionStatusEnabled = "enabled"
+	QuestionStatusEnabled = constant.QuestionStatusEnabled
 
 	// GradingModeManual 表示人工阅卷。
-	GradingModeManual = "manual"
+	GradingModeManual = constant.GradingModeManual
 )
 
 var (

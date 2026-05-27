@@ -2,9 +2,11 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lifei6671/papermind/server/api/middleware"
@@ -42,6 +44,10 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		Now:           options.Now,
 		CodeGenerator: options.CodeGenerator,
 	})
+	takingService := serviceexam.NewTakingService(serviceexam.TakingServiceOptions{
+		Repo: examRepository,
+		Now:  options.Now,
+	})
 	tenantRepository := dbdao.NewTenantRepository(options.DB, dbdao.TenantRepositoryOptions{Now: options.Now})
 	tenantService := servicetenant.NewService(servicetenant.ServiceOptions{
 		Repo:                 tenantRepository,
@@ -60,7 +66,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		SpaceAdminInvariantChecker: spaceRepository,
 		Now:                        options.Now,
 	})
-	examHandler := examHandler{service: examService}
+	examHandler := examHandler{service: examService, taking: takingService, now: defaultRouterNow(options.Now)}
 	tenantHandler := tenantHandler{service: tenantService}
 	spaceHandler := spaceHandler{service: spaceService, members: spaceRepository}
 	userHandler := userHandler{service: userService}
@@ -75,6 +81,10 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	api.GET("/exams", examHandler.list)
 	api.POST("/exams", examHandler.publish)
 	api.POST("/exams/invite/resolve", examHandler.resolveInvite)
+	api.POST("/exams/:id/attempts/start", examHandler.startAttempt)
+	api.POST("/exam-attempts/:attempt_id/answers/:attempt_question_id", examHandler.saveAnswer)
+	api.POST("/exam-attempts/:attempt_id/submit", examHandler.submitAttempt)
+	api.POST("/exam-attempts/:attempt_id/events", examHandler.recordEvent)
 	api.GET("/tenants", tenantHandler.list)
 	api.POST("/tenants", tenantHandler.create)
 	api.GET("/spaces", spaceHandler.list)
@@ -96,8 +106,17 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	return router
 }
 
+func defaultRouterNow(now func() int64) func() int64 {
+	if now != nil {
+		return now
+	}
+	return func() int64 { return time.Now().UnixMilli() }
+}
+
 type examHandler struct {
 	service *serviceexam.Service
+	taking  *serviceexam.TakingService
+	now     func() int64
 }
 
 type publishExamRequest struct {
@@ -120,6 +139,32 @@ type resolveExamInviteRequest struct {
 	UserID     uint64 `json:"user_id"`
 }
 
+type startAttemptRequest struct {
+	TenantID uint64 `json:"tenant_id"`
+	UserID   uint64 `json:"user_id"`
+}
+
+type saveAnswerRequest struct {
+	TenantID     uint64   `json:"tenant_id"`
+	ExamToken    string   `json:"exam_token"`
+	QuestionType string   `json:"question_type"`
+	OptionIDs    []uint64 `json:"option_ids"`
+	Text         string   `json:"text"`
+}
+
+type submitAttemptRequest struct {
+	TenantID  uint64 `json:"tenant_id"`
+	ExamToken string `json:"exam_token"`
+	EventType string `json:"event_type"`
+}
+
+type recordExamEventRequest struct {
+	TenantID  uint64 `json:"tenant_id"`
+	ExamToken string `json:"exam_token"`
+	EventType string `json:"event_type"`
+	Payload   string `json:"payload"`
+}
+
 type examResponse struct {
 	ID               uint64 `json:"id"`
 	TenantID         uint64 `json:"tenant_id"`
@@ -139,6 +184,60 @@ type examResponse struct {
 }
 
 type examInviteResponse = examResponse
+
+type startAttemptResponse struct {
+	Attempt   attemptResponse           `json:"attempt"`
+	ExamToken string                    `json:"exam_token"`
+	Questions []attemptQuestionResponse `json:"questions"`
+}
+
+type attemptResponse struct {
+	ID             uint64 `json:"id"`
+	ExamID         uint64 `json:"exam_id"`
+	UserID         uint64 `json:"user_id"`
+	AttemptNo      int    `json:"attempt_no"`
+	Status         string `json:"status"`
+	StartedAt      int64  `json:"started_at"`
+	AnswerDeadline int64  `json:"answer_deadline"`
+}
+
+type attemptQuestionResponse struct {
+	ID        uint64                   `json:"id"`
+	SortOrder int                      `json:"sort_order"`
+	Section   sectionSnapshotResponse  `json:"section"`
+	Question  questionSnapshotResponse `json:"question"`
+	Options   []optionSnapshotResponse `json:"options"`
+	Score     string                   `json:"score"`
+}
+
+type sectionSnapshotResponse struct {
+	Name         string `json:"name"`
+	Instructions string `json:"instructions"`
+}
+
+type questionSnapshotResponse struct {
+	Title string `json:"title"`
+	Type  string `json:"type"`
+}
+
+type optionSnapshotResponse struct {
+	ID      uint64 `json:"id"`
+	Key     string `json:"key"`
+	Content string `json:"content"`
+}
+
+type answerSavedResponse struct {
+	Saved     bool  `json:"saved"`
+	UpdatedAt int64 `json:"updated_at"`
+}
+
+type submitAttemptResponse struct {
+	Submitted bool `json:"submitted"`
+}
+
+type examEventResponse struct {
+	Recorded bool `json:"recorded"`
+}
 
 type examListResponse struct {
 	Items    []examResponse `json:"items"`
@@ -248,6 +347,160 @@ func (h examHandler) resolveInvite(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(examToResponse(exam)))
 }
 
+func (h examHandler) startAttempt(c *gin.Context) {
+	examID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "考试 ID 必须是正整数"))
+		return
+	}
+	var request startAttemptRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 || request.UserID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 和 user_id 必须是正整数"))
+		return
+	}
+	started, err := h.service.StartExam(c.Request.Context(), serviceexam.StartInput{
+		TenantID: request.TenantID,
+		ExamID:   examID,
+		UserID:   request.UserID,
+	})
+	if err != nil {
+		writeExamServiceError(c, err)
+		return
+	}
+	// 开考成功后立即固化本次题目快照，后续保存答案只引用 attempt_question_id。
+	snapshots, err := h.service.GenerateAttemptSnapshots(c.Request.Context(), serviceexam.GenerateSnapshotInput{
+		TenantID:  request.TenantID,
+		ExamID:    examID,
+		AttemptID: started.Attempt.ID,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "生成作答题目失败"))
+		return
+	}
+	snapshots, err = h.service.SaveAttemptQuestions(c.Request.Context(), snapshots)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存作答题目失败"))
+		return
+	}
+	exam, err := h.service.GetExam(c.Request.Context(), request.TenantID, examID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试信息失败"))
+		return
+	}
+	questions, err := attemptQuestionsToResponse(snapshots)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取作答题目失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(startAttemptResponse{
+		Attempt:   attemptToResponse(started.Attempt, exam),
+		ExamToken: started.ExamToken,
+		Questions: questions,
+	}))
+}
+
+func (h examHandler) saveAnswer(c *gin.Context) {
+	attemptID, err := readUintParam(c, "attempt_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "作答 ID 必须是正整数"))
+		return
+	}
+	attemptQuestionID, err := readUintParam(c, "attempt_question_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "作答题目 ID 必须是正整数"))
+		return
+	}
+	var request saveAnswerRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 || request.ExamToken == "" || request.QuestionType == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、exam_token 和 question_type 不能为空"))
+		return
+	}
+	err = h.taking.SaveAnswer(c.Request.Context(), serviceexam.SaveAnswerInput{
+		TenantID:          request.TenantID,
+		AttemptID:         attemptID,
+		AttemptQuestionID: attemptQuestionID,
+		ExamToken:         request.ExamToken,
+		QuestionType:      request.QuestionType,
+		OptionIDs:         request.OptionIDs,
+		Text:              request.Text,
+	})
+	if err != nil {
+		writeTakingServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(answerSavedResponse{Saved: true, UpdatedAt: h.now()}))
+}
+
+func (h examHandler) submitAttempt(c *gin.Context) {
+	attemptID, err := readUintParam(c, "attempt_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "作答 ID 必须是正整数"))
+		return
+	}
+	var request submitAttemptRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 || request.ExamToken == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 和 exam_token 不能为空"))
+		return
+	}
+	eventType := request.EventType
+	if eventType == "" {
+		eventType = serviceexam.EventTypeSubmit
+	}
+	if err := h.taking.Submit(c.Request.Context(), serviceexam.SubmitInput{
+		TenantID:  request.TenantID,
+		AttemptID: attemptID,
+		ExamToken: request.ExamToken,
+		EventType: eventType,
+	}); err != nil {
+		writeTakingServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(submitAttemptResponse{Submitted: true}))
+}
+
+func (h examHandler) recordEvent(c *gin.Context) {
+	attemptID, err := readUintParam(c, "attempt_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "作答 ID 必须是正整数"))
+		return
+	}
+	var request recordExamEventRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 || request.ExamToken == "" || request.EventType == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、exam_token 和 event_type 不能为空"))
+		return
+	}
+	if request.Payload == "" {
+		request.Payload = "{}"
+	}
+	if err := h.taking.RecordEvent(c.Request.Context(), serviceexam.RecordEventInput{
+		TenantID:  request.TenantID,
+		AttemptID: attemptID,
+		ExamToken: request.ExamToken,
+		EventType: request.EventType,
+		Payload:   request.Payload,
+	}); err != nil {
+		writeTakingServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(examEventResponse{Recorded: true}))
+}
+
 func (r publishExamRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -294,11 +547,26 @@ func writeExamServiceError(c *gin.Context, err error) {
 		errors.Is(err, serviceexam.ErrShortTextCannotRepeatAttempt) ||
 		errors.Is(err, serviceexam.ErrShortTextCannotImmediateScore) ||
 		errors.Is(err, serviceexam.ErrDuplicateExamTarget) ||
-		errors.Is(err, serviceexam.ErrLoginRequiredForInvite) {
+		errors.Is(err, serviceexam.ErrLoginRequiredForInvite) ||
+		errors.Is(err, serviceexam.ErrMaxAttemptsReached) ||
+		errors.Is(err, serviceexam.ErrExamNotStarted) ||
+		errors.Is(err, serviceexam.ErrExamEnded) ||
+		errors.Is(err, serviceexam.ErrExamNotEligible) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "考试操作失败"))
+}
+
+func writeTakingServiceError(c *gin.Context, err error) {
+	if errors.Is(err, serviceexam.ErrExamTokenInvalid) ||
+		errors.Is(err, serviceexam.ErrExamTokenAttemptMismatch) ||
+		errors.Is(err, serviceexam.ErrAnswerDeadlineExceeded) ||
+		errors.Is(err, serviceexam.ErrAttemptAlreadySubmitted) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "作答操作失败"))
 }
 
 func readUintQuery(c *gin.Context, key string) (uint64, error) {
@@ -356,6 +624,63 @@ func examToResponse(exam serviceexam.Exam) examResponse {
 		InviteCode:       exam.InviteCode,
 		Status:           exam.Status,
 	}
+}
+
+func attemptToResponse(attempt serviceexam.Attempt, exam serviceexam.Exam) attemptResponse {
+	return attemptResponse{
+		ID:             attempt.ID,
+		ExamID:         attempt.ExamID,
+		UserID:         attempt.UserID,
+		AttemptNo:      attempt.AttemptNo,
+		Status:         attempt.Status,
+		StartedAt:      attempt.StartedAt,
+		AnswerDeadline: answerDeadlineForResponse(attempt.StartedAt, exam),
+	}
+}
+
+func answerDeadlineForResponse(startedAt int64, exam serviceexam.Exam) int64 {
+	durationDeadline := startedAt + int64(exam.DurationMinutes)*60_000
+	if durationDeadline < exam.EndTime {
+		return durationDeadline
+	}
+	return exam.EndTime
+}
+
+func attemptQuestionsToResponse(questions []serviceexam.AttemptQuestion) ([]attemptQuestionResponse, error) {
+	items := make([]attemptQuestionResponse, 0, len(questions))
+	for _, question := range questions {
+		item, err := attemptQuestionToResponse(question)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func attemptQuestionToResponse(question serviceexam.AttemptQuestion) (attemptQuestionResponse, error) {
+	section := sectionSnapshotResponse{}
+	if err := json.Unmarshal([]byte(question.SectionSnapshot), &section); err != nil {
+		return attemptQuestionResponse{}, err
+	}
+	questionSnapshot := questionSnapshotResponse{}
+	if err := json.Unmarshal([]byte(question.QuestionSnapshot), &questionSnapshot); err != nil {
+		return attemptQuestionResponse{}, err
+	}
+	var optionSnapshot struct {
+		Options []optionSnapshotResponse `json:"options"`
+	}
+	if err := json.Unmarshal([]byte(question.OptionSnapshot), &optionSnapshot); err != nil {
+		return attemptQuestionResponse{}, err
+	}
+	return attemptQuestionResponse{
+		ID:        question.ID,
+		SortOrder: question.SortOrder,
+		Section:   section,
+		Question:  questionSnapshot,
+		Options:   optionSnapshot.Options,
+		Score:     question.Score,
+	}, nil
 }
 
 type tenantHandler struct {

@@ -7,18 +7,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/lifei6671/papermind/server/library/constant"
 )
 
 const (
 	// BuildModeManual 表示手动固化组卷。
-	BuildModeManual = "manual"
+	BuildModeManual = constant.BuildModeManual
 	// BuildModeRuleFixed 表示规则生成后固化组卷。
-	BuildModeRuleFixed = "rule_fixed"
+	BuildModeRuleFixed = constant.BuildModeRuleFixed
 	// BuildModeRuleLive 表示考试开始时实时抽题。
-	BuildModeRuleLive = "rule_live"
+	BuildModeRuleLive = constant.BuildModeRuleLive
 
 	// StatusDraft 表示试卷草稿状态。
-	StatusDraft = "draft"
+	StatusDraft = constant.PaperStatusDraft
 )
 
 var (

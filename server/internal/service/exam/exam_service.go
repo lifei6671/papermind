@@ -12,20 +12,21 @@ import (
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
+	"github.com/lifei6671/papermind/server/library/constant"
 )
 
 const (
 	// StatusDraft 表示考试草稿状态。
-	StatusDraft = "draft"
+	StatusDraft = constant.ExamStatusDraft
 	// StatusPublished 表示考试已发布。
-	StatusPublished = "published"
+	StatusPublished = constant.ExamStatusPublished
 
 	// BuildModeManual 表示手动固化组卷。
-	BuildModeManual = "manual"
+	BuildModeManual = constant.BuildModeManual
 	// BuildModeRuleFixed 表示规则生成后固化组卷。
-	BuildModeRuleFixed = "rule_fixed"
+	BuildModeRuleFixed = constant.BuildModeRuleFixed
 	// BuildModeRuleLive 表示实时抽题组卷。
-	BuildModeRuleLive = "rule_live"
+	BuildModeRuleLive = constant.BuildModeRuleLive
 
 	// ResultStrategyLatest 表示多次作答取最近一次成绩。
 	ResultStrategyLatest = "latest"
@@ -43,9 +44,9 @@ const (
 	TargetTypeUser = "user"
 
 	// AttemptStatusInProgress 表示作答进行中。
-	AttemptStatusInProgress = "in_progress"
+	AttemptStatusInProgress = constant.AttemptStatusInProgress
 	// AttemptStatusSubmitted 表示作答已提交。
-	AttemptStatusSubmitted = "submitted"
+	AttemptStatusSubmitted = constant.AttemptStatusSubmitted
 )
 
 var (
@@ -123,6 +124,7 @@ type Attempt struct {
 }
 
 type AttemptQuestion struct {
+	ID                    uint64 // 考生题目快照 ID。
 	TenantID              uint64 // 所属租户 ID。
 	AttemptID             uint64 // 作答 ID。
 	SectionID             uint64 // 原始大题 ID。
@@ -136,16 +138,23 @@ type AttemptQuestion struct {
 }
 
 type SnapshotSourceQuestion struct {
-	SectionID        uint64   // 大题 ID。
-	SectionName      string   // 大题名称。
-	Instructions     string   // 作答说明。
-	QuestionID       uint64   // 题目 ID。
-	QuestionType     string   // 题型，判分时必须使用快照值避免题库变更影响考试。
-	Title            string   // 题干。
-	Score            string   // 分值。
+	SectionID        uint64 // 大题 ID。
+	SectionName      string // 大题名称。
+	Instructions     string // 作答说明。
+	QuestionID       uint64 // 题目 ID。
+	QuestionType     string // 题型，判分时必须使用快照值避免题库变更影响考试。
+	Title            string // 题干。
+	Score            string // 分值。
+	Options          []SnapshotSourceOption
 	OptionIDs        []uint64 // 最终展示选项 ID 顺序。
 	CorrectOptionIDs []uint64 // 正确选项 ID。
 	CorrectText      string   // 填空或简答正确答案。
+}
+
+type SnapshotSourceOption struct {
+	ID      uint64 // 选项 ID，答题保存和客观题判分都以 ID 为准。
+	Key     string // 原始选项标签，例如 A/B/C。
+	Content string // 选项展示内容。
 }
 
 type CreateDraftInput struct {
@@ -217,9 +226,11 @@ type Repository interface {
 	FindInProgressAttempt(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (Attempt, error)
 	CountAttempts(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (int, error)
 	CreateAttempt(ctx context.Context, attempt Attempt) (Attempt, error)
+	UpdateAttemptToken(ctx context.Context, attempt Attempt) (Attempt, error)
 	FindAttemptByTokenHash(ctx context.Context, tokenHash string) (Attempt, error)
 	ListFixedSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]SnapshotSourceQuestion, error)
 	ListFrozenLiveSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]SnapshotSourceQuestion, error)
+	SaveAttemptQuestions(ctx context.Context, questions []AttemptQuestion) ([]AttemptQuestion, error)
 }
 
 type CodeGenerator interface {
@@ -263,6 +274,10 @@ func NewService(options ServiceOptions) *Service {
 
 func (s *Service) List(ctx context.Context, input ListInput) (pagination.Result[Exam], error) {
 	return s.repo.ListExams(ctx, input.TenantID, pagination.Input{Page: input.Page, PageSize: input.PageSize})
+}
+
+func (s *Service) GetExam(ctx context.Context, tenantID uint64, examID uint64) (Exam, error) {
+	return s.repo.GetExam(ctx, tenantID, examID)
 }
 
 func (s *Service) CreateDraft(ctx context.Context, input CreateDraftInput) (Exam, error) {
@@ -362,7 +377,17 @@ func (s *Service) StartExam(ctx context.Context, input StartInput) (StartResult,
 		return StartResult{}, ErrExamEnded
 	}
 	if attempt, err := s.repo.FindInProgressAttempt(ctx, input.TenantID, input.ExamID, input.UserID); err == nil {
-		return StartResult{Attempt: attempt}, nil
+		token, err := s.tokenIssuer.IssueToken()
+		if err != nil {
+			return StartResult{}, err
+		}
+		attempt.ExamTokenHash = s.HashExamToken(token)
+		attempt.ExamTokenExpiresAt = answerDeadline(attempt.StartedAt, exam) + tokenBufferMillis
+		attempt, err = s.repo.UpdateAttemptToken(ctx, attempt)
+		if err != nil {
+			return StartResult{}, err
+		}
+		return StartResult{Attempt: attempt, ExamToken: token}, nil
 	} else if !errors.Is(err, ErrAttemptNotFound) {
 		return StartResult{}, err
 	}
@@ -393,7 +418,13 @@ func (s *Service) StartExam(ctx context.Context, input StartInput) (StartResult,
 		if findErr != nil {
 			return StartResult{}, findErr
 		}
-		return StartResult{Attempt: existing}, nil
+		existing.ExamTokenHash = attempt.ExamTokenHash
+		existing.ExamTokenExpiresAt = attempt.ExamTokenExpiresAt
+		existing, findErr = s.repo.UpdateAttemptToken(ctx, existing)
+		if findErr != nil {
+			return StartResult{}, findErr
+		}
+		return StartResult{Attempt: existing, ExamToken: token}, nil
 	}
 	if err != nil {
 		return StartResult{}, err
@@ -426,11 +457,15 @@ func (s *Service) GenerateAttemptSnapshots(ctx context.Context, input GenerateSn
 			SortOrder:             index + 1,
 			Score:                 source.Score,
 			QuestionSnapshot:      mustJSON(map[string]any{"title": source.Title, "type": source.QuestionType}),
-			OptionSnapshot:        mustJSON(map[string]any{"option_ids": source.OptionIDs}),
+			OptionSnapshot:        mustJSON(map[string]any{"option_ids": source.OptionIDs, "options": source.Options}),
 			CorrectAnswerSnapshot: mustJSON(map[string]any{"option_ids": source.CorrectOptionIDs, "text": source.CorrectText}),
 		})
 	}
 	return snapshots, nil
+}
+
+func (s *Service) SaveAttemptQuestions(ctx context.Context, questions []AttemptQuestion) ([]AttemptQuestion, error) {
+	return s.repo.SaveAttemptQuestions(ctx, questions)
 }
 
 func (s *Service) ValidateExamToken(ctx context.Context, token string, attemptID uint64) (Attempt, error) {

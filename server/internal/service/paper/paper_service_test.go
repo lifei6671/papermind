@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/lifei6671/papermind/server/library/constant"
 )
 
 func TestSectionLifecycleUsesStableOrderAndCascadingDelete(t *testing.T) {
@@ -15,7 +17,7 @@ func TestSectionLifecycleUsesStableOrderAndCascadingDelete(t *testing.T) {
 		PaperID:      100,
 		SortOrder:    1,
 		Name:         "一、单选题",
-		QuestionType: "single",
+		QuestionType: constant.QuestionTypeSingle,
 		Instructions: "请选择一个正确答案",
 	})
 	if err != nil {
@@ -35,12 +37,12 @@ func TestSectionLifecycleUsesStableOrderAndCascadingDelete(t *testing.T) {
 		TenantID:     10,
 		SectionID:    1,
 		Name:         "一、选择题",
-		QuestionType: "multiple",
+		QuestionType: constant.QuestionTypeMultiple,
 		Instructions: "请选择全部正确答案",
 	}); err != nil {
 		t.Fatalf("UpdateSection returned error: %v", err)
 	}
-	if repo.updatedSectionName != "一、选择题" || repo.updatedQuestionType != "multiple" || repo.updatedInstructions != "请选择全部正确答案" {
+	if repo.updatedSectionName != "一、选择题" || repo.updatedQuestionType != constant.QuestionTypeMultiple || repo.updatedInstructions != "请选择全部正确答案" {
 		t.Fatalf("expected section fields updated, got name=%q type=%q instructions=%q", repo.updatedSectionName, repo.updatedQuestionType, repo.updatedInstructions)
 	}
 

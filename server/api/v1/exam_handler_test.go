@@ -3,14 +3,17 @@ package v1
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lifei6671/papermind/server/library/constant"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -113,6 +116,83 @@ func TestExamEntryResolveInviteWithSQLite(t *testing.T) {
 	}
 }
 
+func TestStudentTakingAPIRoutesStartSaveAndSubmitWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+
+	startRecorder := httptest.NewRecorder()
+	router.ServeHTTP(startRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exams/1/attempts/start", bytes.NewReader([]byte(`{
+		"tenant_id": 10,
+		"user_id": 20
+	}`))))
+	if startRecorder.Code != http.StatusOK {
+		t.Fatalf("start status = %d, body = %s", startRecorder.Code, startRecorder.Body.String())
+	}
+	startBody := decodeExamAPIResponse[startAttemptResponse](t, startRecorder.Body.Bytes())
+	if startBody.Data.Attempt.ID == 0 || startBody.Data.ExamToken == "" || len(startBody.Data.Questions) != 1 {
+		t.Fatalf("unexpected start response: %#v", startBody.Data)
+	}
+	question := startBody.Data.Questions[0]
+	if question.Question.Title != "服务端题干" || len(question.Options) != 2 || question.Options[0].ID != 101 {
+		t.Fatalf("unexpected question snapshot: %#v", question)
+	}
+
+	saveRecorder := httptest.NewRecorder()
+	savePayload := fmt.Sprintf(`{
+		"tenant_id": 10,
+		"exam_token": "%s",
+		"question_type": "%s",
+		"option_ids": [101]
+	}`, startBody.Data.ExamToken, constant.QuestionTypeSingle)
+	router.ServeHTTP(saveRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-attempts/"+
+		strconv.FormatUint(startBody.Data.Attempt.ID, 10)+"/answers/"+strconv.FormatUint(question.ID, 10), bytes.NewReader([]byte(savePayload))))
+	if saveRecorder.Code != http.StatusOK {
+		t.Fatalf("save status = %d, body = %s", saveRecorder.Code, saveRecorder.Body.String())
+	}
+	var answerRow struct {
+		AnswerContent string
+	}
+	if err := gormDB.Table("exam_answers").
+		Select("answer_content").
+		Where("tenant_id = ? AND attempt_id = ? AND attempt_question_id = ?", 10, startBody.Data.Attempt.ID, question.ID).
+		Scan(&answerRow).Error; err != nil {
+		t.Fatalf("query answer: %v", err)
+	}
+	if answerRow.AnswerContent != "101" {
+		t.Fatalf("expected normalized answer 101, got %q", answerRow.AnswerContent)
+	}
+
+	submitRecorder := httptest.NewRecorder()
+	router.ServeHTTP(submitRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-attempts/"+
+		strconv.FormatUint(startBody.Data.Attempt.ID, 10)+"/submit", bytes.NewReader([]byte(`{
+		"tenant_id": 10,
+		"exam_token": "`+startBody.Data.ExamToken+`"
+	}`))))
+	if submitRecorder.Code != http.StatusOK {
+		t.Fatalf("submit status = %d, body = %s", submitRecorder.Code, submitRecorder.Body.String())
+	}
+	var attemptRow struct {
+		Status         string
+		ObjectiveScore string
+	}
+	if err := gormDB.Table("exam_attempts").
+		Select("status, objective_score").
+		Where("id = ?", startBody.Data.Attempt.ID).
+		Scan(&attemptRow).Error; err != nil {
+		t.Fatalf("query attempt: %v", err)
+	}
+	if attemptRow.Status != constant.AttemptStatusSubmitted || attemptRow.ObjectiveScore != "2" {
+		t.Fatalf("unexpected submitted attempt: %#v", attemptRow)
+	}
+}
+
 func openExamAPITestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -141,7 +221,7 @@ func seedExamAPITestData(t *testing.T, gormDB *gorm.DB) {
 			id, tenant_id, name, description, total_score, build_mode, status,
 			created_at, updated_at, ext_json
 		) VALUES (?, ?, ?, '', 100, ?, 'enabled', ?, ?, '{}')
-	`, 100, 10, "高一语文月考试卷", "manual", fixedAPINow, fixedAPINow).Error; err != nil {
+	`, 100, 10, "高一语文月考试卷", constant.BuildModeManual, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed paper: %v", err)
 	}
 	if err := gormDB.Exec(`
@@ -152,6 +232,45 @@ func seedExamAPITestData(t *testing.T, gormDB *gorm.DB) {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'latest', 'manual_publish', ?, 'published', ?, ?, '{}')
 	`, 1, 10, 100, "高一语文期中考试", fixedAPINow, fixedAPINow+7_200_000, 120, "PM2026", fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed exam: %v", err)
+	}
+}
+
+func seedTakingAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	if err := gormDB.Exec(`
+		INSERT INTO paper_sections (
+			id, tenant_id, paper_id, sort_order, name, question_type, instructions, total_score, question_count,
+			created_at, updated_at, ext_json
+		) VALUES (1, 10, 100, 1, '一、单项选择题', ?, '每题 2 分', 2, 1, ?, ?, '{}')
+	`, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed paper section: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO questions (
+			id, tenant_id, type, difficulty, title, analysis, score_default, shuffle_options, status,
+			created_at, updated_at, ext_json
+		) VALUES (1001, 10, ?, 'easy', '服务端题干', '服务端解析', 2, FALSE, 'enabled', ?, ?, '{}')
+	`, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed question: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO question_options (
+			id, tenant_id, question_id, option_key, sort_order, content, is_correct, is_distractor,
+			created_at, updated_at, ext_json
+		) VALUES
+			(101, 10, 1001, 'A', 1, '正确选项', TRUE, FALSE, ?, ?, '{}'),
+			(102, 10, 1001, 'B', 2, '干扰项', FALSE, TRUE, ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed options: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_section_questions (
+			id, tenant_id, section_id, paper_id, question_id, sort_order, score,
+			created_at, updated_at, ext_json
+		) VALUES (1, 10, 1, 100, 1001, 1, 2, ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed paper question: %v", err)
 	}
 }
 

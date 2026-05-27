@@ -50,6 +50,69 @@ export type ExamEntryAPI = {
   resolveInvite(input: ResolveExamInviteInput): Promise<ExamRow>;
 };
 
+export type StudentExamQuestionType = "single" | "multiple" | "judge" | "fill_blank" | "short_text";
+
+export type StudentExamOption = {
+  id: number;
+  key: string;
+  content: string;
+};
+
+export type StudentExamQuestion = {
+  id: number;
+  number: number;
+  sectionTitle: string;
+  sectionSubtitle: string;
+  type: StudentExamQuestionType;
+  stem: string;
+  score: number;
+  options: StudentExamOption[];
+};
+
+export type StartAttemptInput = {
+  tenantID: number;
+  examID: number;
+  userID: number;
+};
+
+export type StartAttemptResult = {
+  attemptID: number;
+  examToken: string;
+  answerDeadline: number;
+  questions: StudentExamQuestion[];
+};
+
+export type SaveStudentAnswerInput = {
+  tenantID: number;
+  attemptID: number;
+  attemptQuestionID: number;
+  examToken: string;
+  questionType: StudentExamQuestionType;
+  optionIDs?: number[];
+  text?: string;
+};
+
+export type SubmitAttemptInput = {
+  tenantID: number;
+  attemptID: number;
+  examToken: string;
+};
+
+export type RecordExamEventInput = {
+  tenantID: number;
+  attemptID: number;
+  examToken: string;
+  eventType: string;
+  payload?: string;
+};
+
+export type StudentExamAPI = {
+  startAttempt(input: StartAttemptInput): Promise<StartAttemptResult>;
+  saveAnswer(input: SaveStudentAnswerInput): Promise<void>;
+  submitAttempt(input: SubmitAttemptInput): Promise<void>;
+  recordEvent(input: RecordExamEventInput): Promise<void>;
+};
+
 type ExamAPIResponse = {
   id: number;
   tenant_id: number;
@@ -64,6 +127,34 @@ type ExamAPIResponse = {
   target_id?: number;
 };
 
+type StartAttemptAPIResponse = {
+  attempt: {
+    id: number;
+    answer_deadline: number;
+  };
+  exam_token: string;
+  questions: AttemptQuestionAPIResponse[];
+};
+
+type AttemptQuestionAPIResponse = {
+  id: number;
+  sort_order: number;
+  section: {
+    name: string;
+    instructions: string;
+  };
+  question: {
+    title: string;
+    type: StudentExamQuestionType;
+  };
+  options: Array<{
+    id: number;
+    key: string;
+    content: string;
+  }>;
+  score: string;
+};
+
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
   getAccessToken: readStoredAccessToken,
@@ -71,7 +162,7 @@ const defaultApiClient = createApiClient({
 
 export const examApi = createExamAPI(defaultApiClient);
 
-export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEntryAPI {
+export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEntryAPI & StudentExamAPI {
   return {
     async listExams(tenantID) {
       const data = await apiClient.get<PageData<ExamAPIResponse>>(`/api/v1/exams?tenant_id=${tenantID}`);
@@ -102,6 +193,59 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
       });
       return mapExamResponse(data);
     },
+    async startAttempt(input) {
+      const data = await apiClient.post<StartAttemptAPIResponse>(`/api/v1/exams/${input.examID}/attempts/start`, {
+        tenant_id: input.tenantID,
+        user_id: input.userID,
+      });
+      return {
+        attemptID: data.attempt.id,
+        examToken: data.exam_token,
+        answerDeadline: data.attempt.answer_deadline,
+        questions: data.questions.map(mapAttemptQuestionResponse),
+      };
+    },
+    async saveAnswer(input) {
+      await apiClient.post(`/api/v1/exam-attempts/${input.attemptID}/answers/${input.attemptQuestionID}`, {
+        tenant_id: input.tenantID,
+        exam_token: input.examToken,
+        question_type: input.questionType,
+        option_ids: input.optionIDs ?? [],
+        text: input.text ?? "",
+      });
+    },
+    async submitAttempt(input) {
+      await apiClient.post(`/api/v1/exam-attempts/${input.attemptID}/submit`, {
+        tenant_id: input.tenantID,
+        exam_token: input.examToken,
+        event_type: "submit",
+      });
+    },
+    async recordEvent(input) {
+      await apiClient.post(`/api/v1/exam-attempts/${input.attemptID}/events`, {
+        tenant_id: input.tenantID,
+        exam_token: input.examToken,
+        event_type: input.eventType,
+        payload: input.payload ?? "{}",
+      });
+    },
+  };
+}
+
+function mapAttemptQuestionResponse(row: AttemptQuestionAPIResponse): StudentExamQuestion {
+  return {
+    id: row.id,
+    number: row.sort_order,
+    sectionTitle: row.section.name,
+    sectionSubtitle: row.section.instructions,
+    type: row.question.type,
+    stem: row.question.title,
+    score: Number(row.score),
+    options: row.options.map((option) => ({
+      id: option.id,
+      key: option.key,
+      content: option.content,
+    })),
   };
 }
 

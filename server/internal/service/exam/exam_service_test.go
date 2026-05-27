@@ -175,6 +175,9 @@ func TestStartExamIsIdempotentAndIssuesOpaqueAttemptToken(t *testing.T) {
 	if started.Attempt.ID != 99 || repo.createdAttempt.ID != 0 {
 		t.Fatalf("expected existing in_progress attempt, got started=%#v created=%#v", started.Attempt, repo.createdAttempt)
 	}
+	if started.ExamToken != "exam-token" || started.Attempt.ExamTokenHash == "" {
+		t.Fatalf("expected existing attempt token to be refreshed, got started=%#v", started)
+	}
 
 	repo.existingInProgress = nil
 	repo.attemptCount = 2
@@ -451,6 +454,13 @@ func (r *fakeRepository) CreateAttempt(ctx context.Context, attempt Attempt) (At
 	return attempt, nil
 }
 
+func (r *fakeRepository) UpdateAttemptToken(ctx context.Context, attempt Attempt) (Attempt, error) {
+	if r.existingInProgress != nil && r.existingInProgress.ID == attempt.ID {
+		*r.existingInProgress = attempt
+	}
+	return attempt, nil
+}
+
 func (r *fakeRepository) FindAttemptByTokenHash(ctx context.Context, tokenHash string) (Attempt, error) {
 	attempt, ok := r.attemptsByTokenHash[tokenHash]
 	if !ok {
@@ -467,6 +477,10 @@ func (r *fakeRepository) ListFixedSnapshotQuestions(ctx context.Context, tenantI
 func (r *fakeRepository) ListFrozenLiveSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]SnapshotSourceQuestion, error) {
 	r.usedFrozenPool = true
 	return append([]SnapshotSourceQuestion(nil), r.liveQuestions...), nil
+}
+
+func (r *fakeRepository) SaveAttemptQuestions(ctx context.Context, questions []AttemptQuestion) ([]AttemptQuestion, error) {
+	return append([]AttemptQuestion(nil), questions...), nil
 }
 
 type fakeCodeGenerator struct {
