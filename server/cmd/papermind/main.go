@@ -17,6 +17,8 @@ import (
 )
 
 func main() {
+	configureConsoleLogger()
+
 	cfg, err := config.LoadAndValidate(resolveConfigPath())
 	if err != nil {
 		slog.Error("load config failed", "error", err)
@@ -43,10 +45,18 @@ func main() {
 		slog.Error("seed development data failed", "error", err)
 		os.Exit(1)
 	}
-
 	server := buildHTTPServer(cfg, v1.NewRouter(v1.RouterOptions{
-		DB:        gormDB,
-		ExportDir: cfg.Storage.ExportDir,
+		DB:                   gormDB,
+		AuthSessionProvider:  cfg.Auth.Session.Provider,
+		AuthSessionSecret:    cfg.Auth.Session.Secret,
+		AuthSessionKeyPrefix: cfg.Auth.Session.KeyPrefix,
+		AuthSessionRedisAddr: cfg.Auth.Session.Redis.Addr,
+		AuthSessionRedisUser: cfg.Auth.Session.Redis.Username,
+		AuthSessionRedisPass: cfg.Auth.Session.Redis.Password,
+		AuthSessionRedisDB:   cfg.Auth.Session.Redis.DB,
+		AuthSessionTTL:       authSessionTTL(cfg),
+		ExportDir:            cfg.Storage.ExportDir,
+		UploadDir:            filepath.Join(cfg.Storage.ImportDir, "uploads"),
 	}))
 	defer utils.SafeClose(server)
 	slog.Info("papermind http server starting", "addr", server.Addr)
@@ -54,6 +64,10 @@ func main() {
 		slog.Error("papermind http server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func configureConsoleLogger() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 }
 
 func buildHTTPServer(cfg *config.Config, handler http.Handler) *http.Server {
@@ -65,6 +79,16 @@ func buildHTTPServer(cfg *config.Config, handler http.Handler) *http.Server {
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: handler,
 	}
+}
+
+func authSessionTTL(cfg *config.Config) int {
+	if cfg != nil && cfg.Auth.Session.TTL > 0 {
+		return cfg.Auth.Session.TTL
+	}
+	if cfg != nil && cfg.Auth.RefreshTokenTTL > 0 {
+		return cfg.Auth.RefreshTokenTTL
+	}
+	return 0
 }
 
 func resolveConfigPath() string {

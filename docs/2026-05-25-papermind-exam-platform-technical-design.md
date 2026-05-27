@@ -492,7 +492,7 @@ space_configs
 业务规则：
 
 - 平台管理员创建租户时，系统自动生成全平台唯一的 `tenant_code`。
-- 新租户的 `allow_register` 默认继承 `security.allow_register_default`。
+- 新租户的 `allow_register` 可以在创建时显式指定；未指定时继承 `security.allow_register_default`。
 - 平台管理员可以查看、复制、重置租户码。
 - 平台管理员可以控制租户是否允许用户自注册。
 - 用户通过租户专属注册链接或手动输入租户码注册。
@@ -624,6 +624,15 @@ user_roles
 - 登录成功后更新 `last_login_ip` 和 `last_login_at`。
 - 登录失败不更新最后登录信息，但需要记录安全日志。
 - 头像文件本身不存入数据库，只保存文件地址或对象存储 key。
+
+通用文件上传规则：
+
+- 文件上传统一走 `/api/v1/uploads`，业务表只保存上传接口返回的 URL 或对象 key。
+- 服务端通过 `ObjectStore` 抽象写入对象存储；本地开发使用本地文件系统实现，后续 S3、OSS、MinIO 等远端协议只新增实现，不修改业务 handler。
+- 上传接口负责生成对象 key，不信任客户端原始文件名作为存储路径。
+- 服务端保存文件名统一使用 `{yyyyMMddHHmmss}_{文件内容 MD5 前 16 位}{后缀}`，同一天上传的文件按日期目录归档。
+- 本地存储返回 `/uploads/{category}/{date}/{object}` 形式地址，并由 HTTP server 挂载静态读取路由。
+- 浏览器端上传图片前优先转为 WebP；转换失败、浏览器能力不足或非图片文件时上传原始文件。
 
 租户用户唯一约束：
 
@@ -1262,13 +1271,46 @@ API 分组：
 ├── 成绩查询
 ├── 成绩发布
 └── 成绩导出
+
+/api/v1/uploads
+└── 通用文件上传
 ```
 
-首版阅卷和成绩 API 使用显式权限上下文字段承载调用人身份，后续接入统一认证中间件后再收敛到登录态解析：
+平台管理员登录成功后使用 `github.com/gin-contrib/sessions` 写入服务端 session。当前 provider 支持进程内 `memstore` 和组件自带 Redis store，可通过 `auth.session.provider` 切换。登录响应返回的 `access_token` 是同一次 `Set-Cookie` 中已签名的 session cookie 值，前端仍可用 `Authorization: Bearer <token>` 调用 API；HTTP 中间件会把 Bearer 值回填为 session cookie，再由 Gin session middleware 解析当前主体。
+
+认证上下文规则：
+
+- session 中只保存当前主体类型、用户 ID、租户 ID 和角色，不保存密码、密码哈希或业务表快照。
+- 平台侧写操作统一从当前主体上下文获取平台管理员用户 ID，禁止再从请求体信任 `actor_id` 写审计字段。
+- 未携带有效平台管理员 Bearer token 或 session cookie 时，平台侧写操作返回未登录错误。
+- `auth.session.secret` 留空时启动进程随机生成签名密钥；生产环境应通过环境变量注入稳定密钥。
+
+租户管理写操作的审计规则：
+
+- 创建租户时，`created_by` 和 `updated_by` 写入当前平台管理员用户 ID。
+- 编辑租户资料、重置租户码、修改注册开关时，`updated_by` 写入当前平台管理员用户 ID。
+- 未携带有效平台管理员 Bearer token 或 session cookie 时，租户管理写操作返回未登录错误。
+
+首版阅卷和成绩 API 仍使用显式权限上下文字段承载调用人身份，后续接入统一认证中间件后再收敛到登录态解析：
 
 ```text
 POST /api/v1/auth/tenant/register
      body: tenant_code, username, real_name, password, phone?, email?
+
+GET  /api/v1/tenants
+     query: keyword?
+POST /api/v1/tenants
+     body: name, logo_url?, description, allow_register?
+POST /api/v1/tenants/:id/profile
+     body: name, logo_url?, description
+POST /api/v1/tenants/:id/reset-code
+     body: {}
+POST /api/v1/tenants/:id/register-setting
+     body: allow_register
+
+POST /api/v1/uploads
+     form-data: file, category?
+     response: key, url, file_name, content_type, size
 
 GET  /api/v1/grading/pending
      query: tenant_id, exam_id, actor_id, actor_role, space_id?
@@ -1356,6 +1398,17 @@ auth:
   access_token_ttl: 7200
   refresh_token_ttl: 604800
   exam_token_buffer_minutes: 30
+  session:
+    provider: memory
+    secret: ""
+    ttl: 604800
+    key_prefix: papermind:session
+    cleanup_interval: 300
+    redis:
+      addr: 127.0.0.1:6379
+      username: ""
+      password: ""
+      db: 0
 
 storage:
   temp_dir: /var/lib/papermind/tmp
@@ -1453,6 +1506,8 @@ API 测试：
 - 统一错误码
 - 统一请求 ID
 - 关键业务日志
+
+服务启动时使用 `slog` 文本日志输出到控制台，API 路由统一挂载请求日志中间件，记录 `request_id`、HTTP 方法、路径、状态码和耗时。租户管理等平台侧接口的服务层错误必须记录原始错误，再返回统一错误响应。
 
 关键业务日志包括：
 

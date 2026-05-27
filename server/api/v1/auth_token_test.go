@@ -1,0 +1,82 @@
+package v1
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+	"github.com/lifei6671/papermind/server/internal/service/permission"
+)
+
+func TestGinSessionPrincipalCanBeReadFromBearerToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store, err := NewSessionStore(SessionStoreOptions{Provider: "memory", Secret: "test-session-secret-32-bytes-long"})
+	if err != nil {
+		t.Fatalf("NewSessionStore() error = %v", err)
+	}
+	router := gin.New()
+	router.Use(bearerSessionCookieMiddleware(authSessionName), sessions.Sessions(authSessionName, store), authContextMiddleware())
+	router.POST("/login", func(c *gin.Context) {
+		token, err := saveAuthPrincipalSession(c, AuthPrincipal{
+			SubjectType: permission.SubjectPlatformUser,
+			UserID:      7,
+			Role:        platformAdminRole,
+		}, 3600)
+		if err != nil {
+			t.Fatalf("saveAuthPrincipalSession() error = %v", err)
+		}
+		c.String(http.StatusOK, token)
+	})
+	router.POST("/protected", func(c *gin.Context) {
+		actorID, ok := requirePlatformActor(c)
+		if !ok {
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"actor_id": actorID})
+	})
+
+	loginRecorder := httptest.NewRecorder()
+	router.ServeHTTP(loginRecorder, httptest.NewRequest(http.MethodPost, "/login", nil))
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+
+	protectedRecorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/protected", nil)
+	request.AddCookie(&http.Cookie{Name: authSessionName, Value: "stale-cookie"})
+	request.Header.Set("Authorization", "Bearer "+loginRecorder.Body.String())
+	router.ServeHTTP(protectedRecorder, request)
+	if protectedRecorder.Code != http.StatusOK {
+		t.Fatalf("protected status = %d, body = %s", protectedRecorder.Code, protectedRecorder.Body.String())
+	}
+}
+
+func TestNewSessionStoreSupportsRedisProvider(t *testing.T) {
+	store, err := NewSessionStore(SessionStoreOptions{
+		Provider: "redis",
+		Secret:   "test-session-secret-32-bytes-long",
+		Redis: RedisSessionStoreOptions{
+			Addr:      "127.0.0.1:6379",
+			Username:  "",
+			Password:  "",
+			DB:        2,
+			KeyPrefix: "papermind:test:session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewSessionStore() error = %v", err)
+	}
+	if store == nil {
+		t.Fatalf("NewSessionStore() returned nil store")
+	}
+}
+
+func TestNewSessionStoreRejectsUnsupportedProvider(t *testing.T) {
+	_, err := NewSessionStore(SessionStoreOptions{Provider: "unknown"})
+	if !errors.Is(err, errAuthSessionProviderUnsupported) {
+		t.Fatalf("NewSessionStore() error = %v, want errAuthSessionProviderUnsupported", err)
+	}
+}

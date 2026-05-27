@@ -23,6 +23,17 @@ auth:
   access_token_ttl: 7200
   refresh_token_ttl: 604800
   exam_token_buffer_minutes: 30
+  session:
+    provider: memory
+    secret: yaml-session-secret
+    ttl: 604800
+    key_prefix: papermind:session
+    cleanup_interval: 300
+    redis:
+      addr: 127.0.0.1:6379
+      username: default
+      password: example-password
+      db: 1
 storage:
   temp_dir: /tmp/papermind/tmp
   import_dir: /tmp/papermind/imports
@@ -52,6 +63,11 @@ security:
 	if cfg.Auth.ExamTokenBufferMinutes != 30 {
 		t.Fatalf("Auth.ExamTokenBufferMinutes = %d", cfg.Auth.ExamTokenBufferMinutes)
 	}
+	if cfg.Auth.Session.Provider != "memory" ||
+		cfg.Auth.Session.Secret != "yaml-session-secret" ||
+		cfg.Auth.Session.Redis.DB != 1 {
+		t.Fatalf("Auth.Session = %#v", cfg.Auth.Session)
+	}
 	if !cfg.Security.AllowRegisterDefault {
 		t.Fatalf("Security.AllowRegisterDefault = false")
 	}
@@ -76,6 +92,15 @@ auth:
   access_token_ttl: 7200
   refresh_token_ttl: 604800
   exam_token_buffer_minutes: 30
+  session:
+    provider: memory
+    secret: ""
+    ttl: 604800
+    key_prefix: papermind:session
+    cleanup_interval: 300
+    redis:
+      addr: 127.0.0.1:6379
+      db: 0
 storage:
   temp_dir: /tmp/papermind/tmp
   import_dir: /tmp/papermind/imports
@@ -88,6 +113,15 @@ security:
 `)
 	t.Setenv("PAPERMIND_DATABASE_DSN", "postgres://user:pass@127.0.0.1:5432/papermind")
 	t.Setenv("PAPERMIND_AUTH_ACCESS_TOKEN_TTL", "3600")
+	t.Setenv("PAPERMIND_AUTH_SESSION_PROVIDER", "redis")
+	t.Setenv("PAPERMIND_AUTH_SESSION_SECRET", "env-session-secret")
+	t.Setenv("PAPERMIND_AUTH_SESSION_TTL", "86400")
+	t.Setenv("PAPERMIND_AUTH_SESSION_KEY_PREFIX", "pm:test:session")
+	t.Setenv("PAPERMIND_AUTH_SESSION_CLEANUP_INTERVAL", "60")
+	t.Setenv("PAPERMIND_AUTH_SESSION_REDIS_ADDR", "127.0.0.1:6380")
+	t.Setenv("PAPERMIND_AUTH_SESSION_REDIS_USERNAME", "session-user")
+	t.Setenv("PAPERMIND_AUTH_SESSION_REDIS_PASSWORD", "session-pass")
+	t.Setenv("PAPERMIND_AUTH_SESSION_REDIS_DB", "2")
 	t.Setenv("PAPERMIND_SECURITY_CORS_ORIGINS", "http://localhost:3000, http://127.0.0.1:3000")
 
 	cfg, err := Load(configPath)
@@ -100,6 +134,17 @@ security:
 	}
 	if cfg.Auth.AccessTokenTTL != 3600 {
 		t.Fatalf("Auth.AccessTokenTTL = %d", cfg.Auth.AccessTokenTTL)
+	}
+	if cfg.Auth.Session.Provider != "redis" ||
+		cfg.Auth.Session.Secret != "env-session-secret" ||
+		cfg.Auth.Session.TTL != 86400 ||
+		cfg.Auth.Session.KeyPrefix != "pm:test:session" ||
+		cfg.Auth.Session.CleanupInterval != 60 ||
+		cfg.Auth.Session.Redis.Addr != "127.0.0.1:6380" ||
+		cfg.Auth.Session.Redis.Username != "session-user" ||
+		cfg.Auth.Session.Redis.Password != "session-pass" ||
+		cfg.Auth.Session.Redis.DB != 2 {
+		t.Fatalf("Auth.Session = %#v", cfg.Auth.Session)
 	}
 	if got := strings.Join(cfg.Security.CORSOrigins, ","); got != "http://localhost:3000,http://127.0.0.1:3000" {
 		t.Fatalf("Security.CORSOrigins = %q", got)

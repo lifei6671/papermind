@@ -14,11 +14,12 @@ func TestPlatformLoginAPIRouteSavesSessionAndAuditWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedPlatformLoginAPITestData(t, gormDB)
+	seedTenantAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
-		DB:              gormDB,
-		Now:             func() int64 { return fixedAPINow },
-		AuthTokenIssuer: fixedAuthTokenIssuer{accessToken: "platform-access-token", refreshToken: "platform-refresh-token"},
+		DB:             gormDB,
+		Now:            func() int64 { return fixedAPINow },
+		AuthSessionTTL: 7200,
 	})
 
 	payload := []byte(`{
@@ -34,12 +35,29 @@ func TestPlatformLoginAPIRouteSavesSessionAndAuditWithSQLite(t *testing.T) {
 	}
 
 	body := decodeExamAPIResponse[authSessionResponse](t, recorder.Body.Bytes())
-	if body.Data.AccessToken != "platform-access-token" || body.Data.RefreshToken != "platform-refresh-token" {
+	if body.Data.AccessToken == "" || body.Data.RefreshToken != body.Data.AccessToken {
 		t.Fatalf("unexpected token response: %#v", body.Data)
 	}
 	if body.Data.User.UserID != 1 || body.Data.User.DisplayName != "admin" || body.Data.User.Role != "platform_admin" {
 		t.Fatalf("unexpected user response: %#v", body.Data.User)
 	}
+	if len(recorder.Result().Cookies()) == 0 {
+		t.Fatalf("expected login to set session cookie")
+	}
+	if recorder.Result().Cookies()[0].Value != body.Data.AccessToken {
+		t.Fatalf("access token should match session cookie value")
+	}
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, authorizedRequest(
+		http.MethodPost,
+		"/api/v1/tenants/1/profile",
+		[]byte(`{"name":"青藤实验中学","description":"登录 session 审计","logo_url":"qingteng.webp"}`),
+		"Bearer "+body.Data.AccessToken,
+	))
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("profile status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+	assertTenantUpdatedBy(t, gormDB, 1, 1)
 
 	var row struct {
 		LastLoginIP string
@@ -62,9 +80,8 @@ func TestPlatformLoginAPIRouteRejectsInvalidCredential(t *testing.T) {
 	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
-		DB:              gormDB,
-		Now:             func() int64 { return fixedAPINow },
-		AuthTokenIssuer: fixedAuthTokenIssuer{accessToken: "unused-access", refreshToken: "unused-refresh"},
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
 	})
 
 	payload := []byte(`{
@@ -153,17 +170,4 @@ func seedTenantRegisterAPITestData(t *testing.T, gormDB *gorm.DB) {
 	`, 10, "青藤一中", "允许学生通过租户码自注册", "PM-QT01", fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed register tenant: %v", err)
 	}
-}
-
-type fixedAuthTokenIssuer struct {
-	accessToken  string
-	refreshToken string
-}
-
-func (i fixedAuthTokenIssuer) IssueAccessToken() (string, error) {
-	return i.accessToken, nil
-}
-
-func (i fixedAuthTokenIssuer) IssueRefreshToken() (string, error) {
-	return i.refreshToken, nil
 }

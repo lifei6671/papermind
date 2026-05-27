@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { FileUploadField } from "./FileUploadField";
@@ -38,4 +38,66 @@ test("文件上传组件拒绝超过大小限制的文件", async () => {
   await user.upload(screen.getByLabelText("上传头像"), new File(["12345"], "avatar.png", { type: "image/png" }));
 
   expect(onReject).toHaveBeenCalledWith("文件不能超过 4 B");
+});
+
+test("文件上传组件提供拖拽上传区域和图片预览区域", () => {
+  const createObjectURL = vi.fn().mockReturnValue("blob:logo-preview");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", {
+    ...URL,
+    createObjectURL,
+    revokeObjectURL,
+  });
+  const onFileAccepted = vi.fn();
+
+  render(
+    <FileUploadField
+      accept={["image/png"]}
+      label="租户 Logo"
+      maxSizeBytes={1024}
+      onFileAccepted={onFileAccepted}
+    />,
+  );
+
+  expect(screen.getByLabelText("租户 Logo上传区域")).toBeInTheDocument();
+  const preview = screen.getByLabelText("租户 Logo预览");
+  expect(within(preview).getByText("暂未选择图片")).toBeInTheDocument();
+
+  const logo = new File(["logo"], "tenant.png", { type: "image/png" });
+  fireEvent.drop(screen.getByLabelText("租户 Logo上传区域"), {
+    dataTransfer: { files: [logo] },
+  });
+
+  expect(onFileAccepted).toHaveBeenCalledWith(expect.objectContaining({ name: "tenant.png" }));
+  expect(createObjectURL).toHaveBeenCalledWith(logo);
+  expect(screen.getByRole("img", { name: "tenant.png 预览" })).toHaveAttribute("src", "blob:logo-preview");
+  vi.unstubAllGlobals();
+});
+
+test("文件拖到真实文件输入框时也会生成图片预览", () => {
+  const createObjectURL = vi.fn().mockReturnValue("blob:input-drop-preview");
+  vi.stubGlobal("URL", {
+    ...URL,
+    createObjectURL,
+    revokeObjectURL: vi.fn(),
+  });
+  const onFileAccepted = vi.fn();
+
+  render(
+    <FileUploadField
+      accept={["image/png"]}
+      label="租户 Logo"
+      maxSizeBytes={1024}
+      onFileAccepted={onFileAccepted}
+    />,
+  );
+
+  const logo = new File(["logo"], "tenant-input.png", { type: "image/png" });
+  fireEvent.drop(screen.getByLabelText("租户 Logo"), {
+    dataTransfer: { files: [logo] },
+  });
+
+  expect(onFileAccepted).toHaveBeenCalledWith(expect.objectContaining({ name: "tenant-input.png" }));
+  expect(screen.getByRole("img", { name: "tenant-input.png 预览" })).toHaveAttribute("src", "blob:input-drop-preview");
+  vi.unstubAllGlobals();
 });

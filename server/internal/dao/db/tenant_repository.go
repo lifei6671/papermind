@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
@@ -27,17 +28,26 @@ func NewTenantRepository(gormDB *gorm.DB, options TenantRepositoryOptions) *Tena
 	return &TenantRepository{db: gormDB, now: now}
 }
 
-func (r *TenantRepository) List(ctx context.Context, page pagination.Input) (pagination.Result[servicetenant.Tenant], error) {
-	page = pagination.Normalize(page)
+func (r *TenantRepository) List(ctx context.Context, input servicetenant.ListInput) (pagination.Result[servicetenant.Tenant], error) {
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
 	query := r.db.WithContext(ctx).Model(&TenantDO{}).
 		Where(TenantColumns.DeletedAt+" = ?", 0)
+	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
+		likePattern := "%" + keyword + "%"
+		// 租户检索只覆盖列表可见字段，避免隐藏字段命中后前端无法解释结果来源。
+		query = query.Where(
+			r.db.Where(TenantColumns.Name+" LIKE ?", likePattern).
+				Or(TenantColumns.Description+" LIKE ?", likePattern).
+				Or(TenantColumns.TenantCode+" LIKE ?", likePattern),
+		)
+	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return pagination.Result[servicetenant.Tenant]{}, err
 	}
 	var rows []TenantDO
 	if err := query.
-		Order(TenantColumns.ID + " ASC").
+		Order(TenantColumns.ID + " DESC").
 		Limit(page.PageSize).
 		Offset(pagination.Offset(page)).
 		Find(&rows).Error; err != nil {
@@ -60,7 +70,9 @@ func (r *TenantRepository) Create(ctx context.Context, tenant servicetenant.Tena
 	row := TenantDO{
 		BaseFields: BaseFields{
 			CreatedAt: now,
+			CreatedBy: tenant.CreatedBy,
 			UpdatedAt: now,
+			UpdatedBy: tenant.UpdatedBy,
 			Version:   1,
 			ExtJSON:   datatypes.JSON([]byte("{}")),
 		},
@@ -99,13 +111,14 @@ func (r *TenantRepository) TenantCodeExists(ctx context.Context, tenantCode stri
 	return count > 0, nil
 }
 
-func (r *TenantRepository) UpdateTenantCode(ctx context.Context, tenantID uint64, tenantCode string) (servicetenant.Tenant, error) {
+func (r *TenantRepository) UpdateTenantCode(ctx context.Context, tenantID uint64, tenantCode string, actorID uint64) (servicetenant.Tenant, error) {
 	if err := r.db.WithContext(ctx).Model(&TenantDO{}).
 		Where(TenantColumns.ID+" = ?", tenantID).
 		Where(TenantColumns.DeletedAt+" = ?", 0).
 		Updates(map[string]any{
 			TenantColumns.TenantCode: tenantCode,
 			BaseColumns.UpdatedAt:    r.now(),
+			BaseColumns.UpdatedBy:    actorID,
 			BaseColumns.Version:      gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error; err != nil {
 		return servicetenant.Tenant{}, err
@@ -113,13 +126,46 @@ func (r *TenantRepository) UpdateTenantCode(ctx context.Context, tenantID uint64
 	return r.FindByID(ctx, tenantID)
 }
 
-func (r *TenantRepository) UpdateStatus(ctx context.Context, tenantID uint64, status string) error {
+func (r *TenantRepository) UpdateProfile(ctx context.Context, input servicetenant.UpdateProfileInput) (servicetenant.Tenant, error) {
+	if err := r.db.WithContext(ctx).Model(&TenantDO{}).
+		Where(TenantColumns.ID+" = ?", input.TenantID).
+		Where(TenantColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			TenantColumns.Name:        input.Name,
+			TenantColumns.LogoURL:     input.LogoURL,
+			TenantColumns.Description: input.Description,
+			BaseColumns.UpdatedAt:     r.now(),
+			BaseColumns.UpdatedBy:     input.ActorID,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		}).Error; err != nil {
+		return servicetenant.Tenant{}, err
+	}
+	return r.FindByID(ctx, input.TenantID)
+}
+
+func (r *TenantRepository) UpdateAllowRegister(ctx context.Context, tenantID uint64, allowRegister bool, actorID uint64) (servicetenant.Tenant, error) {
+	if err := r.db.WithContext(ctx).Model(&TenantDO{}).
+		Where(TenantColumns.ID+" = ?", tenantID).
+		Where(TenantColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			TenantColumns.AllowRegister: allowRegister,
+			BaseColumns.UpdatedAt:       r.now(),
+			BaseColumns.UpdatedBy:       actorID,
+			BaseColumns.Version:         gorm.Expr(BaseColumns.Version + " + 1"),
+		}).Error; err != nil {
+		return servicetenant.Tenant{}, err
+	}
+	return r.FindByID(ctx, tenantID)
+}
+
+func (r *TenantRepository) UpdateStatus(ctx context.Context, tenantID uint64, status string, actorID uint64) error {
 	return r.db.WithContext(ctx).Model(&TenantDO{}).
 		Where(TenantColumns.ID+" = ?", tenantID).
 		Where(TenantColumns.DeletedAt+" = ?", 0).
 		Updates(map[string]any{
 			TenantColumns.Status:  status,
 			BaseColumns.UpdatedAt: r.now(),
+			BaseColumns.UpdatedBy: actorID,
 			BaseColumns.Version:   gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error
 }
@@ -133,5 +179,7 @@ func tenantFromDO(row TenantDO) servicetenant.Tenant {
 		TenantCode:    row.TenantCode,
 		AllowRegister: row.AllowRegister,
 		Status:        row.Status,
+		CreatedBy:     row.CreatedBy,
+		UpdatedBy:     row.UpdatedBy,
 	}
 }

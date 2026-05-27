@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/lifei6671/papermind/server/api/middleware"
 	dbdao "github.com/lifei6671/papermind/server/internal/dao/db"
@@ -20,6 +22,7 @@ import (
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenant "github.com/lifei6671/papermind/server/internal/service/tenant"
 	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
+	"github.com/lifei6671/papermind/server/internal/storage"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/constant"
 	"github.com/lifei6671/papermind/server/library/response"
@@ -31,8 +34,18 @@ type RouterOptions struct {
 	Now                  func() int64
 	CodeGenerator        serviceexam.CodeGenerator
 	AllowRegisterDefault bool
-	AuthTokenIssuer      AuthTokenIssuer
+	AuthSessionStore     sessions.Store
+	AuthSessionProvider  string
+	AuthSessionSecret    string
+	AuthSessionKeyPrefix string
+	AuthSessionRedisAddr string
+	AuthSessionRedisUser string
+	AuthSessionRedisPass string
+	AuthSessionRedisDB   int
+	AuthSessionTTL       int
 	ExportDir            string
+	UploadDir            string
+	UploadStore          storage.ObjectStore
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -86,10 +99,15 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	userHandler := userHandler{service: userService}
 	questionHandler := questionHandler{service: questionService}
 	paperHandler := paperHandler{service: paperService}
-	authHandler := authHandler{platformUsers: platformUserService, tenantUsers: userService, tokenIssuer: defaultAuthTokenIssuer(options.AuthTokenIssuer)}
+	authHandler := authHandler{platformUsers: platformUserService, tenantUsers: userService, sessionMaxAgeSeconds: options.AuthSessionTTL}
+	uploadDir := defaultUploadDir(options.UploadDir)
+	uploadHandler := uploadHandler{store: defaultUploadStore(options.UploadStore, uploadDir), now: time.Now}
+	sessionStore := defaultAuthSessionStore(options)
 
 	router := gin.New()
-	router.Use(middleware.RequestID(), middleware.Recovery())
+	router.Use(middleware.RequestID(), middleware.RequestLogger(), middleware.Recovery())
+	router.Use(bearerSessionCookieMiddleware(authSessionName), sessions.Sessions(authSessionName, sessionStore), authContextMiddleware())
+	router.StaticFS("/uploads", gin.Dir(uploadDir, false))
 	api := router.Group("/api/v1")
 	api.POST("/auth/platform/login", authHandler.platformLogin)
 	api.POST("/auth/tenant/register", authHandler.tenantRegister)
@@ -107,6 +125,10 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	api.POST("/results/export", examHandler.exportResults)
 	api.GET("/tenants", tenantHandler.list)
 	api.POST("/tenants", tenantHandler.create)
+	api.POST("/tenants/:id/profile", tenantHandler.updateProfile)
+	api.POST("/tenants/:id/reset-code", tenantHandler.resetCode)
+	api.POST("/tenants/:id/register-setting", tenantHandler.updateRegisterSetting)
+	api.POST("/uploads", uploadHandler.create)
 	api.GET("/spaces", spaceHandler.list)
 	api.POST("/spaces", spaceHandler.create)
 	api.GET("/users", userHandler.list)
@@ -131,6 +153,41 @@ func defaultExportDir(exportDir string) string {
 		return exportDir
 	}
 	return "server/data/exports"
+}
+
+func defaultUploadDir(uploadDir string) string {
+	if uploadDir != "" {
+		return uploadDir
+	}
+	return "server/data/uploads"
+}
+
+func defaultUploadStore(store storage.ObjectStore, uploadDir string) storage.ObjectStore {
+	if store != nil {
+		return store
+	}
+	return storage.NewLocalStore(storage.LocalStoreOptions{RootDir: uploadDir, PublicBaseURL: "/uploads"})
+}
+
+func defaultAuthSessionStore(options RouterOptions) sessions.Store {
+	if options.AuthSessionStore != nil {
+		return options.AuthSessionStore
+	}
+	store, err := NewSessionStore(SessionStoreOptions{
+		Provider: options.AuthSessionProvider,
+		Secret:   options.AuthSessionSecret,
+		Redis: RedisSessionStoreOptions{
+			Addr:      options.AuthSessionRedisAddr,
+			Username:  options.AuthSessionRedisUser,
+			Password:  options.AuthSessionRedisPass,
+			DB:        options.AuthSessionRedisDB,
+			KeyPrefix: options.AuthSessionKeyPrefix,
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return store
 }
 
 func defaultRouterNow(now func() int64) func() int64 {
@@ -1068,9 +1125,20 @@ type tenantHandler struct {
 }
 
 type createTenantRequest struct {
+	Name          string `json:"name"`
+	LogoURL       string `json:"logo_url"`
+	Description   string `json:"description"`
+	AllowRegister *bool  `json:"allow_register"`
+}
+
+type updateTenantProfileRequest struct {
 	Name        string `json:"name"`
 	LogoURL     string `json:"logo_url"`
 	Description string `json:"description"`
+}
+
+type updateTenantRegisterSettingRequest struct {
+	AllowRegister bool `json:"allow_register"`
 }
 
 type tenantResponse struct {
@@ -1096,9 +1164,13 @@ func (h tenantHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), servicetenant.ListInput{Page: page, PageSize: pageSize})
+	result, err := h.service.List(c.Request.Context(), servicetenant.ListInput{
+		Page:     page,
+		PageSize: pageSize,
+		Keyword:  c.Query("keyword"),
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取租户列表失败"))
+		writeTenantInternalError(c, "读取租户列表失败", err)
 		return
 	}
 	items := make([]tenantResponse, 0, len(result.Items))
@@ -1115,6 +1187,10 @@ func (h tenantHandler) list(c *gin.Context) {
 }
 
 func (h tenantHandler) create(c *gin.Context) {
+	actorID, ok := requirePlatformActor(c)
+	if !ok {
+		return
+	}
 	var request createTenantRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
@@ -1125,15 +1201,108 @@ func (h tenantHandler) create(c *gin.Context) {
 		return
 	}
 	tenant, err := h.service.Create(c.Request.Context(), servicetenant.CreateInput{
-		Name:        request.Name,
-		LogoURL:     request.LogoURL,
-		Description: request.Description,
+		Name:          request.Name,
+		LogoURL:       request.LogoURL,
+		Description:   request.Description,
+		AllowRegister: request.AllowRegister,
+		ActorID:       actorID,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "创建租户失败"))
+		writeTenantInternalError(c, "创建租户失败", err)
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(tenantToResponse(tenant)))
+}
+
+func (h tenantHandler) updateProfile(c *gin.Context) {
+	actorID, ok := requirePlatformActor(c)
+	if !ok {
+		return
+	}
+	tenantID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "租户 ID 必须是正整数"))
+		return
+	}
+	var request updateTenantProfileRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	// 租户资料用于平台列表展示，名称、描述和 Logo 必须一起返回最新快照。
+	tenant, err := h.service.UpdateProfile(c.Request.Context(), servicetenant.UpdateProfileInput{
+		TenantID:    tenantID,
+		Name:        request.Name,
+		LogoURL:     request.LogoURL,
+		Description: request.Description,
+		ActorID:     actorID,
+	})
+	if err != nil {
+		writeTenantInternalError(c, "更新租户资料失败", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(tenantToResponse(tenant)))
+}
+
+func (h tenantHandler) resetCode(c *gin.Context) {
+	actorID, ok := requirePlatformActor(c)
+	if !ok {
+		return
+	}
+	tenantID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "租户 ID 必须是正整数"))
+		return
+	}
+	tenant, err := h.service.ResetTenantCode(c.Request.Context(), servicetenant.ResetTenantCodeInput{
+		TenantID: tenantID,
+		ActorID:  actorID,
+	})
+	if err != nil {
+		writeTenantInternalError(c, "重置租户码失败", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(tenantToResponse(tenant)))
+}
+
+func (h tenantHandler) updateRegisterSetting(c *gin.Context) {
+	actorID, ok := requirePlatformActor(c)
+	if !ok {
+		return
+	}
+	tenantID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "租户 ID 必须是正整数"))
+		return
+	}
+	var request updateTenantRegisterSettingRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	// 注册开关只控制该租户是否允许自注册，不改变租户启停状态。
+	tenant, err := h.service.UpdateRegisterSetting(c.Request.Context(), servicetenant.UpdateRegisterSettingInput{
+		TenantID:      tenantID,
+		AllowRegister: request.AllowRegister,
+		ActorID:       actorID,
+	})
+	if err != nil {
+		writeTenantInternalError(c, "更新租户注册设置失败", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(tenantToResponse(tenant)))
+}
+
+func writeTenantInternalError(c *gin.Context, message string, err error) {
+	slog.Error(
+		"tenant api failed",
+		"request_id", c.GetString(middleware.RequestIDKey),
+		"method", c.Request.Method,
+		"path", c.Request.URL.Path,
+		"message", message,
+		"error", err,
+	)
+	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, message))
 }
 
 func tenantToResponse(tenant servicetenant.Tenant) tenantResponse {

@@ -13,6 +13,7 @@ import (
 func TestTenantAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
 	seedTenantAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
@@ -38,10 +39,12 @@ func TestTenantAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	payload := []byte(`{
 		"name": "星海大学",
 		"logo_url": "xinghai.png",
-		"description": "面向公共课和企业培训的考试空间"
+		"description": "面向公共课和企业培训的考试空间",
+		"allow_register": false
 	}`)
+	authHeader := platformAuthHeader(t, router)
 	createRecorder := httptest.NewRecorder()
-	router.ServeHTTP(createRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/tenants", bytes.NewReader(payload)))
+	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/tenants", payload, authHeader))
 	if createRecorder.Code != http.StatusOK {
 		t.Fatalf("create status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
 	}
@@ -49,9 +52,174 @@ func TestTenantAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	if createBody.Data.Name != "星海大学" || createBody.Data.TenantCode != "PM-XH01" {
 		t.Fatalf("unexpected created tenant response: %#v", createBody.Data)
 	}
-	if !createBody.Data.AllowRegister {
-		t.Fatalf("expected allow_register inherited from platform default")
+	if createBody.Data.AllowRegister {
+		t.Fatalf("expected allow_register overridden by request")
 	}
+	var createdAudit struct {
+		CreatedBy uint64
+		UpdatedBy uint64
+	}
+	if err := gormDB.Table("tenants").
+		Select("created_by, updated_by").
+		Where("id = ?", createBody.Data.ID).
+		First(&createdAudit).Error; err != nil {
+		t.Fatalf("query created tenant audit: %v", err)
+	}
+	if createdAudit.CreatedBy != 1 || createdAudit.UpdatedBy != 1 {
+		t.Fatalf("expected created_by and updated_by to be login user 1, got %#v", createdAudit)
+	}
+}
+
+func TestTenantAPIListFiltersByKeywordWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	seedTenantAPITestData(t, gormDB)
+	seedSecondTenantAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/tenants?keyword=知行", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[tenantListResponse](t, recorder.Body.Bytes())
+	if body.Data.Total != 1 || len(body.Data.Items) != 1 {
+		t.Fatalf("expected one filtered tenant, got total=%d items=%#v", body.Data.Total, body.Data.Items)
+	}
+	if body.Data.Items[0].Name != "知行培训" || body.Data.Items[0].TenantCode != "PM-ZX01" {
+		t.Fatalf("unexpected filtered tenant: %#v", body.Data.Items[0])
+	}
+}
+
+func TestTenantAPIRoutesUpdateTenantOperationsWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	seedTenantAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:            gormDB,
+		Now:           func() int64 { return fixedAPINow + 1000 },
+		CodeGenerator: fixedCodeGenerator{code: "PM-QT02"},
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	descriptionRecorder := httptest.NewRecorder()
+	router.ServeHTTP(descriptionRecorder, authorizedRequest(
+		http.MethodPost,
+		"/api/v1/tenants/1/profile",
+		[]byte(`{"name":"青藤实验中学","description":"统一管理期中、期末和补测","logo_url":"/uploads/tenant-logos/qingteng.webp"}`),
+		authHeader,
+	))
+	if descriptionRecorder.Code != http.StatusOK {
+		t.Fatalf("profile status = %d, body = %s", descriptionRecorder.Code, descriptionRecorder.Body.String())
+	}
+	descriptionBody := decodeExamAPIResponse[tenantResponse](t, descriptionRecorder.Body.Bytes())
+	if descriptionBody.Data.Name != "青藤实验中学" ||
+		descriptionBody.Data.Description != "统一管理期中、期末和补测" ||
+		descriptionBody.Data.LogoURL != "/uploads/tenant-logos/qingteng.webp" {
+		t.Fatalf("unexpected profile response: %#v", descriptionBody.Data)
+	}
+	assertTenantUpdatedBy(t, gormDB, 1, 1)
+
+	resetRecorder := httptest.NewRecorder()
+	router.ServeHTTP(resetRecorder, authorizedRequest(http.MethodPost, "/api/v1/tenants/1/reset-code", nil, authHeader))
+	if resetRecorder.Code != http.StatusOK {
+		t.Fatalf("reset code status = %d, body = %s", resetRecorder.Code, resetRecorder.Body.String())
+	}
+	resetBody := decodeExamAPIResponse[tenantResponse](t, resetRecorder.Body.Bytes())
+	if resetBody.Data.TenantCode != "PM-QT02" {
+		t.Fatalf("unexpected reset tenant code response: %#v", resetBody.Data)
+	}
+	assertTenantUpdatedBy(t, gormDB, 1, 1)
+
+	disableRecorder := httptest.NewRecorder()
+	router.ServeHTTP(disableRecorder, authorizedRequest(
+		http.MethodPost,
+		"/api/v1/tenants/1/register-setting",
+		[]byte(`{"allow_register":false}`),
+		authHeader,
+	))
+	if disableRecorder.Code != http.StatusOK {
+		t.Fatalf("disable register status = %d, body = %s", disableRecorder.Code, disableRecorder.Body.String())
+	}
+	disableBody := decodeExamAPIResponse[tenantResponse](t, disableRecorder.Body.Bytes())
+	if disableBody.Data.AllowRegister {
+		t.Fatalf("expected registration disabled response: %#v", disableBody.Data)
+	}
+	assertTenantUpdatedBy(t, gormDB, 1, 1)
+
+	enableRecorder := httptest.NewRecorder()
+	router.ServeHTTP(enableRecorder, authorizedRequest(
+		http.MethodPost,
+		"/api/v1/tenants/1/register-setting",
+		[]byte(`{"allow_register":true}`),
+		authHeader,
+	))
+	if enableRecorder.Code != http.StatusOK {
+		t.Fatalf("enable register status = %d, body = %s", enableRecorder.Code, enableRecorder.Body.String())
+	}
+	enableBody := decodeExamAPIResponse[tenantResponse](t, enableRecorder.Body.Bytes())
+	if !enableBody.Data.AllowRegister {
+		t.Fatalf("expected registration enabled response: %#v", enableBody.Data)
+	}
+	assertTenantUpdatedBy(t, gormDB, 1, 1)
+}
+
+func TestTenantAPIResetTenantCodeUsesDefaultGeneratorWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	seedTenantAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow + 1000 },
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/tenants/1/reset-code", nil, authHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("reset code status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[tenantResponse](t, recorder.Body.Bytes())
+	if body.Data.TenantCode == "" || body.Data.TenantCode == "PM-QT01" {
+		t.Fatalf("expected generated tenant code, got %#v", body.Data)
+	}
+}
+
+func platformAuthHeader(t *testing.T, router *gin.Engine) string {
+	t.Helper()
+
+	loginRecorder := httptest.NewRecorder()
+	router.ServeHTTP(loginRecorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/auth/platform/login",
+		bytes.NewReader([]byte(`{"username":"admin","password":"papermind123"}`)),
+	))
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("platform login status = %d, body = %s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+	body := decodeExamAPIResponse[authSessionResponse](t, loginRecorder.Body.Bytes())
+	return "Bearer " + body.Data.AccessToken
+}
+
+func authorizedRequest(method string, target string, body []byte, authHeader string) *http.Request {
+	var reader *bytes.Reader
+	if body == nil {
+		reader = bytes.NewReader(nil)
+	} else {
+		reader = bytes.NewReader(body)
+	}
+	request := httptest.NewRequest(method, target, reader)
+	request.Header.Set("Authorization", authHeader)
+	return request
 }
 
 func seedTenantAPITestData(t *testing.T, gormDB *gorm.DB) {
@@ -64,5 +232,33 @@ func seedTenantAPITestData(t *testing.T, gormDB *gorm.DB) {
 		) VALUES (?, ?, ?, ?, ?, 1, 'enabled', ?, ?, '{}')
 	`, 1, "青藤一中", "qingteng.png", "统一管理月考、联考和补测", "PM-QT01", fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed tenant: %v", err)
+	}
+}
+
+func seedSecondTenantAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	if err := gormDB.Exec(`
+		INSERT INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, ext_json
+		) VALUES (?, ?, ?, ?, ?, 0, 'enabled', ?, ?, '{}')
+	`, 2, "知行培训", "zhixing.png", "企业知识课堂和阶段测评", "PM-ZX01", fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed second tenant: %v", err)
+	}
+}
+
+func assertTenantUpdatedBy(t *testing.T, gormDB *gorm.DB, tenantID uint64, want uint64) {
+	t.Helper()
+
+	var updatedBy uint64
+	if err := gormDB.Table("tenants").
+		Select("updated_by").
+		Where("id = ?", tenantID).
+		Scan(&updatedBy).Error; err != nil {
+		t.Fatalf("query tenant updated_by: %v", err)
+	}
+	if updatedBy != want {
+		t.Fatalf("expected tenant %d updated_by %d, got %d", tenantID, want, updatedBy)
 	}
 }

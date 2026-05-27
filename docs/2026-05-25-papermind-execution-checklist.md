@@ -133,6 +133,8 @@ P0 文档与项目骨架
 - [x] 支持 `auth.access_token_ttl`。
 - [x] 支持 `auth.refresh_token_ttl`。
 - [x] 支持 `auth.exam_token_buffer_minutes`。
+- [x] 支持 `auth.session.provider`、`auth.session.secret`、`auth.session.ttl`。
+- [x] 预留 `auth.session.key_prefix`、`auth.session.cleanup_interval` 和 Redis 配置。
 - [x] 支持 `storage.temp_dir`。
 - [x] 支持 `storage.import_dir`。
 - [x] 支持 `storage.export_dir`。
@@ -146,6 +148,7 @@ P0 文档与项目骨架
 
 - [x] 实现统一 `request_id` 中间件。
 - [x] 实现 Gin 请求日志中间件。
+- [x] HTTP server 挂载请求日志中间件并输出到控制台。
 - [x] 实现 panic recover 中间件。
 - [x] 实现统一响应结构 `{ code, message, data }`。
 - [x] 实现分页响应结构 `{ items, page, page_size, total }`。
@@ -361,12 +364,13 @@ P0 文档与项目骨架
 - [x] 实现创建租户。
 - [x] 创建租户时生成唯一 `tenant_code`。
 - [x] 新租户 `allow_register` 继承 `security.allow_register_default`。
+- [x] 创建租户时支持显式设置 `allow_register`。
 - [x] 实现查看租户码。
 - [x] 实现重置租户码。
 - [x] 实现启用租户。
 - [x] 实现禁用租户。
 - [x] 实现租户 logo 保存。
-- [x] 实现租户描述保存。
+- [x] 实现租户名称、描述和 Logo 保存。
 
 ### P3.4 租户用户
 
@@ -778,8 +782,11 @@ P0 文档与项目骨架
 - [x] 平台管理员登录页。
 - [x] 租户列表。
 - [x] 创建租户表单。
+- [x] 创建租户表单必填项显示红色 `*`。
+- [x] 创建租户表单支持设置是否开放注册。
 - [x] 租户 logo 上传。
-- [x] 租户描述编辑。
+- [x] 租户 logo 上传支持左侧拖拽选择、右侧图片预览。
+- [x] 租户资料编辑支持名称、描述和 Logo。
 - [x] 租户码查看。
 - [x] 租户码重置。
 - [x] 注册开关配置。
@@ -854,7 +861,17 @@ P0 文档与项目骨架
 - [x] 定义 request DTO。
 - [x] 定义 response DTO。
 - [x] 认证 API 接入前端登录态。
+- [x] 认证 API 使用 `github.com/gin-contrib/sessions` 写入服务端 session。
+- [x] 当前 session provider 支持进程内 memory 和 `github.com/gin-contrib/sessions/redis`。
+- [x] Bearer 登录态兼容已签名 session cookie 值，后端从 session 注入平台管理员主体上下文。
 - [x] 租户管理页面接入真实 API。
+- [x] 租户管理搜索和刷新接入后台列表接口。
+- [x] 租户管理搜索输入支持回车触发后台检索。
+- [x] 租户管理操作区按钮接入后台接口。
+- [x] 通用文件上传 API 接入对象存储抽象。
+- [x] 上传文件按年月日时分秒、内容 MD5 和后缀生成服务端文件名。
+- [x] 租户 Logo 创建流程上传真实文件并提交返回 URL。
+- [x] 浏览器端图片上传前优先转换为 WebP，失败时回退上传原图。
 - [x] 空间管理页面接入真实 API。
 - [x] 用户管理页面接入真实 API。
 - [x] 题库页面接入真实 API。
@@ -870,12 +887,15 @@ P0 文档与项目骨架
 - [x] 本地 SQLite dev seed 覆盖默认联调租户、用户、空间、试卷和考试数据。
 - [x] API 错误码映射到统一错误提示。
 - [x] 考试发布 API handler 使用 SQLite 覆盖列表和发布链路。
-- [x] 租户管理 API handler 使用 SQLite 覆盖列表和创建链路。
+- [x] 租户管理 API handler 使用 SQLite 覆盖列表、创建、资料更新、租户码重置和注册开关链路。
+- [x] 租户管理写接口从 Bearer 登录态解析平台管理员 ID，并写入 `created_by` / `updated_by`。
+- [x] 文件上传 API handler 覆盖 multipart 上传和缺少文件错误。
 - [x] 空间管理 API handler 使用 SQLite 覆盖列表和创建链路。
 - [x] 用户管理 API handler 使用 SQLite 覆盖列表、创建和禁用链路。
 - [x] 题库 API handler 使用 SQLite 覆盖列表和在线保存题目链路。
 - [x] 覆盖主要 API handler 测试。
 - [x] 覆盖前端 API client 集成测试。
+- [x] 覆盖前端上传 API client 和租户 Logo 上传联动测试。
 - [ ] 使用浏览器完成发布考试、进入考试、自动保存、提交、阅卷、发布成绩主链路联调。
 
 **验收标准**：

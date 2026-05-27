@@ -28,6 +28,24 @@ auth:
   refresh_token_ttl: 604800
   # 考试 token 物理过期缓冲时间，单位为分钟；业务作答截止时间仍单独硬校验。
   exam_token_buffer_minutes: 30
+  # session 保存登录主体信息；支持 memory 和 redis。
+  session:
+    # session provider，可选 memory 或 redis。
+    provider: memory
+    # session 签名密钥；留空时启动进程会随机生成，生产环境建议通过环境变量注入。
+    secret: ""
+    # session 有效期，单位为秒；默认与 refresh token 有效期保持一致。
+    ttl: 604800
+    # session key 前缀，Redis provider 用于隔离不同环境。
+    key_prefix: papermind:session
+    # 内存 session 过期清理间隔，单位为秒。
+    cleanup_interval: 300
+    # Redis provider 连接配置；memory 模式不会连接 Redis。
+    redis:
+      addr: 127.0.0.1:6379
+      username: ""
+      password: ""
+      db: 0
 
 # storage 用于配置运行期文件目录。
 storage:

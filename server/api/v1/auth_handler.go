@@ -1,12 +1,11 @@
 package v1
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lifei6671/papermind/server/internal/service/permission"
 	serviceplatformuser "github.com/lifei6671/papermind/server/internal/service/platformuser"
 	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
@@ -15,15 +14,10 @@ import (
 
 const platformAdminRole = "platform_admin"
 
-type AuthTokenIssuer interface {
-	IssueAccessToken() (string, error)
-	IssueRefreshToken() (string, error)
-}
-
 type authHandler struct {
-	platformUsers *serviceplatformuser.Service
-	tenantUsers   *servicetenantuser.Service
-	tokenIssuer   AuthTokenIssuer
+	platformUsers        *serviceplatformuser.Service
+	tenantUsers          *servicetenantuser.Service
+	sessionMaxAgeSeconds int
 }
 
 type platformLoginRequest struct {
@@ -72,21 +66,21 @@ func (h authHandler) platformLogin(c *gin.Context) {
 		writePlatformLoginError(c, err)
 		return
 	}
-	accessToken, err := h.tokenIssuer.IssueAccessToken()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "签发登录凭证失败"))
-		return
+	principal := AuthPrincipal{
+		SubjectType: permission.SubjectPlatformUser,
+		UserID:      user.ID,
+		Role:        platformAdminRole,
 	}
-	refreshToken, err := h.tokenIssuer.IssueRefreshToken()
+	accessToken, err := saveAuthPrincipalSession(c, principal, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "签发登录凭证失败"))
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存登录会话失败"))
 		return
 	}
 
 	// 平台管理员登录成功后只返回前端会话所需身份，不把密码哈希、审计字段暴露给浏览器。
 	c.JSON(http.StatusOK, response.OK(authSessionResponse{
 		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
+		RefreshToken: accessToken,
 		User: authUserResponse{
 			UserID:      user.ID,
 			DisplayName: user.Username,
@@ -149,29 +143,4 @@ func writeTenantRegisterError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "租户用户注册失败"))
-}
-
-func defaultAuthTokenIssuer(issuer AuthTokenIssuer) AuthTokenIssuer {
-	if issuer != nil {
-		return issuer
-	}
-	return randomAuthTokenIssuer{}
-}
-
-type randomAuthTokenIssuer struct{}
-
-func (randomAuthTokenIssuer) IssueAccessToken() (string, error) {
-	return issueOpaqueToken()
-}
-
-func (randomAuthTokenIssuer) IssueRefreshToken() (string, error) {
-	return issueOpaqueToken()
-}
-
-func issueOpaqueToken() (string, error) {
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
 }

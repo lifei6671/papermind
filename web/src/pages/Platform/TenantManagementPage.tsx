@@ -7,22 +7,29 @@ import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { tenantApi } from "../../api/tenants";
 import type { TenantManagementAPI, TenantRow } from "../../api/tenants";
+import { uploadApi } from "../../api/uploads";
+import type { UploadAPI } from "../../api/uploads";
 
 type TenantManagementPageProps = {
   api?: TenantManagementAPI;
+  uploadAPI?: UploadAPI;
 };
 
-export function TenantManagementPage({ api = tenantApi }: TenantManagementPageProps) {
+export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }: TenantManagementPageProps) {
   const [tenants, setTenants] = useState<TenantRow[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [logoFileName, setLogoFileName] = useState("");
+  const [allowRegister, setAllowRegister] = useState(true);
   const [uploadResetKey, setUploadResetKey] = useState(0);
+  const [isLogoUploading, setIsLogoUploading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [editingTenant, setEditingTenant] = useState<TenantRow | null>(null);
+  const [editingName, setEditingName] = useState("");
   const [editingDescription, setEditingDescription] = useState("");
+  const [editingLogoFileName, setEditingLogoFileName] = useState("");
+  const [editingUploadResetKey, setEditingUploadResetKey] = useState(0);
   const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
@@ -46,76 +53,136 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
     };
   }, [api]);
 
-  const filteredTenants = tenants.filter((tenant) => {
-    const keyword = appliedSearchQuery.trim().toLowerCase();
-    if (!keyword) {
-      return true;
+  async function reloadTenants(keyword?: string) {
+    try {
+      const data = keyword ? await api.listTenants({ keyword }) : await api.listTenants();
+      setTenants(data.items);
+      setLoadError("");
+    } catch {
+      setLoadError("租户列表加载失败");
     }
-
-    // 租户列表搜索只匹配当前可见字段，便于平台管理员按名称、描述或租户码快速定位。
-    return [tenant.name, tenant.description, tenant.code].some((value) => value.toLowerCase().includes(keyword));
-  });
+  }
 
   async function handleCreateTenant(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isLogoUploading) {
+      setLoadError("租户 Logo 正在上传");
+      return;
+    }
 
     const nextTenant = await api.createTenant({
       name,
       description,
       logoFileName: logoFileName || "未上传",
+      allowRegister,
     });
 
-    setTenants((items) => [...items, nextTenant]);
+    setTenants((items) => [nextTenant, ...items]);
     setName("");
     setDescription("");
     setLogoFileName("");
+    setAllowRegister(true);
     setUploadResetKey((value) => value + 1);
     setIsCreateDialogOpen(false);
   }
 
-  function openDescriptionEditor(tenant: TenantRow) {
-    setEditingTenant(tenant);
-    setEditingDescription(tenant.description);
+  async function handleLogoAccepted(file: File) {
+    try {
+      setIsLogoUploading(true);
+      // 租户 Logo 先上传为对象地址，创建租户时只提交后端返回的 URL。
+      const result = await uploadAPI.uploadFile({ category: "tenant-logos", file });
+      setLogoFileName(result.url);
+      setLoadError("");
+    } catch {
+      setLogoFileName("");
+      setLoadError("租户 Logo 上传失败");
+    } finally {
+      setIsLogoUploading(false);
+    }
   }
 
-  function saveDescription() {
+  function openProfileEditor(tenant: TenantRow) {
+    setEditingTenant(tenant);
+    setEditingName(tenant.name);
+    setEditingDescription(tenant.description);
+    setEditingLogoFileName(tenant.logoFileName);
+    setEditingUploadResetKey((value) => value + 1);
+  }
+
+  function updateTenantRow(nextTenant: TenantRow) {
+    setTenants((items) =>
+      items.map((tenant) => (tenant.id === nextTenant.id ? nextTenant : tenant)),
+    );
+  }
+
+  async function handleEditingLogoAccepted(file: File) {
+    try {
+      setIsLogoUploading(true);
+      // 编辑租户 Logo 只替换弹窗里的待保存 URL，保存资料后再更新列表快照。
+      const result = await uploadAPI.uploadFile({ category: "tenant-logos", file });
+      setEditingLogoFileName(result.url);
+      setLoadError("");
+    } catch {
+      setLoadError("租户 Logo 上传失败");
+    } finally {
+      setIsLogoUploading(false);
+    }
+  }
+
+  async function saveProfile() {
     if (!editingTenant) {
       return;
     }
 
-    // 租户描述是平台侧展示字段，保存后只影响当前租户的说明文本。
-    setTenants((items) =>
-      items.map((tenant) =>
-        tenant.id === editingTenant.id ? { ...tenant, description: editingDescription } : tenant,
-      ),
-    );
-    setEditingTenant(null);
-    setEditingDescription("");
+    try {
+      // 租户资料由后端持久化，列表只采用接口返回的最新租户快照。
+      const nextTenant = await api.updateTenantProfile({
+        tenantID: editingTenant.id,
+        name: editingName,
+        description: editingDescription,
+        logoFileName: editingLogoFileName || "未上传",
+      });
+      updateTenantRow(nextTenant);
+      setEditingTenant(null);
+      setEditingName("");
+      setEditingDescription("");
+      setEditingLogoFileName("");
+      setLoadError("");
+    } catch {
+      setLoadError("租户操作失败");
+    }
   }
 
-  function resetTenantCode(tenantID: number) {
-    setTenants((items) =>
-      items.map((tenant) =>
-        tenant.id === tenantID ? { ...tenant, code: nextTenantCode(tenant.code) } : tenant,
-      ),
-    );
+  async function resetTenantCode(tenantID: number) {
+    try {
+      const nextTenant = await api.resetTenantCode(tenantID);
+      updateTenantRow(nextTenant);
+      setLoadError("");
+    } catch {
+      setLoadError("租户操作失败");
+    }
   }
 
-  function toggleRegister(tenantID: number) {
-    setTenants((items) =>
-      items.map((tenant) =>
-        tenant.id === tenantID ? { ...tenant, allowRegister: !tenant.allowRegister } : tenant,
-      ),
-    );
+  async function toggleRegister(tenant: TenantRow) {
+    try {
+      // 注册开关只控制自注册入口，不能和租户启停状态混用。
+      const nextTenant = tenant.allowRegister
+        ? await api.disableTenantRegistration(tenant.id)
+        : await api.enableTenantRegistration(tenant.id);
+      updateTenantRow(nextTenant);
+      setLoadError("");
+    } catch {
+      setLoadError("租户操作失败");
+    }
   }
 
   function handleSearchTenants() {
-    setAppliedSearchQuery(searchQuery);
+    void reloadTenants(searchQuery.trim());
   }
 
   function handleRefreshTenants() {
     setSearchQuery("");
-    setAppliedSearchQuery("");
+    void reloadTenants();
   }
 
   return (
@@ -139,6 +206,12 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
                 <span className="sr-only">搜索租户</span>
                 <input
                   onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleSearchTenants();
+                    }
+                  }}
                   placeholder="输入租户名称、描述或租户码"
                   value={searchQuery}
                 />
@@ -169,14 +242,14 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
                 </tr>
               </thead>
               <tbody>
-                {filteredTenants.length === 0 && <EmptyTableRow colSpan={5} />}
-                {filteredTenants.map((tenant) => (
+                {tenants.length === 0 && <EmptyTableRow colSpan={5} />}
+                {tenants.map((tenant) => (
                   <tr key={tenant.id}>
                     <td>
                       <strong>{tenant.name}</strong>
                       <span>{tenant.description}</span>
                     </td>
-                    <td>{tenant.logoFileName}</td>
+                    <td>{renderTenantLogo(tenant)}</td>
                     <td><code>{tenant.code}</code></td>
                     <td>
                       <StatusBadge tone={tenant.allowRegister ? "success" : "info"}>
@@ -188,9 +261,9 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
                         <Button
                           variant="actionEdit"
                           type="button"
-                          onClick={() => openDescriptionEditor(tenant)}
+                          onClick={() => openProfileEditor(tenant)}
                         >
-                          编辑描述
+                          编辑资料
                         </Button>
                         <Button
                           variant="actionReset"
@@ -200,7 +273,7 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
                           重置租户码
                         </Button>
                         <Button
-                          onClick={() => toggleRegister(tenant.id)}
+                          onClick={() => toggleRegister(tenant)}
                           type="button"
                           variant={tenant.allowRegister ? "actionClose" : "actionOpen"}
                         >
@@ -220,37 +293,47 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
         <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="创建租户弹窗">
           <div className="platform-dialog__card">
             <h2>创建租户</h2>
-            <p>首版创建后生成租户码，后续接入平台租户 API。</p>
+            <p>创建后生成租户码，用于注册链接和手动注册归属。</p>
             <form className="platform-form" onSubmit={handleCreateTenant}>
               <label className="field">
-                <span>租户名称</span>
+                <span className="field-label">租户名称<span className="required-marker" aria-hidden="true">*</span></span>
                 <input
+                  aria-label="租户名称"
                   onChange={(event) => setName(event.target.value)}
                   required
                   value={name}
                 />
               </label>
               <label className="field">
-                <span>租户描述</span>
+                <span className="field-label">租户描述<span className="required-marker" aria-hidden="true">*</span></span>
                 <textarea
+                  aria-label="租户描述"
                   onChange={(event) => setDescription(event.target.value)}
                   required
                   value={description}
                 />
+              </label>
+              <label className="tenant-register-option">
+                <input
+                  checked={allowRegister}
+                  onChange={(event) => setAllowRegister(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>是否开放注册</span>
               </label>
               <FileUploadField
                 accept={["image/png", "image/jpeg"]}
                 key={uploadResetKey}
                 label="租户 Logo"
                 maxSizeBytes={1024 * 1024}
-                onFileAccepted={(file) => setLogoFileName(file.name)}
+                onFileAccepted={handleLogoAccepted}
               />
               <div className="platform-dialog__actions">
                 <Button variant="secondary" onClick={() => setIsCreateDialogOpen(false)} type="button">
                   取消
                 </Button>
-                <Button variant="primary" type="submit">
-                  确认创建
+                <Button disabled={isLogoUploading} variant="primary" type="submit">
+                  {isLogoUploading ? "上传中" : "确认创建"}
                 </Button>
               </div>
             </form>
@@ -259,9 +342,18 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
       )}
 
       {editingTenant && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="租户描述弹窗">
+        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="租户资料弹窗">
           <div className="platform-dialog__card">
             <h2>{editingTenant.name}</h2>
+            <label className="field">
+              <span>编辑租户名称</span>
+              <input
+                aria-label="编辑租户名称"
+                onChange={(event) => setEditingName(event.target.value)}
+                required
+                value={editingName}
+              />
+            </label>
             <label className="field">
               <span>编辑租户描述</span>
               <textarea
@@ -269,12 +361,21 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
                 value={editingDescription}
               />
             </label>
+            <FileUploadField
+              accept={["image/png", "image/jpeg", "image/webp"]}
+              key={editingUploadResetKey}
+              label="编辑租户 Logo"
+              maxSizeBytes={1024 * 1024}
+              onFileAccepted={handleEditingLogoAccepted}
+              previewSrc={editingLogoFileName === "未上传" ? undefined : editingLogoFileName}
+              selectedLabel={editingLogoFileName === "未上传" ? undefined : "当前 Logo"}
+            />
             <div className="platform-dialog__actions">
               <Button variant="secondary" onClick={() => setEditingTenant(null)} type="button">
                 取消
               </Button>
-              <Button variant="primary" onClick={saveDescription} type="button">
-                保存描述
+              <Button disabled={isLogoUploading} variant="primary" onClick={saveProfile} type="button">
+                {isLogoUploading ? "上传中" : "保存资料"}
               </Button>
             </div>
           </div>
@@ -284,11 +385,16 @@ export function TenantManagementPage({ api = tenantApi }: TenantManagementPagePr
   );
 }
 
-function nextTenantCode(currentCode: string) {
-  const match = currentCode.match(/^(.*?)(\d+)$/);
-  if (!match) {
-    return `${currentCode}-2`;
+function renderTenantLogo(tenant: TenantRow) {
+  if (!tenant.logoFileName || tenant.logoFileName === "未上传") {
+    return <span className="tenant-logo-empty">未上传</span>;
   }
 
-  return `${match[1]}${String(Number(match[2]) + 1).padStart(match[2].length, "0")}`;
+  return (
+    <img
+      alt={`${tenant.name} Logo`}
+      className="tenant-logo-thumb"
+      src={tenant.logoFileName}
+    />
+  );
 }

@@ -638,6 +638,17 @@ code {
   line-height: 1.4;
 }
 
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.required-marker {
+  color: var(--brand-accent);
+  font-weight: 700;
+}
+
 .field input,
 .field select {
   min-height: 40px;
@@ -769,6 +780,12 @@ code {
   display: block;
 }
 
+.file-upload-field__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(132px, 0.7fr);
+  gap: 12px;
+}
+
 .file-upload-field__control {
   position: relative;
   min-height: 92px;
@@ -782,6 +799,25 @@ code {
   color: var(--text-secondary);
 }
 
+.file-upload-field__preview {
+  min-height: 92px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.file-upload-field__preview img {
+  width: 100%;
+  height: 100%;
+  max-height: 136px;
+  object-fit: contain;
+}
+
 .file-upload-field__control input {
   position: absolute;
   inset: 0;
@@ -791,6 +827,12 @@ code {
 
 .file-upload-field small {
   color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .file-upload-field__layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 .primary-button.api-search__button {
@@ -2851,6 +2893,22 @@ code {
   gap: 16px;
 }
 
+.tenant-register-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.tenant-register-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--brand-accent);
+}
+
 .field textarea,
 .platform-settings-form textarea {
   min-height: 86px;
@@ -2869,6 +2927,21 @@ code {
 
 .tenant-table td:first-child span {
   color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.tenant-logo-thumb {
+  width: 40px;
+  height: 40px;
+  display: block;
+  object-fit: contain;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-panel);
+}
+
+.tenant-logo-empty {
+  color: var(--text-muted);
   font-size: 13px;
 }
 

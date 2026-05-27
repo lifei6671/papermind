@@ -31,26 +31,57 @@ type Tenant struct {
 	TenantCode    string // 租户码，用于专属注册链接和手动注册归属。
 	AllowRegister bool   // 是否允许该租户用户自注册。
 	Status        string // 租户状态：enabled / disabled。
+	CreatedBy     uint64 // 创建租户的平台管理员用户 ID。
+	UpdatedBy     uint64 // 最近更新租户的平台管理员用户 ID。
 }
 
 type CreateInput struct {
-	Name        string // 租户名称。
-	LogoURL     string // 企业或机构 Logo 地址。
-	Description string // 企业或机构描述。
+	Name          string // 租户名称。
+	LogoURL       string // 企业或机构 Logo 地址。
+	Description   string // 企业或机构描述。
+	AllowRegister *bool  // 是否允许该租户用户自注册；为空时继承平台默认值。
+	ActorID       uint64 // 执行创建操作的平台管理员用户 ID。
 }
 
 type ListInput struct {
 	Page     int
 	PageSize int
+	Keyword  string
+}
+
+type UpdateProfileInput struct {
+	TenantID    uint64
+	Name        string
+	LogoURL     string
+	Description string
+	ActorID     uint64
+}
+
+type ResetTenantCodeInput struct {
+	TenantID uint64
+	ActorID  uint64
+}
+
+type UpdateRegisterSettingInput struct {
+	TenantID      uint64
+	AllowRegister bool
+	ActorID       uint64
+}
+
+type UpdateStatusInput struct {
+	TenantID uint64
+	ActorID  uint64
 }
 
 type Repository interface {
-	List(ctx context.Context, page pagination.Input) (pagination.Result[Tenant], error)
+	List(ctx context.Context, input ListInput) (pagination.Result[Tenant], error)
 	Create(ctx context.Context, tenant Tenant) (Tenant, error)
 	FindByID(ctx context.Context, tenantID uint64) (Tenant, error)
 	TenantCodeExists(ctx context.Context, code string) (bool, error)
-	UpdateTenantCode(ctx context.Context, tenantID uint64, code string) (Tenant, error)
-	UpdateStatus(ctx context.Context, tenantID uint64, status string) error
+	UpdateTenantCode(ctx context.Context, tenantID uint64, code string, actorID uint64) (Tenant, error)
+	UpdateProfile(ctx context.Context, input UpdateProfileInput) (Tenant, error)
+	UpdateAllowRegister(ctx context.Context, tenantID uint64, allowRegister bool, actorID uint64) (Tenant, error)
+	UpdateStatus(ctx context.Context, tenantID uint64, status string, actorID uint64) error
 }
 
 type CodeGenerator interface {
@@ -103,16 +134,20 @@ func NewService(options ServiceOptions) *Service {
 	if attempts == 0 {
 		attempts = 8
 	}
+	codeGenerator := options.CodeGenerator
+	if codeGenerator == nil {
+		codeGenerator = NewRandomCodeGenerator()
+	}
 	return &Service{
 		repo:                    options.Repo,
-		codeGenerator:           options.CodeGenerator,
+		codeGenerator:           codeGenerator,
 		allowRegisterDefault:    options.AllowRegisterDefault,
 		maxCodeGenerateAttempts: attempts,
 	}
 }
 
 func (s *Service) List(ctx context.Context, input ListInput) (pagination.Result[Tenant], error) {
-	return s.repo.List(ctx, pagination.Input{Page: input.Page, PageSize: input.PageSize})
+	return s.repo.List(ctx, input)
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Tenant, error) {
@@ -120,13 +155,19 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Tenant, error)
 	if err != nil {
 		return Tenant{}, err
 	}
+	allowRegister := s.allowRegisterDefault
+	if input.AllowRegister != nil {
+		allowRegister = *input.AllowRegister
+	}
 	return s.repo.Create(ctx, Tenant{
 		Name:          input.Name,
 		LogoURL:       input.LogoURL,
 		Description:   input.Description,
 		TenantCode:    code,
-		AllowRegister: s.allowRegisterDefault,
+		AllowRegister: allowRegister,
 		Status:        StatusEnabled,
+		CreatedBy:     input.ActorID,
+		UpdatedBy:     input.ActorID,
 	})
 }
 
@@ -138,31 +179,36 @@ func (s *Service) GetTenantCode(ctx context.Context, tenantID uint64) (string, e
 	return tenant.TenantCode, nil
 }
 
-func (s *Service) ResetTenantCode(ctx context.Context, tenantID uint64) (Tenant, error) {
-	if _, err := s.repo.FindByID(ctx, tenantID); err != nil {
+func (s *Service) ResetTenantCode(ctx context.Context, input ResetTenantCodeInput) (Tenant, error) {
+	if _, err := s.repo.FindByID(ctx, input.TenantID); err != nil {
 		return Tenant{}, err
 	}
 	code, err := s.nextUniqueCode(ctx)
 	if err != nil {
 		return Tenant{}, err
 	}
-	return s.repo.UpdateTenantCode(ctx, tenantID, code)
+	return s.repo.UpdateTenantCode(ctx, input.TenantID, code, input.ActorID)
 }
 
-func (s *Service) Enable(ctx context.Context, tenantID uint64) error {
-	return s.repo.UpdateStatus(ctx, tenantID, StatusEnabled)
+func (s *Service) UpdateProfile(ctx context.Context, input UpdateProfileInput) (Tenant, error) {
+	return s.repo.UpdateProfile(ctx, input)
 }
 
-func (s *Service) Disable(ctx context.Context, tenantID uint64) error {
-	return s.repo.UpdateStatus(ctx, tenantID, StatusDisabled)
+func (s *Service) UpdateRegisterSetting(ctx context.Context, input UpdateRegisterSettingInput) (Tenant, error) {
+	return s.repo.UpdateAllowRegister(ctx, input.TenantID, input.AllowRegister, input.ActorID)
+}
+
+func (s *Service) Enable(ctx context.Context, input UpdateStatusInput) error {
+	return s.repo.UpdateStatus(ctx, input.TenantID, StatusEnabled, input.ActorID)
+}
+
+func (s *Service) Disable(ctx context.Context, input UpdateStatusInput) error {
+	return s.repo.UpdateStatus(ctx, input.TenantID, StatusDisabled, input.ActorID)
 }
 
 func (s *Service) nextUniqueCode(ctx context.Context) (string, error) {
 	if s.repo == nil {
 		return "", ErrTenantRepositoryMiss
-	}
-	if s.codeGenerator == nil {
-		return "", ErrTenantCodeGenerator
 	}
 	for range s.maxCodeGenerateAttempts {
 		code, err := s.codeGenerator.NextCode()

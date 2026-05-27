@@ -32,9 +32,26 @@ type DatabaseConfig struct {
 }
 
 type AuthConfig struct {
-	AccessTokenTTL         int `yaml:"access_token_ttl"`
-	RefreshTokenTTL        int `yaml:"refresh_token_ttl"`
-	ExamTokenBufferMinutes int `yaml:"exam_token_buffer_minutes"`
+	AccessTokenTTL         int           `yaml:"access_token_ttl"`
+	RefreshTokenTTL        int           `yaml:"refresh_token_ttl"`
+	ExamTokenBufferMinutes int           `yaml:"exam_token_buffer_minutes"`
+	Session                SessionConfig `yaml:"session"`
+}
+
+type SessionConfig struct {
+	Provider        string             `yaml:"provider"`
+	Secret          string             `yaml:"secret"`
+	TTL             int                `yaml:"ttl"`
+	KeyPrefix       string             `yaml:"key_prefix"`
+	CleanupInterval int                `yaml:"cleanup_interval"`
+	Redis           RedisSessionConfig `yaml:"redis"`
+}
+
+type RedisSessionConfig struct {
+	Addr     string `yaml:"addr"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
 }
 
 type StorageConfig struct {
@@ -123,6 +140,21 @@ func applyEnvironmentOverrides(cfg *Config) error {
 		return err
 	}
 	if err := overrideInt("PAPERMIND_AUTH_EXAM_TOKEN_BUFFER_MINUTES", &cfg.Auth.ExamTokenBufferMinutes); err != nil {
+		return err
+	}
+	overrideString("PAPERMIND_AUTH_SESSION_PROVIDER", &cfg.Auth.Session.Provider)
+	overrideString("PAPERMIND_AUTH_SESSION_SECRET", &cfg.Auth.Session.Secret)
+	if err := overrideInt("PAPERMIND_AUTH_SESSION_TTL", &cfg.Auth.Session.TTL); err != nil {
+		return err
+	}
+	overrideString("PAPERMIND_AUTH_SESSION_KEY_PREFIX", &cfg.Auth.Session.KeyPrefix)
+	if err := overrideInt("PAPERMIND_AUTH_SESSION_CLEANUP_INTERVAL", &cfg.Auth.Session.CleanupInterval); err != nil {
+		return err
+	}
+	overrideString("PAPERMIND_AUTH_SESSION_REDIS_ADDR", &cfg.Auth.Session.Redis.Addr)
+	overrideString("PAPERMIND_AUTH_SESSION_REDIS_USERNAME", &cfg.Auth.Session.Redis.Username)
+	overrideString("PAPERMIND_AUTH_SESSION_REDIS_PASSWORD", &cfg.Auth.Session.Redis.Password)
+	if err := overrideInt("PAPERMIND_AUTH_SESSION_REDIS_DB", &cfg.Auth.Session.Redis.DB); err != nil {
 		return err
 	}
 
