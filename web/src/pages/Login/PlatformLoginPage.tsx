@@ -5,6 +5,7 @@ import { BookOpenCheck } from "lucide-react";
 import { useSession } from "../../auth/session-context";
 import { authApi } from "../../api/auth";
 import type { AuthAPI } from "../../api/auth";
+import { formatApiErrorMessage } from "../../api/client";
 
 type PlatformLoginPageProps = {
   api?: AuthAPI;
@@ -42,7 +43,7 @@ export function PlatformLoginPage({ api = authApi }: PlatformLoginPageProps) {
       signIn(session);
       navigate("/", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "平台管理员登录失败");
+      setError(formatApiErrorMessage(err, "平台管理员登录失败"));
     } finally {
       setIsSubmitting(false);
     }

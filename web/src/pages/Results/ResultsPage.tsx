@@ -2,78 +2,100 @@ import { Button } from "../../components/ui/Button";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Download, Save } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { formatApiErrorMessage } from "../../api/client";
+import type { ActorRole } from "../../api/grading";
+import { resultsApi } from "../../api/results";
+import type { ResultRow, ResultsAPI } from "../../api/results";
 
-type ResultRow = {
-  id: number;
-  studentName: string;
-  spaceName: string;
-  attemptNo: number;
-  objectiveScore: number;
-  subjectiveScore: number;
-  totalScore: number;
-  submittedAt: string;
+type ResultsPageProps = {
+  api?: ResultsAPI;
+  tenantID?: number;
+  examID?: number;
+  actorID?: number;
+  actorRole?: ActorRole;
+  spaceID?: number;
 };
-
-const resultRows: ResultRow[] = [
-  {
-    id: 1,
-    studentName: "张三",
-    spaceName: "高一 1 班",
-    attemptNo: 1,
-    objectiveScore: 72,
-    subjectiveScore: 16,
-    totalScore: 88,
-    submittedAt: "2026-05-30 10:48",
-  },
-  {
-    id: 2,
-    studentName: "李四",
-    spaceName: "高一 2 班",
-    attemptNo: 1,
-    objectiveScore: 68,
-    subjectiveScore: 15,
-    totalScore: 83,
-    submittedAt: "2026-05-30 10:52",
-  },
-];
 
 function formatPublishTime(value: string) {
   return value.replace("T", " ");
 }
 
-export function ResultsPage() {
+export function ResultsPage({
+  api = resultsApi,
+  tenantID = 10,
+  examID = 1,
+  actorID = 1,
+  actorRole = "tenant_admin",
+  spaceID,
+}: ResultsPageProps) {
+  const [resultRows, setResultRows] = useState<ResultRow[]>([]);
   const [publishMode, setPublishMode] = useState("manual_publish");
   const [publishTime, setPublishTime] = useState("");
   const [publishMessage, setPublishMessage] = useState("");
   const [publishError, setPublishError] = useState("");
   const [exportMessage, setExportMessage] = useState("");
   const [exportHref, setExportHref] = useState("");
+  const [loadError, setLoadError] = useState("");
 
-  function handleSavePublishConfig(event: React.FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    let ignore = false;
+    api.listResults({ tenantID, examID, actorID, actorRole, spaceID })
+      .then((result) => {
+        if (!ignore) {
+          setResultRows(result.items);
+          setLoadError("");
+        }
+      })
+      .catch((err) => {
+        if (!ignore) {
+          setLoadError(formatApiErrorMessage(err, "成绩列表加载失败"));
+        }
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [api, tenantID, examID, actorID, actorRole, spaceID]);
+
+  async function handleSavePublishConfig(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (publishMode === "scheduled_publish" && !publishTime.trim()) {
+    if (publishMode === "manual_publish" && !publishTime.trim()) {
       setPublishError("统一公布时间不能为空。");
       setPublishMessage("");
       return;
     }
 
-    // 成绩发布时间最终由服务端判断可见性，前端只负责提交配置并展示反馈。
-    const visibleTime = publishTime ? formatPublishTime(publishTime) : "待教师手动发布";
-    setPublishError("");
-    setPublishMessage(`成绩发布配置已保存：${publishMode === "scheduled_publish" ? "统一公布" : "手动发布"}，${visibleTime}`);
+    try {
+      // 成绩发布时间最终由服务端判断可见性，前端只负责提交配置并展示反馈。
+      const scorePublishTime = publishTime ? new Date(publishTime).getTime() : undefined;
+      await api.savePublishConfig({
+        tenantID,
+        examID,
+        actorID,
+        actorRole,
+        spaceID,
+        publishMode: publishMode as "immediate_score" | "manual_publish",
+        scorePublishTime,
+      });
+      const visibleTime = publishTime ? formatPublishTime(publishTime) : "提交后立即出分";
+      setPublishError("");
+      setPublishMessage(`成绩发布配置已保存：${publishMode === "manual_publish" ? "统一公布" : "立即出分"}，${visibleTime}`);
+    } catch (err) {
+      setPublishError(formatApiErrorMessage(err, "保存成绩发布配置失败"));
+      setPublishMessage("");
+    }
   }
 
-  function handleExportResults() {
-    const header = "考生姓名,空间名称,attempt次数,客观题分,主观题分,总分,提交时间";
-    const rows = resultRows.map((row) =>
-      [row.studentName, row.spaceName, row.attemptNo, row.objectiveScore, row.subjectiveScore, row.totalScore, row.submittedAt].join(","),
-    );
-    const csv = [header, ...rows].join("\n");
-
-    setExportHref(`data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`);
-    setExportMessage("成绩导出任务已创建，文件将写入 server/data/exports/papermind-results.csv");
+  async function handleExportResults() {
+    try {
+      const result = await api.exportResults({ tenantID, examID, actorID, actorRole, spaceID });
+      setExportHref(result.filePath);
+      setExportMessage(`成绩导出完成：已导出 ${result.rowCount} 行，文件 ${result.filePath}`);
+    } catch (err) {
+      setExportHref("");
+      setExportMessage(formatApiErrorMessage(err, "成绩导出失败"));
+    }
   }
 
   return (
@@ -100,8 +122,8 @@ export function ResultsPage() {
           <label className="field">
             <span>成绩发布模式</span>
             <select onChange={(event) => setPublishMode(event.target.value)} value={publishMode}>
-              <option value="manual_publish">教师手动发布</option>
-              <option value="scheduled_publish">统一公布时间</option>
+              <option value="manual_publish">统一公布时间</option>
+              <option value="immediate_score">提交后立即出分</option>
             </select>
           </label>
           <label className="field">
@@ -120,6 +142,7 @@ export function ResultsPage() {
         </form>
 
         {publishError && <div className="tenant-admin-warning" role="alert">{publishError}</div>}
+        {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
         {publishMessage && (
           <div aria-label="result-publish-config" className="tenant-admin-status" role="status">
             {publishMessage}

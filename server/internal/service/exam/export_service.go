@@ -28,6 +28,8 @@ type ExportExamScoresInput struct {
 	ExamID     uint64                       // 考试 ID。
 }
 
+type ListExamScoresInput = ExportExamScoresInput
+
 type ExportResult struct {
 	FilePath string // 导出文件绝对或工作目录相对路径。
 	RowCount int    // 导出数据行数。
@@ -60,10 +62,7 @@ func NewExportService(options ExportServiceOptions) *ExportService {
 }
 
 func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamScoresInput) (ExportResult, error) {
-	if err := s.permissionChecker.CanGradeExam(input.Permission, input.ExamID); err != nil {
-		return ExportResult{}, err
-	}
-	rows, err := s.repo.ListScoreExportRows(ctx, input.TenantID, input.ExamID)
+	rows, err := s.ListExamScores(ctx, ListExamScoresInput(input))
 	if err != nil {
 		return ExportResult{}, err
 	}
@@ -81,6 +80,13 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 		return ExportResult{}, err
 	}
 	return ExportResult{FilePath: filePath, RowCount: len(rows)}, nil
+}
+
+func (s *ExportService) ListExamScores(ctx context.Context, input ListExamScoresInput) ([]ScoreExportRow, error) {
+	if err := s.permissionChecker.CanGradeExam(input.Permission, input.ExamID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListScoreExportRows(ctx, input.TenantID, input.ExamID)
 }
 
 func writeScoreExportCSV(writer *csv.Writer, rows []ScoreExportRow) error {

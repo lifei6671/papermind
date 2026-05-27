@@ -1,53 +1,36 @@
 import { Button } from "../../components/ui/Button";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { CheckCircle2, PenLine, RefreshCw, Search } from "lucide-react";
-import { useState } from "react";
+import { PenLine, RefreshCw, Search } from "lucide-react";
+import { useEffect, useState } from "react";
+import { formatApiErrorMessage } from "../../api/client";
+import { gradingApi } from "../../api/grading";
+import type { ActorRole, GradingAPI, PendingReviewRow } from "../../api/grading";
 
-type PendingAttempt = {
-  id: number;
-  studentName: string;
-  spaceName: string;
-  examName: string;
-  questionTitle: string;
-  submittedAt: string;
-  maxScore: number;
-  version: number;
-  status: "pending" | "completed";
+type GradingPageProps = {
+  api?: GradingAPI;
+  tenantID?: number;
+  examID?: number;
+  actorID?: number;
+  actorRole?: ActorRole;
+  spaceID?: number;
 };
 
-const pendingAttempts: PendingAttempt[] = [
-  {
-    id: 1,
-    studentName: "张三",
-    spaceName: "高一 1 班",
-    examName: "高一语文期中考试",
-    questionTitle: "岳阳楼记思想内涵",
-    submittedAt: "2026-05-30 10:48",
-    maxScore: 10,
-    version: 3,
-    status: "pending",
-  },
-  {
-    id: 2,
-    studentName: "李四",
-    spaceName: "高一 2 班",
-    examName: "高一语文期中考试",
-    questionTitle: "现代文阅读观点概括",
-    submittedAt: "2026-05-30 10:52",
-    maxScore: 8,
-    version: 2,
-    status: "pending",
-  },
-];
-
-export function GradingPage() {
-  const [attempts, setAttempts] = useState<PendingAttempt[]>(pendingAttempts);
-  const [selectedAttempt, setSelectedAttempt] = useState<PendingAttempt | null>(null);
+export function GradingPage({
+  api = gradingApi,
+  tenantID = 10,
+  examID = 1,
+  actorID = 1,
+  actorRole = "tenant_admin",
+  spaceID,
+}: GradingPageProps) {
+  const [attempts, setAttempts] = useState<PendingReviewRow[]>([]);
+  const [selectedAttempt, setSelectedAttempt] = useState<PendingReviewRow | null>(null);
   const [score, setScore] = useState("7");
   const [comment, setComment] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
   const [completeMessage, setCompleteMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
 
@@ -64,31 +47,76 @@ export function GradingPage() {
     );
   });
 
-  function openGradingDialog(attempt: PendingAttempt) {
+  async function loadPendingAttempts() {
+    try {
+      const result = await api.listPendingAttempts({ tenantID, examID, actorID, actorRole, spaceID });
+      setAttempts(result.items);
+      setLoadError("");
+    } catch (err) {
+      setLoadError(formatApiErrorMessage(err, "待阅卷列表加载失败"));
+    }
+  }
+
+  useEffect(() => {
+    let ignore = false;
+    api.listPendingAttempts({ tenantID, examID, actorID, actorRole, spaceID })
+      .then((result) => {
+        if (!ignore) {
+          setAttempts(result.items);
+          setLoadError("");
+        }
+      })
+      .catch((err: unknown) => {
+        if (!ignore) {
+          setLoadError(formatApiErrorMessage(err, "待阅卷列表加载失败"));
+        }
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [api, tenantID, examID, actorID, actorRole, spaceID]);
+
+  function openGradingDialog(attempt: PendingReviewRow) {
     setSelectedAttempt(attempt);
-    setScore(String(Math.min(7, attempt.maxScore)));
+    setScore(String(Math.min(7, Number(attempt.maxScore))));
     setComment("");
     setSaveMessage("");
     setCompleteMessage("");
   }
 
-  function handleSaveGrading(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSaveGrading(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    // 阅卷保存需要携带 version，后端乐观锁冲突时应由 API 返回明确错误。
-    setSaveMessage(`${selectedAttempt?.studentName ?? "当前考生"}简答题已保存 ${score} 分，version=${selectedAttempt?.version ?? 0}`);
-  }
-
-  function handleCompleteGrading() {
     if (!selectedAttempt) {
       return;
     }
 
-    setAttempts((items) =>
-      items.map((item) => item.id === selectedAttempt.id ? { ...item, status: "completed" } : item),
-    );
-    setSelectedAttempt((attempt) => attempt ? { ...attempt, status: "completed" } : attempt);
-    setCompleteMessage(`${selectedAttempt?.studentName ?? "当前考生"}已完成阅卷，主观题和总分已重算。`);
+    try {
+      // 阅卷保存必须携带答案 version，后端用乐观锁阻止并发覆盖评分。
+      await api.gradeShortText({
+        tenantID,
+        examID,
+        actorID,
+        actorRole,
+        spaceID,
+        attemptID: selectedAttempt.attemptID,
+        attemptQuestionID: selectedAttempt.attemptQuestionID,
+        answerVersion: selectedAttempt.answerVersion,
+        score,
+        comment,
+      });
+      setAttempts((items) =>
+        items.map((item) =>
+          item.attemptID === selectedAttempt.attemptID && item.attemptQuestionID === selectedAttempt.attemptQuestionID
+            ? { ...item, status: "completed" }
+            : item,
+        ),
+      );
+      setSelectedAttempt((attempt) => attempt ? { ...attempt, status: "completed" } : attempt);
+      setSaveMessage(`${selectedAttempt.studentName}简答题已保存 ${score} 分`);
+      setCompleteMessage(`${selectedAttempt.studentName}已完成阅卷，主观题和总分已重算。`);
+    } catch (err) {
+      setSaveMessage(formatApiErrorMessage(err, "保存阅卷结果失败"));
+    }
   }
 
   return (
@@ -110,7 +138,7 @@ export function GradingPage() {
       <Panel>
         <div className="tenant-list-toolbar">
           <div className="tenant-list-actions" aria-label="阅卷操作区">
-            <Button variant="toolbarSecondary" onClick={() => setAppliedSearchQuery("")} type="button">
+            <Button variant="toolbarSecondary" onClick={() => { setAppliedSearchQuery(""); void loadPendingAttempts(); }} type="button">
               <RefreshCw aria-hidden="true" size={16} />
               刷新待阅卷
             </Button>
@@ -129,6 +157,7 @@ export function GradingPage() {
             </Button>
           </div>
         </div>
+        {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
 
         <div className="table-wrap">
           <table className="data-table tenant-admin-table">
@@ -145,7 +174,7 @@ export function GradingPage() {
             </thead>
             <tbody>
               {filteredAttempts.map((attempt) => (
-                <tr key={attempt.id}>
+                <tr key={`${attempt.attemptID}-${attempt.attemptQuestionID}`}>
                   <td>{attempt.studentName}</td>
                   <td>{attempt.spaceName}</td>
                   <td>{attempt.examName}</td>
@@ -179,7 +208,7 @@ export function GradingPage() {
             <h2>简答题阅卷</h2>
             <div className="grading-answer-block">
               <strong>{selectedAttempt.studentName} · {selectedAttempt.questionTitle}</strong>
-              <p>学生作答：先忧后乐体现了士人以天下为己任的责任意识，也强调个人得失应服从公共价值。</p>
+              <p>学生作答：{selectedAttempt.answerContent}</p>
             </div>
             <form className="platform-form" onSubmit={handleSaveGrading}>
               <label className="field">
@@ -189,6 +218,7 @@ export function GradingPage() {
                   min={0}
                   onChange={(event) => setScore(event.target.value)}
                   required
+                  step="0.1"
                   type="number"
                   value={score}
                 />
@@ -210,10 +240,6 @@ export function GradingPage() {
               <div className="platform-dialog__actions">
                 <Button variant="secondary" onClick={() => setSelectedAttempt(null)} type="button">
                   关闭
-                </Button>
-                <Button variant="secondary" onClick={handleCompleteGrading} type="button">
-                  <CheckCircle2 aria-hidden="true" size={16} />
-                  完成阅卷
                 </Button>
                 <Button variant="primary" type="submit">
                   <PenLine aria-hidden="true" size={16} />

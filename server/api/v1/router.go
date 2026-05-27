@@ -14,12 +14,14 @@ import (
 	serviceexam "github.com/lifei6671/papermind/server/internal/service/exam"
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
 	servicepaper "github.com/lifei6671/papermind/server/internal/service/paper"
+	"github.com/lifei6671/papermind/server/internal/service/permission"
 	serviceplatformuser "github.com/lifei6671/papermind/server/internal/service/platformuser"
 	servicequestion "github.com/lifei6671/papermind/server/internal/service/question"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenant "github.com/lifei6671/papermind/server/internal/service/tenant"
 	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
+	"github.com/lifei6671/papermind/server/library/constant"
 	"github.com/lifei6671/papermind/server/library/response"
 	"gorm.io/gorm"
 )
@@ -30,6 +32,7 @@ type RouterOptions struct {
 	CodeGenerator        serviceexam.CodeGenerator
 	AllowRegisterDefault bool
 	AuthTokenIssuer      AuthTokenIssuer
+	ExportDir            string
 }
 
 func NewRouter(options RouterOptions) *gin.Engine {
@@ -47,6 +50,17 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	takingService := serviceexam.NewTakingService(serviceexam.TakingServiceOptions{
 		Repo: examRepository,
 		Now:  options.Now,
+	})
+	reviewService := serviceexam.NewReviewService(serviceexam.ReviewServiceOptions{
+		Repo:              examRepository,
+		PermissionChecker: permission.NewFixedRoleChecker(),
+		Now:               options.Now,
+	})
+	exportService := serviceexam.NewExportService(serviceexam.ExportServiceOptions{
+		Repo:              examRepository,
+		PermissionChecker: permission.NewFixedRoleChecker(),
+		ExportDir:         defaultExportDir(options.ExportDir),
+		Now:               options.Now,
 	})
 	tenantRepository := dbdao.NewTenantRepository(options.DB, dbdao.TenantRepositoryOptions{Now: options.Now})
 	tenantService := servicetenant.NewService(servicetenant.ServiceOptions{
@@ -66,7 +80,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		SpaceAdminInvariantChecker: spaceRepository,
 		Now:                        options.Now,
 	})
-	examHandler := examHandler{service: examService, taking: takingService, now: defaultRouterNow(options.Now)}
+	examHandler := examHandler{service: examService, taking: takingService, review: reviewService, export: exportService, now: defaultRouterNow(options.Now)}
 	tenantHandler := tenantHandler{service: tenantService}
 	spaceHandler := spaceHandler{service: spaceService, members: spaceRepository}
 	userHandler := userHandler{service: userService}
@@ -85,6 +99,11 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	api.POST("/exam-attempts/:attempt_id/answers/:attempt_question_id", examHandler.saveAnswer)
 	api.POST("/exam-attempts/:attempt_id/submit", examHandler.submitAttempt)
 	api.POST("/exam-attempts/:attempt_id/events", examHandler.recordEvent)
+	api.GET("/grading/pending", examHandler.listPendingReviews)
+	api.POST("/exam-attempts/:attempt_id/questions/:attempt_question_id/grade", examHandler.gradeShortText)
+	api.GET("/results", examHandler.listResults)
+	api.POST("/results/publish-config", examHandler.saveResultPublishConfig)
+	api.POST("/results/export", examHandler.exportResults)
 	api.GET("/tenants", tenantHandler.list)
 	api.POST("/tenants", tenantHandler.create)
 	api.GET("/spaces", spaceHandler.list)
@@ -106,6 +125,13 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	return router
 }
 
+func defaultExportDir(exportDir string) string {
+	if exportDir != "" {
+		return exportDir
+	}
+	return "server/data/exports"
+}
+
 func defaultRouterNow(now func() int64) func() int64 {
 	if now != nil {
 		return now
@@ -116,6 +142,8 @@ func defaultRouterNow(now func() int64) func() int64 {
 type examHandler struct {
 	service *serviceexam.Service
 	taking  *serviceexam.TakingService
+	review  *serviceexam.ReviewService
+	export  *serviceexam.ExportService
 	now     func() int64
 }
 
@@ -163,6 +191,35 @@ type recordExamEventRequest struct {
 	ExamToken string `json:"exam_token"`
 	EventType string `json:"event_type"`
 	Payload   string `json:"payload"`
+}
+
+type actorPermissionRequest struct {
+	ActorID   uint64 `json:"actor_id"`
+	ActorRole string `json:"actor_role"`
+	SpaceID   uint64 `json:"space_id"`
+}
+
+type gradeShortTextRequest struct {
+	actorPermissionRequest
+	TenantID      uint64 `json:"tenant_id"`
+	ExamID        uint64 `json:"exam_id"`
+	AnswerVersion int64  `json:"answer_version"`
+	Score         string `json:"score"`
+	Comment       string `json:"comment"`
+}
+
+type saveResultPublishConfigRequest struct {
+	actorPermissionRequest
+	TenantID         uint64 `json:"tenant_id"`
+	ExamID           uint64 `json:"exam_id"`
+	PublishMode      string `json:"publish_mode"`
+	ScorePublishTime *int64 `json:"score_publish_time"`
+}
+
+type exportResultsRequest struct {
+	actorPermissionRequest
+	TenantID uint64 `json:"tenant_id"`
+	ExamID   uint64 `json:"exam_id"`
 }
 
 type examResponse struct {
@@ -237,6 +294,55 @@ type submitAttemptResponse struct {
 
 type examEventResponse struct {
 	Recorded bool `json:"recorded"`
+}
+
+type pendingReviewResponse struct {
+	AttemptID             uint64 `json:"attempt_id"`
+	AttemptQuestionID     uint64 `json:"attempt_question_id"`
+	StudentName           string `json:"student_name"`
+	SpaceName             string `json:"space_name"`
+	ExamName              string `json:"exam_name"`
+	QuestionTitle         string `json:"question_title"`
+	AnswerContent         string `json:"answer_content"`
+	SubmittedAt           int64  `json:"submitted_at"`
+	MaxScore              string `json:"max_score"`
+	AnswerVersion         int64  `json:"answer_version"`
+	PendingShortTextCount int    `json:"pending_short_text_count"`
+	Status                string `json:"status"`
+}
+
+type pendingReviewListResponse struct {
+	Items []pendingReviewResponse `json:"items"`
+}
+
+type gradeShortTextResponse struct {
+	Graded bool `json:"graded"`
+}
+
+type resultResponse struct {
+	ID              uint64 `json:"id"`
+	StudentName     string `json:"student_name"`
+	SpaceName       string `json:"space_name"`
+	AttemptNo       int    `json:"attempt_no"`
+	ObjectiveScore  string `json:"objective_score"`
+	SubjectiveScore string `json:"subjective_score"`
+	TotalScore      string `json:"total_score"`
+	SubmittedAt     int64  `json:"submitted_at"`
+	Status          string `json:"status"`
+}
+
+type resultListResponse struct {
+	Items []resultResponse `json:"items"`
+}
+
+type resultPublishConfigResponse struct {
+	Saved bool         `json:"saved"`
+	Exam  examResponse `json:"exam"`
+}
+
+type resultExportResponse struct {
+	FilePath string `json:"file_path"`
+	RowCount int    `json:"row_count"`
 }
 
 type examListResponse struct {
@@ -501,6 +607,175 @@ func (h examHandler) recordEvent(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(examEventResponse{Recorded: true}))
 }
 
+func (h examHandler) listPendingReviews(c *gin.Context) {
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	examID, err := readUintQuery(c, "exam_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "exam_id 必须是正整数"))
+		return
+	}
+	permissionContext, err := readActorPermissionQuery(c, tenantID, examID, 0)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	items, err := h.review.ListPendingAttempts(c.Request.Context(), serviceexam.ListPendingAttemptsInput{
+		Permission: permissionContext,
+		TenantID:   tenantID,
+		ExamID:     examID,
+	})
+	if err != nil {
+		writePermissionOrInternalError(c, err, "读取待阅卷列表失败")
+		return
+	}
+	responses := make([]pendingReviewResponse, 0, len(items))
+	for _, item := range items {
+		responses = append(responses, pendingReviewToResponse(item))
+	}
+	c.JSON(http.StatusOK, response.OK(pendingReviewListResponse{Items: responses}))
+}
+
+func (h examHandler) gradeShortText(c *gin.Context) {
+	attemptID, err := readUintParam(c, "attempt_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "作答 ID 必须是正整数"))
+		return
+	}
+	attemptQuestionID, err := readUintParam(c, "attempt_question_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "作答题目 ID 必须是正整数"))
+		return
+	}
+	var request gradeShortTextRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 || request.ExamID == 0 || request.AnswerVersion == 0 || request.Score == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、exam_id、answer_version 和 score 不能为空"))
+		return
+	}
+	permissionContext, err := request.actorPermissionRequest.toPermissionContext(request.TenantID, request.ExamID, attemptID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	err = h.review.GradeShortText(c.Request.Context(), serviceexam.GradeShortTextInput{
+		Permission:        permissionContext,
+		TenantID:          request.TenantID,
+		AttemptID:         attemptID,
+		AttemptQuestionID: attemptQuestionID,
+		AnswerVersion:     request.AnswerVersion,
+		Score:             request.Score,
+		Comment:           request.Comment,
+	})
+	if err != nil {
+		if errors.Is(err, serviceexam.ErrAnswerVersionConflict) {
+			c.JSON(http.StatusConflict, response.Fail(code.InvalidParam, "答案已被其他阅卷人更新，请刷新后重试"))
+			return
+		}
+		writePermissionOrInternalError(c, err, "保存阅卷结果失败")
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(gradeShortTextResponse{Graded: true}))
+}
+
+func (h examHandler) listResults(c *gin.Context) {
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	examID, err := readUintQuery(c, "exam_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "exam_id 必须是正整数"))
+		return
+	}
+	permissionContext, err := readActorPermissionQuery(c, tenantID, examID, 0)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	rows, err := h.export.ListExamScores(c.Request.Context(), serviceexam.ListExamScoresInput{
+		Permission: permissionContext,
+		TenantID:   tenantID,
+		ExamID:     examID,
+	})
+	if err != nil {
+		writePermissionOrInternalError(c, err, "读取成绩列表失败")
+		return
+	}
+	items := make([]resultResponse, 0, len(rows))
+	for index, row := range rows {
+		items = append(items, scoreRowToResponse(uint64(index+1), row))
+	}
+	c.JSON(http.StatusOK, response.OK(resultListResponse{Items: items}))
+}
+
+func (h examHandler) saveResultPublishConfig(c *gin.Context) {
+	var request saveResultPublishConfigRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 || request.ExamID == 0 || request.PublishMode == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、exam_id 和 publish_mode 不能为空"))
+		return
+	}
+	permissionContext, err := request.actorPermissionRequest.toPermissionContext(request.TenantID, request.ExamID, 0)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if err := permission.NewFixedRoleChecker().CanGradeExam(permissionContext, request.ExamID); err != nil {
+		writePermissionOrInternalError(c, err, "保存成绩发布配置失败")
+		return
+	}
+	// 成绩可见性由后端统一以 publish_mode 和 score_publish_time 判断，前端只提交配置。
+	exam, err := h.service.UpdateScorePublishConfig(c.Request.Context(), serviceexam.UpdateScorePublishConfigInput{
+		TenantID:         request.TenantID,
+		ExamID:           request.ExamID,
+		PublishMode:      request.PublishMode,
+		ScorePublishTime: request.ScorePublishTime,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存成绩发布配置失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(resultPublishConfigResponse{Saved: true, Exam: examToResponse(exam)}))
+}
+
+func (h examHandler) exportResults(c *gin.Context) {
+	var request exportResultsRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 || request.ExamID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 和 exam_id 不能为空"))
+		return
+	}
+	permissionContext, err := request.actorPermissionRequest.toPermissionContext(request.TenantID, request.ExamID, 0)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	result, err := h.export.ExportExamScores(c.Request.Context(), serviceexam.ExportExamScoresInput{
+		Permission: permissionContext,
+		TenantID:   request.TenantID,
+		ExamID:     request.ExamID,
+	})
+	if err != nil {
+		writePermissionOrInternalError(c, err, "导出成绩失败")
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(resultExportResponse{FilePath: result.FilePath, RowCount: result.RowCount}))
+}
+
 func (r publishExamRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -569,6 +844,79 @@ func writeTakingServiceError(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "作答操作失败"))
 }
 
+func readActorPermissionQuery(c *gin.Context, tenantID uint64, examID uint64, attemptID uint64) (permission.PermissionContext, error) {
+	actorID, err := readOptionalUintQueryValue(c, "actor_id")
+	if err != nil {
+		return permission.PermissionContext{}, errors.New("actor_id 必须是正整数")
+	}
+	spaceID, err := readOptionalUintQueryValue(c, "space_id")
+	if err != nil {
+		return permission.PermissionContext{}, errors.New("space_id 必须是正整数")
+	}
+	return actorPermissionRequest{
+		ActorID:   actorID,
+		ActorRole: c.Query("actor_role"),
+		SpaceID:   spaceID,
+	}.toPermissionContext(tenantID, examID, attemptID)
+}
+
+func readOptionalUintQueryValue(c *gin.Context, key string) (uint64, error) {
+	raw := c.Query(key)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || value == 0 {
+		return 0, errors.New("invalid query")
+	}
+	return value, nil
+}
+
+func (r actorPermissionRequest) toPermissionContext(tenantID uint64, examID uint64, attemptID uint64) (permission.PermissionContext, error) {
+	actorID := r.ActorID
+	if actorID == 0 {
+		actorID = 1
+	}
+	role := r.ActorRole
+	if role == "" {
+		role = permission.RoleTenantAdmin
+	}
+	if role != permission.RoleTenantAdmin && role != permission.RoleSpaceAdmin && role != permission.RoleTeacher && role != permission.RoleStudent {
+		return permission.PermissionContext{}, errors.New("actor_role 只能是 tenant_admin、space_admin、teacher 或 student")
+	}
+	if role != permission.RoleTenantAdmin && r.SpaceID == 0 {
+		return permission.PermissionContext{}, errors.New("space_id 必须是正整数")
+	}
+	ctx := permission.PermissionContext{
+		SubjectType:  permission.SubjectTenantUser,
+		UserID:       actorID,
+		TenantID:     tenantID,
+		SpaceRoles:   map[uint64]string{},
+		ExamScope:    map[uint64]uint64{},
+		AttemptScope: map[uint64]uint64{},
+	}
+	if role == permission.RoleTenantAdmin {
+		ctx.TenantRoles = []string{permission.RoleTenantAdmin}
+	} else {
+		ctx.SpaceRoles[r.SpaceID] = role
+	}
+	if examID != 0 {
+		ctx.ExamScope[examID] = r.SpaceID
+	}
+	if attemptID != 0 {
+		ctx.AttemptScope[attemptID] = r.SpaceID
+	}
+	return ctx, nil
+}
+
+func writePermissionOrInternalError(c *gin.Context, err error, fallback string) {
+	if errors.Is(err, permission.ErrForbidden) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return
+	}
+	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, fallback))
+}
+
 func readUintQuery(c *gin.Context, key string) (uint64, error) {
 	raw := c.Query(key)
 	if raw == "" {
@@ -623,6 +971,37 @@ func examToResponse(exam serviceexam.Exam) examResponse {
 		ScorePublishTime: exam.ScorePublishTime,
 		InviteCode:       exam.InviteCode,
 		Status:           exam.Status,
+	}
+}
+
+func pendingReviewToResponse(item serviceexam.PendingAttempt) pendingReviewResponse {
+	return pendingReviewResponse{
+		AttemptID:             item.AttemptID,
+		AttemptQuestionID:     item.AttemptQuestionID,
+		StudentName:           item.StudentName,
+		SpaceName:             item.SpaceName,
+		ExamName:              item.ExamName,
+		QuestionTitle:         item.QuestionTitle,
+		AnswerContent:         item.AnswerContent,
+		SubmittedAt:           item.SubmittedAt,
+		MaxScore:              item.MaxScore,
+		AnswerVersion:         item.AnswerVersion,
+		PendingShortTextCount: item.PendingShortTextCount,
+		Status:                constant.GradingStatusPending,
+	}
+}
+
+func scoreRowToResponse(id uint64, row serviceexam.ScoreExportRow) resultResponse {
+	return resultResponse{
+		ID:              id,
+		StudentName:     row.StudentName,
+		SpaceName:       row.SpaceName,
+		AttemptNo:       row.AttemptNo,
+		ObjectiveScore:  row.ObjectiveScore,
+		SubjectiveScore: row.SubjectiveScore,
+		TotalScore:      row.TotalScore,
+		SubmittedAt:     row.SubmittedAt,
+		Status:          "可发布",
 	}
 }
 

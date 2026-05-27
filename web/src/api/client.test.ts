@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { ApiError, createApiClient } from "./client";
+import { ApiError, createApiClient, formatApiErrorMessage } from "./client";
 
 describe("api client", () => {
   test("成功响应只把 data 返回给业务页面", async () => {
@@ -76,5 +76,29 @@ describe("api client", () => {
 
     await expect(client.get("/api/v1/profile")).rejects.toBeInstanceOf(ApiError);
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  test("非 2xx 响应保留后端业务错误码和统一错误提示文案", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ code: 40001, message: "tenant_id 必须是正整数", data: null }), {
+        headers: { "Content-Type": "application/json" },
+        status: 400,
+      }),
+    );
+
+    const client = createApiClient({ baseUrl: "", fetcher });
+
+    await expect(client.get("/api/v1/exams?tenant_id=abc")).rejects.toMatchObject({
+      code: 40001,
+      message: "tenant_id 必须是正整数",
+      status: 400,
+    });
+  });
+
+  test("统一错误提示在后端文案缺失时按错误码兜底", () => {
+    const error = new ApiError("", 50000, 500, { code: 50000 });
+
+    expect(formatApiErrorMessage(error, "默认失败")).toBe("服务暂时不可用，请稍后重试");
+    expect(formatApiErrorMessage("unknown", "默认失败")).toBe("默认失败");
   });
 });

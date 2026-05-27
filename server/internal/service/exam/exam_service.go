@@ -176,6 +176,13 @@ type PublishInput struct {
 	ScorePublishTime *int64 // 成绩公布时间。
 }
 
+type UpdateScorePublishConfigInput struct {
+	TenantID         uint64 // 所属租户 ID。
+	ExamID           uint64 // 考试 ID。
+	PublishMode      string // 成绩发布模式。
+	ScorePublishTime *int64 // 成绩公布时间。
+}
+
 type AddTargetInput struct {
 	TenantID   uint64 // 所属租户 ID。
 	ExamID     uint64 // 考试 ID。
@@ -231,6 +238,7 @@ type Repository interface {
 	ListFixedSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]SnapshotSourceQuestion, error)
 	ListFrozenLiveSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]SnapshotSourceQuestion, error)
 	SaveAttemptQuestions(ctx context.Context, questions []AttemptQuestion) ([]AttemptQuestion, error)
+	UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64) (Exam, error)
 }
 
 type CodeGenerator interface {
@@ -466,6 +474,10 @@ func (s *Service) GenerateAttemptSnapshots(ctx context.Context, input GenerateSn
 
 func (s *Service) SaveAttemptQuestions(ctx context.Context, questions []AttemptQuestion) ([]AttemptQuestion, error) {
 	return s.repo.SaveAttemptQuestions(ctx, questions)
+}
+
+func (s *Service) UpdateScorePublishConfig(ctx context.Context, input UpdateScorePublishConfigInput) (Exam, error) {
+	return s.repo.UpdateScorePublishConfig(ctx, input.TenantID, input.ExamID, input.PublishMode, input.ScorePublishTime)
 }
 
 func (s *Service) ValidateExamToken(ctx context.Context, token string, attemptID uint64) (Attempt, error) {

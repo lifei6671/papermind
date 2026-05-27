@@ -483,6 +483,14 @@ func (r *fakeRepository) SaveAttemptQuestions(ctx context.Context, questions []A
 	return append([]AttemptQuestion(nil), questions...), nil
 }
 
+func (r *fakeRepository) UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64) (Exam, error) {
+	exam := r.exams[examID]
+	exam.PublishMode = publishMode
+	exam.ScorePublishTime = scorePublishTime
+	r.exams[examID] = exam
+	return exam, nil
+}
+
 type fakeCodeGenerator struct {
 	codes []string
 	next  int

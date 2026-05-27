@@ -1264,6 +1264,25 @@ API 分组：
 └── 成绩导出
 ```
 
+首版阅卷和成绩 API 使用显式权限上下文字段承载调用人身份，后续接入统一认证中间件后再收敛到登录态解析：
+
+```text
+GET  /api/v1/grading/pending
+     query: tenant_id, exam_id, actor_id, actor_role, space_id?
+
+POST /api/v1/exam-attempts/:attempt_id/questions/:attempt_question_id/grade
+     body: tenant_id, exam_id, actor_id, actor_role, space_id?, answer_version, score, comment?
+
+GET  /api/v1/results
+     query: tenant_id, exam_id, actor_id, actor_role, space_id?
+
+POST /api/v1/results/publish-config
+     body: tenant_id, exam_id, actor_id, actor_role, space_id?, publish_mode, score_publish_time?
+
+POST /api/v1/results/export
+     body: tenant_id, exam_id, actor_id, actor_role, space_id?
+```
+
 列表接口统一分页参数：
 
 ```text

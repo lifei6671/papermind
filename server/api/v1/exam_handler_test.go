@@ -193,6 +193,115 @@ func TestStudentTakingAPIRoutesStartSaveAndSubmitWithSQLite(t *testing.T) {
 	}
 }
 
+func TestReviewAndResultAPIRoutesWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedReviewResultAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:        gormDB,
+		Now:       func() int64 { return fixedAPINow },
+		ExportDir: t.TempDir(),
+	})
+
+	listReviewRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listReviewRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/grading/pending?tenant_id=10&exam_id=1&actor_id=501&actor_role=teacher&space_id=301", nil))
+	if listReviewRecorder.Code != http.StatusOK {
+		t.Fatalf("list review status = %d, body = %s", listReviewRecorder.Code, listReviewRecorder.Body.String())
+	}
+	reviewBody := decodeExamAPIResponse[pendingReviewListResponse](t, listReviewRecorder.Body.Bytes())
+	if len(reviewBody.Data.Items) != 1 {
+		t.Fatalf("expected one pending review row, got %#v", reviewBody.Data.Items)
+	}
+	pending := reviewBody.Data.Items[0]
+	if pending.StudentName != "张三" || pending.QuestionTitle != "岳阳楼记思想内涵" || pending.AnswerContent == "" || pending.AnswerVersion != 7 {
+		t.Fatalf("unexpected pending review response: %#v", pending)
+	}
+
+	gradeRecorder := httptest.NewRecorder()
+	router.ServeHTTP(gradeRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-attempts/900/questions/901/grade", bytes.NewReader([]byte(`{
+		"tenant_id": 10,
+		"exam_id": 1,
+		"actor_id": 501,
+		"actor_role": "teacher",
+		"space_id": 301,
+		"answer_version": 7,
+		"score": "4.5",
+		"comment": "要点完整"
+	}`))))
+	if gradeRecorder.Code != http.StatusOK {
+		t.Fatalf("grade status = %d, body = %s", gradeRecorder.Code, gradeRecorder.Body.String())
+	}
+	var gradedAnswer struct {
+		Score         string
+		GradingStatus string
+		GraderComment string
+	}
+	if err := gormDB.Table("exam_answers").
+		Select("score, grading_status, grader_comment").
+		Where("tenant_id = ? AND attempt_id = ? AND attempt_question_id = ?", 10, 900, 901).
+		Scan(&gradedAnswer).Error; err != nil {
+		t.Fatalf("query graded answer: %v", err)
+	}
+	if gradedAnswer.Score != "4.5" || gradedAnswer.GradingStatus != "graded" || gradedAnswer.GraderComment != "要点完整" {
+		t.Fatalf("unexpected graded answer: %#v", gradedAnswer)
+	}
+	var scoredAttempt struct {
+		SubjectiveScore string
+		TotalScore      string
+	}
+	if err := gormDB.Table("exam_attempts").
+		Select("subjective_score, total_score").
+		Where("id = ?", 900).
+		Scan(&scoredAttempt).Error; err != nil {
+		t.Fatalf("query scored attempt: %v", err)
+	}
+	if scoredAttempt.SubjectiveScore != "4.5" || scoredAttempt.TotalScore != "6.5" {
+		t.Fatalf("unexpected recalculated attempt score: %#v", scoredAttempt)
+	}
+
+	configRecorder := httptest.NewRecorder()
+	router.ServeHTTP(configRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/results/publish-config", bytes.NewReader([]byte(`{
+		"tenant_id": 10,
+		"exam_id": 1,
+		"actor_id": 501,
+		"actor_role": "teacher",
+		"space_id": 301,
+		"publish_mode": "manual_publish",
+		"score_publish_time": 1779795600000
+	}`))))
+	if configRecorder.Code != http.StatusOK {
+		t.Fatalf("publish config status = %d, body = %s", configRecorder.Code, configRecorder.Body.String())
+	}
+
+	listResultsRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listResultsRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/results?tenant_id=10&exam_id=1&actor_id=501&actor_role=teacher&space_id=301", nil))
+	if listResultsRecorder.Code != http.StatusOK {
+		t.Fatalf("list results status = %d, body = %s", listResultsRecorder.Code, listResultsRecorder.Body.String())
+	}
+	resultsBody := decodeExamAPIResponse[resultListResponse](t, listResultsRecorder.Body.Bytes())
+	if len(resultsBody.Data.Items) != 1 || resultsBody.Data.Items[0].StudentName != "张三" || resultsBody.Data.Items[0].TotalScore != "6.5" {
+		t.Fatalf("unexpected result list response: %#v", resultsBody.Data.Items)
+	}
+
+	exportRecorder := httptest.NewRecorder()
+	router.ServeHTTP(exportRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/results/export", bytes.NewReader([]byte(`{
+		"tenant_id": 10,
+		"exam_id": 1,
+		"actor_id": 501,
+		"actor_role": "teacher",
+		"space_id": 301
+	}`))))
+	if exportRecorder.Code != http.StatusOK {
+		t.Fatalf("export status = %d, body = %s", exportRecorder.Code, exportRecorder.Body.String())
+	}
+	exportBody := decodeExamAPIResponse[resultExportResponse](t, exportRecorder.Body.Bytes())
+	if exportBody.Data.RowCount != 1 || !strings.Contains(exportBody.Data.FilePath, "exam-1-scores") {
+		t.Fatalf("unexpected export response: %#v", exportBody.Data)
+	}
+}
+
 func openExamAPITestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -271,6 +380,72 @@ func seedTakingAPITestData(t *testing.T, gormDB *gorm.DB) {
 		) VALUES (1, 10, 1, 100, 1001, 1, 2, ?, ?, '{}')
 	`, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed paper question: %v", err)
+	}
+}
+
+func seedReviewResultAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, type, status, created_at, updated_at, ext_json
+		) VALUES (301, 10, '高一 1 班', 'class', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed space: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, tenant_id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(501, 10, 'teacher.li', '李老师', '13800000501', 'teacher501@example.test', 'hash', 'enabled', ?, ?, '{}'),
+			(601, 10, 'student.zhang', '张三', '13800000601', 'student601@example.test', 'hash', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status, created_at, updated_at, ext_json
+		) VALUES
+			(701, 10, 301, 501, 'teacher', 'enabled', ?, ?, '{}'),
+			(702, 10, 301, 601, 'student', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed space members: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_targets (
+			id, tenant_id, exam_id, target_type, target_id, created_at, ext_json
+		) VALUES (801, 10, 1, 'space', 301, ?, '{}')
+	`, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed exam target: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_attempts (
+			id, tenant_id, exam_id, user_id, attempt_no, status, started_at, submitted_at,
+			exam_token_hash, exam_token_expires_at, objective_score, subjective_score, total_score,
+			created_at, updated_at, version, ext_json
+		) VALUES (900, 10, 1, 601, 1, 'submitted', ?, ?, 'hash', ?, 2, 0, 2, ?, ?, 3, '{}')
+	`, fixedAPINow-3_600_000, fixedAPINow, fixedAPINow+3_600_000, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed attempt: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_attempt_questions (
+			id, tenant_id, attempt_id, section_id, question_id, section_snapshot, sort_order, score,
+			question_snapshot, option_snapshot, correct_answer_snapshot, created_at, updated_at, version, ext_json
+		) VALUES (
+			901, 10, 900, 1, 1001, '{"name":"四、简答题","instructions":"结合文本作答"}', 1, 10,
+			'{"title":"岳阳楼记思想内涵","type":"short_text"}', '[]', '{"text":"先忧后乐"}', ?, ?, 1, '{}'
+		)
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed attempt question: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_answers (
+			id, tenant_id, attempt_id, attempt_question_id, answer_content, score, grading_status,
+			created_at, updated_at, version, ext_json
+		) VALUES (902, 10, 900, 901, '先忧后乐体现了责任意识。', 0, 'pending', ?, ?, 7, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed answer: %v", err)
 	}
 }
 

@@ -38,6 +38,13 @@ export class ApiError extends Error {
   }
 }
 
+const apiErrorMessageByCode: Record<number, string> = {
+  40001: "请求参数不正确",
+  401: "登录状态已失效，请重新登录",
+  403: "没有权限执行当前操作",
+  50000: "服务暂时不可用，请稍后重试",
+};
+
 export type ApiClient = {
   get<T>(path: string, options?: RequestOptions): Promise<T>;
   post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>;
@@ -63,7 +70,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
     if (!response.ok) {
       const message = readMessage(body) ?? `HTTP ${response.status}`;
-      throw new ApiError(message, response.status, response.status, body);
+      throw new ApiError(message, readCode(body) ?? response.status, response.status, body);
     }
 
     const envelope = body as ApiBody<T>;
@@ -81,6 +88,17 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       request(path, { ...requestOptions, body: formData, method: "POST" }),
     request,
   };
+}
+
+export function formatApiErrorMessage(error: unknown, fallback = "操作失败") {
+  if (error instanceof ApiError) {
+    // 后端有明确业务文案时优先展示文案；无文案时按错误码映射统一提示。
+    return error.message || apiErrorMessageByCode[error.code] || fallback;
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
 }
 
 function buildUrl(baseUrl: string, path: string) {
@@ -125,6 +143,14 @@ async function parseBody<T>(response: Response): Promise<T> {
 function readMessage(body: unknown) {
   if (body && typeof body === "object" && "message" in body && typeof body.message === "string") {
     return body.message;
+  }
+
+  return null;
+}
+
+function readCode(body: unknown) {
+  if (body && typeof body === "object" && "code" in body && typeof body.code === "number") {
+    return body.code;
   }
 
   return null;

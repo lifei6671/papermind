@@ -14,9 +14,17 @@ var (
 
 type PendingAttempt struct {
 	AttemptID             uint64 // 作答 ID。
+	AttemptQuestionID     uint64 // 待阅卷题目快照 ID。
 	ExamID                uint64 // 考试 ID。
 	UserID                uint64 // 考生用户 ID。
 	StudentName           string // 考生姓名。
+	SpaceID               uint64 // 考生所属空间 ID，用于权限范围判断。
+	SpaceName             string // 考生所属空间名称。
+	ExamName              string // 考试名称。
+	QuestionTitle         string // 简答题题干。
+	AnswerContent         string // 考生作答内容。
+	MaxScore              string // 简答题满分。
+	AnswerVersion         int64  // 答案版本号，用于乐观锁。
 	PendingShortTextCount int    // 待阅卷简答题数量。
 	SubmittedAt           int64  // 提交时间，Unix 毫秒时间戳。
 }
@@ -81,6 +89,9 @@ func (s *ReviewService) ListPendingAttempts(ctx context.Context, input ListPendi
 	items, err := s.repo.ListPendingAttempts(ctx, input.TenantID, input.ExamID)
 	if err != nil {
 		return nil, err
+	}
+	if err := s.permissionChecker.CanGradeExam(input.Permission, input.ExamID); err == nil {
+		return items, nil
 	}
 	allowed := make([]PendingAttempt, 0, len(items))
 	for _, item := range items {

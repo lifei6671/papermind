@@ -5,16 +5,13 @@ import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { questionApi } from "../../api/questions";
 import type { QuestionImportAPI } from "../../api/questions";
+import { formatApiErrorMessage } from "../../api/client";
 
 type ImportRecord = {
   id: number;
   fileName: string;
   result: string;
 };
-
-const initialImportRecords: ImportRecord[] = [
-  { id: 1, fileName: "sample-questions.csv", result: "已解析 12 道题" },
-];
 
 type QuestionImportPageProps = {
   api?: QuestionImportAPI;
@@ -23,7 +20,7 @@ type QuestionImportPageProps = {
 };
 
 export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }: QuestionImportPageProps) {
-  const [importRecords, setImportRecords] = useState<ImportRecord[]>(initialImportRecords);
+  const [importRecords, setImportRecords] = useState<ImportRecord[]>([]);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importMessage, setImportMessage] = useState("");
   const [isImporting, setIsImporting] = useState(false);
@@ -64,7 +61,7 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
       ]);
       setIsImportDialogOpen(false);
     } catch (err) {
-      setImportMessage(err instanceof Error ? err.message : "导入题目失败");
+      setImportMessage(formatApiErrorMessage(err, "导入题目失败"));
     } finally {
       setIsImporting(false);
     }

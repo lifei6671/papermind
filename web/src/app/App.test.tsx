@@ -286,11 +286,40 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
 
 test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async () => {
   const user = userEvent.setup();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/grading/pending")) {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            attempt_id: 900,
+            attempt_question_id: 901,
+            student_name: "张三",
+            space_name: "高一 1 班",
+            exam_name: "高一语文期中考试",
+            question_title: "岳阳楼记思想内涵",
+            answer_content: "先忧后乐体现了责任意识。",
+            submitted_at: 1779792000000,
+            max_score: "10",
+            answer_version: 7,
+            pending_short_text_count: 1,
+            status: "pending",
+          }],
+        },
+      }));
+    }
+    if (url === "/api/v1/exam-attempts/900/questions/901/grade" && init?.method === "POST") {
+      return new Response(JSON.stringify({ code: 0, message: "ok", data: { graded: true } }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
 
   renderApp(["/grading"]);
 
   expect(screen.getByRole("heading", { name: "阅卷中心" })).toBeInTheDocument();
-  expect(screen.getByText("张三")).toBeInTheDocument();
+  expect(await screen.findByText("张三")).toBeInTheDocument();
   expect(screen.getByText("岳阳楼记思想内涵")).toBeInTheDocument();
 
   await user.click(within(screen.getByRole("row", { name: /张三/ })).getByRole("button", { name: "开始阅卷" }));
@@ -300,29 +329,54 @@ test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async ()
   await user.click(screen.getByRole("button", { name: "保存阅卷" }));
 
   expect(screen.getByRole("status", { name: "grading-save-result" })).toHaveTextContent("8 分");
-
-  await user.click(screen.getByRole("button", { name: "完成阅卷" }));
-
   expect(screen.getByRole("status", { name: "grading-complete-result" })).toHaveTextContent("已完成");
   expect(screen.getByRole("row", { name: /张三/ })).toHaveTextContent("已完成");
-  expect(screen.getByText("待阅卷 1")).toBeInTheDocument();
+  expect(screen.getByText("待阅卷 0")).toBeInTheDocument();
 });
 
 test("成绩页支持发布配置和成绩导出", async () => {
   const user = userEvent.setup();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/results?")) {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 1,
+            student_name: "张三",
+            space_name: "高一 1 班",
+            attempt_no: 1,
+            objective_score: "2",
+            subjective_score: "4.5",
+            total_score: "6.5",
+            submitted_at: 1779792000000,
+            status: "可发布",
+          }],
+        },
+      }));
+    }
+    if (url === "/api/v1/results/publish-config" && init?.method === "POST") {
+      return new Response(JSON.stringify({ code: 0, message: "ok", data: { saved: true } }));
+    }
+    if (url === "/api/v1/results/export" && init?.method === "POST") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { file_path: "server/data/exports/exam-1-scores.csv", row_count: 1 },
+      }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
 
   renderApp(["/results"]);
 
   expect(screen.getByRole("heading", { name: "成绩" })).toBeInTheDocument();
   expect(screen.getByText("高一语文期中考试")).toBeInTheDocument();
-  expect(screen.getByText("张三")).toBeInTheDocument();
+  expect(await screen.findByText("张三")).toBeInTheDocument();
   expect(screen.getByText("客观题分")).toBeInTheDocument();
   expect(screen.getByText("主观题分")).toBeInTheDocument();
-
-  await user.selectOptions(screen.getByLabelText("成绩发布模式"), "scheduled_publish");
-  await user.click(screen.getByRole("button", { name: "保存发布配置" }));
-
-  expect(screen.getByRole("alert")).toHaveTextContent("统一公布时间不能为空");
 
   await user.type(screen.getByLabelText("统一公布时间"), "2026-05-30T10:00");
   await user.click(screen.getByRole("button", { name: "保存发布配置" }));
@@ -331,6 +385,6 @@ test("成绩页支持发布配置和成绩导出", async () => {
 
   await user.click(screen.getByRole("button", { name: "导出成绩" }));
 
-  expect(screen.getByRole("status", { name: "result-export" })).toHaveTextContent("server/data/exports");
+  expect(screen.getByRole("status", { name: "result-export" })).toHaveTextContent("已导出 1 行");
   expect(screen.getByRole("link", { name: "下载导出文件" })).toHaveAttribute("download", "papermind-results.csv");
 });

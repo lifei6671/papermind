@@ -38,7 +38,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := buildHTTPServer(cfg, v1.NewRouter(v1.RouterOptions{DB: gormDB}))
+	server := buildHTTPServer(cfg, v1.NewRouter(v1.RouterOptions{
+		DB:        gormDB,
+		ExportDir: cfg.Storage.ExportDir,
+	}))
 	slog.Info("papermind http server starting", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("papermind http server stopped", "error", err)

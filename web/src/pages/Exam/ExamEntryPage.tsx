@@ -6,6 +6,7 @@ import { ClipboardCheck, DoorOpen, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { examApi } from "../../api/exams";
 import type { ExamEntryAPI } from "../../api/exams";
+import { formatApiErrorMessage } from "../../api/client";
 
 const examNotices = [
   "开考后系统自动开始计时，到达截止时间将自动交卷。",
@@ -36,7 +37,7 @@ export function ExamEntryPage({ api = examApi, userID = 20 }: ExamEntryPageProps
       navigate("/student/exam");
     } catch (err) {
       setResolveMessage("");
-      setEntryError(err instanceof Error ? err.message : "邀请码校验失败");
+      setEntryError(formatApiErrorMessage(err, "邀请码校验失败"));
     }
   }
 

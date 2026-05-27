@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/datatypes"
@@ -414,6 +416,171 @@ func (r *ExamRepository) SaveAttemptQuestions(ctx context.Context, questions []s
 	return saved, nil
 }
 
+func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.PendingAttempt, error) {
+	var rows []pendingReviewRow
+	if err := r.db.WithContext(ctx).Table("exam_answers AS answers").
+		Select(`
+			attempts.id AS attempt_id,
+			attempt_questions.id AS attempt_question_id,
+			attempts.exam_id AS exam_id,
+			attempts.user_id AS user_id,
+			COALESCE(users.real_name, users.username) AS student_name,
+			COALESCE(spaces.id, 0) AS space_id,
+			COALESCE(spaces.name, '') AS space_name,
+			exams.name AS exam_name,
+			attempt_questions.question_snapshot AS question_snapshot,
+			answers.answer_content AS answer_content,
+			attempt_questions.score AS max_score,
+			answers.version AS answer_version,
+			attempts.submitted_at AS submitted_at
+		`).
+		Joins("JOIN exam_attempt_questions AS attempt_questions ON attempt_questions.tenant_id = answers.tenant_id AND attempt_questions.attempt_id = answers.attempt_id AND attempt_questions.id = answers.attempt_question_id").
+		Joins("JOIN exam_attempts AS attempts ON attempts.tenant_id = answers.tenant_id AND attempts.id = answers.attempt_id").
+		Joins("JOIN exams ON exams.tenant_id = attempts.tenant_id AND exams.id = attempts.exam_id AND exams.deleted_at = 0").
+		Joins("JOIN users ON users.tenant_id = attempts.tenant_id AND users.id = attempts.user_id AND users.deleted_at = 0").
+		Joins("LEFT JOIN space_members AS members ON members.tenant_id = attempts.tenant_id AND members.user_id = attempts.user_id AND members.status = 'enabled' AND members.deleted_at = 0").
+		Joins("LEFT JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.deleted_at = 0").
+		Where("answers.tenant_id = ?", tenantID).
+		Where("attempts.exam_id = ?", examID).
+		Where("answers.grading_status = ?", constant.GradingStatusPending).
+		Order("attempts.submitted_at ASC, attempt_questions.sort_order ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	countByAttempt := make(map[uint64]int, len(rows))
+	for _, row := range rows {
+		countByAttempt[row.AttemptID]++
+	}
+	items := make([]serviceexam.PendingAttempt, 0, len(rows))
+	for _, row := range rows {
+		title, err := parseQuestionSnapshotTitle(row.QuestionSnapshot)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, serviceexam.PendingAttempt{
+			AttemptID:             row.AttemptID,
+			AttemptQuestionID:     row.AttemptQuestionID,
+			ExamID:                row.ExamID,
+			UserID:                row.UserID,
+			StudentName:           row.StudentName,
+			SpaceID:               row.SpaceID,
+			SpaceName:             row.SpaceName,
+			ExamName:              row.ExamName,
+			QuestionTitle:         title,
+			AnswerContent:         row.AnswerContent,
+			MaxScore:              row.MaxScore,
+			AnswerVersion:         row.AnswerVersion,
+			PendingShortTextCount: countByAttempt[row.AttemptID],
+			SubmittedAt:           row.SubmittedAtValue(),
+		})
+	}
+	return items, nil
+}
+
+func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade serviceexam.ShortTextGrade) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := grade.GradedAt
+		// 简答题评分使用答案 version 乐观锁，避免两个教师同时覆盖同一题评分。
+		result := tx.Model(&ExamAnswerDO{}).
+			Where(ExamAnswerColumns.TenantID+" = ?", grade.TenantID).
+			Where(ExamAnswerColumns.AttemptID+" = ?", grade.AttemptID).
+			Where(ExamAnswerColumns.AttemptQuestionID+" = ?", grade.AttemptQuestionID).
+			Where(BaseColumns.Version+" = ?", grade.AnswerVersion).
+			Updates(map[string]any{
+				ExamAnswerColumns.Score:         grade.Score,
+				ExamAnswerColumns.GradingStatus: constant.GradingStatusGraded,
+				ExamAnswerColumns.GradedBy:      grade.GradedBy,
+				ExamAnswerColumns.GradedAt:      &now,
+				ExamAnswerColumns.GraderComment: grade.Comment,
+				BaseColumns.UpdatedAt:           now,
+				BaseColumns.Version:             gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return serviceexam.ErrAnswerVersionConflict
+		}
+
+		subjectiveScore, err := sumGradedSubjectiveScore(tx, grade.TenantID, grade.AttemptID)
+		if err != nil {
+			return err
+		}
+		var attempt ExamAttemptDO
+		if err := tx.Where(ExamAttemptColumns.TenantID+" = ?", grade.TenantID).
+			Where(ExamAttemptColumns.ID+" = ?", grade.AttemptID).
+			First(&attempt).Error; err != nil {
+			return err
+		}
+		objectiveScore, err := parseScoreString(attempt.ObjectiveScore)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&ExamAttemptDO{}).
+			Where(ExamAttemptColumns.TenantID+" = ?", grade.TenantID).
+			Where(ExamAttemptColumns.ID+" = ?", grade.AttemptID).
+			Updates(map[string]any{
+				ExamAttemptColumns.SubjectiveScore: formatScoreString(subjectiveScore),
+				ExamAttemptColumns.TotalScore:      formatScoreString(objectiveScore + subjectiveScore),
+				BaseColumns.UpdatedAt:              now,
+				BaseColumns.Version:                gorm.Expr(BaseColumns.Version + " + 1"),
+			}).Error
+	})
+}
+
+func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.ScoreExportRow, error) {
+	var rows []scoreExportRow
+	if err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
+		Select(`
+			COALESCE(users.real_name, users.username) AS student_name,
+			COALESCE(spaces.name, '') AS space_name,
+			attempts.attempt_no AS attempt_no,
+			attempts.objective_score AS objective_score,
+			attempts.subjective_score AS subjective_score,
+			attempts.total_score AS total_score,
+			attempts.submitted_at AS submitted_at
+		`).
+		Joins("JOIN users ON users.tenant_id = attempts.tenant_id AND users.id = attempts.user_id AND users.deleted_at = 0").
+		Joins("LEFT JOIN space_members AS members ON members.tenant_id = attempts.tenant_id AND members.user_id = attempts.user_id AND members.status = 'enabled' AND members.deleted_at = 0").
+		Joins("LEFT JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.deleted_at = 0").
+		Where("attempts.tenant_id = ?", tenantID).
+		Where("attempts.exam_id = ?", examID).
+		Where("attempts.submitted_at IS NOT NULL").
+		Order("attempts.submitted_at ASC, attempts.id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	items := make([]serviceexam.ScoreExportRow, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, serviceexam.ScoreExportRow{
+			StudentName:     row.StudentName,
+			SpaceName:       row.SpaceName,
+			AttemptNo:       row.AttemptNo,
+			ObjectiveScore:  row.ObjectiveScore,
+			SubjectiveScore: row.SubjectiveScore,
+			TotalScore:      row.TotalScore,
+			SubmittedAt:     row.SubmittedAtValue(),
+		})
+	}
+	return items, nil
+}
+
+func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64) (serviceexam.Exam, error) {
+	if err := r.db.WithContext(ctx).Model(&ExamDO{}).
+		Where(ExamColumns.TenantID+" = ?", tenantID).
+		Where(ExamColumns.ID+" = ?", examID).
+		Where(ExamColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			ExamColumns.PublishMode:      publishMode,
+			ExamColumns.ScorePublishTime: scorePublishTime,
+			BaseColumns.UpdatedAt:        r.now(),
+			BaseColumns.Version:          gorm.Expr(BaseColumns.Version + " + 1"),
+		}).Error; err != nil {
+		return serviceexam.Exam{}, err
+	}
+	return r.GetExam(ctx, tenantID, examID)
+}
+
 func (r *ExamRepository) listAttemptQuestions(ctx context.Context, tenantID uint64, attemptID uint64) ([]serviceexam.AttemptQuestion, error) {
 	var rows []ExamAttemptQuestionDO
 	if err := r.db.WithContext(ctx).
@@ -644,6 +811,52 @@ func parseQuestionSnapshotType(raw datatypes.JSON) (string, error) {
 	return snapshot.Type, nil
 }
 
+func parseQuestionSnapshotTitle(raw string) (string, error) {
+	var snapshot struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return "", err
+	}
+	return snapshot.Title, nil
+}
+
+func sumGradedSubjectiveScore(tx *gorm.DB, tenantID uint64, attemptID uint64) (float64, error) {
+	var rows []ExamAnswerDO
+	if err := tx.Where(ExamAnswerColumns.TenantID+" = ?", tenantID).
+		Where(ExamAnswerColumns.AttemptID+" = ?", attemptID).
+		Where(ExamAnswerColumns.GradingStatus+" = ?", constant.GradingStatusGraded).
+		Find(&rows).Error; err != nil {
+		return 0, err
+	}
+	var total float64
+	for _, row := range rows {
+		score, err := parseScoreString(row.Score)
+		if err != nil {
+			return 0, err
+		}
+		total += score
+	}
+	return total, nil
+}
+
+func parseScoreString(value string) (float64, error) {
+	if strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+	return strconv.ParseFloat(value, 64)
+}
+
+func formatScoreString(value float64) string {
+	text := strconv.FormatFloat(value, 'f', 6, 64)
+	text = strings.TrimRight(text, "0")
+	text = strings.TrimRight(text, ".")
+	if text == "" {
+		return "0"
+	}
+	return text
+}
+
 func examFromDO(row ExamDO, buildMode string) serviceexam.Exam {
 	return serviceexam.Exam{
 		ID:               row.ID,
@@ -693,4 +906,44 @@ func attemptQuestionFromDO(row ExamAttemptQuestionDO) serviceexam.AttemptQuestio
 		OptionSnapshot:        string(row.OptionSnapshot),
 		CorrectAnswerSnapshot: string(row.CorrectAnswerSnapshot),
 	}
+}
+
+type pendingReviewRow struct {
+	AttemptID         uint64
+	AttemptQuestionID uint64
+	ExamID            uint64
+	UserID            uint64
+	StudentName       string
+	SpaceID           uint64
+	SpaceName         string
+	ExamName          string
+	QuestionSnapshot  string
+	AnswerContent     string
+	MaxScore          string
+	AnswerVersion     int64
+	SubmittedAt       *int64
+}
+
+func (r pendingReviewRow) SubmittedAtValue() int64 {
+	if r.SubmittedAt == nil {
+		return 0
+	}
+	return *r.SubmittedAt
+}
+
+type scoreExportRow struct {
+	StudentName     string
+	SpaceName       string
+	AttemptNo       int
+	ObjectiveScore  string
+	SubjectiveScore string
+	TotalScore      string
+	SubmittedAt     *int64
+}
+
+func (r scoreExportRow) SubmittedAtValue() int64 {
+	if r.SubmittedAt == nil {
+		return 0
+	}
+	return *r.SubmittedAt
 }

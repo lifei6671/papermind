@@ -40,16 +40,27 @@ test("题目导入页可以上传文件并展示解析结果", async () => {
 
 test("题目导入页可以搜索和刷新导入记录", async () => {
   const user = userEvent.setup();
-  render(<QuestionImportPage />);
+  const api: QuestionImportAPI = {
+    importQuestions: async () => ({ successCount: 1, errors: [] }),
+  };
+  render(<QuestionImportPage api={api} />);
+
+  expect(screen.queryByText("sample-questions.csv")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+  await user.upload(screen.getByLabelText("题目导入文件"), new File(["title,type"], "questions.csv", { type: "text/csv" }));
+  await user.click(screen.getByRole("button", { name: "确认导入" }));
+
+  expect(screen.getByText("questions.csv")).toBeInTheDocument();
 
   await user.type(screen.getByLabelText("搜索导入记录"), "不存在");
   await user.click(screen.getByRole("button", { name: "搜索" }));
 
-  expect(screen.queryByText("sample-questions.csv")).not.toBeInTheDocument();
+  expect(screen.queryByText("questions.csv")).not.toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "刷新导入记录" }));
 
-  expect(screen.getByText("sample-questions.csv")).toBeInTheDocument();
+  expect(screen.getByText("questions.csv")).toBeInTheDocument();
 });
 
 test("取消导入后不会保留上一次选择的文件", async () => {
