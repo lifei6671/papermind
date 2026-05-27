@@ -86,12 +86,13 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	userHandler := userHandler{service: userService}
 	questionHandler := questionHandler{service: questionService}
 	paperHandler := paperHandler{service: paperService}
-	authHandler := authHandler{platformUsers: platformUserService, tokenIssuer: defaultAuthTokenIssuer(options.AuthTokenIssuer)}
+	authHandler := authHandler{platformUsers: platformUserService, tenantUsers: userService, tokenIssuer: defaultAuthTokenIssuer(options.AuthTokenIssuer)}
 
 	router := gin.New()
 	router.Use(middleware.RequestID(), middleware.Recovery())
 	api := router.Group("/api/v1")
 	api.POST("/auth/platform/login", authHandler.platformLogin)
+	api.POST("/auth/tenant/register", authHandler.tenantRegister)
 	api.GET("/exams", examHandler.list)
 	api.POST("/exams", examHandler.publish)
 	api.POST("/exams/invite/resolve", examHandler.resolveInvite)

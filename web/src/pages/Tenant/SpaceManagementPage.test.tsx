@@ -39,9 +39,37 @@ function createSpaceAPI() {
   };
 }
 
+function createUserAPI() {
+  return {
+    listUsers: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 21,
+          tenantID: 10,
+          name: "李老师",
+          username: "teacher01",
+          role: "teacher",
+          avatarFileName: "未上传",
+          status: "enabled",
+        },
+        {
+          id: 22,
+          tenantID: 10,
+          name: "赵老师",
+          username: "teacher02",
+          role: "teacher",
+          avatarFileName: "未上传",
+          status: "enabled",
+        },
+      ],
+    }),
+  };
+}
+
 test("空间管理页展示空间列表和空间管理员", async () => {
   const api = createSpaceAPI();
-  render(<SpaceManagementPage api={api} tenantID={10} />);
+  const userApi = createUserAPI();
+  render(<SpaceManagementPage api={api} userApi={userApi} tenantID={10} />);
 
   expect(screen.getAllByRole("tab")).toHaveLength(1);
   expect(screen.getByRole("tab", { name: "空间管理" })).toHaveAttribute("aria-selected", "true");
@@ -53,13 +81,14 @@ test("空间管理页展示空间列表和空间管理员", async () => {
   expect(await screen.findByText("高一 1 班")).toBeInTheDocument();
   expect(screen.getByText("空间管理员：李老师")).toBeInTheDocument();
   expect(api.listSpaces).toHaveBeenCalledWith(10);
+  expect(userApi.listUsers).toHaveBeenCalledWith(10);
   expect(screen.queryByLabelText("成员姓名")).not.toBeInTheDocument();
 });
 
 test("租户管理员可以创建空间并上传 logo", async () => {
   const user = userEvent.setup();
   const api = createSpaceAPI();
-  render(<SpaceManagementPage api={api} tenantID={10} />);
+  render(<SpaceManagementPage api={api} userApi={createUserAPI()} tenantID={10} />);
 
   await screen.findByText("高一 1 班");
 
@@ -69,7 +98,7 @@ test("租户管理员可以创建空间并上传 logo", async () => {
 
   await user.type(screen.getByLabelText("空间名称"), "高一 3 班");
   await user.type(screen.getByLabelText("空间描述"), "面向月考与补测的学生空间");
-  await user.type(screen.getByLabelText("空间管理员"), "赵老师");
+  await user.selectOptions(screen.getByLabelText("空间管理员"), "22");
   await user.upload(screen.getByLabelText("空间 Logo"), new File(["logo"], "class3.png", { type: "image/png" }));
   await user.click(screen.getByRole("button", { name: "确认创建" }));
 
@@ -78,7 +107,7 @@ test("租户管理员可以创建空间并上传 logo", async () => {
     name: "高一 3 班",
     description: "面向月考与补测的学生空间",
     logoFileName: "class3.png",
-    adminName: "赵老师",
+    adminUserID: 22,
   });
   expect(await screen.findByText("高一 3 班")).toBeInTheDocument();
   expect(screen.getByText("空间管理员：赵老师")).toBeInTheDocument();
@@ -87,7 +116,7 @@ test("租户管理员可以创建空间并上传 logo", async () => {
 
 test("租户管理员可以搜索和刷新空间列表", async () => {
   const user = userEvent.setup();
-  render(<SpaceManagementPage api={createSpaceAPI()} tenantID={10} />);
+  render(<SpaceManagementPage api={createSpaceAPI()} userApi={createUserAPI()} tenantID={10} />);
 
   await screen.findByText("高一 1 班");
 
@@ -105,7 +134,7 @@ test("租户管理员可以搜索和刷新空间列表", async () => {
 
 test("租户管理员可以编辑空间描述并管理成员", async () => {
   const user = userEvent.setup();
-  render(<SpaceManagementPage api={createSpaceAPI()} tenantID={10} />);
+  render(<SpaceManagementPage api={createSpaceAPI()} userApi={createUserAPI()} tenantID={10} />);
 
   await screen.findByText("高一 1 班");
 
@@ -131,7 +160,7 @@ test("租户管理员可以编辑空间描述并管理成员", async () => {
 
 test("降级最后一个空间管理员时展示不变式错误", async () => {
   const user = userEvent.setup();
-  render(<SpaceManagementPage api={createSpaceAPI()} tenantID={10} />);
+  render(<SpaceManagementPage api={createSpaceAPI()} userApi={createUserAPI()} tenantID={10} />);
 
   await screen.findByText("高一 1 班");
 
@@ -143,7 +172,7 @@ test("降级最后一个空间管理员时展示不变式错误", async () => {
 
 test("成员管理只作用于从空间列表选中的空间", async () => {
   const user = userEvent.setup();
-  render(<SpaceManagementPage api={createSpaceAPI()} tenantID={10} />);
+  render(<SpaceManagementPage api={createSpaceAPI()} userApi={createUserAPI()} tenantID={10} />);
 
   await screen.findByText("高一 1 班");
 
@@ -168,7 +197,7 @@ test("成员管理只作用于从空间列表选中的空间", async () => {
 
 test("空间配置保存后展示当前配置", async () => {
   const user = userEvent.setup();
-  render(<SpaceManagementPage api={createSpaceAPI()} tenantID={10} />);
+  render(<SpaceManagementPage api={createSpaceAPI()} userApi={createUserAPI()} tenantID={10} />);
 
   await screen.findByText("高一 1 班");
 

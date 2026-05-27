@@ -26,6 +26,7 @@ test("平台管理员登录成功后保存登录态并进入概览", async () =>
         },
       };
     },
+    tenantRegister: vi.fn(),
   };
 
   render(
@@ -53,6 +54,7 @@ test("平台管理员登录失败时展示服务端错误且不保存登录态",
     platformLogin: async () => {
       throw new Error("账号或密码不正确");
     },
+    tenantRegister: vi.fn(),
   };
 
   render(

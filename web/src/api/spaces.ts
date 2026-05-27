@@ -25,7 +25,7 @@ export type CreateSpaceInput = {
   name: string;
   description: string;
   logoFileName: string;
-  adminName: string;
+  adminUserID: number;
 };
 
 export type SpaceListResult = {
@@ -68,21 +68,20 @@ export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI {
       return { items: data.items.map((row) => mapSpaceResponse(row)) };
     },
     async createSpace(input) {
-      const adminUserID = adminUserIDByName(input.adminName);
       const data = await apiClient.post<SpaceAPIResponse>("/api/v1/spaces", {
         tenant_id: input.tenantID,
         name: input.name,
         description: input.description,
         logo_url: input.logoFileName,
         type: "class",
-        admin_user_ids: [adminUserID],
+        admin_user_ids: [input.adminUserID],
       });
-      return mapSpaceResponse(data, input.adminName);
+      return mapSpaceResponse(data);
     },
   };
 }
 
-function mapSpaceResponse(row: SpaceAPIResponse, createdAdminName?: string): SpaceRow {
+function mapSpaceResponse(row: SpaceAPIResponse): SpaceRow {
   return {
     id: row.id,
     tenantID: row.tenant_id,
@@ -91,26 +90,9 @@ function mapSpaceResponse(row: SpaceAPIResponse, createdAdminName?: string): Spa
     logoFileName: row.logo_url || "未上传",
     members: row.members.map((member) => ({
       id: member.id,
-      name: displayMemberName(member.name, createdAdminName),
+      name: member.name,
       role: member.role,
       status: member.status,
     })),
   };
-}
-
-function displayMemberName(name: string, createdAdminName: string | undefined) {
-  if (createdAdminName && name.startsWith("用户 ")) {
-    return createdAdminName;
-  }
-  return name;
-}
-
-function adminUserIDByName(name: string) {
-  const knownUsers: Record<string, number> = {
-    李老师: 20,
-    周老师: 21,
-    赵老师: 22,
-  };
-
-  return knownUsers[name] ?? 20;
 }

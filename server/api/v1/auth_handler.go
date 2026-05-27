@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	serviceplatformuser "github.com/lifei6671/papermind/server/internal/service/platformuser"
+	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/response"
 )
@@ -21,12 +22,22 @@ type AuthTokenIssuer interface {
 
 type authHandler struct {
 	platformUsers *serviceplatformuser.Service
+	tenantUsers   *servicetenantuser.Service
 	tokenIssuer   AuthTokenIssuer
 }
 
 type platformLoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+type tenantRegisterRequest struct {
+	TenantCode string `json:"tenant_code"`
+	Username   string `json:"username"`
+	RealName   string `json:"real_name"`
+	Password   string `json:"password"`
+	Phone      string `json:"phone"`
+	Email      string `json:"email"`
 }
 
 type authSessionResponse struct {
@@ -84,6 +95,33 @@ func (h authHandler) platformLogin(c *gin.Context) {
 	}))
 }
 
+func (h authHandler) tenantRegister(c *gin.Context) {
+	var request tenantRegisterRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantCode == "" || request.Username == "" || request.RealName == "" || request.Password == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "租户码、账号、姓名和密码不能为空"))
+		return
+	}
+
+	// 租户码自注册只创建学生账号，不自动加入空间，后续空间归属由租户管理员维护。
+	user, err := h.tenantUsers.RegisterWithTenantCode(c.Request.Context(), servicetenantuser.RegisterInput{
+		TenantCode:   request.TenantCode,
+		Username:     request.Username,
+		RealName:     request.RealName,
+		PasswordHash: request.Password,
+		Phone:        request.Phone,
+		Email:        request.Email,
+	})
+	if err != nil {
+		writeTenantRegisterError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
+}
+
 func writePlatformLoginError(c *gin.Context, err error) {
 	if errors.Is(err, serviceplatformuser.ErrInvalidCredential) ||
 		errors.Is(err, serviceplatformuser.ErrPlatformUserNotFound) {
@@ -95,6 +133,22 @@ func writePlatformLoginError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "平台管理员登录失败"))
+}
+
+func writeTenantRegisterError(c *gin.Context, err error) {
+	if errors.Is(err, servicetenantuser.ErrTenantNotFound) {
+		c.JSON(http.StatusNotFound, response.Fail(code.InvalidParam, "租户码不存在"))
+		return
+	}
+	if errors.Is(err, servicetenantuser.ErrTenantDisabled) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "租户已禁用"))
+		return
+	}
+	if errors.Is(err, servicetenantuser.ErrRegisterNotAllowed) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "当前租户不允许自注册"))
+		return
+	}
+	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "租户用户注册失败"))
 }
 
 func defaultAuthTokenIssuer(issuer AuthTokenIssuer) AuthTokenIssuer {

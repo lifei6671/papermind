@@ -7,6 +7,8 @@ import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { spaceApi } from "../../api/spaces";
 import type { MemberRole, SpaceManagementAPI, SpaceRow } from "../../api/spaces";
+import { userApi as defaultUserApi } from "../../api/users";
+import type { TenantUserRow, UserManagementAPI } from "../../api/users";
 
 const roleLabels: Record<MemberRole, string> = {
   space_admin: "空间管理员",
@@ -16,14 +18,16 @@ const roleLabels: Record<MemberRole, string> = {
 
 type SpaceManagementPageProps = {
   api?: SpaceManagementAPI;
+  userApi?: Pick<UserManagementAPI, "listUsers">;
   tenantID?: number;
 };
 
-export function SpaceManagementPage({ api = spaceApi, tenantID = 10 }: SpaceManagementPageProps) {
+export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, tenantID = 10 }: SpaceManagementPageProps) {
   const [spaces, setSpaces] = useState<SpaceRow[]>([]);
+  const [users, setUsers] = useState<TenantUserRow[]>([]);
   const [spaceName, setSpaceName] = useState("");
   const [spaceDescription, setSpaceDescription] = useState("");
-  const [spaceAdminName, setSpaceAdminName] = useState("");
+  const [spaceAdminUserID, setSpaceAdminUserID] = useState("");
   const [spaceLogoFileName, setSpaceLogoFileName] = useState("");
   const [logoResetKey, setLogoResetKey] = useState(0);
   const [editingSpace, setEditingSpace] = useState<SpaceRow | null>(null);
@@ -45,23 +49,25 @@ export function SpaceManagementPage({ api = spaceApi, tenantID = 10 }: SpaceMana
   useEffect(() => {
     let ignore = false;
 
-    api.listSpaces(tenantID)
-      .then((data) => {
+    Promise.all([api.listSpaces(tenantID), userApi.listUsers(tenantID)])
+      .then(([spaceData, userData]) => {
         if (!ignore) {
-          setSpaces(data.items);
+          setSpaces(spaceData.items);
+          setUsers(userData.items);
+          setSpaceAdminUserID((current) => current || String(userData.items[0]?.id ?? ""));
           setLoadError("");
         }
       })
       .catch(() => {
         if (!ignore) {
-          setLoadError("空间列表加载失败");
+          setLoadError("空间或用户列表加载失败");
         }
       });
 
     return () => {
       ignore = true;
     };
-  }, [api, tenantID]);
+  }, [api, tenantID, userApi]);
 
   const filteredSpaces = spaces.filter((space) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
@@ -77,6 +83,11 @@ export function SpaceManagementPage({ api = spaceApi, tenantID = 10 }: SpaceMana
 
   async function handleCreateSpace(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const adminUserID = Number(spaceAdminUserID);
+    if (!adminUserID) {
+      setLoadError("请先选择空间管理员");
+      return;
+    }
 
     // 创建空间时必须指定空间管理员，保证空间成员管理从一开始满足管理员不变式。
     const nextSpace = await api.createSpace({
@@ -84,13 +95,13 @@ export function SpaceManagementPage({ api = spaceApi, tenantID = 10 }: SpaceMana
       name: spaceName,
       description: spaceDescription,
       logoFileName: spaceLogoFileName || "未上传",
-      adminName: spaceAdminName,
+      adminUserID,
     });
 
     setSpaces((items) => [...items, nextSpace]);
     setSpaceName("");
     setSpaceDescription("");
-    setSpaceAdminName("");
+    setSpaceAdminUserID(String(users[0]?.id ?? ""));
     setSpaceLogoFileName("");
     setLogoResetKey((value) => value + 1);
     setIsCreateDialogOpen(false);
@@ -379,7 +390,17 @@ export function SpaceManagementPage({ api = spaceApi, tenantID = 10 }: SpaceMana
               </label>
               <label className="field">
                 <span>空间管理员</span>
-                <input onChange={(event) => setSpaceAdminName(event.target.value)} required value={spaceAdminName} />
+                <select
+                  onChange={(event) => setSpaceAdminUserID(event.target.value)}
+                  required
+                  value={spaceAdminUserID}
+                >
+                  {users.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name}
+                    </option>
+                  ))}
+                </select>
               </label>
               <FileUploadField
                 accept={["image/png", "image/jpeg"]}

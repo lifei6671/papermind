@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	v1 "github.com/lifei6671/papermind/server/api/v1"
+	"github.com/lifei6671/papermind/server/bootstrap/devseed"
 	"github.com/lifei6671/papermind/server/bootstrap/migration"
 	dbdao "github.com/lifei6671/papermind/server/internal/dao/db"
 	"github.com/lifei6671/papermind/server/library/config"
@@ -36,6 +37,10 @@ func main() {
 
 	if err := migration.RunForDriver(gormDB, resolveMigrationRoot(), cfg.Database.Driver); err != nil {
 		slog.Error("run database migration failed", "error", err)
+		os.Exit(1)
+	}
+	if err := devseed.RunForDriver(gormDB, cfg.Database.Driver, cfg.App.Env); err != nil {
+		slog.Error("seed development data failed", "error", err)
 		os.Exit(1)
 	}
 

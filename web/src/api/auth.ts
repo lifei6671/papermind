@@ -7,8 +7,28 @@ export type PlatformLoginInput = {
   password: string;
 };
 
+export type TenantRegisterInput = {
+  tenantCode: string;
+  username: string;
+  realName: string;
+  password: string;
+  phone?: string;
+  email?: string;
+};
+
+export type TenantRegisterResult = {
+  id: number;
+  tenantID: number;
+  username: string;
+  realName: string;
+  avatarURL: string;
+  role: string;
+  status: string;
+};
+
 export type AuthAPI = {
   platformLogin(input: PlatformLoginInput): Promise<AuthSession>;
+  tenantRegister(input: TenantRegisterInput): Promise<TenantRegisterResult>;
 };
 
 type AuthSessionAPIResponse = {
@@ -20,6 +40,16 @@ type AuthSessionAPIResponse = {
     role: string;
     tenant_id?: number;
   };
+};
+
+type TenantRegisterAPIResponse = {
+  id: number;
+  tenant_id: number;
+  username: string;
+  real_name: string;
+  avatar_url: string;
+  role: string;
+  status: string;
 };
 
 const defaultApiClient = createApiClient({
@@ -37,6 +67,17 @@ export function createAuthAPI(apiClient: ApiClient): AuthAPI {
       });
       return mapAuthSessionResponse(data);
     },
+    async tenantRegister(input) {
+      const data = await apiClient.post<TenantRegisterAPIResponse>("/api/v1/auth/tenant/register", {
+        tenant_code: input.tenantCode,
+        username: input.username,
+        real_name: input.realName,
+        password: input.password,
+        phone: input.phone,
+        email: input.email,
+      });
+      return mapTenantRegisterResponse(data);
+    },
   };
 }
 
@@ -50,5 +91,17 @@ function mapAuthSessionResponse(response: AuthSessionAPIResponse): AuthSession {
       role: response.user.role,
       tenantID: response.user.tenant_id,
     },
+  };
+}
+
+function mapTenantRegisterResponse(response: TenantRegisterAPIResponse): TenantRegisterResult {
+  return {
+    id: response.id,
+    tenantID: response.tenant_id,
+    username: response.username,
+    realName: response.real_name,
+    avatarURL: response.avatar_url,
+    role: response.role,
+    status: response.status,
   };
 }

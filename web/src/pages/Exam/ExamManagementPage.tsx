@@ -5,30 +5,42 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { useEffect, useState } from "react";
 import { examApi } from "../../api/exams";
 import type { ExamManagementAPI, ExamRow } from "../../api/exams";
+import { paperApi as defaultPaperApi } from "../../api/papers";
+import type { PaperAPI, PaperRow } from "../../api/papers";
+import { spaceApi as defaultSpaceApi } from "../../api/spaces";
+import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
+import { userApi as defaultUserApi } from "../../api/users";
+import type { TenantUserRow, UserManagementAPI } from "../../api/users";
 
 type ExamManagementPageProps = {
   api?: ExamManagementAPI;
+  paperApi?: Pick<PaperAPI, "listPapers">;
+  spaceApi?: Pick<SpaceManagementAPI, "listSpaces">;
+  userApi?: Pick<UserManagementAPI, "listUsers">;
   tenantID?: number;
 };
 
-const paperOptions = [
-  { id: 100, name: "高一语文月考试卷" },
-  { id: 101, name: "高二数学阶段测评" },
-];
+type TargetOption = {
+  id: number;
+  label: string;
+  type: "space" | "user";
+  value: string;
+};
 
-const targetOptions = [
-  { id: 100, label: "高一全年级", type: "space" },
-  { id: 200, label: "高一 1 班", type: "space" },
-  { id: 201, label: "高一 2 班", type: "space" },
-  { id: 300, label: "指定学生", type: "user" },
-] as const;
-
-export function ExamManagementPage({ api = examApi, tenantID = 10 }: ExamManagementPageProps) {
+export function ExamManagementPage({
+  api = examApi,
+  paperApi = defaultPaperApi,
+  spaceApi = defaultSpaceApi,
+  userApi = defaultUserApi,
+  tenantID = 10,
+}: ExamManagementPageProps) {
   const [exams, setExams] = useState<ExamRow[]>([]);
+  const [papers, setPapers] = useState<PaperRow[]>([]);
+  const [targetOptions, setTargetOptions] = useState<TargetOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
-  const [paperName, setPaperName] = useState<string>(paperOptions[0].name);
-  const [target, setTarget] = useState<string>(targetOptions[0].label);
+  const [paperID, setPaperID] = useState("");
+  const [targetValue, setTargetValue] = useState("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [durationMinutes, setDurationMinutes] = useState("120");
@@ -61,8 +73,44 @@ export function ExamManagementPage({ api = examApi, tenantID = 10 }: ExamManagem
     };
   }, [api, tenantID]);
 
+  useEffect(() => {
+    let ignore = false;
+
+    Promise.all([
+      paperApi.listPapers({ tenantID }),
+      spaceApi.listSpaces(tenantID),
+      userApi.listUsers(tenantID),
+    ])
+      .then(([paperData, spaceData, userData]) => {
+        if (ignore) {
+          return;
+        }
+        setPapers(paperData.items);
+        const nextTargets = buildTargetOptions(spaceData.items, userData.items);
+        setTargetOptions(nextTargets);
+        setPaperID((current) => current || String(paperData.items[0]?.id ?? ""));
+        setTargetValue((current) => current || (nextTargets[0]?.value ?? ""));
+      })
+      .catch(() => {
+        if (!ignore) {
+          setPublishError("发布选项加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [paperApi, spaceApi, tenantID, userApi]);
+
   async function handlePublishExam(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    const selectedPaper = papers.find((option) => String(option.id) === paperID);
+    const selectedTarget = targetOptions.find((option) => option.value === targetValue);
+    if (!selectedPaper || !selectedTarget) {
+      setPublishError("请先选择试卷和发布范围");
+      return;
+    }
 
     const startTime = new Date(startAt).getTime();
     const endTime = new Date(endAt).getTime();
@@ -74,12 +122,10 @@ export function ExamManagementPage({ api = examApi, tenantID = 10 }: ExamManagem
       return;
     }
 
-    const selectedPaper = paperOptions.find((option) => option.name === paperName) ?? paperOptions[0];
-    const selectedTarget = targetOptions.find((option) => option.label === target) ?? targetOptions[0];
     const nextExam = await api.publishExam({
       tenantID,
       paperID: selectedPaper.id,
-      name: paperName,
+      name: selectedPaper.name,
       targetType: selectedTarget.type,
       targetID: selectedTarget.id,
       startTime,
@@ -161,9 +207,9 @@ export function ExamManagementPage({ api = examApi, tenantID = 10 }: ExamManagem
             <form className="platform-form" onSubmit={handlePublishExam}>
               <label className="field">
                 <span>发布试卷</span>
-                <select onChange={(event) => setPaperName(event.target.value)} value={paperName}>
-                  {paperOptions.map((option) => (
-                    <option key={option.id} value={option.name}>{option.name}</option>
+                <select onChange={(event) => setPaperID(event.target.value)} required value={paperID}>
+                  {papers.map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
                   ))}
                 </select>
               </label>
@@ -187,9 +233,9 @@ export function ExamManagementPage({ api = examApi, tenantID = 10 }: ExamManagem
               </label>
               <label className="field">
                 <span>发布范围</span>
-                <select onChange={(event) => setTarget(event.target.value)} value={target}>
+                <select onChange={(event) => setTargetValue(event.target.value)} required value={targetValue}>
                   {targetOptions.map((option) => (
-                    <option key={option.id} value={option.label}>{option.label}</option>
+                    <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
               </label>
@@ -208,4 +254,23 @@ export function ExamManagementPage({ api = examApi, tenantID = 10 }: ExamManagem
       )}
     </section>
   );
+}
+
+function buildTargetOptions(spaces: SpaceRow[], users: TenantUserRow[]): TargetOption[] {
+  return [
+    ...spaces.map((space) => ({
+      id: space.id,
+      label: space.name,
+      type: "space" as const,
+      value: `space:${space.id}`,
+    })),
+    ...users
+      .filter((user) => user.status === "enabled")
+      .map((user) => ({
+        id: user.id,
+        label: `${user.name}（个人）`,
+        type: "user" as const,
+        value: `user:${user.id}`,
+      })),
+  ];
 }

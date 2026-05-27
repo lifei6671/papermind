@@ -49,7 +49,7 @@ describe("space api", () => {
     expect(fetcher).toHaveBeenCalledWith("/api/v1/spaces?tenant_id=10", expect.objectContaining({ method: "GET" }));
   });
 
-  test("创建空间会把管理员姓名映射为用户 ID", async () => {
+  test("创建空间会提交真实管理员用户 ID", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
         code: 0,
@@ -63,7 +63,7 @@ describe("space api", () => {
           members: [{
             id: 2,
             user_id: 21,
-            name: "用户 21",
+            name: "周老师",
             role: "space_admin",
             status: "enabled",
           }],
@@ -77,7 +77,7 @@ describe("space api", () => {
       name: "高一二班",
       description: "实验班",
       logoFileName: "space.png",
-      adminName: "周老师",
+      adminUserID: 21,
     })).resolves.toMatchObject({
       id: 302,
       members: [{ id: 2, name: "周老师", role: "space_admin", status: "enabled" }],

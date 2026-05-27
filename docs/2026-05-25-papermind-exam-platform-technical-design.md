@@ -1267,6 +1267,9 @@ API 分组：
 首版阅卷和成绩 API 使用显式权限上下文字段承载调用人身份，后续接入统一认证中间件后再收敛到登录态解析：
 
 ```text
+POST /api/v1/auth/tenant/register
+     body: tenant_code, username, real_name, password, phone?, email?
+
 GET  /api/v1/grading/pending
      query: tenant_id, exam_id, actor_id, actor_role, space_id?
 
@@ -1313,6 +1316,15 @@ page_size  默认 20，最大 100
 - 微信登录、手机号授权等小程序特有能力放在独立认证入口。
 - 考试、答题、成绩接口不感知调用端类型。
 - 导入、导出、打印等 Web 管理端能力独立分组，小程序可不调用。
+
+本地端到端联调约定：
+
+- `app.env` 为 `dev`、`development` 或 `local` 且 `database.driver = sqlite` 时，`bootstrap/devseed` 在迁移完成后写入幂等演示数据。
+- 演示数据固定覆盖前端默认联调入口：租户 `10`、平台管理员 `1`、租户管理员 `1`、考生 `20`、教师 `21`、试卷 `100`、考试 `1`。
+- 默认考试每次开发环境启动都会滚动到当前可作答时间窗口内，避免长期复用 SQLite 数据库后考试过期。
+- 该种子数据只用于本地开发和演示，不进入 PostgreSQL、MySQL 或生产环境。
+
+前端管理页不能内置核心业务 mock 数据。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。
 
 ## 8. 配置设计
 
