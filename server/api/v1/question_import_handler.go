@@ -30,7 +30,7 @@ func (h questionHandler) importQuestions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeTenantManagement(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID) {
 		return
 	}
 	spaceID, err := readOptionalUintForm(c, "space_id")

@@ -33,6 +33,7 @@ var (
 	ErrTenantDisabled        = errors.New("tenant disabled")
 	ErrRegisterNotAllowed    = errors.New("tenant register not allowed")
 	ErrUserNotFound          = errors.New("tenant user not found")
+	ErrDisplayNameRequired   = errors.New("display name required")
 	ErrInvalidCredential     = errors.New("invalid tenant user credential")
 	ErrUserDisabled          = errors.New("tenant user disabled")
 	ErrUnsupportedAvatarType = errors.New("unsupported avatar content type")
@@ -122,6 +123,15 @@ type DisableInput struct {
 	TargetID uint64 // 将被禁用的用户 ID。
 }
 
+type UpdateProfileInput struct {
+	TenantID    uint64 // 所属租户 ID。
+	UserID      uint64 // 当前租户用户 ID。
+	DisplayName string // 真实姓名。
+	AvatarURL   string // 用户头像地址。
+	Phone       string // 手机号。
+	Email       string // 邮箱。
+}
+
 type DisableImpact struct {
 	LoseLogin       bool     // 禁用后失去登录能力。
 	LoseExamAccess  bool     // 禁用后失去考试能力。
@@ -138,6 +148,7 @@ type Repository interface {
 	CreateUserWithRole(ctx context.Context, user User, role string) (User, error)
 	FindUserByUsername(ctx context.Context, tenantID uint64, username string) (User, error)
 	UpdateLoginAudit(ctx context.Context, tenantID uint64, userID uint64, ip string, at int64) error
+	UpdateProfile(ctx context.Context, input UpdateProfileInput) (User, error)
 	UpdateAvatarURL(ctx context.Context, tenantID uint64, userID uint64, url string) error
 	BuildDisableImpact(ctx context.Context, tenantID uint64, userID uint64) (DisableImpact, error)
 	UpdateStatus(ctx context.Context, tenantID uint64, userID uint64, status string) error
@@ -309,6 +320,13 @@ func (s *Service) Disable(ctx context.Context, input DisableInput) error {
 		return err
 	}
 	return s.repo.UpdateStatus(ctx, input.TenantID, input.TargetID, StatusDisabled)
+}
+
+func (s *Service) UpdateProfile(ctx context.Context, input UpdateProfileInput) (User, error) {
+	if input.DisplayName == "" {
+		return User{}, ErrDisplayNameRequired
+	}
+	return s.repo.UpdateProfile(ctx, input)
 }
 
 func (s *Service) register(ctx context.Context, input RegisterInput) (User, error) {

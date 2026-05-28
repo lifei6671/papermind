@@ -99,6 +99,73 @@ func TestPlatformLoginAPIRouteRejectsInvalidCredential(t *testing.T) {
 	}
 }
 
+func TestProfileAPIRoutesReadAndUpdatePlatformUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	readRecorder := httptest.NewRecorder()
+	router.ServeHTTP(readRecorder, authorizedRequest(http.MethodGet, "/api/v1/profile", nil, authHeader))
+	if readRecorder.Code != http.StatusOK {
+		t.Fatalf("read profile status = %d, body = %s", readRecorder.Code, readRecorder.Body.String())
+	}
+	readBody := decodeExamAPIResponse[profileResponse](t, readRecorder.Body.Bytes())
+	if readBody.Data.DisplayName != "admin" || readBody.Data.Phone != "admin-phone" || readBody.Data.Email != "admin@example.test" {
+		t.Fatalf("unexpected read profile response: %#v", readBody.Data)
+	}
+
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPost, "/api/v1/profile", []byte(`{
+		"display_name": "平台负责人",
+		"avatar_url": "/uploads/avatars/admin.png",
+		"phone": "13800000001",
+		"email": "owner@example.test"
+	}`), authHeader))
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("update profile status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+	updateBody := decodeExamAPIResponse[profileResponse](t, updateRecorder.Body.Bytes())
+	if updateBody.Data.DisplayName != "admin" || updateBody.Data.AvatarURL != "/uploads/avatars/admin.png" ||
+		updateBody.Data.Phone != "13800000001" || updateBody.Data.Email != "owner@example.test" {
+		t.Fatalf("unexpected updated profile response: %#v", updateBody.Data)
+	}
+}
+
+func TestProfileAPIRoutesReadAndUpdateTenantUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedTenantRegisterAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPost, "/api/v1/profile", []byte(`{
+		"display_name": "张同学更新",
+		"avatar_url": "/uploads/avatars/student20.png",
+		"phone": "13800002020",
+		"email": "student20-new@example.test"
+	}`), authHeader))
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("update tenant profile status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+	body := decodeExamAPIResponse[profileResponse](t, updateRecorder.Body.Bytes())
+	if body.Data.DisplayName != "张同学更新" || body.Data.TenantID != 10 || body.Data.Role != "student" ||
+		body.Data.Phone != "13800002020" || body.Data.Email != "student20-new@example.test" {
+		t.Fatalf("unexpected tenant profile response: %#v", body.Data)
+	}
+}
+
 func TestTenantRegisterAPIRouteCreatesStudentByTenantCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

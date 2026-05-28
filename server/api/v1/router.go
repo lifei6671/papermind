@@ -121,18 +121,20 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	api.POST("/auth/platform/login", authHandler.platformLogin)
 	api.POST("/auth/tenant/login", authHandler.tenantLogin)
 	api.POST("/auth/tenant/register", authHandler.tenantRegister)
-	api.GET("/exams", requireTenantAdminOrPlatformPrincipalMiddleware(), examHandler.list)
-	api.POST("/exams", requireTenantAdminOrPlatformPrincipalMiddleware(), examHandler.publish)
+	api.GET("/profile", requireAuthPrincipalMiddleware(), authHandler.getProfile)
+	api.POST("/profile", requireAuthPrincipalMiddleware(), authHandler.updateProfile)
+	api.GET("/exams", requireExamBusinessPrincipalMiddleware(), examHandler.list)
+	api.POST("/exams", requireExamBusinessPrincipalMiddleware(), examHandler.publish)
 	api.POST("/exams/invite/resolve", examHandler.resolveInvite)
 	api.POST("/exams/:id/attempts/start", examHandler.startAttempt)
 	api.POST("/exam-attempts/:attempt_id/answers/:attempt_question_id", examHandler.saveAnswer)
 	api.POST("/exam-attempts/:attempt_id/submit", examHandler.submitAttempt)
 	api.POST("/exam-attempts/:attempt_id/events", examHandler.recordEvent)
-	api.GET("/grading/pending", requireAuthPrincipalMiddleware(), examHandler.listPendingReviews)
-	api.POST("/exam-attempts/:attempt_id/questions/:attempt_question_id/grade", requireAuthPrincipalMiddleware(), examHandler.gradeShortText)
-	api.GET("/results", requireAuthPrincipalMiddleware(), examHandler.listResults)
-	api.POST("/results/publish-config", requireAuthPrincipalMiddleware(), examHandler.saveResultPublishConfig)
-	api.POST("/results/export", requireAuthPrincipalMiddleware(), examHandler.exportResults)
+	api.GET("/grading/pending", requireExamBusinessPrincipalMiddleware(), examHandler.listPendingReviews)
+	api.POST("/exam-attempts/:attempt_id/questions/:attempt_question_id/grade", requireExamBusinessPrincipalMiddleware(), examHandler.gradeShortText)
+	api.GET("/results", requireExamBusinessPrincipalMiddleware(), examHandler.listResults)
+	api.POST("/results/publish-config", requireExamBusinessPrincipalMiddleware(), examHandler.saveResultPublishConfig)
+	api.POST("/results/export", requireExamBusinessPrincipalMiddleware(), examHandler.exportResults)
 	api.GET("/tenants", requirePlatformPrincipalMiddleware(), tenantHandler.list)
 	api.POST("/tenants", requirePlatformPrincipalMiddleware(), tenantHandler.create)
 	api.POST("/tenants/:id/profile", requirePlatformPrincipalMiddleware(), tenantHandler.updateProfile)
@@ -144,17 +146,17 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	api.GET("/users", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.list)
 	api.POST("/users", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.create)
 	api.POST("/users/:id/disable", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.disable)
-	api.GET("/questions", requireTenantAdminOrPlatformPrincipalMiddleware(), questionHandler.list)
-	api.POST("/questions", requireTenantAdminOrPlatformPrincipalMiddleware(), questionHandler.create)
-	api.POST("/questions/import", requireTenantAdminOrPlatformPrincipalMiddleware(), questionHandler.importQuestions)
-	api.GET("/papers", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.list)
-	api.GET("/papers/:id/rules", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.listRules)
-	api.POST("/papers/:id/rule-fixed/generate", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.generateRuleFixed)
-	api.POST("/papers/:id/rule-live/precheck", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.precheckRuleLive)
-	api.GET("/papers/:id/sections", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.listSections)
-	api.POST("/papers/:id/sections", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.createSection)
-	api.POST("/papers/:id/sections/:section_id/questions", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.addManualQuestion)
-	api.POST("/papers/:id/sections/:section_id/rules", requireTenantAdminOrPlatformPrincipalMiddleware(), paperHandler.createRule)
+	api.GET("/questions", requireExamBusinessPrincipalMiddleware(), questionHandler.list)
+	api.POST("/questions", requireExamBusinessPrincipalMiddleware(), questionHandler.create)
+	api.POST("/questions/import", requireExamBusinessPrincipalMiddleware(), questionHandler.importQuestions)
+	api.GET("/papers", requireExamBusinessPrincipalMiddleware(), paperHandler.list)
+	api.GET("/papers/:id/rules", requireExamBusinessPrincipalMiddleware(), paperHandler.listRules)
+	api.POST("/papers/:id/rule-fixed/generate", requireExamBusinessPrincipalMiddleware(), paperHandler.generateRuleFixed)
+	api.POST("/papers/:id/rule-live/precheck", requireExamBusinessPrincipalMiddleware(), paperHandler.precheckRuleLive)
+	api.GET("/papers/:id/sections", requireExamBusinessPrincipalMiddleware(), paperHandler.listSections)
+	api.POST("/papers/:id/sections", requireExamBusinessPrincipalMiddleware(), paperHandler.createSection)
+	api.POST("/papers/:id/sections/:section_id/questions", requireExamBusinessPrincipalMiddleware(), paperHandler.addManualQuestion)
+	api.POST("/papers/:id/sections/:section_id/rules", requireExamBusinessPrincipalMiddleware(), paperHandler.createRule)
 	return router
 }
 
@@ -431,7 +433,7 @@ func (h examHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeTenantManagement(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID) {
 		return
 	}
 	page, pageSize, err := readPaginationQuery(c)
@@ -467,7 +469,7 @@ func (h examHandler) publish(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeTenantManagement(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
 	draft, err := h.service.CreateDraft(c.Request.Context(), serviceexam.CreateDraftInput{
@@ -867,7 +869,7 @@ func (h examHandler) saveResultPublishConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if err := permission.NewFixedRoleChecker().CanManageTenant(permissionContext, request.TenantID); err != nil {
+	if err := permission.NewFixedRoleChecker().CanGradeExam(permissionContextWithExamScope(permissionContext, request.ExamID, request.SpaceID), request.ExamID); err != nil {
 		writePermissionOrInternalError(c, err, "保存成绩发布配置失败")
 		return
 	}
@@ -989,6 +991,21 @@ func (h examHandler) readActorPermissionQuery(c *gin.Context, tenantID uint64) (
 	return h.permissionContextFromSession(c, tenantID, spaceID)
 }
 
+func permissionContextWithExamScope(ctx permission.PermissionContext, examID uint64, spaceID uint64) permission.PermissionContext {
+	next := ctx
+	next.ExamScope = clonePermissionScope(ctx.ExamScope)
+	next.ExamScope[examID] = spaceID
+	return next
+}
+
+func clonePermissionScope(scope map[uint64]uint64) map[uint64]uint64 {
+	next := make(map[uint64]uint64, len(scope)+1)
+	for key, value := range scope {
+		next[key] = value
+	}
+	return next
+}
+
 func readOptionalUintQueryValue(c *gin.Context, key string) (uint64, error) {
 	raw := c.Query(key)
 	if raw == "" {
@@ -1015,15 +1032,13 @@ func (h examHandler) permissionContextFromSession(c *gin.Context, tenantID uint6
 		AttemptScope: map[uint64]uint64{},
 	}
 	if principal.SubjectType == permission.SubjectPlatformUser {
-		return ctx, nil
+		return permission.PermissionContext{}, permission.ErrForbidden
 	}
 	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
 		return permission.PermissionContext{}, permission.ErrForbidden
 	}
 	switch principal.Role {
-	case permission.RoleTenantAdmin:
-		ctx.TenantRoles = []string{permission.RoleTenantAdmin}
-	case permission.RoleSpaceAdmin, permission.RoleTeacher, permission.RoleStudent:
+	case permission.RoleSpaceAdmin, permission.RoleTeacher:
 		if spaceID == 0 {
 			return permission.PermissionContext{}, errors.New("space_id 必须是正整数")
 		}
@@ -1064,6 +1079,21 @@ func authorizeTenantManagement(c *gin.Context, tenantID uint64) bool {
 	if principal.SubjectType == permission.SubjectTenantUser &&
 		principal.Role == permission.RoleTenantAdmin &&
 		principal.TenantID == tenantID {
+		return true
+	}
+	c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+	return false
+}
+
+func authorizeExamBusiness(c *gin.Context, tenantID uint64) bool {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return false
+	}
+	if principal.SubjectType == permission.SubjectTenantUser &&
+		principal.TenantID == tenantID &&
+		(principal.Role == permission.RoleSpaceAdmin || principal.Role == permission.RoleTeacher) {
 		return true
 	}
 	c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
@@ -1835,7 +1865,7 @@ func (h questionHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeTenantManagement(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID) {
 		return
 	}
 	spaceID, err := readOptionalUintQuery(c, "space_id")
@@ -1881,7 +1911,7 @@ func (h questionHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeTenantManagement(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
 	created, err := h.service.CreateQuestion(c.Request.Context(), servicequestion.CreateQuestionInput{

@@ -2,7 +2,7 @@ import { Button } from "../../components/ui/Button";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Home, LogOut, Settings } from "lucide-react";
 import { useSession } from "../../auth/session-context";
-import type { AdminRoute, AdminRouteGroup } from "../../app/routes";
+import { routeVisibleForRole, type AdminRoute, type AdminRouteGroup } from "../../app/routes";
 import "./AdminShell.css";
 
 type AdminShellProps = {
@@ -115,8 +115,4 @@ function routeLinkTarget(route: AdminRoute, currentSearch: string) {
     return `${route.path}?tenant_id=${encodeURIComponent(tenantID)}`;
   }
   return route.path;
-}
-
-function routeVisibleForRole(route: AdminRoute, role?: string) {
-  return !route.menuRoles || (!!role && route.menuRoles.includes(role));
 }

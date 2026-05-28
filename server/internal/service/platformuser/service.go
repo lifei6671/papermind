@@ -24,6 +24,7 @@ var (
 	ErrInvalidCredential      = errors.New("invalid platform user credential")
 	ErrPlatformUserDisabled   = errors.New("platform user disabled")
 	ErrPlatformUserNotFound   = errors.New("platform user not found")
+	ErrDisplayNameRequired    = errors.New("display name required")
 	ErrCannotDisableSelf      = errors.New("cannot disable self")
 	ErrCannotDisableLastAdmin = errors.New("cannot disable last enabled platform admin")
 	ErrUnsupportedAvatarType  = errors.New("unsupported avatar content type")
@@ -59,6 +60,14 @@ type DisableInput struct {
 	TargetID uint64 // 被禁用的平台管理员 ID。
 }
 
+type UpdateProfileInput struct {
+	UserID      uint64 // 当前平台管理员 ID。
+	DisplayName string // 平台管理员登录名当前只读，保留用于 API 入参对齐。
+	AvatarURL   string // 用户头像地址。
+	Phone       string // 手机号。
+	Email       string // 邮箱。
+}
+
 type UploadAvatarInput struct {
 	UserID      uint64 // 平台管理员 ID。
 	FileName    string // 上传文件名。
@@ -81,6 +90,7 @@ type Repository interface {
 	CountEnabledAdmins(ctx context.Context) (int64, error)
 	UpdateLoginAudit(ctx context.Context, userID uint64, ip string, at int64) error
 	UpdateStatus(ctx context.Context, userID uint64, status string) error
+	UpdateProfile(ctx context.Context, input UpdateProfileInput) (PlatformUser, error)
 	UpdateAvatarURL(ctx context.Context, userID uint64, url string) error
 }
 
@@ -185,6 +195,10 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (PlatformUser, er
 	return user, nil
 }
 
+func (s *Service) Get(ctx context.Context, userID uint64) (PlatformUser, error) {
+	return s.repo.FindByID(ctx, userID)
+}
+
 func (s *Service) Disable(ctx context.Context, input DisableInput) error {
 	if input.ActorID == input.TargetID {
 		return ErrCannotDisableSelf
@@ -203,6 +217,13 @@ func (s *Service) Disable(ctx context.Context, input DisableInput) error {
 		}
 	}
 	return s.repo.UpdateStatus(ctx, input.TargetID, StatusDisabled)
+}
+
+func (s *Service) UpdateProfile(ctx context.Context, input UpdateProfileInput) (PlatformUser, error) {
+	if input.DisplayName == "" {
+		return PlatformUser{}, ErrDisplayNameRequired
+	}
+	return s.repo.UpdateProfile(ctx, input)
 }
 
 func (s *Service) UploadAvatar(ctx context.Context, input UploadAvatarInput) (string, error) {

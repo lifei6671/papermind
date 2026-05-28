@@ -317,6 +317,22 @@ func requireTenantAdminOrPlatformPrincipalMiddleware() gin.HandlerFunc {
 	}
 }
 
+func requireExamBusinessPrincipalMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := currentAuthPrincipal(c)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+			return
+		}
+		if principal.SubjectType == permission.SubjectTenantUser &&
+			(principal.Role == permission.RoleSpaceAdmin || principal.Role == permission.RoleTeacher) {
+			c.Next()
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+	}
+}
+
 func currentAuthPrincipal(c *gin.Context) (AuthPrincipal, bool) {
 	if value, ok := c.Get(authPrincipalGinKey); ok {
 		if principal, ok := value.(AuthPrincipal); ok && principal.UserID != 0 {

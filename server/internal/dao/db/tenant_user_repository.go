@@ -210,6 +210,25 @@ func (r *TenantUserRepository) UpdateLoginAudit(ctx context.Context, tenantID ui
 		}).Error
 }
 
+func (r *TenantUserRepository) UpdateProfile(ctx context.Context, input servicetenantuser.UpdateProfileInput) (servicetenantuser.User, error) {
+	err := r.db.WithContext(ctx).Model(&UserDO{}).
+		Where(UserColumns.TenantID+" = ?", input.TenantID).
+		Where(UserColumns.ID+" = ?", input.UserID).
+		Where(UserColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			UserColumns.RealName:  input.DisplayName,
+			UserColumns.AvatarURL: input.AvatarURL,
+			UserColumns.Phone:     input.Phone,
+			UserColumns.Email:     input.Email,
+			BaseColumns.UpdatedAt: r.now(),
+			BaseColumns.Version:   gorm.Expr(BaseColumns.Version + " + 1"),
+		}).Error
+	if err != nil {
+		return servicetenantuser.User{}, err
+	}
+	return r.FindUserByID(ctx, input.TenantID, input.UserID)
+}
+
 func (r *TenantUserRepository) UpdateAvatarURL(ctx context.Context, tenantID uint64, userID uint64, url string) error {
 	return r.db.WithContext(ctx).Model(&UserDO{}).
 		Where(UserColumns.TenantID+" = ?", tenantID).

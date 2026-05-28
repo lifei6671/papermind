@@ -15,13 +15,13 @@ func TestPaperAPIRoutesListSectionsAndAddManualQuestionWithSQLite(t *testing.T) 
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedPaperAPITestData(t, gormDB)
-	seedPlatformLoginAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
-	authHeader := platformAuthHeader(t, router)
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
 
 	listRecorder := httptest.NewRecorder()
 	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers?tenant_id=10", nil, authHeader))
@@ -91,13 +91,13 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 	gormDB := openExamAPITestDB(t)
 	seedPaperAPITestData(t, gormDB)
 	seedPaperRuleAPITestData(t, gormDB)
-	seedPlatformLoginAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
-	authHeader := platformAuthHeader(t, router)
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
 
 	createRulePayload := []byte(`{
 		"tenant_id": 10,

@@ -346,6 +346,8 @@ type fakeRepository struct {
 	updatedStatusTenantID uint64
 	updatedStatusUserID   uint64
 	updatedStatus         string
+
+	profileInput UpdateProfileInput
 }
 
 func (r *fakeRepository) ListUsers(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[User], error) {
@@ -425,6 +427,19 @@ func (r *fakeRepository) UpdateStatus(ctx context.Context, tenantID uint64, user
 	r.updatedStatusUserID = userID
 	r.updatedStatus = status
 	return nil
+}
+
+func (r *fakeRepository) UpdateProfile(ctx context.Context, input UpdateProfileInput) (User, error) {
+	r.profileInput = input
+	return User{
+		ID:        input.UserID,
+		TenantID:  input.TenantID,
+		RealName:  input.DisplayName,
+		AvatarURL: input.AvatarURL,
+		Phone:     input.Phone,
+		Email:     input.Email,
+		Status:    StatusEnabled,
+	}, nil
 }
 
 type userLookupKey struct {

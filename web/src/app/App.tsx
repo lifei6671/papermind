@@ -5,7 +5,7 @@ import { PlatformLoginPage } from "../pages/Login/PlatformLoginPage";
 import { ExamEntryPage } from "../pages/Exam/ExamEntryPage";
 import { StudentExamPage } from "../pages/StudentExam/StudentExamPage";
 import { useSession } from "../auth/session-context";
-import { buildAdminRoutes } from "./routes";
+import { buildAdminRoutes, routeVisibleForRole } from "./routes";
 
 export function App() {
   const { session } = useSession();
@@ -18,7 +18,15 @@ export function App() {
       <Route path="/student/exam" element={<StudentExamPage />} />
       <Route element={<RequireSession><AdminShell routes={adminRoutes} /></RequireSession>}>
         {adminRoutes.map((route) => (
-          <Route key={route.path} path={route.path} element={route.element} />
+          <Route
+            element={
+              route.group === "exam" && !routeVisibleForRole(route, session?.user.role)
+                ? <Navigate to="/" replace />
+                : route.element
+            }
+            key={route.path}
+            path={route.path}
+          />
         ))}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

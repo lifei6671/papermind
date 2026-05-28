@@ -26,14 +26,14 @@ func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedExamAPITestData(t, gormDB)
-	seedPlatformLoginAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:            gormDB,
 		Now:           func() int64 { return fixedAPINow },
 		CodeGenerator: fixedCodeGenerator{code: "PM2027"},
 	})
-	authHeader := platformAuthHeader(t, router)
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
 
 	listRecorder := httptest.NewRecorder()
 	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/exams?tenant_id=10", nil, authHeader))
@@ -83,6 +83,25 @@ func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 	}
 	if targetCount != 1 {
 		t.Fatalf("expected one target row, got %d", targetCount)
+	}
+}
+
+func TestPlatformAdminCannotAccessExamBusinessAPIs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedPlatformLoginAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/exams?tenant_id=10", nil, authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("platform exam list status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -311,14 +330,13 @@ func TestReviewAndResultAPIRoutesWithSQLite(t *testing.T) {
 	gormDB := openExamAPITestDB(t)
 	seedExamAPITestData(t, gormDB)
 	seedReviewResultAPITestData(t, gormDB)
-	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:        gormDB,
 		Now:       func() int64 { return fixedAPINow },
 		ExportDir: t.TempDir(),
 	})
-	authHeader := platformAuthHeader(t, router)
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.li", "papermind123")
 
 	listReviewRecorder := httptest.NewRecorder()
 	router.ServeHTTP(listReviewRecorder, authorizedRequest(http.MethodGet, "/api/v1/grading/pending?tenant_id=10&exam_id=1&space_id=301", nil, authHeader))
@@ -453,6 +471,30 @@ func seedExamAPITestData(t *testing.T, gormDB *gorm.DB) {
 	}
 }
 
+func seedExamBusinessLoginAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash exam business password: %v", err)
+	}
+
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, tenant_id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES (501, 10, 'teacher.exam', '考试教师', '13800000501', 'teacher.exam@example.test', ?, 'enabled', ?, ?, '{}')
+	`, passwordHash, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed exam business user: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO user_roles (
+			id, tenant_id, user_id, role, created_at, updated_at, ext_json
+		) VALUES (501, 10, 501, 'teacher', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed exam business role: %v", err)
+	}
+}
+
 func seedTakingAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
 	passwordHash, err := crypto.HashPassword("papermind123")
@@ -525,6 +567,10 @@ func seedTakingAPITestData(t *testing.T, gormDB *gorm.DB) {
 
 func seedReviewResultAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash review password: %v", err)
+	}
 
 	if err := gormDB.Exec(`
 		INSERT INTO spaces (
@@ -538,10 +584,17 @@ func seedReviewResultAPITestData(t *testing.T, gormDB *gorm.DB) {
 			id, tenant_id, username, real_name, phone, email, password_hash, status,
 			created_at, updated_at, ext_json
 		) VALUES
-			(501, 10, 'teacher.li', '李老师', '13800000501', 'teacher501@example.test', 'hash', 'enabled', ?, ?, '{}'),
+			(501, 10, 'teacher.li', '李老师', '13800000501', 'teacher501@example.test', ?, 'enabled', ?, ?, '{}'),
 			(601, 10, 'student.zhang', '张三', '13800000601', 'student601@example.test', 'hash', 'enabled', ?, ?, '{}')
-	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
+	`, passwordHash, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO user_roles (
+			id, tenant_id, user_id, role, created_at, updated_at, ext_json
+		) VALUES (501, 10, 501, 'teacher', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed review user role: %v", err)
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO space_members (

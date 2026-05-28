@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
@@ -54,6 +55,96 @@ type authUserResponse struct {
 	DisplayName string `json:"display_name"`
 	Role        string `json:"role"`
 	TenantID    uint64 `json:"tenant_id,omitempty"`
+}
+
+type profileRequest struct {
+	DisplayName string `json:"display_name"`
+	AvatarURL   string `json:"avatar_url"`
+	Phone       string `json:"phone"`
+	Email       string `json:"email"`
+}
+
+type profileResponse struct {
+	UserID      uint64 `json:"user_id"`
+	TenantID    uint64 `json:"tenant_id,omitempty"`
+	DisplayName string `json:"display_name"`
+	AvatarURL   string `json:"avatar_url"`
+	Phone       string `json:"phone"`
+	Email       string `json:"email"`
+	Role        string `json:"role"`
+	SubjectType string `json:"subject_type"`
+}
+
+func (h authHandler) getProfile(c *gin.Context) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return
+	}
+	if principal.SubjectType == permission.SubjectPlatformUser {
+		user, err := h.platformUsers.Get(c.Request.Context(), principal.UserID)
+		if err != nil {
+			writeProfileError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, response.OK(platformProfileToResponse(user)))
+		return
+	}
+	user, err := h.tenantUsers.Get(c.Request.Context(), principal.TenantID, principal.UserID)
+	if err != nil {
+		writeProfileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(tenantProfileToResponse(user)))
+}
+
+func (h authHandler) updateProfile(c *gin.Context) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return
+	}
+	var request profileRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	displayName := strings.TrimSpace(request.DisplayName)
+	if displayName == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "display_name 不能为空"))
+		return
+	}
+	avatarURL := strings.TrimSpace(request.AvatarURL)
+	phone := strings.TrimSpace(request.Phone)
+	email := strings.TrimSpace(request.Email)
+	if principal.SubjectType == permission.SubjectPlatformUser {
+		user, err := h.platformUsers.UpdateProfile(c.Request.Context(), serviceplatformuser.UpdateProfileInput{
+			UserID:      principal.UserID,
+			DisplayName: displayName,
+			AvatarURL:   avatarURL,
+			Phone:       phone,
+			Email:       email,
+		})
+		if err != nil {
+			writeProfileError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, response.OK(platformProfileToResponse(user)))
+		return
+	}
+	user, err := h.tenantUsers.UpdateProfile(c.Request.Context(), servicetenantuser.UpdateProfileInput{
+		TenantID:    principal.TenantID,
+		UserID:      principal.UserID,
+		DisplayName: displayName,
+		AvatarURL:   avatarURL,
+		Phone:       phone,
+		Email:       email,
+	})
+	if err != nil {
+		writeProfileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(tenantProfileToResponse(user)))
 }
 
 func (h authHandler) platformLogin(c *gin.Context) {
@@ -177,6 +268,45 @@ func (h authHandler) tenantRegister(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
+}
+
+func platformProfileToResponse(user serviceplatformuser.PlatformUser) profileResponse {
+	return profileResponse{
+		UserID:      user.ID,
+		DisplayName: user.Username,
+		AvatarURL:   user.AvatarURL,
+		Phone:       user.Phone,
+		Email:       user.Email,
+		Role:        platformAdminRole,
+		SubjectType: permission.SubjectPlatformUser,
+	}
+}
+
+func tenantProfileToResponse(user servicetenantuser.User) profileResponse {
+	return profileResponse{
+		UserID:      user.ID,
+		TenantID:    user.TenantID,
+		DisplayName: user.RealName,
+		AvatarURL:   user.AvatarURL,
+		Phone:       user.Phone,
+		Email:       user.Email,
+		Role:        user.Role,
+		SubjectType: permission.SubjectTenantUser,
+	}
+}
+
+func writeProfileError(c *gin.Context, err error) {
+	if errors.Is(err, serviceplatformuser.ErrDisplayNameRequired) ||
+		errors.Is(err, servicetenantuser.ErrDisplayNameRequired) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "display_name 不能为空"))
+		return
+	}
+	if errors.Is(err, serviceplatformuser.ErrPlatformUserNotFound) ||
+		errors.Is(err, servicetenantuser.ErrUserNotFound) {
+		c.JSON(http.StatusNotFound, response.Fail(code.InvalidParam, "当前用户不存在"))
+		return
+	}
+	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "个人资料操作失败"))
 }
 
 func validatePasswordMinLength(password string, passwordMinLength int) error {

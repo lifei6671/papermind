@@ -21,9 +21,9 @@ import { PaperAssemblyPage } from "../pages/Exam/PaperAssemblyPage";
 import { QuestionBankPage } from "../pages/Exam/QuestionBankPage";
 import { QuestionImportPage } from "../pages/Exam/QuestionImportPage";
 import { GradingPage } from "../pages/Grading/GradingPage";
-import { PlaceholderPage } from "../pages/Placeholder/PlaceholderPage";
 import { PlatformSettingsPage } from "../pages/Platform/PlatformSettingsPage";
 import { TenantManagementPage } from "../pages/Platform/TenantManagementPage";
+import { ProfileSettingsPage } from "../pages/Profile/ProfileSettingsPage";
 import { ResultsPage } from "../pages/Results/ResultsPage";
 import { SpaceManagementPage } from "../pages/Tenant/SpaceManagementPage";
 import { UserManagementPage } from "../pages/Tenant/UserManagementPage";
@@ -43,6 +43,8 @@ export type AdminRoute = {
   badge?: string;
   menuRoles?: string[];
 };
+
+export const examBusinessRoles = ["space_admin", "teacher"];
 
 export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
   const sessionTenantID = user?.tenantID;
@@ -111,6 +113,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     icon: LibraryBig,
     element: <QuestionBankPage tenantID={sessionTenantID ?? 0} />,
     group: "exam",
+    menuRoles: examBusinessRoles,
   },
   {
     path: "/imports",
@@ -119,6 +122,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     icon: Upload,
     element: <QuestionImportPage tenantID={sessionTenantID ?? 0} />,
     group: "exam",
+    menuRoles: examBusinessRoles,
   },
   {
     path: "/papers",
@@ -127,6 +131,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     icon: FileStack,
     element: <PaperAssemblyPage tenantID={sessionTenantID ?? 0} />,
     group: "exam",
+    menuRoles: examBusinessRoles,
   },
   {
     path: "/exams",
@@ -135,6 +140,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     icon: ClipboardList,
     element: <ExamManagementPage tenantID={sessionTenantID ?? 0} />,
     group: "exam",
+    menuRoles: examBusinessRoles,
   },
   {
     path: "/grading",
@@ -144,6 +150,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     element: <GradingPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} />,
     group: "exam",
     badge: "P8 已就绪",
+    menuRoles: examBusinessRoles,
   },
   {
     path: "/results",
@@ -152,6 +159,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     icon: Trophy,
     element: <ResultsPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} />,
     group: "exam",
+    menuRoles: examBusinessRoles,
   },
   {
     path: "/exam-entry",
@@ -160,16 +168,21 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     icon: GraduationCap,
     element: <ExamEntryPage />,
     group: "exam",
+    menuRoles: examBusinessRoles,
   },
   {
     path: "/settings/profile",
     label: "个人设置",
     description: "维护当前账号资料和默认空间",
     icon: BookOpenCheck,
-    element: <PlaceholderPage title="个人设置" description="当前用户资料和默认空间后续接入登录态。" />,
+    element: <ProfileSettingsPage />,
     group: "hidden",
   },
   ];
+}
+
+export function routeVisibleForRole(route: AdminRoute, role?: string) {
+  return !route.menuRoles || (!!role && route.menuRoles.includes(role));
 }
 
 function routeActorRole(role?: string): ActorRole {

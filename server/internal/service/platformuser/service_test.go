@@ -268,6 +268,8 @@ type fakeRepository struct {
 
 	avatarUserID uint64
 	avatarURL    string
+
+	profileInput UpdateProfileInput
 }
 
 func (r *fakeRepository) HasAny(ctx context.Context) (bool, error) {
@@ -317,6 +319,18 @@ func (r *fakeRepository) UpdateAvatarURL(ctx context.Context, userID uint64, url
 	r.avatarUserID = userID
 	r.avatarURL = url
 	return nil
+}
+
+func (r *fakeRepository) UpdateProfile(ctx context.Context, input UpdateProfileInput) (PlatformUser, error) {
+	r.profileInput = input
+	return PlatformUser{
+		ID:        input.UserID,
+		Username:  "admin",
+		AvatarURL: input.AvatarURL,
+		Phone:     input.Phone,
+		Email:     input.Email,
+		Status:    StatusEnabled,
+	}, nil
 }
 
 type fakePasswordVerifier struct {

@@ -127,6 +127,23 @@ func (r *PlatformUserRepository) UpdateStatus(ctx context.Context, userID uint64
 		}).Error
 }
 
+func (r *PlatformUserRepository) UpdateProfile(ctx context.Context, input serviceplatformuser.UpdateProfileInput) (serviceplatformuser.PlatformUser, error) {
+	err := r.db.WithContext(ctx).Model(&PlatformUserDO{}).
+		Where(PlatformUserColumns.ID+" = ?", input.UserID).
+		Where(PlatformUserColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			PlatformUserColumns.AvatarURL: input.AvatarURL,
+			PlatformUserColumns.Phone:     input.Phone,
+			PlatformUserColumns.Email:     input.Email,
+			BaseColumns.UpdatedAt:         r.now(),
+			BaseColumns.Version:           gorm.Expr(BaseColumns.Version + " + 1"),
+		}).Error
+	if err != nil {
+		return serviceplatformuser.PlatformUser{}, err
+	}
+	return r.FindByID(ctx, input.UserID)
+}
+
 func (r *PlatformUserRepository) UpdateAvatarURL(ctx context.Context, userID uint64, url string) error {
 	return r.db.WithContext(ctx).Model(&PlatformUserDO{}).
 		Where(PlatformUserColumns.ID+" = ?", userID).

@@ -117,7 +117,7 @@ func (h paperHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeTenantManagement(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID) {
 		return
 	}
 	papers, err := h.service.ListPapers(c.Request.Context(), tenantID)
@@ -143,7 +143,7 @@ func (h paperHandler) listSections(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeTenantManagement(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID) {
 		return
 	}
 	sections, err := h.service.ListSections(c.Request.Context(), tenantID, paperID)
@@ -173,7 +173,7 @@ func (h paperHandler) createSection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeTenantManagement(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
 	sections, err := h.service.ListSections(c.Request.Context(), request.TenantID, paperID)
@@ -217,7 +217,7 @@ func (h paperHandler) addManualQuestion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeTenantManagement(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
 	questions, err := h.service.ListSectionQuestions(c.Request.Context(), request.TenantID, paperID)
@@ -259,7 +259,7 @@ func (h paperHandler) listRules(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeTenantManagement(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID) {
 		return
 	}
 	rules, err := h.service.ListRules(c.Request.Context(), tenantID, paperID)
@@ -294,7 +294,7 @@ func (h paperHandler) createRule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeTenantManagement(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
 	// 组卷规则持久化为 paper_section_rules，tag_ids 在 service 层稳定排序为 JSON，便于后续规则生成和预检查复用同一来源。
@@ -331,7 +331,7 @@ func (h paperHandler) generateRuleFixed(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeTenantManagement(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
 	if err := h.service.GenerateRuleFixed(c.Request.Context(), request.TenantID, paperID); err != nil {
@@ -356,7 +356,7 @@ func (h paperHandler) precheckRuleLive(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeTenantManagement(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
 	rules, err := h.service.ListRules(c.Request.Context(), request.TenantID, paperID)

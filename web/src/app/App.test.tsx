@@ -157,7 +157,7 @@ test("渲染 Papermind 管理端基础骨架", () => {
 
   expect(screen.getByText("Papermind")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /租户管理/ })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /阅卷中心/ })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /阅卷中心/ })).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
 });
 
@@ -284,6 +284,17 @@ test("平台管理员打开用户管理时使用 URL 租户 ID 接入后端 API"
   expect(await screen.findByText("tenant.admin")).toBeInTheDocument();
   expect(requests).toContain("/api/v1/users?tenant_id=10");
   expect(requests).not.toContain("/api/v1/users?tenant_id=0");
+});
+
+test("平台管理员直接访问考试业务路由会回到概览", () => {
+  storePlatformSession();
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+
+  renderApp(["/grading"]);
+
+  expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "阅卷中心" })).not.toBeInTheDocument();
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 test("学生考试端与管理员后台路由隔离", async () => {
@@ -540,7 +551,7 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
 
 test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async () => {
   const user = userEvent.setup();
-  storePlatformSession();
+  storeTenantTeacherSession();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.startsWith("/api/v1/grading/pending")) {
@@ -705,7 +716,7 @@ test("真实路由渲染用户管理时从 session 派生租户并请求后端 A
 
 test("成绩页支持发布配置和成绩导出", async () => {
   const user = userEvent.setup();
-  storePlatformSession();
+  storeTenantTeacherSession();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.startsWith("/api/v1/results?")) {
