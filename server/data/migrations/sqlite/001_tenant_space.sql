@@ -9,8 +9,10 @@ CREATE TABLE IF NOT EXISTS tenants (
     status TEXT NOT NULL DEFAULT 'enabled',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -29,8 +31,10 @@ CREATE TABLE IF NOT EXISTS spaces (
     status TEXT NOT NULL DEFAULT 'enabled',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -48,8 +52,10 @@ CREATE TABLE IF NOT EXISTS space_members (
     status TEXT NOT NULL DEFAULT 'enabled',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -70,8 +76,10 @@ CREATE TABLE IF NOT EXISTS space_configs (
     description TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
@@ -91,8 +99,10 @@ CREATE TABLE IF NOT EXISTS platform_users (
     status TEXT NOT NULL DEFAULT 'enabled',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -113,8 +123,10 @@ CREATE TABLE IF NOT EXISTS platform_configs (
     description TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
@@ -136,8 +148,10 @@ CREATE TABLE IF NOT EXISTS users (
     status TEXT NOT NULL DEFAULT 'enabled',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -157,13 +171,15 @@ CREATE TABLE IF NOT EXISTS user_roles (
     role TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
--- 同一租户用户不能重复分配同一个固定角色。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_role ON user_roles (tenant_id, user_id, role);
+-- 同一租户用户只能拥有一个固定角色。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id);
 
 -- questions：题目表，保存租户公共题库和空间题库中的题目。
 CREATE TABLE IF NOT EXISTS questions (
@@ -180,8 +196,10 @@ CREATE TABLE IF NOT EXISTS questions (
     status TEXT NOT NULL DEFAULT 'draft',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -203,8 +221,10 @@ CREATE TABLE IF NOT EXISTS question_options (
     is_distractor INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
@@ -222,8 +242,10 @@ CREATE TABLE IF NOT EXISTS tags (
     name TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -241,6 +263,7 @@ CREATE TABLE IF NOT EXISTS question_tags (
     tag_id INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
 -- 同一题目不能重复绑定同一标签。
@@ -262,8 +285,10 @@ CREATE TABLE IF NOT EXISTS papers (
     status TEXT NOT NULL DEFAULT 'draft',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -284,8 +309,10 @@ CREATE TABLE IF NOT EXISTS paper_sections (
     question_count INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -307,8 +334,10 @@ CREATE TABLE IF NOT EXISTS paper_section_questions (
     shuffle_options INTEGER,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     FOREIGN KEY (tenant_id, section_id, paper_id) REFERENCES paper_sections (tenant_id, id, paper_id)
@@ -332,8 +361,10 @@ CREATE TABLE IF NOT EXISTS paper_section_rules (
     shuffle_options INTEGER,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     FOREIGN KEY (tenant_id, section_id, paper_id) REFERENCES paper_sections (tenant_id, id, paper_id)
@@ -358,8 +389,10 @@ CREATE TABLE IF NOT EXISTS exams (
     status TEXT NOT NULL DEFAULT 'draft',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
@@ -376,6 +409,7 @@ CREATE TABLE IF NOT EXISTS exam_targets (
     target_id INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
 -- 同一考试不能重复添加相同空间或用户目标。
@@ -391,6 +425,7 @@ CREATE TABLE IF NOT EXISTS exam_live_question_pools (
     question_id INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
 -- 同一规则候选题不能重复冻结。
@@ -413,8 +448,10 @@ CREATE TABLE IF NOT EXISTS exam_attempts (
     total_score NUMERIC NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
@@ -438,8 +475,10 @@ CREATE TABLE IF NOT EXISTS exam_attempt_questions (
     correct_answer_snapshot TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
@@ -458,8 +497,10 @@ CREATE TABLE IF NOT EXISTS exam_answers (
     grader_comment TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     updated_at INTEGER NOT NULL,
     updated_by INTEGER NOT NULL DEFAULT 0,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
@@ -476,5 +517,6 @@ CREATE TABLE IF NOT EXISTS exam_events (
     payload TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
+    created_by_type TEXT NOT NULL DEFAULT 'system',
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
