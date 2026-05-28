@@ -139,4 +139,39 @@ describe("authApi", () => {
       },
     });
   });
+
+  test("当前用户空间授权列表会映射空间成员关系字段", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("GET");
+
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 1,
+            tenant_id: 10,
+            space_id: 100,
+            role: "space_admin",
+            status: "enabled",
+          }],
+        },
+      }));
+    });
+    const api = createAuthAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.listProfileSpaces();
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/profile/spaces",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(result.items).toEqual([{
+      id: 1,
+      tenantID: 10,
+      spaceID: 100,
+      role: "space_admin",
+      status: "enabled",
+    }]);
+  });
 });

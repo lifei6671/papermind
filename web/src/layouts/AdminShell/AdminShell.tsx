@@ -20,7 +20,9 @@ export function AdminShell({ routes }: AdminShellProps) {
   const navigate = useNavigate();
   const { session, signOut } = useSession();
   const visibleGroups = Object.keys(groupLabels) as Array<Exclude<AdminRouteGroup, "hidden">>;
-  const menuRoutes = routes.filter((route) => routeVisibleForRole(route, session?.user.role));
+  const menuRoutes = routes.filter((route) =>
+    routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? []),
+  );
 
   const renderRouteLink = (route: AdminRoute) => {
     const Icon = route.icon;

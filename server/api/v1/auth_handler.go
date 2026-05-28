@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
 	serviceplatformuser "github.com/lifei6671/papermind/server/internal/service/platformuser"
+	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/crypto"
@@ -20,6 +21,7 @@ const platformAdminRole = permission.RolePlatformAdmin
 type authHandler struct {
 	platformUsers        *serviceplatformuser.Service
 	tenantUsers          *servicetenantuser.Service
+	spaces               *servicespace.Service
 	sessionMaxAgeSeconds int
 	passwordMinLength    int
 }
@@ -75,6 +77,18 @@ type profileResponse struct {
 	SubjectType string `json:"subject_type"`
 }
 
+type profileSpaceResponse struct {
+	ID       uint64 `json:"id"`        // 空间成员记录 ID，用于前端定位成员关系本身。
+	TenantID uint64 `json:"tenant_id"` // 成员关系所属租户，前端只能把它作为当前 session 租户范围使用。
+	SpaceID  uint64 `json:"space_id"`  // 当前用户已加入且启用的空间 ID，用于后续业务页面携带 space_id。
+	Role     string `json:"role"`      // 当前用户在该空间内的角色，space_admin 只在这里出现，不写入 session role。
+	Status   string `json:"status"`    // 成员关系状态；本接口只返回 enabled，保留字段便于前端统一展示。
+}
+
+type profileSpaceListResponse struct {
+	Items []profileSpaceResponse `json:"items"`
+}
+
 func (h authHandler) getProfile(c *gin.Context) {
 	principal, ok := currentAuthPrincipal(c)
 	if !ok {
@@ -96,6 +110,32 @@ func (h authHandler) getProfile(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(tenantProfileToResponse(user)))
+}
+
+func (h authHandler) listProfileSpaces(c *gin.Context) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return
+	}
+	// 平台管理员没有租户空间身份，不能把平台主体伪装成空间管理员或教师来驱动租户业务菜单。
+	if principal.SubjectType != permission.SubjectTenantUser {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "平台管理员没有租户空间授权"))
+		return
+	}
+
+	// 当前授权空间列表只来自 space_members 的启用成员关系，用于前端菜单和零空间教师提示。
+	// 这里不会把 space_admin 写回 session，避免空间身份被误当成租户级角色。
+	members, err := h.spaces.ListEffectiveMembershipsForUser(c.Request.Context(), principal.TenantID, principal.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取当前用户空间授权失败"))
+		return
+	}
+	items := make([]profileSpaceResponse, 0, len(members))
+	for _, member := range members {
+		items = append(items, profileSpaceToResponse(member))
+	}
+	c.JSON(http.StatusOK, response.OK(profileSpaceListResponse{Items: items}))
 }
 
 func (h authHandler) updateProfile(c *gin.Context) {
@@ -268,6 +308,16 @@ func (h authHandler) tenantRegister(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
+}
+
+func profileSpaceToResponse(member servicespace.Member) profileSpaceResponse {
+	return profileSpaceResponse{
+		ID:       member.ID,
+		TenantID: member.TenantID,
+		SpaceID:  member.SpaceID,
+		Role:     member.Role,
+		Status:   member.Status,
+	}
 }
 
 func platformProfileToResponse(user serviceplatformuser.PlatformUser) profileResponse {

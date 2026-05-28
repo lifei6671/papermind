@@ -115,6 +115,27 @@ func TestListEffectiveMembersUsesEnabledAndNotDeletedRepositoryQuery(t *testing.
 	}
 }
 
+func TestListEffectiveMembershipsForUserUsesTenantAndUserScope(t *testing.T) {
+	repo := &fakeRepository{
+		effectiveMembershipsForUser: []Member{
+			{TenantID: 10, SpaceID: 301, UserID: 21, Role: RoleTeacher, Status: StatusEnabled},
+			{TenantID: 10, SpaceID: 302, UserID: 21, Role: RoleSpaceAdmin, Status: StatusEnabled},
+		},
+	}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	members, err := svc.ListEffectiveMembershipsForUser(context.Background(), 10, 21)
+	if err != nil {
+		t.Fatalf("ListEffectiveMembershipsForUser returned error: %v", err)
+	}
+	if repo.listMembershipTenantID != 10 || repo.listMembershipUserID != 21 {
+		t.Fatalf("expected tenant 10 user 21, got tenant=%d user=%d", repo.listMembershipTenantID, repo.listMembershipUserID)
+	}
+	if len(members) != 2 || members[1].Role != RoleSpaceAdmin {
+		t.Fatalf("expected effective memberships for user, got %#v", members)
+	}
+}
+
 func TestDisableMemberRejectsLastEnabledSpaceAdmin(t *testing.T) {
 	repo := &fakeRepository{
 		membersByKey: map[memberKey]Member{
@@ -222,6 +243,10 @@ type fakeRepository struct {
 	effectiveMembers    []Member
 	listEffectiveCalled bool
 
+	effectiveMembershipsForUser []Member
+	listMembershipTenantID      uint64
+	listMembershipUserID        uint64
+
 	membersByKey            map[memberKey]Member
 	enabledSpaceAdminCount  int64
 	invariantChecks         int
@@ -259,6 +284,12 @@ func (r *fakeRepository) AddMember(ctx context.Context, member Member) (Member, 
 func (r *fakeRepository) ListEffectiveMembers(ctx context.Context, tenantID uint64, spaceID uint64) ([]Member, error) {
 	r.listEffectiveCalled = true
 	return r.effectiveMembers, nil
+}
+
+func (r *fakeRepository) ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]Member, error) {
+	r.listMembershipTenantID = tenantID
+	r.listMembershipUserID = userID
+	return r.effectiveMembershipsForUser, nil
 }
 
 func (r *fakeRepository) FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (Member, error) {

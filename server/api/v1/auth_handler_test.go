@@ -166,6 +166,39 @@ func TestProfileAPIRoutesReadAndUpdateTenantUser(t *testing.T) {
 	}
 }
 
+func TestProfileSpacesAPIRouteListsCurrentTenantUserMemberships(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedProfileSpacesAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/profile/spaces", nil, authHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("profile spaces status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[struct {
+		Items []struct {
+			SpaceID uint64 `json:"space_id"`
+			Role    string `json:"role"`
+			Status  string `json:"status"`
+		} `json:"items"`
+	}](t, recorder.Body.Bytes())
+	if len(body.Data.Items) != 1 {
+		t.Fatalf("expected one effective membership, got %#v", body.Data.Items)
+	}
+	item := body.Data.Items[0]
+	if item.SpaceID != 100 || item.Role != "space_admin" || item.Status != "enabled" {
+		t.Fatalf("unexpected membership item: %#v", item)
+	}
+}
+
 func TestTenantRegisterAPIRouteCreatesStudentByTenantCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -335,5 +368,48 @@ func seedTenantRegisterAPITestData(t *testing.T, gormDB *gorm.DB) {
 		) VALUES (?, ?, '', ?, ?, true, 'enabled', ?, ?, 1, '{}')
 	`, 10, "青藤一中", "允许学生通过租户码自注册", "PM-QT01", fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed register tenant: %v", err)
+	}
+}
+
+func seedProfileSpacesAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash teacher password: %v", err)
+	}
+	if err := gormDB.Exec(`
+		UPDATE users
+		SET password_hash = ?
+		WHERE tenant_id = 10 AND id = 20
+	`, passwordHash).Error; err != nil {
+		t.Fatalf("update teacher password: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO user_roles (
+			id, tenant_id, user_id, role, created_at, updated_at, ext_json
+		) VALUES (20, 10, 20, 'teacher', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed teacher role: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, logo_url, description, type, status,
+			created_at, updated_at, deleted_at, ext_json
+		) VALUES
+			(101, 10, '高一 2 班', '', '', 'class', 'enabled', ?, ?, 0, '{}'),
+			(102, 10, '高一 3 班', '', '', 'class', 'enabled', ?, ?, 0, '{}')
+	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed extra spaces: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status,
+			created_at, updated_at, deleted_at, ext_json
+		) VALUES
+			(101, 10, 101, 20, 'teacher', 'disabled', ?, ?, 0, '{}'),
+			(102, 10, 102, 20, 'teacher', 'enabled', ?, ?, 1700000000000, '{}')
+	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed inactive memberships: %v", err)
 	}
 }

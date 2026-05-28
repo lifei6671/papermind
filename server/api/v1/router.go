@@ -113,7 +113,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	userHandler := userHandler{service: userService, passwordMinLength: options.PasswordMinLength}
 	questionHandler := questionHandler{service: questionService, members: spaceRepository}
 	paperHandler := paperHandler{service: paperService, papers: paperRepository, members: spaceRepository}
-	authHandler := authHandler{platformUsers: platformUserService, tenantUsers: userService, sessionMaxAgeSeconds: options.AuthSessionTTL, passwordMinLength: options.PasswordMinLength}
+	authHandler := authHandler{platformUsers: platformUserService, tenantUsers: userService, spaces: spaceService, sessionMaxAgeSeconds: options.AuthSessionTTL, passwordMinLength: options.PasswordMinLength}
 	uploadDir := defaultUploadDir(options.UploadDir)
 	uploadHandler := uploadHandler{store: defaultUploadStore(options.UploadStore, uploadDir), now: time.Now}
 	sessionStore := defaultAuthSessionStore(options)
@@ -128,6 +128,7 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	api.POST("/auth/tenant/register", authHandler.tenantRegister)
 	api.GET("/profile", requireAuthPrincipalMiddleware(), authHandler.getProfile)
 	api.POST("/profile", requireAuthPrincipalMiddleware(), authHandler.updateProfile)
+	api.GET("/profile/spaces", requireAuthPrincipalMiddleware(), authHandler.listProfileSpaces)
 	api.GET("/exams", requireExamBusinessPrincipalMiddleware(), examHandler.list)
 	api.POST("/exams", requireExamBusinessPrincipalMiddleware(), examHandler.publish)
 	api.POST("/exams/invite/resolve", examHandler.resolveInvite)

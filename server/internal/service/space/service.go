@@ -86,6 +86,7 @@ type Repository interface {
 	CreateSpace(ctx context.Context, space Space, adminUserIDs []uint64) (Space, error)
 	AddMember(ctx context.Context, member Member) (Member, error)
 	ListEffectiveMembers(ctx context.Context, tenantID uint64, spaceID uint64) ([]Member, error)
+	ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]Member, error)
 	FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (Member, error)
 	CountEnabledSpaceAdmins(ctx context.Context, tenantID uint64, spaceID uint64) (int64, error)
 	DisableMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error
@@ -135,6 +136,10 @@ func (s *Service) JoinMember(ctx context.Context, input JoinMemberInput) (Member
 
 func (s *Service) ListEffectiveMembers(ctx context.Context, tenantID uint64, spaceID uint64) ([]Member, error) {
 	return s.repo.ListEffectiveMembers(ctx, tenantID, spaceID)
+}
+
+func (s *Service) ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]Member, error) {
+	return s.repo.ListEffectiveMembershipsForUser(ctx, tenantID, userID)
 }
 
 func (s *Service) DisableMember(ctx context.Context, input MemberActionInput) error {

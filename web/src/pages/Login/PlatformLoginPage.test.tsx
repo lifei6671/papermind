@@ -28,6 +28,7 @@ test("平台管理员登录成功后保存登录态并进入概览", async () =>
     },
     tenantLogin: vi.fn(),
     tenantRegister: vi.fn(),
+    listProfileSpaces: vi.fn(),
   };
 
   render(
@@ -57,6 +58,7 @@ test("平台管理员登录失败时展示服务端错误且不保存登录态",
     },
     tenantLogin: vi.fn(),
     tenantRegister: vi.fn(),
+    listProfileSpaces: vi.fn(),
   };
 
   render(
@@ -93,6 +95,7 @@ test("租户学生登录成功后保存登录态并进入考试入口", async ()
       };
     },
     tenantRegister: vi.fn(),
+    listProfileSpaces: vi.fn(),
   };
 
   render(

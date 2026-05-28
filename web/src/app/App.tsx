@@ -20,7 +20,7 @@ export function App() {
         {adminRoutes.map((route) => (
           <Route
             element={
-              route.group === "exam" && !routeVisibleForRole(route, session?.user.role)
+              route.group === "exam" && !routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? [])
                 ? <Navigate to="/" replace />
                 : route.element
             }

@@ -28,7 +28,7 @@ import { ResultsPage } from "../pages/Results/ResultsPage";
 import { SpaceManagementPage } from "../pages/Tenant/SpaceManagementPage";
 import { UserManagementPage } from "../pages/Tenant/UserManagementPage";
 import type { ActorRole } from "../api/grading";
-import type { SessionUser } from "../auth/session-context";
+import type { ProfileSpaceAuthorization, SessionUser } from "../auth/session-context";
 import { TenantScopedRoute } from "./TenantScopedRoute";
 
 export type AdminRouteGroup = "platform" | "tenant" | "exam" | "hidden";
@@ -42,6 +42,8 @@ export type AdminRoute = {
   group: AdminRouteGroup;
   badge?: string;
   menuRoles?: string[];
+  // 需要空间内身份的菜单项通过 profileSpaces 授权，不把 space_admin 混入租户级角色。
+  spaceMemberRoles?: ProfileSpaceAuthorization["role"][];
 };
 
 export const tenantAdminRoles = ["tenant_admin"];
@@ -182,8 +184,22 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
   ];
 }
 
-export function routeVisibleForRole(route: AdminRoute, role?: string) {
-  return !route.menuRoles || (!!role && route.menuRoles.includes(role));
+export function routeVisibleForRole(
+  route: AdminRoute,
+  role?: string,
+  profileSpaces: ProfileSpaceAuthorization[] = [],
+) {
+  if (!route.menuRoles) {
+    return true;
+  }
+  if (role && route.menuRoles.includes(role)) {
+    return true;
+  }
+
+  // 空间管理员入口必须从启用的空间成员授权推导，不能把 space_admin 写成 session 角色。
+  return !!route.spaceMemberRoles?.some((memberRole) =>
+    profileSpaces.some((space) => space.status === "enabled" && space.role === memberRole),
+  );
 }
 
 function routeActorRole(role?: string): ActorRole {

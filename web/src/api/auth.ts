@@ -32,10 +32,23 @@ export type TenantRegisterResult = {
   status: string;
 };
 
+export type ProfileSpaceMembership = {
+  id: number;
+  tenantID: number;
+  spaceID: number;
+  role: "space_admin" | "teacher" | "student";
+  status: "enabled" | "disabled";
+};
+
+export type ProfileSpaceMembershipList = {
+  items: ProfileSpaceMembership[];
+};
+
 export type AuthAPI = {
   platformLogin(input: PlatformLoginInput): Promise<AuthSession>;
   tenantLogin(input: TenantLoginInput): Promise<AuthSession>;
   tenantRegister(input: TenantRegisterInput): Promise<TenantRegisterResult>;
+  listProfileSpaces(): Promise<ProfileSpaceMembershipList>;
 };
 
 type AuthSessionAPIResponse = {
@@ -57,6 +70,18 @@ type TenantRegisterAPIResponse = {
   avatar_url: string;
   role: string;
   status: string;
+};
+
+type ProfileSpaceMembershipAPIResponse = {
+  id: number;
+  tenant_id: number;
+  space_id: number;
+  role: ProfileSpaceMembership["role"];
+  status: ProfileSpaceMembership["status"];
+};
+
+type ProfileSpaceMembershipListAPIResponse = {
+  items: ProfileSpaceMembershipAPIResponse[];
 };
 
 const defaultApiClient = createApiClient({
@@ -92,6 +117,10 @@ export function createAuthAPI(apiClient: ApiClient): AuthAPI {
         email: input.email,
       });
       return mapTenantRegisterResponse(data);
+    },
+    async listProfileSpaces() {
+      const data = await apiClient.get<ProfileSpaceMembershipListAPIResponse>("/api/v1/profile/spaces");
+      return mapProfileSpaceMembershipList(data);
     },
   };
 }
@@ -130,5 +159,18 @@ function mapTenantRegisterResponse(response: TenantRegisterAPIResponse): TenantR
     avatarURL: response.avatar_url,
     role: response.role,
     status: response.status,
+  };
+}
+
+function mapProfileSpaceMembershipList(response: ProfileSpaceMembershipListAPIResponse): ProfileSpaceMembershipList {
+  return {
+    // 这些条目表示当前用户在 space_members 中的启用授权，不能写回 session.role。
+    items: response.items.map((item) => ({
+      id: item.id,
+      tenantID: item.tenant_id,
+      spaceID: item.space_id,
+      role: item.role,
+      status: item.status,
+    })),
   };
 }

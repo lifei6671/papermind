@@ -152,6 +152,24 @@ func (r *SpaceRepository) ListEffectiveMembers(ctx context.Context, tenantID uin
 	return members, nil
 }
 
+func (r *SpaceRepository) ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]servicespace.Member, error) {
+	var rows []SpaceMemberDO
+	if err := r.db.WithContext(ctx).
+		Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
+		Where(SpaceMemberColumns.UserID+" = ?", userID).
+		Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+		Order(SpaceMemberColumns.SpaceID + " ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	members := make([]servicespace.Member, 0, len(rows))
+	for _, row := range rows {
+		members = append(members, memberFromDO(row))
+	}
+	return members, nil
+}
+
 func (r *SpaceRepository) FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (servicespace.Member, error) {
 	var row SpaceMemberDO
 	err := r.db.WithContext(ctx).
