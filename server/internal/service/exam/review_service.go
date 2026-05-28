@@ -13,20 +13,21 @@ var (
 )
 
 type PendingAttempt struct {
-	AttemptID             uint64 // 作答 ID。
-	AttemptQuestionID     uint64 // 待阅卷题目快照 ID。
-	ExamID                uint64 // 考试 ID。
-	UserID                uint64 // 考生用户 ID。
-	StudentName           string // 考生姓名。
-	SpaceID               uint64 // 考生所属空间 ID，用于权限范围判断。
-	SpaceName             string // 考生所属空间名称。
-	ExamName              string // 考试名称。
-	QuestionTitle         string // 简答题题干。
-	AnswerContent         string // 考生作答内容。
-	MaxScore              string // 简答题满分。
-	AnswerVersion         int64  // 答案版本号，用于乐观锁。
-	PendingShortTextCount int    // 待阅卷简答题数量。
-	SubmittedAt           int64  // 提交时间，Unix 毫秒时间戳。
+	AttemptID             uint64   // 作答 ID。
+	AttemptQuestionID     uint64   // 待阅卷题目快照 ID。
+	ExamID                uint64   // 考试 ID。
+	UserID                uint64   // 考生用户 ID。
+	StudentName           string   // 考生姓名。
+	SpaceID               uint64   // 考生所属空间 ID，用于权限范围判断。
+	SpaceName             string   // 考生所属空间名称。
+	SpaceIDs              []uint64 // 本次考试实际命中的空间 ID 集合，用于多空间考生权限判断。
+	ExamName              string   // 考试名称。
+	QuestionTitle         string   // 简答题题干。
+	AnswerContent         string   // 考生作答内容。
+	MaxScore              string   // 简答题满分。
+	AnswerVersion         int64    // 答案版本号，用于乐观锁。
+	PendingShortTextCount int      // 待阅卷简答题数量。
+	SubmittedAt           int64    // 提交时间，Unix 毫秒时间戳。
 }
 
 type ShortTextGrade struct {
@@ -96,11 +97,18 @@ func (s *ReviewService) ListPendingAttempts(ctx context.Context, input ListPendi
 	}
 	allowed := make([]PendingAttempt, 0, len(items))
 	for _, item := range items {
-		if err := s.permissionChecker.CanGradeAttempt(permissionWithAttemptScope(input.Permission, item.AttemptID, item.SpaceID), item.AttemptID); err == nil {
+		if s.canGradeAttemptInAnySpace(input.Permission, item.AttemptID, pendingAttemptSpaceIDs(item)) {
 			allowed = append(allowed, item)
 		}
 	}
 	return allowed, nil
+}
+
+func pendingAttemptSpaceIDs(item PendingAttempt) []uint64 {
+	if len(item.SpaceIDs) > 0 {
+		return item.SpaceIDs
+	}
+	return []uint64{item.SpaceID}
 }
 
 func (s *ReviewService) GradeShortText(ctx context.Context, input GradeShortTextInput) error {

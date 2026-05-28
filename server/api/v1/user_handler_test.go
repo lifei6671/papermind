@@ -133,6 +133,24 @@ func TestTenantAdminCanManageOnlyOwnTenantUsers(t *testing.T) {
 	}
 }
 
+func TestTenantAdminCannotDisableSelfByForgingActorID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedUserAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/users/99/disable", []byte(`{"tenant_id":10,"actor_id":20}`), authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected self-disable to be rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestCreateUserRejectsShortPassword(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

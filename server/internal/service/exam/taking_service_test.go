@@ -21,6 +21,11 @@ func TestSaveAnswerValidatesExamTokenDeadlineAndNormalizesAnswers(t *testing.T) 
 		ExamTokenHash:      HashExamToken("exam-token"),
 		ExamTokenExpiresAt: fixedUnixMilli + 35*minuteMillis,
 	}
+	repo.attemptQuestions = map[uint64]AttemptQuestion{
+		9001: {ID: 9001, TenantID: 10, AttemptID: 99, QuestionSnapshot: `{"title":"多选题","type":"multiple"}`},
+		9002: {ID: 9002, TenantID: 10, AttemptID: 99, QuestionSnapshot: `{"title":"填空题","type":"fill_blank"}`},
+		9003: {ID: 9003, TenantID: 10, AttemptID: 99, QuestionSnapshot: `{"title":"简答题","type":"short_text"}`},
+	}
 	svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: repo.currentTime})
 
 	err := svc.SaveAnswer(context.Background(), SaveAnswerInput{
@@ -76,6 +81,46 @@ func TestSaveAnswerValidatesExamTokenDeadlineAndNormalizesAnswers(t *testing.T) 
 	})
 	if !errors.Is(err, ErrAttemptAlreadySubmitted) {
 		t.Fatalf("expected ErrAttemptAlreadySubmitted, got %v", err)
+	}
+}
+
+func TestSaveAnswerUsesAttemptQuestionSnapshotType(t *testing.T) {
+	repo := newFakeTakingRepository()
+	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.attempt = Attempt{
+		ID:                 99,
+		TenantID:           10,
+		ExamID:             1,
+		UserID:             20,
+		Status:             AttemptStatusInProgress,
+		StartedAt:          fixedUnixMilli,
+		ExamTokenHash:      HashExamToken("exam-token"),
+		ExamTokenExpiresAt: fixedUnixMilli + 35*minuteMillis,
+	}
+	repo.attemptQuestions = map[uint64]AttemptQuestion{
+		9001: {
+			ID:               9001,
+			TenantID:         10,
+			AttemptID:        99,
+			QuestionSnapshot: `{"title":"单选题","type":"single"}`,
+		},
+	}
+	svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: fixedNow})
+
+	err := svc.SaveAnswer(context.Background(), SaveAnswerInput{
+		TenantID:          10,
+		AttemptID:         99,
+		AttemptQuestionID: 9001,
+		ExamToken:         "exam-token",
+		QuestionType:      QuestionTypeShortText,
+		OptionIDs:         []uint64{7},
+		Text:              "伪造的文本答案",
+	})
+	if err != nil {
+		t.Fatalf("SaveAnswer returned error: %v", err)
+	}
+	if repo.savedAnswer.AnswerContent != "7" {
+		t.Fatalf("expected answer normalized by snapshot question type, got %q", repo.savedAnswer.AnswerContent)
 	}
 }
 
@@ -403,8 +448,9 @@ func newFakeTakingRepository() *fakeTakingRepository {
 type fakeTakingRepository struct {
 	now int64
 
-	exam    Exam
-	attempt Attempt
+	exam             Exam
+	attempt          Attempt
+	attemptQuestions map[uint64]AttemptQuestion
 
 	savedAnswer Answer
 
@@ -435,6 +481,14 @@ func (r *fakeTakingRepository) FindAttemptByTokenHash(ctx context.Context, token
 
 func (r *fakeTakingRepository) GetExam(ctx context.Context, tenantID uint64, examID uint64) (Exam, error) {
 	return r.exam, nil
+}
+
+func (r *fakeTakingRepository) GetAttemptQuestion(ctx context.Context, tenantID uint64, attemptID uint64, attemptQuestionID uint64) (AttemptQuestion, error) {
+	question, ok := r.attemptQuestions[attemptQuestionID]
+	if !ok {
+		return AttemptQuestion{}, ErrAttemptNotFound
+	}
+	return question, nil
 }
 
 func (r *fakeTakingRepository) UpsertAnswer(ctx context.Context, answer Answer) error {

@@ -27,6 +27,9 @@ import { TenantManagementPage } from "../pages/Platform/TenantManagementPage";
 import { ResultsPage } from "../pages/Results/ResultsPage";
 import { SpaceManagementPage } from "../pages/Tenant/SpaceManagementPage";
 import { UserManagementPage } from "../pages/Tenant/UserManagementPage";
+import type { ActorRole } from "../api/grading";
+import type { SessionUser } from "../auth/session-context";
+import { TenantScopedRoute } from "./TenantScopedRoute";
 
 export type AdminRouteGroup = "platform" | "tenant" | "exam" | "hidden";
 
@@ -38,9 +41,15 @@ export type AdminRoute = {
   element: React.ReactElement;
   group: AdminRouteGroup;
   badge?: string;
+  menuRoles?: string[];
 };
 
-export const adminRoutes: AdminRoute[] = [
+export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
+  const sessionTenantID = user?.tenantID;
+  const actorID = user?.userID ?? 0;
+  const actorRole = routeActorRole(user?.role);
+
+  return [
   {
     path: "/",
     label: "概览",
@@ -70,23 +79,37 @@ export const adminRoutes: AdminRoute[] = [
     label: "空间管理",
     description: "管理空间、成员、空间管理员和空间配置",
     icon: School,
-    element: <SpaceManagementPage />,
+    element: (
+      <TenantScopedRoute
+        render={(tenantID) => <SpaceManagementPage tenantID={tenantID} />}
+        title="空间管理"
+        user={user}
+      />
+    ),
     group: "tenant",
+    menuRoles: ["space_admin"],
   },
   {
     path: "/users",
     label: "用户管理",
     description: "维护租户用户、导入用户和禁用提示",
     icon: Users,
-    element: <UserManagementPage />,
+    element: (
+      <TenantScopedRoute
+        render={(tenantID) => <UserManagementPage actorID={actorID} tenantID={tenantID} />}
+        title="用户管理"
+        user={user}
+      />
+    ),
     group: "tenant",
+    menuRoles: ["space_admin"],
   },
   {
     path: "/questions",
     label: "题库",
     description: "维护题目、选项、解析、标签和导入任务",
     icon: LibraryBig,
-    element: <QuestionBankPage />,
+    element: <QuestionBankPage tenantID={sessionTenantID ?? 0} />,
     group: "exam",
   },
   {
@@ -94,7 +117,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "题目导入",
     description: "上传 CSV/Excel 模板并查看导入错误行",
     icon: Upload,
-    element: <QuestionImportPage />,
+    element: <QuestionImportPage tenantID={sessionTenantID ?? 0} />,
     group: "exam",
   },
   {
@@ -102,7 +125,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "试卷",
     description: "维护大题、手动组卷和规则组卷",
     icon: FileStack,
-    element: <PaperAssemblyPage />,
+    element: <PaperAssemblyPage tenantID={sessionTenantID ?? 0} />,
     group: "exam",
   },
   {
@@ -110,7 +133,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "考试",
     description: "发布考试、配置范围、邀请码和结果策略",
     icon: ClipboardList,
-    element: <ExamManagementPage />,
+    element: <ExamManagementPage tenantID={sessionTenantID ?? 0} />,
     group: "exam",
   },
   {
@@ -118,7 +141,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "阅卷中心",
     description: "处理简答题待阅卷、评语和成绩重算",
     icon: PenLine,
-    element: <GradingPage />,
+    element: <GradingPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} />,
     group: "exam",
     badge: "P8 已就绪",
   },
@@ -127,7 +150,7 @@ export const adminRoutes: AdminRoute[] = [
     label: "成绩",
     description: "查看成绩、配置发布、导出 CSV",
     icon: Trophy,
-    element: <ResultsPage />,
+    element: <ResultsPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} />,
     group: "exam",
   },
   {
@@ -146,4 +169,18 @@ export const adminRoutes: AdminRoute[] = [
     element: <PlaceholderPage title="个人设置" description="当前用户资料和默认空间后续接入登录态。" />,
     group: "hidden",
   },
-];
+  ];
+}
+
+function routeActorRole(role?: string): ActorRole {
+  switch (role) {
+    case "space_admin":
+    case "teacher":
+    case "student":
+      return role;
+    default:
+      return "tenant_admin";
+  }
+}
+
+export const adminRoutes: AdminRoute[] = buildAdminRoutes();

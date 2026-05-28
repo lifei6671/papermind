@@ -2,7 +2,7 @@
 
 ## 本地联调代理
 
-前端开发服务通过 Vite 将 `/api` 和 `/uploads` 代理到后端，默认目标是 `http://localhost:9080`。
+前端开发服务通过 Vite 将 `/api` 和 `/uploads` 代理到后端，默认目标是 `http://localhost:9080`，与 `make backend-dev` 的默认端口一致。
 本地端到端联调时保持 `VITE_API_BASE_URL` 为空，让浏览器请求同源的 `/api/v1/...` 和 `/uploads/...`，再由 Vite 转发到后端，避免跨域问题和上传图片预览地址失效。
 
 ```bash

@@ -1,5 +1,5 @@
 import { Button } from "../../components/ui/Button";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Home, LogOut, Settings } from "lucide-react";
 import { useSession } from "../../auth/session-context";
 import type { AdminRoute, AdminRouteGroup } from "../../app/routes";
@@ -16,9 +16,11 @@ const groupLabels: Record<Exclude<AdminRouteGroup, "hidden">, string> = {
 };
 
 export function AdminShell({ routes }: AdminShellProps) {
+  const location = useLocation();
   const navigate = useNavigate();
-  const { signOut } = useSession();
+  const { session, signOut } = useSession();
   const visibleGroups = Object.keys(groupLabels) as Array<Exclude<AdminRouteGroup, "hidden">>;
+  const menuRoutes = routes.filter((route) => routeVisibleForRole(route, session?.user.role));
 
   const renderRouteLink = (route: AdminRoute) => {
     const Icon = route.icon;
@@ -28,7 +30,7 @@ export function AdminShell({ routes }: AdminShellProps) {
         className={({ isActive }) => (isActive ? "menu-link menu-link--active" : "menu-link")}
         end={route.path === "/"}
         key={route.path}
-        to={route.path}
+        to={routeLinkTarget(route, location.search)}
       >
         <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
         <span>{route.label}</span>
@@ -49,7 +51,10 @@ export function AdminShell({ routes }: AdminShellProps) {
 
         <div className="menu-panel">
           {visibleGroups.map((group) => {
-            const groupRoutes = routes.filter((route) => route.group === group);
+            const groupRoutes = menuRoutes.filter((route) => route.group === group);
+            if (!groupRoutes.length) {
+              return null;
+            }
 
             return (
               <div className="menu-panel__section" key={group}>
@@ -102,4 +107,16 @@ export function AdminShell({ routes }: AdminShellProps) {
       </div>
     </div>
   );
+}
+
+function routeLinkTarget(route: AdminRoute, currentSearch: string) {
+  const tenantID = new URLSearchParams(currentSearch).get("tenant_id");
+  if ((route.group === "tenant" || route.group === "exam") && tenantID) {
+    return `${route.path}?tenant_id=${encodeURIComponent(tenantID)}`;
+  }
+  return route.path;
+}
+
+function routeVisibleForRole(route: AdminRoute, role?: string) {
+  return !route.menuRoles || (!!role && route.menuRoles.includes(role));
 }

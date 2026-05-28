@@ -1,7 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { TenantManagementPage } from "./TenantManagementPage";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function createTenantAPI() {
   return {
@@ -82,6 +86,40 @@ function createUploadAPI() {
   };
 }
 
+function createSpaceAPI() {
+  return {
+    listSpaces: vi.fn().mockResolvedValue({
+      items: [{
+        id: 101,
+        tenantID: 1,
+        name: "高一全年级",
+        description: "月考统一空间",
+        logoFileName: "space.png",
+        members: [
+          { id: 1, name: "林老师", role: "space_admin", status: "enabled" },
+          { id: 2, name: "陈老师", role: "teacher", status: "enabled" },
+        ],
+      }],
+    }),
+  };
+}
+
+function createUserAPI() {
+  return {
+    listUsers: vi.fn().mockResolvedValue({
+      items: [{
+        id: 201,
+        tenantID: 1,
+        name: "林老师",
+        username: "lin.teacher",
+        role: "teacher",
+        avatarFileName: "lin.png",
+        status: "enabled",
+      }],
+    }),
+  };
+}
+
 test("租户管理页展示租户列表和租户码", async () => {
   const api = createTenantAPI();
   render(<TenantManagementPage api={api} />);
@@ -96,8 +134,124 @@ test("租户管理页展示租户列表和租户码", async () => {
   expect(await screen.findByText("青藤一中")).toBeInTheDocument();
   expect(screen.getByText("PM-QT01")).toBeInTheDocument();
   expect(screen.getByRole("img", { name: "青藤一中 Logo" })).toHaveAttribute("src", "qingteng.png");
+  expect(screen.getByRole("button", { name: "查看青藤一中空间" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "查看青藤一中用户" })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "管理青藤一中空间" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "管理青藤一中用户" })).not.toBeInTheDocument();
   expect(screen.getByText("允许注册")).toBeInTheDocument();
   expect(api.listTenants).toHaveBeenCalled();
+});
+
+test("租户管理页通过右侧抽屉查看租户空间", async () => {
+  const user = userEvent.setup();
+  const api = createTenantAPI();
+  const spaceAPI = createSpaceAPI();
+  const userAPI = createUserAPI();
+  render(<TenantManagementPage api={api} spaceAPI={spaceAPI} userAPI={userAPI} />);
+
+  await user.click(await screen.findByRole("button", { name: "查看青藤一中空间" }));
+
+  expect(spaceAPI.listSpaces).toHaveBeenCalledWith(1);
+  const drawer = await screen.findByRole("dialog", { name: "青藤一中空间抽屉" });
+  const drawerLayer = screen.getByTestId("tenant-resource-drawer-layer");
+  expect(drawerLayer).toHaveClass("tenant-resource-drawer-layer--overlay");
+  expect(drawer).toHaveClass("tenant-resource-drawer--half");
+  await waitFor(() => expect(drawer).toHaveClass("tenant-resource-drawer--open"));
+  await waitFor(() => expect(drawerLayer).toHaveClass("tenant-resource-drawer-layer--visible"));
+  expect(within(drawer).queryByRole("tablist")).not.toBeInTheDocument();
+  expect(within(drawer).getByRole("button", { name: "返回租户列表" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("button", { name: "全屏抽屉" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("button", { name: "关闭抽屉" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "空间" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "Logo" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "描述" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "管理员" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "操作" })).toBeInTheDocument();
+  expect(within(drawer).getByText("高一全年级")).toBeInTheDocument();
+  expect(within(drawer).getByText("space.png")).toBeInTheDocument();
+  expect(within(drawer).getByText("月考统一空间")).toBeInTheDocument();
+  expect(within(drawer).getByText("林老师")).toBeInTheDocument();
+
+  await user.click(screen.getByTestId("tenant-resource-drawer-backdrop"));
+  expect(screen.getByRole("dialog", { name: "青藤一中空间抽屉" })).toBeInTheDocument();
+
+  await user.click(within(drawer).getByRole("button", { name: "全屏抽屉" }));
+  expect(drawer).toHaveClass("tenant-resource-drawer--fullscreen");
+  expect(within(drawer).getByRole("button", { name: "退出全屏抽屉" })).toBeInTheDocument();
+
+  await user.click(within(drawer).getByRole("button", { name: "退出全屏抽屉" }));
+  expect(drawer).toHaveClass("tenant-resource-drawer--half");
+  expect(drawer).not.toHaveClass("tenant-resource-drawer--fullscreen");
+
+  await user.click(within(drawer).getByRole("button", { name: "返回租户列表" }));
+
+  expect(drawer).not.toHaveClass("tenant-resource-drawer--open");
+  expect(drawerLayer).not.toHaveClass("tenant-resource-drawer-layer--visible");
+  expect(screen.getByRole("dialog", { name: "青藤一中空间抽屉" })).toBeInTheDocument();
+
+  fireEvent.transitionEnd(drawer, { propertyName: "transform" });
+
+  expect(screen.queryByRole("dialog", { name: "青藤一中空间抽屉" })).not.toBeInTheDocument();
+});
+
+test("租户管理页通过右侧抽屉查看租户用户", async () => {
+  const user = userEvent.setup();
+  const api = createTenantAPI();
+  const spaceAPI = createSpaceAPI();
+  const userAPI = createUserAPI();
+  render(<TenantManagementPage api={api} spaceAPI={spaceAPI} userAPI={userAPI} />);
+
+  await user.click(await screen.findByRole("button", { name: "查看青藤一中用户" }));
+
+  expect(userAPI.listUsers).toHaveBeenCalledWith(1);
+  const drawer = await screen.findByRole("dialog", { name: "青藤一中用户抽屉" });
+  const drawerLayer = screen.getByTestId("tenant-resource-drawer-layer");
+  expect(drawer).toHaveClass("tenant-resource-drawer--half");
+  await waitFor(() => expect(drawerLayer).toHaveClass("tenant-resource-drawer-layer--visible"));
+  expect(within(drawer).queryByRole("tablist")).not.toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "用户" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "账号" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "头像" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "角色" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "状态" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("columnheader", { name: "操作" })).toBeInTheDocument();
+  expect(within(drawer).getByText("林老师")).toBeInTheDocument();
+  expect(within(drawer).getByText("lin.teacher")).toBeInTheDocument();
+  expect(within(drawer).getByText("lin.png")).toBeInTheDocument();
+  expect(within(drawer).getByText("教师")).toBeInTheDocument();
+  expect(within(drawer).getByText("启用")).toBeInTheDocument();
+
+  await user.click(within(drawer).getByRole("button", { name: "关闭抽屉" }));
+
+  expect(drawer).not.toHaveClass("tenant-resource-drawer--open");
+  expect(drawerLayer).not.toHaveClass("tenant-resource-drawer-layer--visible");
+  expect(screen.getByRole("dialog", { name: "青藤一中用户抽屉" })).toBeInTheDocument();
+
+  fireEvent.transitionEnd(drawer, { propertyName: "transform" });
+
+  expect(screen.queryByRole("dialog", { name: "青藤一中用户抽屉" })).not.toBeInTheDocument();
+});
+
+test("租户 Logo 使用后端资源域名展示", async () => {
+  vi.stubEnv("VITE_API_BASE_URL", "http://api.test");
+  const api = createTenantAPI();
+  api.listTenants.mockResolvedValueOnce({
+    items: [{
+      id: 1,
+      name: "青藤一中",
+      description: "覆盖初高中考试",
+      code: "QT2026",
+      logoFileName: "/uploads/tenant-logos/qingteng.png",
+      allowRegister: true,
+    }],
+  });
+
+  render(<TenantManagementPage api={api} />);
+
+  expect(await screen.findByRole("img", { name: "青藤一中 Logo" })).toHaveAttribute(
+    "src",
+    "http://api.test/uploads/tenant-logos/qingteng.png",
+  );
 });
 
 test("平台管理员可以创建租户并上传 logo", async () => {
@@ -311,14 +465,58 @@ test("平台管理员可以通过后端接口编辑描述、重置租户码并�
   );
 
   await user.click(within(screen.getByRole("row", { name: /青藤实验中学/ })).getByRole("button", { name: "重置租户码" }));
+  expect(api.resetTenantCode).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog", { name: "重置租户码确认" })).toBeInTheDocument();
+  expect(screen.getByText("当前租户码 PM-QT01 将立即失效。")).toBeInTheDocument();
+  expect(screen.getByText("已经发出的注册链接、手动注册时填写的旧租户码，都需要改用新的租户码。")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "确认重置" }));
   expect(api.resetTenantCode).toHaveBeenCalledWith(1);
   expect(await screen.findByText("PM-QT88")).toBeInTheDocument();
 
   await user.click(within(screen.getByRole("row", { name: /青藤实验中学/ })).getByRole("button", { name: "关闭注册" }));
+  expect(api.disableTenantRegistration).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog", { name: "关闭注册确认" })).toBeInTheDocument();
+  expect(screen.getByText("关闭后，新的租户用户将无法通过注册链接或手动输入租户码自注册。")).toBeInTheDocument();
+  expect(screen.getByText("已经注册的用户仍可继续登录和使用已授权的空间。")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "确认关闭" }));
   expect(api.disableTenantRegistration).toHaveBeenCalledWith(1);
   expect(await within(screen.getByRole("row", { name: /青藤实验中学/ })).findByText("暂停注册")).toBeInTheDocument();
 
   await user.click(within(screen.getByRole("row", { name: /知行培训/ })).getByRole("button", { name: "开启注册" }));
   expect(api.enableTenantRegistration).toHaveBeenCalledWith(2);
   expect(await within(screen.getByRole("row", { name: /知行培训/ })).findByText("允许注册")).toBeInTheDocument();
+});
+
+test("取消重置租户码不会调用后端接口", async () => {
+  const user = userEvent.setup();
+  const api = createTenantAPI();
+  render(<TenantManagementPage api={api} />);
+
+  await screen.findByText("青藤一中");
+  await user.click(within(screen.getByRole("row", { name: /青藤一中/ })).getByRole("button", { name: "重置租户码" }));
+
+  expect(screen.getByRole("dialog", { name: "重置租户码确认" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "取消" }));
+
+  expect(api.resetTenantCode).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "重置租户码确认" })).not.toBeInTheDocument();
+});
+
+test("取消关闭注册不会调用后端接口", async () => {
+  const user = userEvent.setup();
+  const api = createTenantAPI();
+  render(<TenantManagementPage api={api} />);
+
+  await screen.findByText("青藤一中");
+  await user.click(within(screen.getByRole("row", { name: /青藤一中/ })).getByRole("button", { name: "关闭注册" }));
+
+  expect(screen.getByRole("dialog", { name: "关闭注册确认" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "取消" }));
+
+  expect(api.disableTenantRegistration).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "关闭注册确认" })).not.toBeInTheDocument();
 });

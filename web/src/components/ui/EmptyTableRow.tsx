@@ -5,7 +5,7 @@ type EmptyTableRowProps = {
 
 export function EmptyTableRow({ colSpan, label = "无记录" }: EmptyTableRowProps) {
   return (
-    <tr>
+    <tr className="data-table__empty-row">
       <td className="data-table__empty" colSpan={colSpan}>
         {label}
       </td>

@@ -5,9 +5,9 @@ app:
   # 运行环境标识，常用值为 dev、test、prod。
   env: dev
   # Gin HTTP 服务监听端口。
-  http_port: 8080
+  http_port: 9080
   # 对外访问地址，用于生成回调地址、文件访问地址和前端展示链接。
-  public_url: http://localhost:8080
+  public_url: http://localhost:9080
 
 # database 用于配置 GORM 数据库连接。
 database:

@@ -22,6 +22,14 @@ func TestBuildHTTPServerUsesConfiguredPort(t *testing.T) {
 	}
 }
 
+func TestBuildHTTPServerUsesDefaultPort(t *testing.T) {
+	server := buildHTTPServer(&config.Config{}, http.NewServeMux())
+
+	if server.Addr != ":9080" {
+		t.Fatalf("server.Addr = %q, want :9080", server.Addr)
+	}
+}
+
 func TestRouterOptionsFromConfigPassesSecurityDefaults(t *testing.T) {
 	options := routerOptionsFromConfig(&config.Config{
 		Security: config.SecurityConfig{

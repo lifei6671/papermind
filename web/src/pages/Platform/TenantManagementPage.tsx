@@ -1,7 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
-import { RefreshCw, Search } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowLeft, Maximize2, Minimize2, RefreshCw, Search, X } from "lucide-react";
+import { useEffect, useState, type TransitionEvent } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -9,13 +9,29 @@ import { tenantApi } from "../../api/tenants";
 import type { TenantManagementAPI, TenantRow } from "../../api/tenants";
 import { uploadApi } from "../../api/uploads";
 import type { UploadAPI } from "../../api/uploads";
+import { spaceApi as defaultSpaceApi } from "../../api/spaces";
+import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
+import { userApi as defaultUserApi } from "../../api/users";
+import type { TenantUserRow, UserManagementAPI } from "../../api/users";
 
 type TenantManagementPageProps = {
   api?: TenantManagementAPI;
+  spaceAPI?: Pick<SpaceManagementAPI, "listSpaces">;
   uploadAPI?: UploadAPI;
+  userAPI?: Pick<UserManagementAPI, "listUsers">;
 };
 
-export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }: TenantManagementPageProps) {
+type TenantResourceDrawer = {
+  kind: "spaces" | "users";
+  tenant: TenantRow;
+};
+
+export function TenantManagementPage({
+  api = tenantApi,
+  spaceAPI = defaultSpaceApi,
+  uploadAPI = uploadApi,
+  userAPI = defaultUserApi,
+}: TenantManagementPageProps) {
   const [tenants, setTenants] = useState<TenantRow[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -30,7 +46,14 @@ export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }:
   const [editingDescription, setEditingDescription] = useState("");
   const [editingLogoFileName, setEditingLogoFileName] = useState("");
   const [editingUploadResetKey, setEditingUploadResetKey] = useState(0);
+  const [resetConfirmTenant, setResetConfirmTenant] = useState<TenantRow | null>(null);
+  const [closeRegisterConfirmTenant, setCloseRegisterConfirmTenant] = useState<TenantRow | null>(null);
   const [loadError, setLoadError] = useState("");
+  const [resourceDrawer, setResourceDrawer] = useState<TenantResourceDrawer | null>(null);
+  const [resourceSpaces, setResourceSpaces] = useState<SpaceRow[]>([]);
+  const [resourceUsers, setResourceUsers] = useState<TenantUserRow[]>([]);
+  const [resourceError, setResourceError] = useState("");
+  const [isResourceLoading, setIsResourceLoading] = useState(false);
 
   useEffect(() => {
     let ignore = false;
@@ -153,10 +176,15 @@ export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }:
     }
   }
 
-  async function resetTenantCode(tenantID: number) {
+  async function resetTenantCode() {
+    if (!resetConfirmTenant) {
+      return;
+    }
+
     try {
-      const nextTenant = await api.resetTenantCode(tenantID);
+      const nextTenant = await api.resetTenantCode(resetConfirmTenant.id);
       updateTenantRow(nextTenant);
+      setResetConfirmTenant(null);
       setLoadError("");
     } catch {
       setLoadError("租户操作失败");
@@ -164,12 +192,31 @@ export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }:
   }
 
   async function toggleRegister(tenant: TenantRow) {
+    if (tenant.allowRegister) {
+      setCloseRegisterConfirmTenant(tenant);
+      return;
+    }
+
     try {
       // 注册开关只控制自注册入口，不能和租户启停状态混用。
-      const nextTenant = tenant.allowRegister
-        ? await api.disableTenantRegistration(tenant.id)
-        : await api.enableTenantRegistration(tenant.id);
+      const nextTenant = await api.enableTenantRegistration(tenant.id);
       updateTenantRow(nextTenant);
+      setLoadError("");
+    } catch {
+      setLoadError("租户操作失败");
+    }
+  }
+
+  async function closeRegistration() {
+    if (!closeRegisterConfirmTenant) {
+      return;
+    }
+
+    try {
+      // 关闭注册会阻断新的自注册入口，必须由平台管理员二次确认后执行。
+      const nextTenant = await api.disableTenantRegistration(closeRegisterConfirmTenant.id);
+      updateTenantRow(nextTenant);
+      setCloseRegisterConfirmTenant(null);
       setLoadError("");
     } catch {
       setLoadError("租户操作失败");
@@ -183,6 +230,28 @@ export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }:
   function handleRefreshTenants() {
     setSearchQuery("");
     void reloadTenants();
+  }
+
+  async function openTenantResourceDrawer(tenant: TenantRow, kind: TenantResourceDrawer["kind"]) {
+    setResourceDrawer({ kind, tenant });
+    setResourceError("");
+    setIsResourceLoading(true);
+    setResourceSpaces([]);
+    setResourceUsers([]);
+
+    try {
+      if (kind === "spaces") {
+        const data = await spaceAPI.listSpaces(tenant.id);
+        setResourceSpaces(data.items);
+      } else {
+        const data = await userAPI.listUsers(tenant.id);
+        setResourceUsers(data.items);
+      }
+    } catch {
+      setResourceError(kind === "spaces" ? "租户空间加载失败" : "租户用户加载失败");
+    } finally {
+      setIsResourceLoading(false);
+    }
   }
 
   return (
@@ -266,9 +335,25 @@ export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }:
                           编辑资料
                         </Button>
                         <Button
+                          aria-label={`查看${tenant.name}空间`}
+                          onClick={() => void openTenantResourceDrawer(tenant, "spaces")}
+                          type="button"
+                          variant="actionReset"
+                        >
+                          空间
+                        </Button>
+                        <Button
+                          aria-label={`查看${tenant.name}用户`}
+                          onClick={() => void openTenantResourceDrawer(tenant, "users")}
+                          type="button"
+                          variant="actionReset"
+                        >
+                          用户
+                        </Button>
+                        <Button
                           variant="actionReset"
                           type="button"
-                          onClick={() => resetTenantCode(tenant.id)}
+                          onClick={() => setResetConfirmTenant(tenant)}
                         >
                           重置租户码
                         </Button>
@@ -341,6 +426,48 @@ export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }:
         </div>
       )}
 
+      {resetConfirmTenant && (
+        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="重置租户码确认">
+          <div className="platform-dialog__card">
+            <h2>重置租户码</h2>
+            <p>你正在重置租户「{resetConfirmTenant.name}」的租户码。</p>
+            <div className="platform-dialog__warning">
+              <p>当前租户码 {resetConfirmTenant.code} 将立即失效。</p>
+              <p>已经发出的注册链接、手动注册时填写的旧租户码，都需要改用新的租户码。</p>
+            </div>
+            <div className="platform-dialog__actions">
+              <Button variant="secondary" onClick={() => setResetConfirmTenant(null)} type="button">
+                取消
+              </Button>
+              <Button variant="primary" onClick={() => void resetTenantCode()} type="button">
+                确认重置
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {closeRegisterConfirmTenant && (
+        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="关闭注册确认">
+          <div className="platform-dialog__card">
+            <h2>关闭注册</h2>
+            <p>你正在关闭租户「{closeRegisterConfirmTenant.name}」的自注册入口。</p>
+            <div className="platform-dialog__warning">
+              <p>关闭后，新的租户用户将无法通过注册链接或手动输入租户码自注册。</p>
+              <p>已经注册的用户仍可继续登录和使用已授权的空间。</p>
+            </div>
+            <div className="platform-dialog__actions">
+              <Button variant="secondary" onClick={() => setCloseRegisterConfirmTenant(null)} type="button">
+                取消
+              </Button>
+              <Button variant="primary" onClick={() => void closeRegistration()} type="button">
+                确认关闭
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingTenant && (
         <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="租户资料弹窗">
           <div className="platform-dialog__card">
@@ -367,7 +494,7 @@ export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }:
               label="编辑租户 Logo"
               maxSizeBytes={1024 * 1024}
               onFileAccepted={handleEditingLogoAccepted}
-              previewSrc={editingLogoFileName === "未上传" ? undefined : editingLogoFileName}
+              previewSrc={editingLogoFileName === "未上传" ? undefined : resolveTenantLogoSrc(editingLogoFileName)}
               selectedLabel={editingLogoFileName === "未上传" ? undefined : "当前 Logo"}
             />
             <div className="platform-dialog__actions">
@@ -381,7 +508,190 @@ export function TenantManagementPage({ api = tenantApi, uploadAPI = uploadApi }:
           </div>
         </div>
       )}
+
+      {resourceDrawer && (
+        <TenantResourceDrawerView
+          drawer={resourceDrawer}
+          error={resourceError}
+          isLoading={isResourceLoading}
+          onClose={() => setResourceDrawer(null)}
+          spaces={resourceSpaces}
+          users={resourceUsers}
+        />
+      )}
     </section>
+  );
+}
+
+type TenantResourceDrawerViewProps = {
+  drawer: TenantResourceDrawer;
+  error: string;
+  isLoading: boolean;
+  onClose: () => void;
+  spaces: SpaceRow[];
+  users: TenantUserRow[];
+};
+
+function TenantResourceDrawerView({
+  drawer,
+  error,
+  isLoading,
+  onClose,
+  spaces,
+  users,
+}: TenantResourceDrawerViewProps) {
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+  const title = drawer.kind === "spaces" ? `${drawer.tenant.name}空间` : `${drawer.tenant.name}用户`;
+  const drawerClassName = [
+    "tenant-resource-drawer",
+    isFullscreen ? "tenant-resource-drawer--fullscreen" : "tenant-resource-drawer--half",
+    isOpen ? "tenant-resource-drawer--open" : "",
+  ].filter(Boolean).join(" ");
+  const layerClassName = [
+    "tenant-resource-drawer-layer",
+    "tenant-resource-drawer-layer--overlay",
+    isOpen ? "tenant-resource-drawer-layer--visible" : "",
+  ].filter(Boolean).join(" ");
+
+  useEffect(() => {
+    const openTimer = window.setTimeout(() => setIsOpen(true), 0);
+    return () => window.clearTimeout(openTimer);
+  }, []);
+
+  const closeDrawer = () => {
+    setIsClosing(true);
+    setIsOpen(false);
+  };
+
+  const finishClose = (event: TransitionEvent<HTMLElement>) => {
+    if (event.currentTarget !== event.target || event.propertyName !== "transform" || !isClosing) {
+      return;
+    }
+    onClose();
+  };
+
+  return (
+    <div className={layerClassName} data-testid="tenant-resource-drawer-layer">
+      <div aria-hidden="true" className="tenant-resource-drawer-backdrop" data-testid="tenant-resource-drawer-backdrop" />
+      <aside
+        aria-label={`${title}抽屉`}
+        aria-modal="true"
+        className={drawerClassName}
+        onTransitionEnd={finishClose}
+        role="dialog"
+      >
+        <header className="tenant-resource-drawer__head">
+          <button
+            aria-label="返回租户列表"
+            className="tenant-resource-drawer__icon"
+            onClick={closeDrawer}
+            type="button"
+          >
+            <ArrowLeft aria-hidden="true" size={19} />
+          </button>
+          <div className="tenant-resource-drawer__title">
+            <span>{drawer.tenant.code}</span>
+            <h2>{title}</h2>
+          </div>
+          <div className="tenant-resource-drawer__tools">
+            <button
+              aria-label={isFullscreen ? "退出全屏抽屉" : "全屏抽屉"}
+              className="tenant-resource-drawer__icon"
+              onClick={() => setIsFullscreen((current) => !current)}
+              type="button"
+            >
+              {isFullscreen
+                ? <Minimize2 aria-hidden="true" size={18} />
+                : <Maximize2 aria-hidden="true" size={18} />}
+            </button>
+            <button
+              aria-label="关闭抽屉"
+              className="tenant-resource-drawer__icon"
+              onClick={closeDrawer}
+              type="button"
+            >
+              <X aria-hidden="true" size={19} />
+            </button>
+          </div>
+        </header>
+
+        {isLoading && <div className="tenant-resource-drawer__state" role="status">正在加载</div>}
+        {error && <div className="tenant-admin-warning" role="alert">{error}</div>}
+        {!isLoading && !error && (
+          drawer.kind === "spaces"
+            ? <TenantSpaceDrawerTable spaces={spaces} />
+            : <TenantUserDrawerTable users={users} />
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function TenantSpaceDrawerTable({ spaces }: { spaces: SpaceRow[] }) {
+  return (
+    <div className="table-wrap tenant-resource-drawer__table">
+      <table className="data-table tenant-resource-table">
+        <thead>
+          <tr>
+            <th scope="col">空间</th>
+            <th scope="col">Logo</th>
+            <th scope="col">描述</th>
+            <th scope="col">管理员</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {spaces.length === 0 && <EmptyTableRow colSpan={5} />}
+          {spaces.map((space) => (
+            <tr key={space.id}>
+              <td>{space.name}</td>
+              <td>{space.logoFileName}</td>
+              <td>{space.description}</td>
+              <td>{tenantSpaceAdminSummary(space)}</td>
+              <td><span className="tenant-admin-muted">仅查看</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TenantUserDrawerTable({ users }: { users: TenantUserRow[] }) {
+  return (
+    <div className="table-wrap tenant-resource-drawer__table">
+      <table className="data-table tenant-resource-table">
+        <thead>
+          <tr>
+            <th scope="col">用户</th>
+            <th scope="col">账号</th>
+            <th scope="col">头像</th>
+            <th scope="col">角色</th>
+            <th scope="col">状态</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {users.length === 0 && <EmptyTableRow colSpan={6} />}
+          {users.map((user) => (
+            <tr key={user.id}>
+              <td>{user.name}</td>
+              <td>{user.username}</td>
+              <td>{user.avatarFileName}</td>
+              <td>{tenantUserRoleLabel(user.role)}</td>
+              <td>
+                <StatusBadge tone={user.status === "enabled" ? "success" : "info"}>
+                  {user.status === "enabled" ? "启用" : "禁用"}
+                </StatusBadge>
+              </td>
+              <td><span className="tenant-admin-muted">仅查看</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -394,7 +704,42 @@ function renderTenantLogo(tenant: TenantRow) {
     <img
       alt={`${tenant.name} Logo`}
       className="tenant-logo-thumb"
-      src={tenant.logoFileName}
+      src={resolveTenantLogoSrc(tenant.logoFileName)}
     />
   );
+}
+
+function resolveTenantLogoSrc(logoURL: string) {
+  if (!logoURL.startsWith("/uploads")) {
+    return logoURL;
+  }
+
+  const apiBaseURL = import.meta.env.VITE_API_BASE_URL ?? "";
+  if (!apiBaseURL) {
+    return logoURL;
+  }
+
+  // 上传接口返回后端静态资源相对路径，跨源联调时图片也要跟随 API 域名加载。
+  return `${apiBaseURL.replace(/\/$/, "")}/${logoURL.replace(/^\//, "")}`;
+}
+
+function tenantUserRoleLabel(role: TenantUserRow["role"]) {
+  switch (role) {
+    case "tenant_admin":
+      return "租户管理员";
+    case "teacher":
+      return "教师";
+    case "student":
+      return "考生";
+    default:
+      return role;
+  }
+}
+
+function tenantSpaceAdminSummary(space: SpaceRow) {
+  const admins = space.members
+    .filter((member) => member.role === "space_admin" && member.status === "enabled")
+    .map((member) => member.name);
+
+  return admins.length ? admins.join("、") : "未配置";
 }

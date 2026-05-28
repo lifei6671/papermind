@@ -1597,7 +1597,6 @@ type createUserRequest struct {
 
 type disableUserRequest struct {
 	TenantID uint64 `json:"tenant_id"`
-	ActorID  uint64 `json:"actor_id"`
 }
 
 type userResponse struct {
@@ -1700,9 +1699,14 @@ func (h userHandler) disable(c *gin.Context) {
 	if !authorizeTenantManagement(c, request.TenantID) {
 		return
 	}
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return
+	}
 	if err := h.service.Disable(c.Request.Context(), servicetenantuser.DisableInput{
 		TenantID: request.TenantID,
-		ActorID:  request.ActorID,
+		ActorID:  principal.UserID,
 		TargetID: userID,
 	}); err != nil {
 		writeUserServiceError(c, err)

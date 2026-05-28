@@ -24,8 +24,8 @@ services:
         condition: service_healthy
     environment:
       PAPERMIND_APP_ENV: ${PAPERMIND_APP_ENV:-docker}
-      PAPERMIND_APP_HTTP_PORT: 8080
-      PAPERMIND_APP_PUBLIC_URL: ${PAPERMIND_APP_PUBLIC_URL:-http://localhost:8080}
+      PAPERMIND_APP_HTTP_PORT: 9080
+      PAPERMIND_APP_PUBLIC_URL: ${PAPERMIND_APP_PUBLIC_URL:-http://localhost:9080}
       PAPERMIND_DATABASE_DRIVER: postgres
       PAPERMIND_DATABASE_DSN: postgres://papermind:${PAPERMIND_POSTGRES_PASSWORD:?set PAPERMIND_POSTGRES_PASSWORD in .env}@postgres:5432/papermind?sslmode=disable
       PAPERMIND_DATABASE_MAX_OPEN_CONNS: ${PAPERMIND_DATABASE_MAX_OPEN_CONNS:-20}
@@ -35,7 +35,7 @@ services:
       PAPERMIND_STORAGE_EXPORT_DIR: /var/lib/papermind/exports
       PAPERMIND_SECURITY_CORS_ORIGINS: ${PAPERMIND_SECURITY_CORS_ORIGINS:-http://localhost}
     ports:
-      - "${PAPERMIND_SERVER_PORT:-8080}:8080"
+      - "${PAPERMIND_SERVER_PORT:-9080}:9080"
     volumes:
       - server-data:/var/lib/papermind
 

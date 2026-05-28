@@ -107,6 +107,63 @@ func TestExamRepositoryRuleLiveCandidatesRejectsCrossRuleDuplicatePool(t *testin
 	}
 }
 
+func TestExamRepositoryReviewAndScoreRowsDoNotDuplicateMultiSpaceStudent(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
+	seedMultiSpaceAttemptData(t, gormDB)
+
+	pending, err := repo.ListPendingAttempts(t.Context(), 10, 900)
+	if err != nil {
+		t.Fatalf("ListPendingAttempts returned error: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected one pending answer, got %#v", pending)
+	}
+	if pending[0].PendingShortTextCount != 1 {
+		t.Fatalf("expected one pending short text count, got %d", pending[0].PendingShortTextCount)
+	}
+	if pending[0].SpaceID != 302 {
+		t.Fatalf("expected pending review to use exam target space 302, got %#v", pending[0])
+	}
+
+	rows, err := repo.ListScoreExportRows(t.Context(), 10, 900)
+	if err != nil {
+		t.Fatalf("ListScoreExportRows returned error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected one score export row, got %#v", rows)
+	}
+	if rows[0].SpaceID != 302 {
+		t.Fatalf("expected score export to use exam target space 302, got %#v", rows[0])
+	}
+
+	spaces, err := repo.AttemptSpaceIDs(t.Context(), 10, 700)
+	if err != nil {
+		t.Fatalf("AttemptSpaceIDs returned error: %v", err)
+	}
+	if len(spaces) != 1 || spaces[0] != 302 {
+		t.Fatalf("expected attempt spaces from exam target only, got %#v", spaces)
+	}
+}
+
+func TestExamRepositoryCreateAttemptMapsUniqueConflict(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
+	seedMultiSpaceAttemptData(t, gormDB)
+
+	_, err := repo.CreateAttempt(t.Context(), serviceexam.Attempt{
+		TenantID:  10,
+		ExamID:    900,
+		UserID:    21,
+		AttemptNo: 1,
+		Status:    serviceexam.AttemptStatusInProgress,
+		StartedAt: 1600,
+	})
+	if !errors.Is(err, serviceexam.ErrAttemptUniqueConflict) {
+		t.Fatalf("expected ErrAttemptUniqueConflict, got %v", err)
+	}
+}
+
 func openExamRepositoryTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -124,6 +181,78 @@ func openExamRepositoryTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("apply migration: %v", err)
 	}
 	return gormDB
+}
+
+func seedMultiSpaceAttemptData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, created_at, updated_at, ext_json
+		) VALUES
+			(301, 10, '高一一班', 1000, 1000, '{}'),
+			(302, 10, '语文培优班', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed spaces: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, tenant_id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES (21, 10, 'student21', '多空间考生', '13800000021', 'student21@example.test', 'hash', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status, created_at, updated_at, ext_json
+		) VALUES
+			(1, 10, 301, 21, 'student', 'enabled', 1000, 1000, '{}'),
+			(2, 10, 302, 21, 'student', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed space members: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exams (
+			id, tenant_id, paper_id, name, start_time, end_time, duration_minutes,
+			max_attempts, result_strategy, publish_mode, invite_code, status,
+			created_at, updated_at, ext_json
+		) VALUES (900, 10, 100, '多空间考试', 1000, 2000, 30, 1, 'latest', 'manual_publish', 'MULTI2026', 'published', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed exam: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_targets (
+			id, tenant_id, exam_id, target_type, target_id, created_at, ext_json
+		) VALUES (1, 10, 900, 'space', 302, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed exam target: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_attempts (
+			id, tenant_id, exam_id, user_id, attempt_no, status, started_at, submitted_at,
+			exam_token_hash, exam_token_expires_at, objective_score, subjective_score, total_score,
+			created_at, updated_at, ext_json
+		) VALUES (700, 10, 900, 21, 1, 'submitted', 1000, 1500, 'token-hash', 3000, 6, 0, 6, 1000, 1500, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed attempt: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_attempt_questions (
+			id, tenant_id, attempt_id, section_id, question_id, section_snapshot, sort_order, score,
+			question_snapshot, option_snapshot, correct_answer_snapshot, created_at, updated_at, ext_json
+		) VALUES (800, 10, 700, 300, 500, '{}', 1, 10, '{"title":"简答题"}', '[]', '{}', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed attempt question: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_answers (
+			id, tenant_id, attempt_id, attempt_question_id, answer_content, score, grading_status,
+			created_at, updated_at, ext_json
+		) VALUES (900, 10, 700, 800, '答案', 0, 'pending', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed answer: %v", err)
+	}
 }
 
 func serviceExamForRuleLive() serviceexam.Exam {

@@ -71,6 +71,15 @@ test("用户管理页展示用户列表和角色状态", async () => {
   );
 });
 
+test("缺少租户上下文时不请求用户接口", () => {
+  const api = createUserAPI();
+
+  render(<UserManagementPage api={api} />);
+
+  expect(api.listUsers).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent("当前账号没有租户上下文");
+});
+
 test("租户管理员可以创建用户并上传头像", async () => {
   const user = userEvent.setup();
   const api = createUserAPI();

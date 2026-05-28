@@ -24,6 +24,6 @@ COPY server/data/migrations /app/data/migrations
 
 USER papermind
 
-EXPOSE 8080
+EXPOSE 9080
 
 CMD ["/app/papermind"]

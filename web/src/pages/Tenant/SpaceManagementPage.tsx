@@ -22,7 +22,7 @@ type SpaceManagementPageProps = {
   tenantID?: number;
 };
 
-export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, tenantID = 10 }: SpaceManagementPageProps) {
+export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, tenantID }: SpaceManagementPageProps) {
   const [spaces, setSpaces] = useState<SpaceRow[]>([]);
   const [users, setUsers] = useState<TenantUserRow[]>([]);
   const [spaceName, setSpaceName] = useState("");
@@ -45,11 +45,17 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
   const [selectedMemberSpaceID, setSelectedMemberSpaceID] = useState<number | null>(null);
 
   const selectedMemberSpace = spaces.find((space) => space.id === selectedMemberSpaceID) ?? null;
+  const hasTenantContext = isPositiveInteger(tenantID);
 
   useEffect(() => {
-    let ignore = false;
+    if (!isPositiveInteger(tenantID)) {
+      return;
+    }
 
-    Promise.all([api.listSpaces(tenantID), userApi.listUsers(tenantID)])
+    let ignore = false;
+    const currentTenantID = tenantID;
+
+    Promise.all([api.listSpaces(currentTenantID), userApi.listUsers(currentTenantID)])
       .then(([spaceData, userData]) => {
         if (!ignore) {
           setSpaces(spaceData.items);
@@ -83,6 +89,11 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
 
   async function handleCreateSpace(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!isPositiveInteger(tenantID)) {
+      setLoadError("当前账号没有租户上下文，请先登录租户账号后再创建空间");
+      return;
+    }
+
     const adminUserID = Number(spaceAdminUserID);
     if (!adminUserID) {
       setLoadError("请先选择空间管理员");
@@ -200,6 +211,24 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
   function handleRefreshSpaces() {
     setSearchQuery("");
     setAppliedSearchQuery("");
+  }
+
+  if (!hasTenantContext) {
+    return (
+      <section className="page platform-page tenant-admin-page">
+        <nav aria-label="空间管理菜单" className="platform-tabbar" role="tablist">
+          <a className="platform-tab platform-tab--active" href="/spaces" role="tab" aria-selected="true">
+            空间管理
+          </a>
+        </nav>
+
+        <Panel>
+          <div className="tenant-admin-warning" role="alert">
+            当前账号没有租户上下文，请先登录租户账号后再进入空间管理。
+          </div>
+        </Panel>
+      </section>
+    );
   }
 
   return (
@@ -481,6 +510,10 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
       )}
     </section>
   );
+}
+
+function isPositiveInteger(value: number | undefined): value is number {
+  return Number.isInteger(value) && Number(value) > 0;
 }
 
 function adminSummary(space: SpaceRow) {

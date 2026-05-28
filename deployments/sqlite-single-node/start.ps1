@@ -1,5 +1,5 @@
 param(
-  [int]$Port = 8080,
+  [int]$Port = 9080,
   [string]$DatabaseFile = "server/data/sqlite/papermind.db"
 )
 
@@ -23,7 +23,16 @@ Set-Location $repoRoot
   New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot $_) | Out-Null
 }
 
-$sqliteDsn = "file:$DatabaseFile`?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000"
+if ([System.IO.Path]::IsPathRooted($DatabaseFile)) {
+  $resolvedDatabaseFile = $DatabaseFile
+} else {
+  $resolvedDatabaseFile = Join-Path $repoRoot $DatabaseFile
+}
+$storageTempDir = Join-Path $repoRoot "server/data/tmp"
+$storageImportDir = Join-Path $repoRoot "server/data/imports"
+$storageExportDir = Join-Path $repoRoot "server/data/exports"
+
+$sqliteDsn = "file:$resolvedDatabaseFile`?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000"
 
 $env:PAPERMIND_APP_ENV = "dev"
 $env:PAPERMIND_APP_HTTP_PORT = [string]$Port
@@ -31,9 +40,9 @@ $env:PAPERMIND_DATABASE_DRIVER = "sqlite"
 $env:PAPERMIND_DATABASE_DSN = $sqliteDsn
 $env:PAPERMIND_DATABASE_MAX_OPEN_CONNS = "1"
 $env:PAPERMIND_DATABASE_MAX_IDLE_CONNS = "1"
-$env:PAPERMIND_STORAGE_TEMP_DIR = "server/data/tmp"
-$env:PAPERMIND_STORAGE_IMPORT_DIR = "server/data/imports"
-$env:PAPERMIND_STORAGE_EXPORT_DIR = "server/data/exports"
+$env:PAPERMIND_STORAGE_TEMP_DIR = $storageTempDir
+$env:PAPERMIND_STORAGE_IMPORT_DIR = $storageImportDir
+$env:PAPERMIND_STORAGE_EXPORT_DIR = $storageExportDir
 
 Write-Host "PaperMind SQLite 单机模式"
 Write-Host "DSN: $sqliteDsn"

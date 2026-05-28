@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 
 	v1 "github.com/lifei6671/papermind/server/api/v1"
+	"github.com/lifei6671/papermind/server/bootstrap/adminseed"
 	"github.com/lifei6671/papermind/server/bootstrap/devseed"
 	"github.com/lifei6671/papermind/server/bootstrap/migration"
 	dbdao "github.com/lifei6671/papermind/server/internal/dao/db"
@@ -40,6 +42,10 @@ func main() {
 
 	if err := migration.RunForDriver(gormDB, resolveMigrationRoot(), cfg.Database.Driver); err != nil {
 		slog.Error("run database migration failed", "error", err)
+		os.Exit(1)
+	}
+	if err := adminseed.Run(context.Background(), gormDB); err != nil {
+		slog.Error("seed default platform admin failed", "error", err)
 		os.Exit(1)
 	}
 	if err := devseed.RunForDriver(gormDB, cfg.Database.Driver, cfg.App.Env); err != nil {
@@ -82,7 +88,7 @@ func configureConsoleLogger() {
 }
 
 func buildHTTPServer(cfg *config.Config, handler http.Handler) *http.Server {
-	port := 8080
+	port := 9080
 	if cfg != nil && cfg.App.HTTPPort > 0 {
 		port = cfg.App.HTTPPort
 	}

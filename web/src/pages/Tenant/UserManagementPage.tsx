@@ -20,7 +20,7 @@ type UserManagementPageProps = {
   actorID?: number;
 };
 
-export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }: UserManagementPageProps) {
+export function UserManagementPage({ api = userApi, tenantID, actorID }: UserManagementPageProps) {
   const [users, setUsers] = useState<TenantUserRow[]>([]);
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -36,11 +36,17 @@ export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
+  const hasTenantContext = isPositiveInteger(tenantID);
 
   useEffect(() => {
-    let ignore = false;
+    if (!isPositiveInteger(tenantID)) {
+      return;
+    }
 
-    api.listUsers(tenantID)
+    let ignore = false;
+    const currentTenantID = tenantID;
+
+    api.listUsers(currentTenantID)
       .then((data) => {
         if (!ignore) {
           setUsers(data.items);
@@ -76,6 +82,10 @@ export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }
 
   async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!isPositiveInteger(tenantID)) {
+      setLoadError("当前账号没有租户上下文，请先登录租户账号后再创建用户");
+      return;
+    }
 
     // 租户管理员创建用户时先写入基础身份和角色，空间归属后续在空间成员管理中维护。
     const nextUser = await api.createUser({
@@ -113,6 +123,16 @@ export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }
       return;
     }
 
+    if (!isPositiveInteger(tenantID)) {
+      setLoadError("当前账号没有租户上下文，请先登录租户账号后再禁用用户");
+      return;
+    }
+
+    if (!isPositiveInteger(actorID)) {
+      setLoadError("当前账号没有操作人上下文，请重新登录后再禁用用户");
+      return;
+    }
+
     const disabledUser = await api.disableUser({
       tenantID,
       actorID,
@@ -134,6 +154,24 @@ export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }
   function handleRefreshUsers() {
     setSearchQuery("");
     setAppliedSearchQuery("");
+  }
+
+  if (!hasTenantContext) {
+    return (
+      <section className="page platform-page tenant-admin-page">
+        <nav aria-label="用户管理菜单" className="platform-tabbar" role="tablist">
+          <a className="platform-tab platform-tab--active" href="/users" role="tab" aria-selected="true">
+            用户管理
+          </a>
+        </nav>
+
+        <Panel>
+          <div className="tenant-admin-warning" role="alert">
+            当前账号没有租户上下文，请先登录租户账号后再进入用户管理。
+          </div>
+        </Panel>
+      </section>
+    );
   }
 
   return (
@@ -323,4 +361,8 @@ export function UserManagementPage({ api = userApi, tenantID = 10, actorID = 1 }
       )}
     </section>
   );
+}
+
+function isPositiveInteger(value: number | undefined): value is number {
+  return Number.isInteger(value) && Number(value) > 0;
 }

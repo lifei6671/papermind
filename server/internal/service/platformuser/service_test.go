@@ -15,6 +15,7 @@ func TestSeedAdminCreatesInitialPlatformAdmin(t *testing.T) {
 
 	user, err := svc.SeedAdmin(context.Background(), SeedAdminInput{
 		Username:     "admin",
+		Email:        "admin@iminho.me",
 		PasswordHash: "hashed-password",
 	})
 	if err != nil {
@@ -28,6 +29,9 @@ func TestSeedAdminCreatesInitialPlatformAdmin(t *testing.T) {
 	}
 	if repo.created.Status != StatusEnabled {
 		t.Fatalf("expected enabled status, got %q", repo.created.Status)
+	}
+	if repo.created.Email != "admin@iminho.me" {
+		t.Fatalf("expected email admin@iminho.me, got %q", repo.created.Email)
 	}
 }
 

@@ -114,6 +114,7 @@ type RecordEventInput struct {
 type TakingRepository interface {
 	FindAttemptByTokenHash(ctx context.Context, tokenHash string) (Attempt, error)
 	GetExam(ctx context.Context, tenantID uint64, examID uint64) (Exam, error)
+	GetAttemptQuestion(ctx context.Context, tenantID uint64, attemptID uint64, attemptQuestionID uint64) (AttemptQuestion, error)
 	UpsertAnswer(ctx context.Context, answer Answer) error
 	// 提交事务内先锁定作答状态，再读取本次答案快照并调用 grader，最后原子写入分数和提交事件。
 	SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, tenantID uint64, attemptID uint64, version int64, submittedAt int64, status string, grader ObjectiveGradingFunc, event ExamEvent) (int64, error)
@@ -169,6 +170,18 @@ func (s *TakingService) SaveAnswer(ctx context.Context, input SaveAnswerInput) e
 	if s.now() > answerDeadline(attempt.StartedAt, exam)+answerTransportGraceMillis {
 		return ErrAnswerDeadlineExceeded
 	}
+	attemptQuestion, err := s.repo.GetAttemptQuestion(ctx, input.TenantID, input.AttemptID, input.AttemptQuestionID)
+	if errors.Is(err, ErrAttemptNotFound) {
+		return ErrExamTokenAttemptMismatch
+	}
+	if err != nil {
+		return err
+	}
+	questionType, err := parseAttemptQuestionSnapshotType(attemptQuestion.QuestionSnapshot)
+	if err != nil {
+		return err
+	}
+	input.QuestionType = questionType
 	return s.repo.UpsertAnswer(ctx, Answer{
 		TenantID:          input.TenantID,
 		AttemptID:         input.AttemptID,
@@ -299,6 +312,19 @@ func (s *TakingService) shouldThrottle(event ExamEvent) bool {
 	}
 	s.lastEventAt[key] = event.EventTime
 	return false
+}
+
+func parseAttemptQuestionSnapshotType(value string) (string, error) {
+	var snapshot struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(value), &snapshot); err != nil {
+		return "", err
+	}
+	if snapshot.Type == "" {
+		return "", ErrUnsupportedQuestionType
+	}
+	return snapshot.Type, nil
 }
 
 func normalizeAnswer(input SaveAnswerInput) string {

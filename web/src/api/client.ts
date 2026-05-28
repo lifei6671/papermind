@@ -24,6 +24,8 @@ type RequestOptions = {
   headers?: Record<string, string>;
 };
 
+export const API_UNAUTHORIZED_EVENT = "papermind:api-unauthorized";
+
 export class ApiError extends Error {
   code: number;
   status: number;
@@ -66,6 +68,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
     if (response.status === 401) {
       options.onUnauthorized?.();
+      dispatchUnauthorizedEvent();
     }
 
     if (!response.ok) {
@@ -99,6 +102,14 @@ export function formatApiErrorMessage(error: unknown, fallback = "操作失败")
     return error.message;
   }
   return fallback;
+}
+
+function dispatchUnauthorizedEvent() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new Event(API_UNAUTHORIZED_EVENT));
 }
 
 function buildUrl(baseUrl: string, path: string) {

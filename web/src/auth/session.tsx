@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { API_UNAUTHORIZED_EVENT } from "../api/client";
 import { SessionContext, SESSION_STORAGE_KEY } from "./session-context";
 import type { AuthSession } from "./session-context";
 
@@ -19,6 +20,11 @@ export function SessionProvider({ children }: SessionProviderProps) {
     setSession(null);
     window.localStorage.removeItem(SESSION_STORAGE_KEY);
   }, []);
+
+  useEffect(() => {
+    window.addEventListener(API_UNAUTHORIZED_EVENT, signOut);
+    return () => window.removeEventListener(API_UNAUTHORIZED_EVENT, signOut);
+  }, [signOut]);
 
   const value = useMemo(
     () => ({

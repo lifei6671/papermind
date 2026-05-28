@@ -48,10 +48,16 @@ func (r *PlatformUserRepository) Create(ctx context.Context, user serviceplatfor
 		},
 		Username:     user.Username,
 		AvatarURL:    user.AvatarURL,
-		Phone:        generatedPlatformUserPhone(user.Username),
-		Email:        generatedPlatformUserEmail(user.Username),
+		Phone:        user.Phone,
+		Email:        user.Email,
 		PasswordHash: user.PasswordHash,
 		Status:       user.Status,
+	}
+	if row.Phone == "" {
+		row.Phone = generatedPlatformUserPhone(user.Username)
+	}
+	if row.Email == "" {
+		row.Email = generatedPlatformUserEmail(user.Username)
 	}
 	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return serviceplatformuser.PlatformUser{}, err
@@ -137,6 +143,8 @@ func platformUserFromDO(row PlatformUserDO) serviceplatformuser.PlatformUser {
 		ID:           row.ID,
 		Username:     row.Username,
 		AvatarURL:    row.AvatarURL,
+		Phone:        row.Phone,
+		Email:        row.Email,
 		PasswordHash: row.PasswordHash,
 		LastLoginIP:  row.LastLoginIP,
 		LastLoginAt:  row.LastLoginAt,

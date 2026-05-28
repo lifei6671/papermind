@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/mattn/go-sqlite3"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,15 +20,22 @@ import (
 	"github.com/lifei6671/papermind/server/library/constant"
 )
 
+// ExamRepository 负责考试模块的数据库持久化边界。
+// 这里集中处理考试发布、考试目标、作答快照、答案、阅卷和成绩导出等数据读写，
+// service 层只关心业务对象，具体表结构和多表关联都收敛在仓储层。
 type ExamRepository struct {
 	db  *gorm.DB
 	now func() int64
 }
 
+// ExamRepositoryOptions 提供仓储层可替换的运行时依赖。
+// Now 主要用于测试中固定毫秒时间戳，避免考试发布、作答和评分用例受真实时间影响。
 type ExamRepositoryOptions struct {
 	Now func() int64
 }
 
+// NewExamRepository 创建考试仓储。
+// 未传入 Now 时使用当前 Unix 毫秒时间，确保写入数据库的时间字段保持同一单位。
 func NewExamRepository(gormDB *gorm.DB, options ExamRepositoryOptions) *ExamRepository {
 	now := options.Now
 	if now == nil {
@@ -34,6 +44,8 @@ func NewExamRepository(gormDB *gorm.DB, options ExamRepositoryOptions) *ExamRepo
 	return &ExamRepository{db: gormDB, now: now}
 }
 
+// ListExams 按租户分页列出未删除的考试。
+// 查询先统计总数再读取当前页，返回值保留分页参数，方便 API 层直接构造列表响应。
 func (r *ExamRepository) ListExams(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[serviceexam.Exam], error) {
 	page = pagination.Normalize(page)
 	query := r.db.WithContext(ctx).Model(&ExamDO{}).
@@ -63,6 +75,8 @@ func (r *ExamRepository) ListExams(ctx context.Context, tenantID uint64, page pa
 	}, nil
 }
 
+// CreateExam 创建考试草稿的基础记录。
+// 未指定作答次数、成绩策略和成绩发布模式时写入业务默认值，保证后续发布流程有稳定初始状态。
 func (r *ExamRepository) CreateExam(ctx context.Context, exam serviceexam.Exam) (serviceexam.Exam, error) {
 	now := r.now()
 	row := ExamDO{
@@ -94,6 +108,8 @@ func (r *ExamRepository) CreateExam(ctx context.Context, exam serviceexam.Exam) 
 	return examFromDO(row, ""), nil
 }
 
+// GetPaper 读取考试发布需要的试卷摘要。
+// ContainsShortText 由小节题型实时统计，用于判断考试是否需要人工阅卷。
 func (r *ExamRepository) GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (serviceexam.Paper, error) {
 	var row PaperDO
 	if err := r.db.WithContext(ctx).
@@ -119,6 +135,8 @@ func (r *ExamRepository) GetPaper(ctx context.Context, tenantID uint64, paperID 
 	}, nil
 }
 
+// InviteCodeExists 检查邀请码是否已被未删除考试占用。
+// 邀请码面向考生入口使用，因此按全局唯一处理，不把 tenantID 作为过滤条件。
 func (r *ExamRepository) InviteCodeExists(ctx context.Context, tenantID uint64, code string) (bool, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&ExamDO{}).
@@ -130,6 +148,8 @@ func (r *ExamRepository) InviteCodeExists(ctx context.Context, tenantID uint64, 
 	return count > 0, nil
 }
 
+// ListRuleLiveCandidates 按动态组卷规则生成发布时的候选题池。
+// 每条规则按 sort_order 顺序抽题，同一次考试发布中同一道题只会被使用一次。
 func (r *ExamRepository) ListRuleLiveCandidates(ctx context.Context, tenantID uint64, paperID uint64) ([]serviceexam.LivePoolItem, error) {
 	var rules []PaperSectionRuleDO
 	if err := r.db.WithContext(ctx).
@@ -142,6 +162,8 @@ func (r *ExamRepository) ListRuleLiveCandidates(ctx context.Context, tenantID ui
 	items := make([]serviceexam.LivePoolItem, 0)
 	usedQuestionIDs := make(map[uint64]struct{})
 	for _, rule := range rules {
+		// 动态组卷先拿到满足当前规则的全部题目，再在内存里排除前序规则已占用的题目。
+		// 这样可以避免同一张试卷的多个规则抽中同一道题，保证冻结题池不重复。
 		questionIDs, err := r.matchRuleLiveQuestionIDs(ctx, tenantID, rule)
 		if err != nil {
 			return nil, err
@@ -163,12 +185,15 @@ func (r *ExamRepository) ListRuleLiveCandidates(ctx context.Context, tenantID ui
 			}
 		}
 		if selected < rule.QuestionCount {
+			// 去重之后数量不足时直接失败，发布流程不会落入部分冻结的不可用状态。
 			return nil, serviceexam.ErrRuleLiveQuestionPoolInsufficient
 		}
 	}
 	return items, nil
 }
 
+// matchRuleLiveQuestionIDs 查出满足单条动态组卷规则的题目 ID。
+// 题型来自规则所属小节，难度和标签来自规则本身，结果按题目 ID 稳定排序。
 func (r *ExamRepository) matchRuleLiveQuestionIDs(ctx context.Context, tenantID uint64, rule PaperSectionRuleDO) ([]uint64, error) {
 	var section PaperSectionDO
 	if err := r.db.WithContext(ctx).
@@ -191,6 +216,8 @@ func (r *ExamRepository) matchRuleLiveQuestionIDs(ctx context.Context, tenantID 
 		query = query.Where("questions."+QuestionColumns.Difficulty+" = ?", *rule.Difficulty)
 	}
 	if len(tagIDs) > 0 {
+		// 标签过滤要求题目同时拥有规则指定的全部标签。
+		// JOIN 后用 GROUP/HAVING 统计不同标签数量，避免 IN 查询退化为“命中任意标签”。
 		query = query.Joins("JOIN "+QuestionTagDO{}.TableName()+" AS question_tags ON question_tags."+QuestionTagColumns.TenantID+" = questions."+QuestionColumns.TenantID+" AND question_tags."+QuestionTagColumns.QuestionID+" = questions."+QuestionColumns.ID).
 			Where("question_tags."+QuestionTagColumns.TagID+" IN ?", tagIDs).
 			Group("questions."+QuestionColumns.ID).
@@ -203,8 +230,11 @@ func (r *ExamRepository) matchRuleLiveQuestionIDs(ctx context.Context, tenantID 
 	return ids, nil
 }
 
+// PublishExamAndFreezeLivePool 发布考试并冻结动态组卷题池。
+// 考试状态和冻结题目写在同一个事务内，防止考试已发布但题池缺失或只写入一部分。
 func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam serviceexam.Exam, pool []serviceexam.LivePoolItem) (serviceexam.Exam, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 发布时写入所有会影响考生可见性和成绩发布的配置，并递增考试版本。
 		updates := map[string]any{
 			ExamColumns.StartTime:        exam.StartTime,
 			ExamColumns.EndTime:          exam.EndTime,
@@ -230,6 +260,8 @@ func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam 
 			return gorm.ErrRecordNotFound
 		}
 		for _, item := range pool {
+			// 动态组卷结果在发布瞬间固化到 exam_live_question_pools。
+			// 后续题库内容或规则变更不会改变已经发布考试的出题范围。
 			row := ExamLiveQuestionPoolDO{
 				RelationFields: RelationFields{
 					CreatedAt: r.now(),
@@ -253,6 +285,8 @@ func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam 
 	return r.GetExam(ctx, exam.TenantID, exam.ID)
 }
 
+// TargetExists 判断考试目标是否已经存在。
+// 发布流程用它避免重复添加同一个用户或空间目标。
 func (r *ExamRepository) TargetExists(ctx context.Context, tenantID uint64, examID uint64, targetType string, targetID uint64) (bool, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
@@ -266,6 +300,8 @@ func (r *ExamRepository) TargetExists(ctx context.Context, tenantID uint64, exam
 	return count > 0, nil
 }
 
+// AddTarget 为考试添加一个投放目标。
+// targetType 区分直投用户和投放空间，targetID 的含义由 targetType 决定。
 func (r *ExamRepository) AddTarget(ctx context.Context, target serviceexam.Target) error {
 	row := ExamTargetDO{
 		RelationFields: RelationFields{
@@ -280,6 +316,8 @@ func (r *ExamRepository) AddTarget(ctx context.Context, target serviceexam.Targe
 	return r.db.WithContext(ctx).Create(&row).Error
 }
 
+// FindExamByInviteCode 通过邀请码读取考试。
+// 考生入口没有 tenant 上下文，因此只按邀请码和未删除状态定位考试。
 func (r *ExamRepository) FindExamByInviteCode(ctx context.Context, inviteCode string) (serviceexam.Exam, error) {
 	var row ExamDO
 	if err := r.db.WithContext(ctx).
@@ -291,6 +329,8 @@ func (r *ExamRepository) FindExamByInviteCode(ctx context.Context, inviteCode st
 	return examFromDO(row, ""), nil
 }
 
+// GetExam 读取单场考试并补齐试卷组卷模式。
+// service 层需要 BuildMode 判断固定组卷或动态组卷的后续作答快照来源。
 func (r *ExamRepository) GetExam(ctx context.Context, tenantID uint64, examID uint64) (serviceexam.Exam, error) {
 	var row ExamDO
 	if err := r.db.WithContext(ctx).
@@ -307,8 +347,11 @@ func (r *ExamRepository) GetExam(ctx context.Context, tenantID uint64, examID ui
 	return examFromDO(row, paper.BuildMode), nil
 }
 
+// IsEligible 判断用户是否具备参加考试的资格。
+// 资格来源包括考试直投给用户，以及考试投放到用户所在的有效学生空间。
 func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (bool, error) {
 	var directCount int64
+	// 直投用户必须仍是启用状态，并且拥有 student 角色，避免被禁用或非学生用户进入考试。
 	if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
 		Joins("JOIN users ON users."+UserColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
 			" AND users."+UserColumns.ID+" = exam_targets."+ExamTargetColumns.TargetID+
@@ -330,6 +373,7 @@ func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID
 	}
 
 	var spaceCount int64
+	// 空间投放按用户当前有效空间成员关系判断，用户和成员关系都必须处于启用状态。
 	if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
 		Joins("JOIN space_members ON space_members."+SpaceMemberColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
 			" AND space_members."+SpaceMemberColumns.SpaceID+" = exam_targets."+ExamTargetColumns.TargetID+
@@ -350,6 +394,8 @@ func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID
 	return spaceCount > 0, nil
 }
 
+// FindInProgressAttempt 查找考生未提交的作答记录。
+// 未找到时转换为考试服务层的 ErrAttemptNotFound，让上层按业务语义决定是否新建作答。
 func (r *ExamRepository) FindInProgressAttempt(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (serviceexam.Attempt, error) {
 	var row ExamAttemptDO
 	err := r.db.WithContext(ctx).
@@ -367,6 +413,8 @@ func (r *ExamRepository) FindInProgressAttempt(ctx context.Context, tenantID uin
 	return attemptFromDO(row), nil
 }
 
+// CountAttempts 统计考生在一场考试中的历史作答次数。
+// 开考前用它和考试的 MaxAttempts 一起判断是否还能继续参加考试。
 func (r *ExamRepository) CountAttempts(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (int, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&ExamAttemptDO{}).
@@ -379,6 +427,8 @@ func (r *ExamRepository) CountAttempts(ctx context.Context, tenantID uint64, exa
 	return int(count), nil
 }
 
+// CreateAttempt 创建一次考试作答。
+// 这里只落作答主表，题目快照会在 SaveAttemptQuestions 中单独持久化，便于开考流程分步复用。
 func (r *ExamRepository) CreateAttempt(ctx context.Context, attempt serviceexam.Attempt) (serviceexam.Attempt, error) {
 	now := r.now()
 	row := ExamAttemptDO{
@@ -399,11 +449,16 @@ func (r *ExamRepository) CreateAttempt(ctx context.Context, attempt serviceexam.
 		ExamTokenExpiresAt: attempt.ExamTokenExpiresAt,
 	}
 	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		if isUniqueConstraintError(err) {
+			return serviceexam.Attempt{}, serviceexam.ErrAttemptUniqueConflict
+		}
 		return serviceexam.Attempt{}, err
 	}
 	return attemptFromDO(row), nil
 }
 
+// UpdateAttemptToken 更新作答令牌摘要及过期时间。
+// 写入后按 token hash 读回最新作答，确保返回对象包含数据库侧递增后的版本等字段。
 func (r *ExamRepository) UpdateAttemptToken(ctx context.Context, attempt serviceexam.Attempt) (serviceexam.Attempt, error) {
 	now := r.now()
 	if err := r.db.WithContext(ctx).Model(&ExamAttemptDO{}).
@@ -420,6 +475,8 @@ func (r *ExamRepository) UpdateAttemptToken(ctx context.Context, attempt service
 	return r.FindAttemptByTokenHash(ctx, attempt.ExamTokenHash)
 }
 
+// FindAttemptByTokenHash 通过作答令牌摘要定位作答。
+// 考生提交答案时只携带令牌，仓储层据此恢复 tenant、exam 和 attempt 上下文。
 func (r *ExamRepository) FindAttemptByTokenHash(ctx context.Context, tokenHash string) (serviceexam.Attempt, error) {
 	var row ExamAttemptDO
 	if err := r.db.WithContext(ctx).
@@ -430,6 +487,8 @@ func (r *ExamRepository) FindAttemptByTokenHash(ctx context.Context, tokenHash s
 	return attemptFromDO(row), nil
 }
 
+// ListFixedSnapshotQuestions 为固定组卷考试读取作答快照来源。
+// 固定组卷直接使用试卷小节题目表的当前配置，按小节顺序和题目顺序生成考生看到的题目列表。
 func (r *ExamRepository) ListFixedSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.SnapshotSourceQuestion, error) {
 	var rows []struct {
 		SectionID    uint64
@@ -456,6 +515,7 @@ func (r *ExamRepository) ListFixedSnapshotQuestions(ctx context.Context, tenantI
 
 	items := make([]serviceexam.SnapshotSourceQuestion, 0, len(rows))
 	for _, row := range rows {
+		// 选项和正确答案也进入作答快照，考试开始后即使题库选项变化也不影响本次作答判分。
 		options, err := r.listSnapshotOptions(ctx, tenantID, row.QuestionID)
 		if err != nil {
 			return nil, err
@@ -476,6 +536,8 @@ func (r *ExamRepository) ListFixedSnapshotQuestions(ctx context.Context, tenantI
 	return items, nil
 }
 
+// ListFrozenLiveSnapshotQuestions 为动态组卷考试读取发布时冻结的作答快照来源。
+// 动态组卷不再实时读取规则命中的题目，而是使用发布事务写入的冻结题池，保证所有考生题目一致。
 func (r *ExamRepository) ListFrozenLiveSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.SnapshotSourceQuestion, error) {
 	var rows []struct {
 		SectionID    uint64
@@ -500,6 +562,7 @@ func (r *ExamRepository) ListFrozenLiveSnapshotQuestions(ctx context.Context, te
 	}
 	items := make([]serviceexam.SnapshotSourceQuestion, 0, len(rows))
 	for _, row := range rows {
+		// 冻结池只保存题目归属，题目内容和选项在开考时一起写入 attempt_questions 快照。
 		options, err := r.listSnapshotOptions(ctx, tenantID, row.QuestionID)
 		if err != nil {
 			return nil, err
@@ -520,6 +583,8 @@ func (r *ExamRepository) ListFrozenLiveSnapshotQuestions(ctx context.Context, te
 	return items, nil
 }
 
+// SaveAttemptQuestions 保存一次作答对应的题目快照。
+// 如果同一 attempt 已经存在快照，直接返回现有数据，使开考接口在重试时保持幂等。
 func (r *ExamRepository) SaveAttemptQuestions(ctx context.Context, questions []serviceexam.AttemptQuestion) ([]serviceexam.AttemptQuestion, error) {
 	if len(questions) == 0 {
 		return []serviceexam.AttemptQuestion{}, nil
@@ -534,6 +599,7 @@ func (r *ExamRepository) SaveAttemptQuestions(ctx context.Context, questions []s
 	now := r.now()
 	rows := make([]ExamAttemptQuestionDO, 0, len(questions))
 	for _, question := range questions {
+		// 小节、题干、选项和正确答案都保存为 JSON 快照，后续题库编辑不会影响本次作答展示和判分。
 		rows = append(rows, ExamAttemptQuestionDO{
 			BaseFields: BaseFields{
 				CreatedAt: now,
@@ -563,8 +629,12 @@ func (r *ExamRepository) SaveAttemptQuestions(ctx context.Context, questions []s
 	return saved, nil
 }
 
+// ListPendingAttempts 列出一场考试中待人工评分的简答题答案。
+// 每一行对应一个待阅答案，并携带考生、空间、考试、题目快照和答案版本信息。
 func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.PendingAttempt, error) {
 	var rows []pendingReviewRow
+	// 待阅答案主查询不直接关联空间成员，避免多空间考生把同一答案放大为多行。
+	// 本次考试实际命中的投放空间会在结果组装阶段按 attempt 单独读取。
 	if err := r.db.WithContext(ctx).Table("exam_answers AS answers").
 		Select(`
 			attempts.id AS attempt_id,
@@ -572,8 +642,6 @@ func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint6
 			attempts.exam_id AS exam_id,
 			attempts.user_id AS user_id,
 			COALESCE(users.real_name, users.username) AS student_name,
-			COALESCE(spaces.id, 0) AS space_id,
-			COALESCE(spaces.name, '') AS space_name,
 			exams.name AS exam_name,
 			attempt_questions.question_snapshot AS question_snapshot,
 			answers.answer_content AS answer_content,
@@ -585,8 +653,6 @@ func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint6
 		Joins("JOIN exam_attempts AS attempts ON attempts.tenant_id = answers.tenant_id AND attempts.id = answers.attempt_id").
 		Joins("JOIN exams ON exams.tenant_id = attempts.tenant_id AND exams.id = attempts.exam_id AND exams.deleted_at = 0").
 		Joins("JOIN users ON users.tenant_id = attempts.tenant_id AND users.id = attempts.user_id AND users.deleted_at = 0").
-		Joins("LEFT JOIN space_members AS members ON members.tenant_id = attempts.tenant_id AND members.user_id = attempts.user_id AND members.status = 'enabled' AND members.deleted_at = 0").
-		Joins("LEFT JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.deleted_at = 0").
 		Where("answers.tenant_id = ?", tenantID).
 		Where("attempts.exam_id = ?", examID).
 		Where("answers.grading_status = ?", constant.GradingStatusPending).
@@ -596,22 +662,31 @@ func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint6
 	}
 	countByAttempt := make(map[uint64]int, len(rows))
 	for _, row := range rows {
+		// PendingShortTextCount 表示同一次作答还剩多少简答题待阅，便于阅卷列表展示进度。
 		countByAttempt[row.AttemptID]++
 	}
 	items := make([]serviceexam.PendingAttempt, 0, len(rows))
+	spaceCache := make(map[uint64][]attemptTargetSpaceRow)
 	for _, row := range rows {
+		// 题目标题从作答快照读取，而不是从题库表回查，避免题库改名影响历史阅卷记录。
 		title, err := parseQuestionSnapshotTitle(row.QuestionSnapshot)
 		if err != nil {
 			return nil, err
 		}
+		spaces, err := r.cachedAttemptTargetSpaces(ctx, tenantID, row.AttemptID, spaceCache)
+		if err != nil {
+			return nil, err
+		}
+		spaceID, spaceName := firstAttemptTargetSpace(spaces)
 		items = append(items, serviceexam.PendingAttempt{
 			AttemptID:             row.AttemptID,
 			AttemptQuestionID:     row.AttemptQuestionID,
 			ExamID:                row.ExamID,
 			UserID:                row.UserID,
 			StudentName:           row.StudentName,
-			SpaceID:               row.SpaceID,
-			SpaceName:             row.SpaceName,
+			SpaceID:               spaceID,
+			SpaceName:             spaceName,
+			SpaceIDs:              targetSpaceIDs(spaces),
 			ExamName:              row.ExamName,
 			QuestionTitle:         title,
 			AnswerContent:         row.AnswerContent,
@@ -624,29 +699,88 @@ func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint6
 	return items, nil
 }
 
+// AttemptSpaceIDs 读取作答考生在本次考试中实际命中的投放空间。
+// 阅卷权限检查只看考试目标空间，避免考生其他空间的教师越权查看答案。
 func (r *ExamRepository) AttemptSpaceIDs(ctx context.Context, tenantID uint64, attemptID uint64) ([]uint64, error) {
-	var rows []struct {
-		SpaceID uint64
+	exists, err := r.attemptExists(ctx, tenantID, attemptID)
+	if err != nil {
+		return nil, err
 	}
-	result := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
-		Distinct("COALESCE(members.space_id, 0) AS space_id").
-		Joins("LEFT JOIN space_members AS members ON members.tenant_id = attempts.tenant_id AND members.user_id = attempts.user_id AND members.status = 'enabled' AND members.deleted_at = 0").
-		Where("attempts.tenant_id = ?", tenantID).
-		Where("attempts.id = ?", attemptID).
-		Scan(&rows)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	if result.RowsAffected == 0 {
+	if !exists {
 		return nil, serviceexam.ErrAttemptNotFound
 	}
-	spaces := make([]uint64, 0, len(rows))
-	for _, row := range rows {
-		spaces = append(spaces, row.SpaceID)
+	spaces, err := r.listAttemptTargetSpaces(ctx, tenantID, attemptID)
+	if err != nil {
+		return nil, err
 	}
+	return targetSpaceIDs(spaces), nil
+}
+
+func (r *ExamRepository) attemptExists(ctx context.Context, tenantID uint64, attemptID uint64) (bool, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&ExamAttemptDO{}).
+		Where(ExamAttemptColumns.TenantID+" = ?", tenantID).
+		Where(ExamAttemptColumns.ID+" = ?", attemptID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+type attemptTargetSpaceRow struct {
+	SpaceID   uint64
+	SpaceName string
+}
+
+// cachedAttemptTargetSpaces 缓存同一批结果中重复出现的 attempt 空间归属查询。
+// 同一次作答可能有多道待阅题，缓存可以避免为每一道题重复查询考试目标空间。
+func (r *ExamRepository) cachedAttemptTargetSpaces(ctx context.Context, tenantID uint64, attemptID uint64, cache map[uint64][]attemptTargetSpaceRow) ([]attemptTargetSpaceRow, error) {
+	if spaces, ok := cache[attemptID]; ok {
+		return spaces, nil
+	}
+	spaces, err := r.listAttemptTargetSpaces(ctx, tenantID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	cache[attemptID] = spaces
 	return spaces, nil
 }
 
+// listAttemptTargetSpaces 查找作答实际命中的考试投放空间。
+// 空间必须同时是考试目标，并且考生仍是该空间的有效成员；普通的其他空间成员关系不参与阅卷授权。
+func (r *ExamRepository) listAttemptTargetSpaces(ctx context.Context, tenantID uint64, attemptID uint64) ([]attemptTargetSpaceRow, error) {
+	var rows []attemptTargetSpaceRow
+	if err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
+		Select("DISTINCT spaces.id AS space_id, spaces.name AS space_name").
+		Joins("JOIN exam_targets AS targets ON targets.tenant_id = attempts.tenant_id AND targets.exam_id = attempts.exam_id AND targets.target_type = ?", serviceexam.TargetTypeSpace).
+		Joins("JOIN space_members AS members ON members.tenant_id = attempts.tenant_id AND members.space_id = targets.target_id AND members.user_id = attempts.user_id AND members.status = 'enabled' AND members.deleted_at = 0").
+		Joins("JOIN spaces ON spaces.tenant_id = targets.tenant_id AND spaces.id = targets.target_id AND spaces.deleted_at = 0").
+		Where("attempts.tenant_id = ?", tenantID).
+		Where("attempts.id = ?", attemptID).
+		Order("spaces.id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func firstAttemptTargetSpace(spaces []attemptTargetSpaceRow) (uint64, string) {
+	if len(spaces) == 0 {
+		return 0, ""
+	}
+	return spaces[0].SpaceID, spaces[0].SpaceName
+}
+
+func targetSpaceIDs(spaces []attemptTargetSpaceRow) []uint64 {
+	ids := make([]uint64, 0, len(spaces))
+	for _, space := range spaces {
+		ids = append(ids, space.SpaceID)
+	}
+	return ids
+}
+
+// GradeShortTextAndRecalculate 保存简答题人工评分并重算总分。
+// 人工评分和 attempt 分数回写放在同一个事务里，避免答案已评分但总分仍是旧值。
 func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade serviceexam.ShortTextGrade) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := grade.GradedAt
@@ -672,6 +806,7 @@ func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade
 			return serviceexam.ErrAnswerVersionConflict
 		}
 
+		// 主观题总分只统计已经人工评分完成的答案，仍处于 pending 的简答题不提前计入总分。
 		subjectiveScore, err := sumGradedSubjectiveScore(tx, grade.TenantID, grade.AttemptID)
 		if err != nil {
 			return err
@@ -686,6 +821,7 @@ func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade
 		if err != nil {
 			return err
 		}
+		// 总分由提交时的客观题分加上当前已完成评分的主观题分组成。
 		return tx.Model(&ExamAttemptDO{}).
 			Where(ExamAttemptColumns.TenantID+" = ?", grade.TenantID).
 			Where(ExamAttemptColumns.ID+" = ?", grade.AttemptID).
@@ -698,13 +834,16 @@ func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade
 	})
 }
 
+// ListScoreExportRows 读取成绩导出所需的已提交作答记录。
+// 只导出 submitted_at 非空的作答，避免未提交或异常中断的作答进入成绩文件。
 func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.ScoreExportRow, error) {
 	var rows []scoreExportRow
+	// 成绩主查询只读取 attempt 和用户信息，避免空间成员关系把成绩行放大。
+	// 展示空间和权限空间随后按考试实际投放目标补齐。
 	if err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
 		Select(`
+			attempts.id AS attempt_id,
 			COALESCE(users.real_name, users.username) AS student_name,
-			COALESCE(spaces.id, 0) AS space_id,
-			COALESCE(spaces.name, '') AS space_name,
 			attempts.attempt_no AS attempt_no,
 			attempts.objective_score AS objective_score,
 			attempts.subjective_score AS subjective_score,
@@ -712,8 +851,6 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 			attempts.submitted_at AS submitted_at
 		`).
 		Joins("JOIN users ON users.tenant_id = attempts.tenant_id AND users.id = attempts.user_id AND users.deleted_at = 0").
-		Joins("LEFT JOIN space_members AS members ON members.tenant_id = attempts.tenant_id AND members.user_id = attempts.user_id AND members.status = 'enabled' AND members.deleted_at = 0").
-		Joins("LEFT JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.deleted_at = 0").
 		Where("attempts.tenant_id = ?", tenantID).
 		Where("attempts.exam_id = ?", examID).
 		Where("attempts.submitted_at IS NOT NULL").
@@ -722,11 +859,18 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 		return nil, err
 	}
 	items := make([]serviceexam.ScoreExportRow, 0, len(rows))
+	spaceCache := make(map[uint64][]attemptTargetSpaceRow)
 	for _, row := range rows {
+		spaces, err := r.cachedAttemptTargetSpaces(ctx, tenantID, row.AttemptID, spaceCache)
+		if err != nil {
+			return nil, err
+		}
+		spaceID, spaceName := firstAttemptTargetSpace(spaces)
 		items = append(items, serviceexam.ScoreExportRow{
 			StudentName:     row.StudentName,
-			SpaceID:         row.SpaceID,
-			SpaceName:       row.SpaceName,
+			SpaceID:         spaceID,
+			SpaceName:       spaceName,
+			SpaceIDs:        targetSpaceIDs(spaces),
 			AttemptNo:       row.AttemptNo,
 			ObjectiveScore:  row.ObjectiveScore,
 			SubjectiveScore: row.SubjectiveScore,
@@ -737,6 +881,8 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 	return items, nil
 }
 
+// UpdateScorePublishConfig 更新考试成绩发布方式。
+// 修改后重新读取考试，确保调用方拿到包含最新发布配置和试卷组卷模式的业务对象。
 func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64) (serviceexam.Exam, error) {
 	if err := r.db.WithContext(ctx).Model(&ExamDO{}).
 		Where(ExamColumns.TenantID+" = ?", tenantID).
@@ -753,6 +899,26 @@ func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID 
 	return r.GetExam(ctx, tenantID, examID)
 }
 
+// GetAttemptQuestion 读取一次作答中的单题快照。
+// 保存答案时以这里的题型快照为准，防止客户端伪造 question_type 影响答案序列化和后续判分。
+func (r *ExamRepository) GetAttemptQuestion(ctx context.Context, tenantID uint64, attemptID uint64, attemptQuestionID uint64) (serviceexam.AttemptQuestion, error) {
+	var row ExamAttemptQuestionDO
+	err := r.db.WithContext(ctx).
+		Where(ExamAttemptQuestionColumns.TenantID+" = ?", tenantID).
+		Where(ExamAttemptQuestionColumns.AttemptID+" = ?", attemptID).
+		Where(ExamAttemptQuestionColumns.ID+" = ?", attemptQuestionID).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return serviceexam.AttemptQuestion{}, serviceexam.ErrAttemptNotFound
+	}
+	if err != nil {
+		return serviceexam.AttemptQuestion{}, err
+	}
+	return attemptQuestionFromDO(row), nil
+}
+
+// listAttemptQuestions 按作答题目顺序读取已保存的快照。
+// 开考重试、答题页加载和幂等保存都会复用这份快照数据。
 func (r *ExamRepository) listAttemptQuestions(ctx context.Context, tenantID uint64, attemptID uint64) ([]serviceexam.AttemptQuestion, error) {
 	var rows []ExamAttemptQuestionDO
 	if err := r.db.WithContext(ctx).
@@ -769,6 +935,8 @@ func (r *ExamRepository) listAttemptQuestions(ctx context.Context, tenantID uint
 	return items, nil
 }
 
+// UpsertAnswer 保存或更新考生答案。
+// 自动保存场景会多次写同一道题，按 tenant、attempt 和 attempt_question 做唯一冲突更新。
 func (r *ExamRepository) UpsertAnswer(ctx context.Context, answer serviceexam.Answer) error {
 	now := r.now()
 	row := ExamAnswerDO{
@@ -784,6 +952,7 @@ func (r *ExamRepository) UpsertAnswer(ctx context.Context, answer serviceexam.An
 		AnswerContent:     answer.AnswerContent,
 		GradingStatus:     serviceexam.GradingStatusPending,
 	}
+	// 更新答案内容时同步递增 version，人工阅卷会用该版本做乐观锁，避免评分覆盖新答案。
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{
 			{Name: ExamAnswerColumns.TenantID},
@@ -798,9 +967,13 @@ func (r *ExamRepository) UpsertAnswer(ctx context.Context, answer serviceexam.An
 	}).Create(&row).Error
 }
 
+// SubmitAttemptAndGradeObjectiveQuestions 提交作答并完成客观题自动判分。
+// 提交状态更新、答案判分、分数回写和提交事件写入在同一事务内完成。
 func (r *ExamRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, tenantID uint64, attemptID uint64, version int64, submittedAt int64, status string, grader serviceexam.ObjectiveGradingFunc, event serviceexam.ExamEvent) (int64, error) {
 	var affected int64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 作答提交使用 attempt version 和 in_progress 状态做乐观锁。
+		// 重复提交或页面持有旧版本时不会继续判分，也不会重复写提交事件。
 		result := tx.Model(&ExamAttemptDO{}).
 			Where(ExamAttemptColumns.TenantID+" = ?", tenantID).
 			Where(ExamAttemptColumns.ID+" = ?", attemptID).
@@ -820,6 +993,7 @@ func (r *ExamRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Con
 			return nil
 		}
 
+		// 自动判分读取的是 attempt_questions 中的题目快照和正确答案快照，保证按开考时内容评分。
 		items, err := r.listAnswersForGrading(tx, tenantID, attemptID)
 		if err != nil {
 			return err
@@ -831,6 +1005,7 @@ func (r *ExamRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Con
 		if err := r.saveAnswerGrades(tx, tenantID, attemptID, submittedAt, grades); err != nil {
 			return err
 		}
+		// 提交时总分先等于客观题分；后续简答题人工评分完成后会再叠加主观题分。
 		if err := tx.Model(&ExamAttemptDO{}).
 			Where(ExamAttemptColumns.TenantID+" = ?", tenantID).
 			Where(ExamAttemptColumns.ID+" = ?", attemptID).
@@ -846,16 +1021,22 @@ func (r *ExamRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Con
 	return affected, err
 }
 
+// AppendEvent 追加考试事件。
+// 事件用于记录提交等关键动作，便于后续审计或排查考生作答链路。
 func (r *ExamRepository) AppendEvent(ctx context.Context, event serviceexam.ExamEvent) error {
 	return appendEventWithDB(r.db.WithContext(ctx), event)
 }
 
+// snapshotOptions 汇总一道题在作答快照中需要保存的选项信息。
+// optionIDs 用于展示顺序，correctOptionIDs 用于客观题判分。
 type snapshotOptions struct {
 	options          []serviceexam.SnapshotSourceOption
 	optionIDs        []uint64
 	correctOptionIDs []uint64
 }
 
+// listSnapshotOptions 按选项顺序读取题目的展示选项和正确选项。
+// 返回值会被写入作答快照，确保后续题库选项调整不影响已开考的作答。
 func (r *ExamRepository) listSnapshotOptions(ctx context.Context, tenantID uint64, questionID uint64) (snapshotOptions, error) {
 	var rows []QuestionOptionDO
 	if err := r.db.WithContext(ctx).
@@ -884,6 +1065,8 @@ func (r *ExamRepository) listSnapshotOptions(ctx context.Context, tenantID uint6
 	return result, nil
 }
 
+// listAnswersForGrading 组装自动判分输入。
+// 未作答的题目在答案 map 中没有记录，会以空字符串交给 grader，保持“未答即空答”的判分语义。
 func (r *ExamRepository) listAnswersForGrading(tx *gorm.DB, tenantID uint64, attemptID uint64) ([]serviceexam.AnswerForGrading, error) {
 	var questionRows []ExamAttemptQuestionDO
 	if err := tx.
@@ -906,6 +1089,7 @@ func (r *ExamRepository) listAnswersForGrading(tx *gorm.DB, tenantID uint64, att
 	}
 	items := make([]serviceexam.AnswerForGrading, 0, len(questionRows))
 	for _, row := range questionRows {
+		// 题型从题目快照解析，判分逻辑不依赖当前题库记录，避免考试后编辑题库改变历史评分。
 		questionType, err := parseQuestionSnapshotType(row.QuestionSnapshot)
 		if err != nil {
 			return nil, err
@@ -921,6 +1105,8 @@ func (r *ExamRepository) listAnswersForGrading(tx *gorm.DB, tenantID uint64, att
 	return items, nil
 }
 
+// saveAnswerGrades 写入自动判分结果。
+// 客观题如果已有自动保存答案则更新分数和状态；未作答题也会插入一行评分记录。
 func (r *ExamRepository) saveAnswerGrades(tx *gorm.DB, tenantID uint64, attemptID uint64, now int64, grades []serviceexam.AnswerGradingResult) error {
 	for _, grade := range grades {
 		row := ExamAnswerDO{
@@ -955,6 +1141,8 @@ func (r *ExamRepository) saveAnswerGrades(tx *gorm.DB, tenantID uint64, attemptI
 	return nil
 }
 
+// appendEventWithDB 使用传入的 DB 或事务写入考试事件。
+// 空 payload 统一落为 {}，保证事件表中的 JSON 字段始终是合法对象。
 func appendEventWithDB(tx *gorm.DB, event serviceexam.ExamEvent) error {
 	payload := event.Payload
 	if payload == "" {
@@ -973,6 +1161,8 @@ func appendEventWithDB(tx *gorm.DB, event serviceexam.ExamEvent) error {
 	}).Error
 }
 
+// parseQuestionSnapshotType 从题目快照中解析题型。
+// 自动判分只需要题型字段，不回查 questions 表，确保按作答时的题目定义评分。
 func parseQuestionSnapshotType(raw datatypes.JSON) (string, error) {
 	var snapshot struct {
 		Type string `json:"type"`
@@ -983,6 +1173,8 @@ func parseQuestionSnapshotType(raw datatypes.JSON) (string, error) {
 	return snapshot.Type, nil
 }
 
+// parseQuestionSnapshotTitle 从题目快照中解析题目标题。
+// 阅卷列表展示历史题目标题，避免题库标题修改后改变教师看到的待阅记录。
 func parseQuestionSnapshotTitle(raw string) (string, error) {
 	var snapshot struct {
 		Title string `json:"title"`
@@ -993,6 +1185,8 @@ func parseQuestionSnapshotTitle(raw string) (string, error) {
 	return snapshot.Title, nil
 }
 
+// sumGradedSubjectiveScore 汇总一次作答中已完成人工评分的主观题分数。
+// 仍处于待阅状态的答案不会计入 subjective_score，避免总分提前包含未确认分数。
 func sumGradedSubjectiveScore(tx *gorm.DB, tenantID uint64, attemptID uint64) (float64, error) {
 	var rows []ExamAnswerDO
 	if err := tx.Where(ExamAnswerColumns.TenantID+" = ?", tenantID).
@@ -1012,6 +1206,8 @@ func sumGradedSubjectiveScore(tx *gorm.DB, tenantID uint64, attemptID uint64) (f
 	return total, nil
 }
 
+// parseScoreString 将数据库中的分数字符串转换为浮点数。
+// 空字符串表示该分数尚未产生，在重算总分时按 0 处理。
 func parseScoreString(value string) (float64, error) {
 	if strings.TrimSpace(value) == "" {
 		return 0, nil
@@ -1019,6 +1215,8 @@ func parseScoreString(value string) (float64, error) {
 	return strconv.ParseFloat(value, 64)
 }
 
+// formatScoreString 将计算后的分数写回数据库使用的字符串格式。
+// 保留最多 6 位小数并裁剪无意义的尾零，避免成绩导出出现 10.000000 这类展示值。
 func formatScoreString(value float64) string {
 	text := strconv.FormatFloat(value, 'f', 6, 64)
 	text = strings.TrimRight(text, "0")
@@ -1029,6 +1227,28 @@ func formatScoreString(value float64) string {
 	return text
 }
 
+func isUniqueConstraintError(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var sqliteErr sqlite3.Error
+	if errors.As(err, &sqliteErr) {
+		return sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique ||
+			sqliteErr.ExtendedCode == sqlite3.ErrConstraintPrimaryKey
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		return mysqlErr.Number == 1062
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
+}
+
+// examFromDO 将考试表记录转换为服务层考试对象。
+// buildMode 来自试卷表，调用方按需传入，避免列表查询为每条考试额外关联试卷。
 func examFromDO(row ExamDO, buildMode string) serviceexam.Exam {
 	return serviceexam.Exam{
 		ID:               row.ID,
@@ -1048,6 +1268,8 @@ func examFromDO(row ExamDO, buildMode string) serviceexam.Exam {
 	}
 }
 
+// attemptFromDO 将作答表记录转换为服务层作答对象。
+// Version 会暴露给提交接口，用于防止重复提交或旧页面覆盖新状态。
 func attemptFromDO(row ExamAttemptDO) serviceexam.Attempt {
 	return serviceexam.Attempt{
 		ID:                 row.ID,
@@ -1064,6 +1286,8 @@ func attemptFromDO(row ExamAttemptDO) serviceexam.Attempt {
 	}
 }
 
+// attemptQuestionFromDO 将作答题目快照转换为服务层对象。
+// JSON 快照在服务层以字符串传递，避免仓储层泄露数据库 JSON 类型。
 func attemptQuestionFromDO(row ExamAttemptQuestionDO) serviceexam.AttemptQuestion {
 	return serviceexam.AttemptQuestion{
 		ID:                    row.ID,
@@ -1080,6 +1304,8 @@ func attemptQuestionFromDO(row ExamAttemptQuestionDO) serviceexam.AttemptQuestio
 	}
 }
 
+// pendingReviewRow 是待阅列表 SQL 的扫描结构。
+// SubmittedAt 使用指针承接数据库 NULL，再由 SubmittedAtValue 转成服务层默认值。
 type pendingReviewRow struct {
 	AttemptID         uint64
 	AttemptQuestionID uint64
@@ -1096,6 +1322,8 @@ type pendingReviewRow struct {
 	SubmittedAt       *int64
 }
 
+// SubmittedAtValue 将可空提交时间转换为服务层使用的 int64。
+// 理论上待阅答案来自已提交作答，但这里保留 NULL 兼容，避免扫描层直接解引用空指针。
 func (r pendingReviewRow) SubmittedAtValue() int64 {
 	if r.SubmittedAt == nil {
 		return 0
@@ -1103,7 +1331,10 @@ func (r pendingReviewRow) SubmittedAtValue() int64 {
 	return *r.SubmittedAt
 }
 
+// scoreExportRow 是成绩导出 SQL 的扫描结构。
+// 该结构只服务导出查询，避免把聚合字段暴露到通用 DO。
 type scoreExportRow struct {
+	AttemptID       uint64
 	StudentName     string
 	SpaceID         uint64
 	SpaceName       string
@@ -1114,6 +1345,8 @@ type scoreExportRow struct {
 	SubmittedAt     *int64
 }
 
+// SubmittedAtValue 将成绩导出中的可空提交时间转换为服务层默认值。
+// 导出查询已经过滤 submitted_at 非空，这里主要用于保持扫描结构的空值安全。
 func (r scoreExportRow) SubmittedAtValue() int64 {
 	if r.SubmittedAt == nil {
 		return 0

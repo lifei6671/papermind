@@ -5,9 +5,12 @@ import { PlatformLoginPage } from "../pages/Login/PlatformLoginPage";
 import { ExamEntryPage } from "../pages/Exam/ExamEntryPage";
 import { StudentExamPage } from "../pages/StudentExam/StudentExamPage";
 import { useSession } from "../auth/session-context";
-import { adminRoutes } from "./routes";
+import { buildAdminRoutes } from "./routes";
 
 export function App() {
+  const { session } = useSession();
+  const adminRoutes = buildAdminRoutes(session?.user);
+
   return (
     <Routes>
       <Route path="/login" element={<PlatformLoginPage />} />

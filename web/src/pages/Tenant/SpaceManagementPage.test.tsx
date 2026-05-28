@@ -85,6 +85,17 @@ test("空间管理页展示空间列表和空间管理员", async () => {
   expect(screen.queryByLabelText("成员姓名")).not.toBeInTheDocument();
 });
 
+test("缺少租户上下文时不请求空间和用户接口", () => {
+  const api = createSpaceAPI();
+  const userApi = createUserAPI();
+
+  render(<SpaceManagementPage api={api} userApi={userApi} />);
+
+  expect(api.listSpaces).not.toHaveBeenCalled();
+  expect(userApi.listUsers).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent("当前账号没有租户上下文");
+});
+
 test("租户管理员可以创建空间并上传 logo", async () => {
   const user = userEvent.setup();
   const api = createSpaceAPI();

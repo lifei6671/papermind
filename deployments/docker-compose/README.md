@@ -27,8 +27,12 @@ docker compose --env-file deployments\docker-compose\.env -f deployments\docker-
 默认端口：
 
 - Web/Nginx: `http://localhost`
-- Server: `http://localhost:8080`
+- Server: `http://localhost:9080`
 - PostgreSQL: 仅在 Compose 网络内暴露给 server
+
+默认登录：
+
+- 全新数据库迁移完成后，后端会在 `platform_users` 为空时初始化平台管理员 `admin / admin123`，默认邮箱为 `admin@iminho.me`。
 
 ## 服务组成
 
@@ -39,7 +43,7 @@ docker compose --env-file deployments\docker-compose\.env -f deployments\docker-
 ## 注意事项
 
 - server 构建阶段会安装 Alpine `build-base`，用于编译 SQLite CGO 依赖。
-- Nginx 会转发 `/uploads/`，确保上传后的 Logo、头像等资源在 Compose 环境可访问。
+- Nginx 会转发 `/uploads/`，并将上传请求大小限制对齐后端 10MB，确保 Logo、头像等资源在 Compose 环境可访问。
 - 仓库只跟踪 `server/conf/app.example.yaml`，真实 `server/conf/app.yaml` 和 `.env` 均不应提交。
 
 ## 空库迁移验证

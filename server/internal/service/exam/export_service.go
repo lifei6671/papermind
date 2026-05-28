@@ -13,14 +13,15 @@ import (
 )
 
 type ScoreExportRow struct {
-	StudentName     string // 考生姓名。
-	SpaceID         uint64 // 考生所属空间 ID，用于权限范围判断。
-	SpaceName       string // 空间名称。
-	AttemptNo       int    // attempt 次数。
-	ObjectiveScore  string // 客观题分。
-	SubjectiveScore string // 主观题分。
-	TotalScore      string // 总分。
-	SubmittedAt     int64  // 提交时间，Unix 毫秒时间戳。
+	StudentName     string   // 考生姓名。
+	SpaceID         uint64   // 考生所属空间 ID，用于权限范围判断。
+	SpaceName       string   // 空间名称。
+	SpaceIDs        []uint64 // 本次考试实际命中的空间 ID 集合，用于多空间考生成绩权限判断。
+	AttemptNo       int      // attempt 次数。
+	ObjectiveScore  string   // 客观题分。
+	SubjectiveScore string   // 主观题分。
+	TotalScore      string   // 总分。
+	SubmittedAt     int64    // 提交时间，Unix 毫秒时间戳。
 }
 
 type ExportExamScoresInput struct {
@@ -93,11 +94,27 @@ func (s *ExportService) ListExamScores(ctx context.Context, input ListExamScores
 	}
 	allowed := make([]ScoreExportRow, 0, len(rows))
 	for _, row := range rows {
-		if err := s.permissionChecker.CanGradeExam(permissionWithExamScope(input.Permission, input.ExamID, row.SpaceID), input.ExamID); err == nil {
+		if s.canGradeExamInAnySpace(input.Permission, input.ExamID, scoreExportSpaceIDs(row)) {
 			allowed = append(allowed, row)
 		}
 	}
 	return allowed, nil
+}
+
+func (s *ExportService) canGradeExamInAnySpace(ctx permission.PermissionContext, examID uint64, spaces []uint64) bool {
+	for _, spaceID := range spaces {
+		if err := s.permissionChecker.CanGradeExam(permissionWithExamScope(ctx, examID, spaceID), examID); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func scoreExportSpaceIDs(row ScoreExportRow) []uint64 {
+	if len(row.SpaceIDs) > 0 {
+		return row.SpaceIDs
+	}
+	return []uint64{row.SpaceID}
 }
 
 func writeScoreExportCSV(writer *csv.Writer, rows []ScoreExportRow) error {

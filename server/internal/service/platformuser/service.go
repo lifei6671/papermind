@@ -34,6 +34,8 @@ type PlatformUser struct {
 	ID           uint64 // 平台管理员主键 ID。
 	Username     string // 平台管理员登录名。
 	AvatarURL    string // 用户头像地址。
+	Phone        string // 手机号，可用于登录或找回账号。
+	Email        string // 邮箱，可用于登录或通知。
 	PasswordHash string // 密码哈希。
 	LastLoginIP  string // 最后登录 IP。
 	LastLoginAt  int64  // 最后登录时间，Unix 毫秒时间戳。
@@ -42,6 +44,7 @@ type PlatformUser struct {
 
 type SeedAdminInput struct {
 	Username     string // 初始平台管理员登录名。
+	Email        string // 初始平台管理员邮箱。
 	PasswordHash string // 初始平台管理员密码哈希。
 }
 
@@ -147,6 +150,7 @@ func (s *Service) SeedAdmin(ctx context.Context, input SeedAdminInput) (Platform
 	}
 	return s.repo.Create(ctx, PlatformUser{
 		Username:     input.Username,
+		Email:        input.Email,
 		PasswordHash: input.PasswordHash,
 		Status:       StatusEnabled,
 	})

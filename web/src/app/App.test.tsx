@@ -59,6 +59,22 @@ function storeTenantStudentSession() {
   }));
 }
 
+function storeTenantTeacherSession() {
+  window.localStorage.setItem("papermind.session.v1", JSON.stringify({
+    accessToken: "teacher-session-token",
+    refreshToken: "teacher-session-token",
+    user: { userID: 55, displayName: "阅卷教师", role: "teacher", tenantID: 77 },
+  }));
+}
+
+function storeTenantAdminSession() {
+  window.localStorage.setItem("papermind.session.v1", JSON.stringify({
+    accessToken: "tenant-admin-session-token",
+    refreshToken: "tenant-admin-session-token",
+    user: { userID: 88, displayName: "租户管理员", role: "tenant_admin", tenantID: 77 },
+  }));
+}
+
 function mockStudentExamFetch() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -151,6 +167,123 @@ test("未登录访问后台路由会跳转登录页", () => {
   renderApp(["/tenants"]);
 
   expect(screen.getByRole("heading", { name: "平台管理员登录" })).toBeInTheDocument();
+});
+
+test("后台接口返回未认证时自动退出并跳转登录页", async () => {
+  storePlatformSession();
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ code: 40001, message: "请先登录平台管理员账号", data: null }), {
+      headers: { "Content-Type": "application/json" },
+      status: 401,
+    }),
+  );
+
+  renderApp(["/tenants"]);
+
+  expect(await screen.findByRole("heading", { name: "平台管理员登录" })).toBeInTheDocument();
+  expect(window.localStorage.getItem("papermind.session.v1")).toBeNull();
+});
+
+test("平台管理员打开空间管理时使用 URL 租户 ID 接入后端 API", async () => {
+  storePlatformSession();
+  const requests: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url === "/api/v1/spaces?tenant_id=10") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 100,
+            tenant_id: 10,
+            name: "高一全年级",
+            logo_url: "",
+            description: "联调空间",
+            members: [{
+              id: 1,
+              user_id: 20,
+              name: "租户管理员",
+              role: "space_admin",
+              status: "enabled",
+            }],
+          }],
+          total: 1,
+          page: 1,
+          page_size: 20,
+        },
+      }));
+    }
+    if (url === "/api/v1/users?tenant_id=10") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 20,
+            tenant_id: 10,
+            username: "tenant.admin",
+            real_name: "租户管理员",
+            avatar_url: "",
+            role: "tenant_admin",
+            status: "enabled",
+          }],
+          total: 1,
+          page: 1,
+          page_size: 20,
+        },
+      }));
+    }
+    return new Response(JSON.stringify({ code: 40001, message: "tenant_id 必须是正整数", data: null }), {
+      status: 400,
+    });
+  });
+
+  renderApp(["/spaces?tenant_id=10"]);
+
+  expect(await screen.findByText("高一全年级")).toBeInTheDocument();
+  expect(requests).toContain("/api/v1/spaces?tenant_id=10");
+  expect(requests).toContain("/api/v1/users?tenant_id=10");
+  expect(requests).not.toContain("/api/v1/spaces?tenant_id=0");
+});
+
+test("平台管理员打开用户管理时使用 URL 租户 ID 接入后端 API", async () => {
+  storePlatformSession();
+  const requests: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url === "/api/v1/users?tenant_id=10") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 20,
+            tenant_id: 10,
+            username: "tenant.admin",
+            real_name: "租户管理员",
+            avatar_url: "",
+            role: "tenant_admin",
+            status: "enabled",
+          }],
+          total: 1,
+          page: 1,
+          page_size: 20,
+        },
+      }));
+    }
+    return new Response(JSON.stringify({ code: 40001, message: "tenant_id 必须是正整数", data: null }), {
+      status: 400,
+    });
+  });
+
+  renderApp(["/users?tenant_id=10"]);
+
+  expect(await screen.findByText("tenant.admin")).toBeInTheDocument();
+  expect(requests).toContain("/api/v1/users?tenant_id=10");
+  expect(requests).not.toContain("/api/v1/users?tenant_id=0");
 });
 
 test("学生考试端与管理员后台路由隔离", async () => {
@@ -454,6 +587,120 @@ test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async ()
   expect(screen.getByRole("status", { name: "grading-complete-result" })).toHaveTextContent("已完成");
   expect(screen.getByRole("row", { name: /张三/ })).toHaveTextContent("已完成");
   expect(screen.getByText("待阅卷 0")).toBeInTheDocument();
+});
+
+test("真实路由渲染阅卷中心时从 session 派生租户和阅卷人", async () => {
+  storeTenantTeacherSession();
+  let pendingURL = "";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/grading/pending")) {
+      pendingURL = url;
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { items: [] },
+      }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
+
+  renderApp(["/grading"]);
+
+  await waitFor(() => expect(pendingURL).toContain("tenant_id=77"));
+  expect(pendingURL).toContain("actor_id=55");
+  expect(pendingURL).toContain("actor_role=teacher");
+});
+
+test("真实路由渲染空间管理时从 session 派生租户并请求后端 API", async () => {
+  storeTenantAdminSession();
+  const requestedURLs: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    requestedURLs.push(url);
+    if (url === "/api/v1/spaces?tenant_id=77") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 301,
+            tenant_id: 77,
+            name: "高一 1 班",
+            logo_url: "class1.png",
+            description: "真实空间",
+            members: [{ id: 1, user_id: 88, name: "租户管理员", role: "space_admin", status: "enabled" }],
+          }],
+          page: 1,
+          page_size: 20,
+          total: 1,
+        },
+      }));
+    }
+    if (url === "/api/v1/users?tenant_id=77") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 88,
+            tenant_id: 77,
+            username: "tenant.admin",
+            real_name: "租户管理员",
+            avatar_url: "",
+            role: "tenant_admin",
+            status: "enabled",
+          }],
+          page: 1,
+          page_size: 20,
+          total: 1,
+        },
+      }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
+
+  renderApp(["/spaces"]);
+
+  expect(await screen.findByText("高一 1 班")).toBeInTheDocument();
+  expect(requestedURLs).toContain("/api/v1/spaces?tenant_id=77");
+  expect(requestedURLs).toContain("/api/v1/users?tenant_id=77");
+  expect(requestedURLs).not.toContain("/api/v1/spaces?tenant_id=0");
+});
+
+test("真实路由渲染用户管理时从 session 派生租户并请求后端 API", async () => {
+  storeTenantAdminSession();
+  let usersURL = "";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/users?")) {
+      usersURL = url;
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 88,
+            tenant_id: 77,
+            username: "tenant.admin",
+            real_name: "租户管理员",
+            avatar_url: "",
+            role: "tenant_admin",
+            status: "enabled",
+          }],
+          page: 1,
+          page_size: 20,
+          total: 1,
+        },
+      }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
+
+  renderApp(["/users"]);
+
+  expect(await screen.findByText("tenant.admin")).toBeInTheDocument();
+  await waitFor(() => expect(usersURL).toBe("/api/v1/users?tenant_id=77"));
 });
 
 test("成绩页支持发布配置和成绩导出", async () => {
