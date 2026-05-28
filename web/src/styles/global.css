@@ -3331,6 +3331,34 @@ code {
   vertical-align: top;
 }
 
+.tenant-admin-table .tenant-action-button + .tenant-action-button {
+  margin-left: 8px;
+}
+
+.tenant-detail-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.tenant-detail-list div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.tenant-detail-list dt {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tenant-detail-list dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
 .tenant-admin-link {
   min-height: 30px;
   padding: 0 10px;

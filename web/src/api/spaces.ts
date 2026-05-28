@@ -6,6 +6,7 @@ export type MemberRole = "space_admin" | "teacher" | "student";
 
 export type SpaceMember = {
   id: number;
+  userID: number;
   name: string;
   role: MemberRole;
   status: "enabled" | "disabled";
@@ -32,9 +33,22 @@ export type SpaceListResult = {
   items: SpaceRow[];
 };
 
+export type SpaceMemberListInput = {
+  tenantID: number;
+  spaceID: number;
+};
+
+export type SpaceMemberListResult = {
+  items: SpaceMember[];
+};
+
 export type SpaceManagementAPI = {
   listSpaces(tenantID: number): Promise<SpaceListResult>;
   createSpace(input: CreateSpaceInput): Promise<SpaceRow>;
+};
+
+export type SpaceMemberAPI = {
+  listSpaceMembers(input: SpaceMemberListInput): Promise<SpaceMemberListResult>;
 };
 
 type SpaceMemberAPIResponse = {
@@ -61,7 +75,7 @@ const defaultApiClient = createApiClient({
 
 export const spaceApi = createSpaceAPI(defaultApiClient);
 
-export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI {
+export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI & SpaceMemberAPI {
   return {
     async listSpaces(tenantID) {
       const data = await apiClient.get<PageData<SpaceAPIResponse>>(`/api/v1/spaces?tenant_id=${tenantID}`);
@@ -78,6 +92,12 @@ export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI {
       });
       return mapSpaceResponse(data);
     },
+    async listSpaceMembers(input) {
+      const data = await apiClient.get<PageData<SpaceMemberAPIResponse>>(
+        `/api/v1/spaces/${input.spaceID}/members?tenant_id=${input.tenantID}`,
+      );
+      return { items: data.items.map((member) => mapSpaceMemberResponse(member)) };
+    },
   };
 }
 
@@ -88,11 +108,16 @@ function mapSpaceResponse(row: SpaceAPIResponse): SpaceRow {
     name: row.name,
     description: row.description,
     logoFileName: row.logo_url || "未上传",
-    members: row.members.map((member) => ({
-      id: member.id,
-      name: member.name,
-      role: member.role,
-      status: member.status,
-    })),
+    members: row.members.map((member) => mapSpaceMemberResponse(member)),
+  };
+}
+
+function mapSpaceMemberResponse(member: SpaceMemberAPIResponse): SpaceMember {
+  return {
+    id: member.id,
+    userID: member.user_id,
+    name: member.name,
+    role: member.role,
+    status: member.status,
   };
 }

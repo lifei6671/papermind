@@ -300,6 +300,11 @@ go test -tags json1 ./internal/service/permission
 - [ ] 批量导入覆盖角色时接入。
 - [ ] 校验必须在同一事务内基于变更后状态执行。
 
+> 2026-05-28 进度：禁用用户路径已在 `TenantUserRepository.UpdateStatus`
+> 的同一 GORM 事务内先更新用户状态，再基于变更后状态执行租户管理员和空间管理员不变式校验；
+> 对应 DAO 测试已覆盖禁止禁用最后一个启用 `tenant_admin`、允许禁用非最后一个管理员以及失败回滚。
+> 删除用户、租户级角色变更、批量角色覆盖入口当前尚未形成稳定 API / service 契约，暂不为勾选清单主动扩展公共接口。
+
 **验收标准**：
 
 - [x] 禁止禁用最后一个启用状态 `tenant_admin`。
@@ -308,16 +313,16 @@ go test -tags json1 ./internal/service/permission
 ### P4.3 空间管理员不变式
 
 - [ ] 实现 `ValidateSpaceAdminInvariant(tx, tenantID, spaceID)`。
-- [ ] 禁用空间成员时接入。
-- [ ] 移除空间成员时接入。
-- [ ] 修改空间成员角色时接入。
+- [x] 禁用空间成员时接入。
+- [x] 移除空间成员时接入。
+- [x] 修改空间成员角色时接入。
 - [ ] 禁用或删除租户用户时，对其涉及的空间逐个接入。
-- [ ] 校验必须在同一事务内基于变更后状态执行。
+- [x] 校验必须在同一事务内基于变更后状态执行。
 
 **验收标准**：
 
-- [ ] 禁止移除、禁用或降级最后一个启用状态 `space_admin`。
-- [ ] 禁用租户用户不会导致任一启用空间失去最后一个空间管理员。
+- [x] 禁止移除、禁用或降级最后一个启用状态 `space_admin`。
+- [x] 禁用租户用户不会导致任一启用空间失去最后一个空间管理员。
 
 ### P4.4 教师创建和空间分配
 
@@ -362,43 +367,48 @@ go test -tags json1 ./internal/service/permission
 
 ### P5.1 平台接口边界
 
-- [ ] `/api/v1/platform/**` 只允许 `platform_admin`。
-- [ ] 平台管理员可以创建租户、维护租户资料、重置租户码、修改注册开关。
-- [ ] 租户用户不能访问平台接口。
-- [ ] 平台管理员不能调用租户业务写接口。
+- [x] `/api/v1/platform/**` 只允许 `platform_admin`。
+  - 2026-05-28：当前平台治理接口实际落在 `/api/v1/tenants*`，已由 `requirePlatformPrincipalMiddleware` 保护；接口测试覆盖租户用户访问租户列表、创建、资料维护、租户码重置和注册开关都返回 403。
+- [x] 平台管理员可以创建租户、维护租户资料、重置租户码、修改注册开关。
+- [x] 租户用户不能访问平台接口。
+- [x] 平台管理员不能调用租户业务写接口。
+  - 2026-05-28：接口测试覆盖平台管理员访问考试列表、发布考试、创建题目、创建试卷大题都被拒绝。
 
 **验收标准**：
 
-- [ ] 构造 `tenant_id` 参数不能绕过平台/租户边界。
+- [x] 构造 `tenant_id` 参数不能绕过平台/租户边界。
 
 ### P5.2 租户接口边界
 
 - [ ] `/api/v1/tenant/**` 只允许 `tenant_user`。
 - [ ] 所有租户接口从 session 或上下文取得 `tenant_id`。
-- [ ] 不信任请求体里的跨租户 `tenant_id`。
-- [ ] `student` 不能访问管理端接口。
-- [ ] `GET /api/v1/tenant/results/:id` 不允许 `student`。
+- [x] 不信任请求体里的跨租户 `tenant_id`。
+  - 2026-05-28：接口测试覆盖 `teacher` 使用本租户 session 构造其他租户 `tenant_id` 发布考试时返回 403。
+- [x] `student` 不能访问管理端接口。
+- [x] `GET /api/v1/tenant/results/:id` 不允许 `student`。
+  - 2026-05-28：当前管理端成绩接口实际为 `/api/v1/results`；接口测试覆盖学生访问考试管理、待阅卷和管理端成绩列表都返回 403。
 
 **验收标准**：
 
-- [ ] `platform_user` 访问 `/api/v1/tenant/**` 返回 403。
-- [ ] `tenant_user` 访问 `/api/v1/platform/**` 返回 403。
+- [x] `platform_user` 访问 `/api/v1/tenant/**` 返回 403。
+- [x] `tenant_user` 访问 `/api/v1/platform/**` 返回 403。
 
 ### P5.3 考试入口 `exam_token`
 
-- [ ] `/api/v1/exam-entry/**` 不复用管理端权限中间件。
-- [ ] `exam_token` 使用服务端随机不透明 token。
-- [ ] 数据库只保存 `exam_token_hash`。
-- [ ] 中间件按 hash 找到 attempt。
+- [x] `/api/v1/exam-entry/**` 不复用管理端权限中间件。
+- [x] `exam_token` 使用服务端随机不透明 token。
+- [x] 数据库只保存 `exam_token_hash`。
+- [x] 中间件按 hash 找到 attempt。
 - [ ] 中间件校验 `tenant_id`、`exam_id`、`attempt_id`、`user_id`、attempt 状态、token 过期时间和业务作答截止时间。
-- [ ] `exam_token` 不支持刷新和续签。
-- [ ] 普通登录 session 不能调用自动保存、提交和事件接口。
-- [ ] `exam_token` 不能调用 profile、tenant、questions、papers、grading、results 等后台接口。
+  - 2026-05-28：写入口 middleware 已先按 `exam_token` hash 找到 attempt，并校验 `tenant_id`、`attempt_id`、attempt 状态、token 过期时间和业务作答截止时间；`exam_id`、`user_id` 当前由 attempt 派生到 `ExamEntryContext`，尚未作为请求级字段比对。
+- [x] `exam_token` 不支持刷新和续签。
+- [x] 普通登录 session 不能调用自动保存、提交和事件接口。
+- [x] `exam_token` 不能调用 profile、tenant、questions、papers、grading、results 等后台接口。
 
 **验收标准**：
 
-- [ ] 过期 token、已提交 attempt、超过可保存窗口都会拒绝写入。
-- [ ] 管理端 session 直接调用答题保存接口失败。
+- [x] 过期 token、已提交 attempt、超过可保存窗口都会拒绝写入。
+- [x] 管理端 session 直接调用答题保存接口失败。
 
 ### P5.4 学生查分入口
 
@@ -442,16 +452,20 @@ go test -tags json1 ./internal/service/permission
 
 ### P6.2 资源归属反查
 
-- [ ] 题目权限从 `questionID` 反查真实 `tenant_id` 和 `space_id`。
-- [ ] 试卷权限从 `paperID` 反查真实 `tenant_id` 和 `space_id`。
-- [ ] 考试发布权限从 `paperID` 或考试目标反查真实空间。
-- [ ] 阅卷权限从 `attemptID` 反查考试和成绩行真实空间。
-- [ ] 成绩列表和导出从 `examID` 或成绩行反查真实空间。
-- [ ] 禁止只信任请求参数拼接授权范围。
+- [x] 题目权限从 `questionID` 反查真实 `tenant_id` 和 `space_id`。
+- [x] 试卷权限从 `paperID` 反查真实 `tenant_id` 和 `space_id`。
+  - 2026-05-28：手动组卷新增 `QuestionUsableForPaper`，由 DAO 反查 `papers.space_id` 和 `questions.space_id`；规则组卷候选题查询同步按试卷真实空间过滤，接口测试覆盖其他空间题不能被手动加入或规则抽中。
+- [x] 考试发布权限从 `paperID` 或考试目标反查真实空间。
+  - 2026-05-28：考试发布在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户有效空间成员关系；接口测试覆盖跨空间试卷、跨空间投放空间、跨空间目标用户都会被拒绝，且拒绝时不创建草稿。
+- [x] 阅卷权限从 `attemptID` 反查考试和成绩行真实空间。
+- [x] 成绩列表和导出从 `examID` 或成绩行反查真实空间。
+  - 2026-05-28：新增 `TestReviewAndResultAPIRoutesRejectForgedSpaceIDWithSQLite` 覆盖管理端 HTTP 入口伪造已授权 `space_id` 时，待阅卷列表、阅卷写入、成绩列表和成绩导出都按 attempt / 成绩行真实空间过滤。
+- [x] 禁止只信任请求参数拼接授权范围。
 
 **验收标准**：
 
-- [ ] 伪造 `space_id` 不能越权查看、阅卷或导出其他空间数据。
+- [x] 伪造 `space_id` 不能越权查看、阅卷或导出其他空间数据。
+- [x] 教师不能发布其他空间试卷，也不能把考试投放到无权限空间或无权限空间内用户。
 
 ### P6.3 成绩查看和导出
 
@@ -492,7 +506,8 @@ go test -tags json1 ./internal/service/permission
 
 - [x] 前端 session role 只保存租户级角色。
 - [x] 前端不能把 `space_admin` 当作 session role。
-- [ ] 空间管理员菜单可见性来自空间成员接口或授权空间列表。
+- [x] 空间管理员菜单可见性来自空间成员接口或授权空间列表。
+  - 2026-05-28：租户登录已拉取授权空间并写入 `session.profileSpaces`，`AdminShell` 已覆盖由授权空间驱动菜单；本轮新增真实 `/space-members` 空间成员入口，菜单由启用的 `profileSpaces.role = space_admin` 授权驱动，并通过现有空间成员接口读取成员列表，不暴露空间创建或空间资料编辑能力。
 - [x] `tenant_admin` 可以看到租户用户、空间、题库、试卷、考试、阅卷和成绩管理入口。
 - [x] `platform_admin` 不能渲染租户业务页面或触发租户业务 API。
 - [x] `student` 不能进入管理端菜单。
@@ -507,13 +522,13 @@ go test -tags json1 ./internal/service/permission
 - [x] 创建租户表单补充首个租户管理员账号信息。
 - [x] 创建租户表单明确不会自动创建默认空间。
 - [x] 创建教师表单不要求选择空间。
-- [ ] 用户详情页展示教师空间分配状态。
+- [x] 用户详情页展示教师空间分配状态。
 - [x] 零空间教师显示“该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷”。
 
 **验收标准**：
 
-- [ ] 创建教师后不会在空间成员列表中自动出现。
-- [ ] 通过空间成员入口分配后，教师才获得对应空间业务入口。
+- [x] 创建教师后不会在空间成员列表中自动出现。
+- [x] 通过空间成员入口分配后，教师才获得对应空间业务入口。
 
 ### P7.3 学生查分页面
 
@@ -557,6 +572,16 @@ go test -tags json1 ./internal/service/permission
 - [x] 覆盖学生只能访问自己的 `/api/v1/exam-entry/results/:id`。
 - [x] 覆盖 `exam_token` 不能续签、不能访问后台接口。
 - [x] 覆盖普通登录 session 不能调用答题保存、提交和事件接口。
+- [x] 覆盖 `exam_token` 返回不透明 token，数据库只保存 hash。
+- [x] 覆盖过期 token、已提交 attempt、超过可保存窗口都会拒绝答题写入。
+- [x] 覆盖 `/api/v1/exam-entry` 答题写入口可仅凭 `exam_token` 调用，不依赖后台 session。
+- [x] 覆盖 `/api/v1/exam-entry` 写入口 middleware 在 handler 参数校验前先校验 `exam_token`。
+- [x] 覆盖创建 `teacher` 后不会自动写入 `space_members`。
+- [x] 覆盖伪造 `space_id` 不能越权查看、阅卷或导出其他空间数据。
+- [x] 覆盖手动组卷和规则组卷不能引用其他空间题目。
+- [x] 覆盖考试发布不能引用其他空间试卷或投放到无权限目标，且拒绝时不创建草稿。
+- [x] 覆盖平台治理接口拒绝租户用户，租户业务接口拒绝平台用户、跨租户 `tenant_id` 和学生角色。
+- [x] 覆盖 `teacher` 通过空间成员入口分配后，才会从 `/api/v1/profile/spaces` 获得授权空间。
 
 **建议验证**：
 
@@ -567,10 +592,13 @@ go test -tags json1 ./...
 
 ### P8.2 前端测试
 
-- [ ] 覆盖 session role 不包含 `space_admin` 时菜单仍可由授权空间列表驱动。
+- [x] 覆盖 session role 不包含 `space_admin` 时菜单仍可由授权空间列表驱动。
+- [x] 覆盖真实空间成员入口由授权空间列表驱动并读取授权空间成员。
 - [x] 覆盖 `tenant_admin` 可见租户业务管理入口。
 - [x] 覆盖 `platform_admin` 不渲染租户业务页面。
+- [x] 覆盖租户用户不展示平台治理菜单，直接访问平台治理路由不触发平台页 API。
 - [x] 覆盖零空间教师提示。
+- [x] 覆盖用户详情展示教师空间分配状态。
 - [x] 覆盖学生查分接口路径为 `/api/v1/exam-entry/results/:id`。
 - [x] 覆盖 401 清理登录态。
 - [x] 覆盖 403 展示无权限提示。

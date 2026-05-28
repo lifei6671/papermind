@@ -20,7 +20,8 @@ export function App() {
         {adminRoutes.map((route) => (
           <Route
             element={
-              route.group === "exam" && !routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? [])
+              routeRequiresRouteGuard(route.group) &&
+              !routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? [])
                 ? <Navigate to="/" replace />
                 : route.element
             }
@@ -32,6 +33,10 @@ export function App() {
       </Route>
     </Routes>
   );
+}
+
+function routeRequiresRouteGuard(group: string) {
+  return group === "platform" || group === "exam";
 }
 
 function RequireSession({ children }: { children: ReactNode }) {

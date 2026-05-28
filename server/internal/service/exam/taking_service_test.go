@@ -269,6 +269,85 @@ func TestExamEventsThrottleDropNonCriticalAndKeepCriticalReliable(t *testing.T) 
 	}
 }
 
+func TestTakingWriteAPIsRejectSubmittedAttemptAndExpiredAnswerWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*fakeTakingRepository)
+		wantErr error
+	}{
+		{
+			name: "submitted attempt",
+			mutate: func(repo *fakeTakingRepository) {
+				repo.attempt.Status = AttemptStatusSubmitted
+			},
+			wantErr: ErrAttemptAlreadySubmitted,
+		},
+		{
+			name: "expired answer window",
+			mutate: func(repo *fakeTakingRepository) {
+				repo.now = fixedUnixMilli + 30*minuteMillis + answerTransportGraceMillis + 1
+			},
+			wantErr: ErrAnswerDeadlineExceeded,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeTakingRepository()
+			repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+			repo.attempt = Attempt{
+				ID:                 99,
+				TenantID:           10,
+				ExamID:             1,
+				UserID:             20,
+				Status:             AttemptStatusInProgress,
+				StartedAt:          fixedUnixMilli,
+				Version:            3,
+				ExamTokenHash:      HashExamToken("exam-token"),
+				ExamTokenExpiresAt: fixedUnixMilli + 35*minuteMillis,
+			}
+			repo.attemptQuestions = map[uint64]AttemptQuestion{
+				9001: {ID: 9001, TenantID: 10, AttemptID: 99, QuestionSnapshot: `{"title":"单选题","type":"single"}`},
+			}
+			tc.mutate(repo)
+			svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: repo.currentTime})
+
+			err := svc.SaveAnswer(context.Background(), SaveAnswerInput{
+				TenantID:          10,
+				AttemptID:         99,
+				AttemptQuestionID: 9001,
+				ExamToken:         "exam-token",
+				QuestionType:      QuestionTypeSingle,
+				OptionIDs:         []uint64{7},
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("SaveAnswer expected %v, got %v", tc.wantErr, err)
+			}
+
+			err = svc.Submit(context.Background(), SubmitInput{
+				TenantID:  10,
+				AttemptID: 99,
+				ExamToken: "exam-token",
+				EventType: EventTypeSubmit,
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Submit expected %v, got %v", tc.wantErr, err)
+			}
+
+			err = svc.RecordEvent(context.Background(), RecordEventInput{
+				TenantID:  10,
+				AttemptID: 99,
+				ExamToken: "exam-token",
+				EventType: EventTypeBlur,
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("RecordEvent expected %v, got %v", tc.wantErr, err)
+			}
+			if len(repo.events) != 0 {
+				t.Fatalf("rejected write should not persist events, got %#v", repo.events)
+			}
+		})
+	}
+}
+
 func TestStartEventConsumerPersistsQueuedEventsAsynchronously(t *testing.T) {
 	repo := newFakeTakingRepository()
 	repo.eventAppended = make(chan struct{}, 1)

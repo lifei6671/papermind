@@ -14,6 +14,7 @@ go.work.sum
 *.log
 .idea/
 .vscode/
+.codegraph/
 pnpm-lock.yaml
 server/conf/app.yaml
 

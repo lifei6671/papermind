@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -196,6 +197,66 @@ func TestProfileSpacesAPIRouteListsCurrentTenantUserMemberships(t *testing.T) {
 	item := body.Data.Items[0]
 	if item.SpaceID != 100 || item.Role != "space_admin" || item.Status != "enabled" {
 		t.Fatalf("unexpected membership item: %#v", item)
+	}
+}
+
+func TestTeacherGainsProfileSpaceOnlyAfterSpaceMemberAssignment(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	adminAuthHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/users", []byte(`{
+		"tenant_id": 10,
+		"username": "new.teacher",
+		"real_name": "新教师",
+		"password": "new-teacher-secure-123",
+		"role": "teacher"
+	}`), adminAuthHeader))
+	if createRecorder.Code != http.StatusOK {
+		t.Fatalf("create teacher status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
+	}
+	createBody := decodeExamAPIResponse[userResponse](t, createRecorder.Body.Bytes())
+	teacherAuthHeader := tenantAuthHeader(t, router, 10, "new.teacher", "new-teacher-secure-123")
+
+	beforeRecorder := httptest.NewRecorder()
+	router.ServeHTTP(beforeRecorder, authorizedRequest(http.MethodGet, "/api/v1/profile/spaces", nil, teacherAuthHeader))
+	if beforeRecorder.Code != http.StatusOK {
+		t.Fatalf("profile spaces before assignment status = %d, body = %s", beforeRecorder.Code, beforeRecorder.Body.String())
+	}
+	beforeBody := decodeExamAPIResponse[profileSpaceListResponse](t, beforeRecorder.Body.Bytes())
+	if len(beforeBody.Data.Items) != 0 {
+		t.Fatalf("expected no profile spaces before assignment, got %#v", beforeBody.Data.Items)
+	}
+
+	assignRecorder := httptest.NewRecorder()
+	router.ServeHTTP(assignRecorder, authorizedRequest(http.MethodPost, "/api/v1/spaces/100/members", []byte(`{
+		"tenant_id": 10,
+		"user_id": `+strconv.FormatUint(createBody.Data.ID, 10)+`,
+		"role": "teacher"
+	}`), adminAuthHeader))
+	if assignRecorder.Code != http.StatusOK {
+		t.Fatalf("assign teacher to space status = %d, body = %s", assignRecorder.Code, assignRecorder.Body.String())
+	}
+
+	afterRecorder := httptest.NewRecorder()
+	router.ServeHTTP(afterRecorder, authorizedRequest(http.MethodGet, "/api/v1/profile/spaces", nil, teacherAuthHeader))
+	if afterRecorder.Code != http.StatusOK {
+		t.Fatalf("profile spaces after assignment status = %d, body = %s", afterRecorder.Code, afterRecorder.Body.String())
+	}
+	afterBody := decodeExamAPIResponse[profileSpaceListResponse](t, afterRecorder.Body.Bytes())
+	if len(afterBody.Data.Items) != 1 {
+		t.Fatalf("expected one profile space after assignment, got %#v", afterBody.Data.Items)
+	}
+	item := afterBody.Data.Items[0]
+	if item.SpaceID != 100 || item.Role != "teacher" || item.Status != "enabled" {
+		t.Fatalf("unexpected assigned profile space: %#v", item)
 	}
 }
 

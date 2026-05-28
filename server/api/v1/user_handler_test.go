@@ -108,6 +108,49 @@ func TestTenantStudentCannotCreateUsers(t *testing.T) {
 	}
 }
 
+func TestCreateTeacherDoesNotAutoJoinSpaceMembers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedUserAPITestData(t, gormDB)
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, logo_url, description, type, status,
+			created_at, updated_at, ext_json
+		) VALUES (301, 10, '高一一班', '', '', 'class', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed space: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/users", []byte(`{
+		"tenant_id": 10,
+		"username": "new.teacher",
+		"real_name": "新教师",
+		"password": "new-teacher-secure-123",
+		"role": "teacher"
+	}`), authHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("create teacher status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	createBody := decodeExamAPIResponse[userResponse](t, recorder.Body.Bytes())
+
+	var memberCount int64
+	if err := gormDB.Table("space_members").
+		Where("tenant_id = ? AND user_id = ?", 10, createBody.Data.ID).
+		Count(&memberCount).Error; err != nil {
+		t.Fatalf("count created teacher space members: %v", err)
+	}
+	if memberCount != 0 {
+		t.Fatalf("expected created teacher to have no space memberships, got %d", memberCount)
+	}
+}
+
 func TestTenantAdminCanManageOnlyOwnTenantUsers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	apirouter "github.com/lifei6671/papermind/server/api/router"
 	v1 "github.com/lifei6671/papermind/server/api/v1"
 	"github.com/lifei6671/papermind/server/bootstrap/adminseed"
 	"github.com/lifei6671/papermind/server/bootstrap/devseed"
@@ -52,7 +53,8 @@ func main() {
 		slog.Error("seed development data failed", "error", err)
 		os.Exit(1)
 	}
-	server := buildHTTPServer(cfg, v1.NewRouter(routerOptionsFromConfig(cfg, gormDB)))
+	routerOptions := routerOptionsFromConfig(cfg, gormDB)
+	server := buildHTTPServer(cfg, apirouter.New(routerOptions, v1.RegisterRoutes, v1.AuthMiddlewares(routerOptions)...))
 	defer utils.SafeClose(server)
 	slog.Info("papermind http server starting", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -61,8 +63,8 @@ func main() {
 	}
 }
 
-func routerOptionsFromConfig(cfg *config.Config, gormDB *gorm.DB) v1.RouterOptions {
-	options := v1.RouterOptions{
+func routerOptionsFromConfig(cfg *config.Config, gormDB *gorm.DB) apirouter.Options {
+	options := apirouter.Options{
 		DB:             gormDB,
 		AuthSessionTTL: authSessionTTL(cfg),
 	}

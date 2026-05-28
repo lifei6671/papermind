@@ -482,6 +482,10 @@ func writePaperServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
+	if errors.Is(err, servicepaper.ErrQuestionOutOfScope) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "题目不属于当前试卷可用范围"))
+		return
+	}
 	if errors.Is(err, servicepaper.ErrQuestionPoolInsufficient) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return

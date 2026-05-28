@@ -177,7 +177,7 @@ func (s *Service) ValidateSpaceAdminInvariant(ctx context.Context, tenantID uint
 	if err != nil {
 		return err
 	}
-	if count <= 1 {
+	if count == 1 {
 		return ErrCannotLoseLastSpaceAdmin
 	}
 	return nil

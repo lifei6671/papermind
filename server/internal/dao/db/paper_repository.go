@@ -201,6 +201,19 @@ func (r *PaperRepository) PaperQuestionExists(ctx context.Context, tenantID uint
 	return total > 0, err
 }
 
+func (r *PaperRepository) QuestionUsableForPaper(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error) {
+	var total int64
+	err := r.db.WithContext(ctx).Table(QuestionDO{}.TableName()+" AS q").
+		Joins("JOIN "+PaperDO{}.TableName()+" AS p ON p."+PaperColumns.TenantID+" = q."+QuestionColumns.TenantID+" AND p."+PaperColumns.ID+" = ? AND p."+PaperColumns.DeletedAt+" = 0", paperID).
+		Where("q."+QuestionColumns.TenantID+" = ?", tenantID).
+		Where("q."+QuestionColumns.ID+" = ?", questionID).
+		Where("q."+QuestionColumns.Status+" = ?", "enabled").
+		Where("q."+QuestionColumns.DeletedAt+" = ?", 0).
+		Where(r.db.Where("q." + QuestionColumns.SpaceID + " IS NULL").Or("q." + QuestionColumns.SpaceID + " = p." + PaperColumns.SpaceID)).
+		Count(&total).Error
+	return total > 0, err
+}
+
 func (r *PaperRepository) AddSectionQuestionAndRecalculate(ctx context.Context, question servicepaper.SectionQuestion) error {
 	now := r.now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -312,10 +325,12 @@ func (r *PaperRepository) MatchQuestionsForRule(ctx context.Context, tenantID ui
 	tagIDs := tagIDsFromFilter(rule.TagFilter)
 	query := r.db.WithContext(ctx).Table(QuestionDO{}.TableName()+" AS q").
 		Select("q."+QuestionColumns.ID).
+		Joins("JOIN "+PaperDO{}.TableName()+" AS p ON p."+PaperColumns.TenantID+" = q."+QuestionColumns.TenantID+" AND p."+PaperColumns.ID+" = ? AND p."+PaperColumns.DeletedAt+" = 0", paperID).
 		Where("q."+QuestionColumns.TenantID+" = ?", tenantID).
 		Where("q."+QuestionColumns.Type+" = ?", section.QuestionType).
 		Where("q."+QuestionColumns.Status+" = ?", "enabled").
-		Where("q."+QuestionColumns.DeletedAt+" = ?", 0)
+		Where("q."+QuestionColumns.DeletedAt+" = ?", 0).
+		Where(r.db.Where("q." + QuestionColumns.SpaceID + " IS NULL").Or("q." + QuestionColumns.SpaceID + " = p." + PaperColumns.SpaceID))
 	if rule.Difficulty != nil {
 		query = query.Where("q."+QuestionColumns.Difficulty+" = ?", *rule.Difficulty)
 	}

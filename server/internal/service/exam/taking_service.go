@@ -111,6 +111,15 @@ type RecordEventInput struct {
 	Payload   string // 事件扩展信息 JSON。
 }
 
+type ExamEntryContext struct {
+	TenantID  uint64
+	ExamID    uint64
+	AttemptID uint64
+	UserID    uint64
+	Attempt   Attempt
+	Exam      Exam
+}
+
 type TakingRepository interface {
 	FindAttemptByTokenHash(ctx context.Context, tokenHash string) (Attempt, error)
 	GetExam(ctx context.Context, tenantID uint64, examID uint64) (Exam, error)
@@ -160,15 +169,9 @@ func NewTakingService(options TakingServiceOptions) *TakingService {
 }
 
 func (s *TakingService) SaveAnswer(ctx context.Context, input SaveAnswerInput) error {
-	attempt, exam, err := s.validateTakingToken(ctx, input.TenantID, input.AttemptID, input.ExamToken)
+	attempt, _, err := s.validateTakingToken(ctx, input.TenantID, input.AttemptID, input.ExamToken)
 	if err != nil {
 		return err
-	}
-	if attempt.Status != AttemptStatusInProgress {
-		return ErrAttemptAlreadySubmitted
-	}
-	if s.now() > answerDeadline(attempt.StartedAt, exam)+answerTransportGraceMillis {
-		return ErrAnswerDeadlineExceeded
 	}
 	attemptQuestion, err := s.repo.GetAttemptQuestion(ctx, input.TenantID, input.AttemptID, input.AttemptQuestionID)
 	if errors.Is(err, ErrAttemptNotFound) {
@@ -196,9 +199,6 @@ func (s *TakingService) Submit(ctx context.Context, input SubmitInput) error {
 	attempt, _, err := s.validateTakingToken(ctx, input.TenantID, input.AttemptID, input.ExamToken)
 	if err != nil {
 		return err
-	}
-	if attempt.Status != AttemptStatusInProgress {
-		return ErrAttemptAlreadySubmitted
 	}
 	event := ExamEvent{
 		TenantID:  input.TenantID,
@@ -281,6 +281,21 @@ func (s *TakingService) PendingEventCount() int {
 	return len(s.events)
 }
 
+func (s *TakingService) ValidateExamEntryToken(ctx context.Context, tenantID uint64, attemptID uint64, token string) (ExamEntryContext, error) {
+	attempt, exam, err := s.validateTakingToken(ctx, tenantID, attemptID, token)
+	if err != nil {
+		return ExamEntryContext{}, err
+	}
+	return ExamEntryContext{
+		TenantID:  attempt.TenantID,
+		ExamID:    attempt.ExamID,
+		AttemptID: attempt.ID,
+		UserID:    attempt.UserID,
+		Attempt:   attempt,
+		Exam:      exam,
+	}, nil
+}
+
 func (s *TakingService) validateTakingToken(ctx context.Context, tenantID uint64, attemptID uint64, token string) (Attempt, Exam, error) {
 	attempt, err := s.repo.FindAttemptByTokenHash(ctx, HashExamToken(token))
 	if err != nil {
@@ -295,6 +310,12 @@ func (s *TakingService) validateTakingToken(ctx context.Context, tenantID uint64
 	exam, err := s.repo.GetExam(ctx, tenantID, attempt.ExamID)
 	if err != nil {
 		return Attempt{}, Exam{}, err
+	}
+	if attempt.Status != AttemptStatusInProgress {
+		return Attempt{}, Exam{}, ErrAttemptAlreadySubmitted
+	}
+	if s.now() > answerDeadline(attempt.StartedAt, exam)+answerTransportGraceMillis {
+		return Attempt{}, Exam{}, ErrAnswerDeadlineExceeded
 	}
 	return attempt, exam, nil
 }

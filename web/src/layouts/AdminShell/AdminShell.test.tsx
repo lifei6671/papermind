@@ -2,7 +2,9 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { adminRoutes } from "../../app/routes";
+import { adminRoutes, buildAdminRoutes } from "../../app/routes";
+import { School } from "lucide-react";
+import type { AdminRoute } from "../../app/routes";
 import { SESSION_STORAGE_KEY } from "../../auth/session-context";
 import { SessionProvider } from "../../auth/session";
 import { AdminShell } from "./AdminShell";
@@ -122,8 +124,8 @@ test("租户管理员展示租户空间菜单", () => {
 });
 
 test("教师展示考试业务菜单", () => {
-  window.localStorage.setItem(
-    SESSION_STORAGE_KEY,
+	window.localStorage.setItem(
+		SESSION_STORAGE_KEY,
     JSON.stringify({
       accessToken: "access-token",
       refreshToken: "refresh-token",
@@ -144,6 +146,89 @@ test("教师展示考试业务菜单", () => {
   );
 
   expect(screen.getByText("考试业务")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /阅卷中心/ })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /成绩/ })).toBeInTheDocument();
+  expect(screen.queryByText("平台运营")).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /租户管理/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /平台配置/ })).not.toBeInTheDocument();
+	expect(screen.getByRole("link", { name: /阅卷中心/ })).toBeInTheDocument();
+	expect(screen.getByRole("link", { name: /成绩/ })).toBeInTheDocument();
+});
+
+test("菜单可由授权空间驱动而不是把 space_admin 写入 session role", () => {
+	const routes: AdminRoute[] = [{
+		description: "管理当前空间成员",
+		element: <div>空间成员页</div>,
+		group: "tenant",
+		icon: School,
+		label: "空间成员",
+		menuRoles: ["tenant_admin"],
+		path: "/space-members",
+		spaceMemberRoles: ["space_admin"],
+	}];
+	window.localStorage.setItem(
+		SESSION_STORAGE_KEY,
+		JSON.stringify({
+			accessToken: "access-token",
+			refreshToken: "refresh-token",
+			profileSpaces: [{
+				id: 1,
+				tenantID: 10,
+				spaceID: 301,
+				role: "space_admin",
+				status: "enabled",
+			}],
+			user: { displayName: "空间管理员", role: "teacher", tenantID: 10, userID: 3 },
+		}),
+	);
+
+	render(
+		<SessionProvider>
+			<MemoryRouter initialEntries={["/"]}>
+				<Routes>
+					<Route element={<AdminShell routes={routes} />}>
+						<Route path="/" element={<div>概览页面</div>} />
+					</Route>
+				</Routes>
+			</MemoryRouter>
+		</SessionProvider>,
+	);
+
+	expect(screen.getByRole("link", { name: /空间成员/ })).toBeInTheDocument();
+});
+
+test("真实空间成员菜单可由授权空间列表驱动", () => {
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        spaceID: 301,
+        role: "space_admin",
+        status: "enabled",
+      }],
+      user: { displayName: "空间管理员", role: "teacher", tenantID: 10, userID: 3 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<AdminShell routes={buildAdminRoutes({
+            displayName: "空间管理员",
+            role: "teacher",
+            tenantID: 10,
+            userID: 3,
+          })} />}>
+            <Route path="/" element={<div>概览页面</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  expect(screen.getByRole("link", { name: /空间成员/ })).toHaveAttribute("href", "/space-members");
+  expect(screen.queryByRole("link", { name: /空间管理/ })).not.toBeInTheDocument();
 });

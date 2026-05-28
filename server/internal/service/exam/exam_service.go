@@ -386,17 +386,7 @@ func (s *Service) StartExam(ctx context.Context, input StartInput) (StartResult,
 		return StartResult{}, ErrExamEnded
 	}
 	if attempt, err := s.repo.FindInProgressAttempt(ctx, input.TenantID, input.ExamID, input.UserID); err == nil {
-		token, err := s.tokenIssuer.IssueToken()
-		if err != nil {
-			return StartResult{}, err
-		}
-		attempt.ExamTokenHash = s.HashExamToken(token)
-		attempt.ExamTokenExpiresAt = answerDeadline(attempt.StartedAt, exam) + tokenBufferMillis
-		attempt, err = s.repo.UpdateAttemptToken(ctx, attempt)
-		if err != nil {
-			return StartResult{}, err
-		}
-		return StartResult{Attempt: attempt, ExamToken: token}, nil
+		return StartResult{Attempt: attempt}, nil
 	} else if !errors.Is(err, ErrAttemptNotFound) {
 		return StartResult{}, err
 	}
@@ -427,13 +417,7 @@ func (s *Service) StartExam(ctx context.Context, input StartInput) (StartResult,
 		if findErr != nil {
 			return StartResult{}, findErr
 		}
-		existing.ExamTokenHash = attempt.ExamTokenHash
-		existing.ExamTokenExpiresAt = attempt.ExamTokenExpiresAt
-		existing, findErr = s.repo.UpdateAttemptToken(ctx, existing)
-		if findErr != nil {
-			return StartResult{}, findErr
-		}
-		return StartResult{Attempt: existing, ExamToken: token}, nil
+		return StartResult{Attempt: existing}, nil
 	}
 	if err != nil {
 		return StartResult{}, err

@@ -26,6 +26,7 @@ import { TenantManagementPage } from "../pages/Platform/TenantManagementPage";
 import { ProfileSettingsPage } from "../pages/Profile/ProfileSettingsPage";
 import { ResultsPage } from "../pages/Results/ResultsPage";
 import { SpaceManagementPage } from "../pages/Tenant/SpaceManagementPage";
+import { SpaceMemberManagementPage } from "../pages/Tenant/SpaceMemberManagementPage";
 import { UserManagementPage } from "../pages/Tenant/UserManagementPage";
 import type { ActorRole } from "../api/grading";
 import type { ProfileSpaceAuthorization, SessionUser } from "../auth/session-context";
@@ -48,6 +49,7 @@ export type AdminRoute = {
 
 export const tenantAdminRoles = ["tenant_admin"];
 export const examBusinessRoles = ["tenant_admin", "teacher"];
+export const platformAdminRoles = ["platform_admin"];
 
 export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
   const sessionTenantID = user?.tenantID;
@@ -61,7 +63,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     description: "租户、考试、阅卷和成绩风险总览",
     icon: BarChart3,
     element: <DashboardPage />,
-    group: "platform",
+    group: "hidden",
   },
   {
     path: "/tenants",
@@ -70,6 +72,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     icon: Building2,
     element: <TenantManagementPage />,
     group: "platform",
+    menuRoles: platformAdminRoles,
   },
   {
     path: "/platform-settings",
@@ -78,6 +81,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     icon: Settings,
     element: <PlatformSettingsPage />,
     group: "platform",
+    menuRoles: platformAdminRoles,
   },
   {
     path: "/spaces",
@@ -93,6 +97,22 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     ),
     group: "tenant",
     menuRoles: tenantAdminRoles,
+  },
+  {
+    path: "/space-members",
+    label: "空间成员",
+    description: "管理当前授权空间的成员",
+    icon: Users,
+    element: (
+      <TenantScopedRoute
+        render={(tenantID) => <SpaceMemberManagementPage tenantID={tenantID} />}
+        title="空间成员"
+        user={user}
+      />
+    ),
+    group: "tenant",
+    menuRoles: tenantAdminRoles,
+    spaceMemberRoles: ["space_admin"],
   },
   {
     path: "/users",

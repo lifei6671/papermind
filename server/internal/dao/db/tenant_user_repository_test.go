@@ -79,6 +79,39 @@ func TestTenantUserRepositoryRejectsDisablingUserWhenSpaceLosesLastAdmin(t *test
 	}
 }
 
+func TestTenantUserRepositoryAllowsDisablingUserWhenOnlyDisabledSpaceLosesAdmin(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, true)
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, logo_url, description, type, status,
+			created_at, updated_at, ext_json
+		) VALUES (301, 10, '高一一班', '', '', 'class', 'disabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed disabled space: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status,
+			created_at, updated_at, ext_json
+		) VALUES (20, 10, 301, 20, 'space_admin', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed space member: %v", err)
+	}
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	if err := repo.UpdateStatus(context.Background(), 10, 20, servicetenantuser.StatusDisabled); err != nil {
+		t.Fatalf("UpdateStatus returned error: %v", err)
+	}
+	var status string
+	if err := gormDB.Table("users").Select("status").Where("tenant_id = ? AND id = ?", 10, 20).Scan(&status).Error; err != nil {
+		t.Fatalf("query user status: %v", err)
+	}
+	if status != servicetenantuser.StatusDisabled {
+		t.Fatalf("expected user disabled when only disabled space loses admin, got %q", status)
+	}
+}
+
 func TestTenantUserRepositoryBuildDisableImpactReturnsAdminSpaceIDs(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	seedTenantAdminInvariantData(t, gormDB, true)

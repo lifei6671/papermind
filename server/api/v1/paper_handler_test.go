@@ -196,6 +196,63 @@ func TestTeacherCannotWritePublicPaper(t *testing.T) {
 	}
 }
 
+func TestPaperAPIRoutesRejectOtherSpaceQuestionsWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPaperAPITestData(t, gormDB)
+	seedPaperRuleAPITestData(t, gormDB)
+	seedOtherSpaceQuestionAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+
+	addQuestionRecorder := httptest.NewRecorder()
+	router.ServeHTTP(addQuestionRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/sections/1/questions", []byte(`{
+		"tenant_id": 10,
+		"question_id": 102,
+		"score": "4"
+	}`), authHeader))
+	if addQuestionRecorder.Code != http.StatusForbidden {
+		t.Fatalf("expected other-space manual question to be forbidden, got status = %d, body = %s", addQuestionRecorder.Code, addQuestionRecorder.Body.String())
+	}
+	var addedCount int64
+	if err := gormDB.Table("paper_section_questions").
+		Where("tenant_id = ? AND paper_id = ? AND question_id = ?", 10, 100, 102).
+		Count(&addedCount).Error; err != nil {
+		t.Fatalf("count other-space section question: %v", err)
+	}
+	if addedCount != 0 {
+		t.Fatalf("expected other-space question not to be added, got %d", addedCount)
+	}
+
+	createRulePayload := []byte(`{
+		"tenant_id": 10,
+		"sort_order": 1,
+		"difficulty": "easy",
+		"tag_ids": [2],
+		"question_count": 1,
+		"score_per_question": "4"
+	}`)
+	createRuleRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRuleRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/sections/1/rules", createRulePayload, authHeader))
+	if createRuleRecorder.Code != http.StatusOK {
+		t.Fatalf("create rule status = %d, body = %s", createRuleRecorder.Code, createRuleRecorder.Body.String())
+	}
+
+	precheckRecorder := httptest.NewRecorder()
+	router.ServeHTTP(precheckRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/rule-live/precheck", []byte(`{
+		"tenant_id": 10
+	}`), authHeader))
+	if precheckRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected other-space rule candidates to be rejected, got status = %d, body = %s", precheckRecorder.Code, precheckRecorder.Body.String())
+	}
+}
+
 func seedPaperAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
 
@@ -263,5 +320,32 @@ func seedPaperRuleAPITestData(t *testing.T, gormDB *gorm.DB) {
 			(10, 101, 1, ?, '{}')
 	`, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed question tags: %v", err)
+	}
+}
+
+func seedOtherSpaceQuestionAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, type, status, created_at, updated_at, ext_json
+		) VALUES (302, 10, '高一 2 班', 'class', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed other question space: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO questions (
+			id, tenant_id, space_id, type, difficulty, title, analysis, score_default, status,
+			created_at, updated_at, ext_json
+		) VALUES (102, 10, 302, ?, 'easy', '其他空间题', '不应被当前空间试卷引用。', 4, 'enabled', ?, ?, '{}')
+	`, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed other-space question: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO question_tags (
+			tenant_id, question_id, tag_id, created_at, ext_json
+		) VALUES (10, 102, 2, ?, '{}')
+	`, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed other-space question tag: %v", err)
 	}
 }

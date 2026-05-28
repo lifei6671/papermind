@@ -67,6 +67,21 @@ function storeTenantTeacherSession() {
   }));
 }
 
+function storeSpaceAdminTeacherSession() {
+  window.localStorage.setItem("papermind.session.v1", JSON.stringify({
+    accessToken: "teacher-session-token",
+    refreshToken: "teacher-session-token",
+    profileSpaces: [{
+      id: 1,
+      tenantID: 77,
+      spaceID: 301,
+      role: "space_admin",
+      status: "enabled",
+    }],
+    user: { userID: 55, displayName: "空间管理员", role: "teacher", tenantID: 77 },
+  }));
+}
+
 function storeTenantAdminSession() {
   window.localStorage.setItem("papermind.session.v1", JSON.stringify({
     accessToken: "tenant-admin-session-token",
@@ -250,6 +265,13 @@ test("平台管理员打开空间管理时使用 URL 租户 ID 接入后端 API"
         },
       }));
     }
+    if (url === "/api/v1/spaces?tenant_id=10") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { items: [], total: 0, page: 1, page_size: 20 },
+      }));
+    }
     return new Response(JSON.stringify({ code: 40001, message: "tenant_id 必须是正整数", data: null }), {
       status: 400,
     });
@@ -289,6 +311,13 @@ test("平台管理员打开用户管理时使用 URL 租户 ID 接入后端 API"
         },
       }));
     }
+    if (url === "/api/v1/spaces?tenant_id=10") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { items: [], total: 0, page: 1, page_size: 20 },
+      }));
+    }
     return new Response(JSON.stringify({ code: 40001, message: "tenant_id 必须是正整数", data: null }), {
       status: 400,
     });
@@ -309,6 +338,17 @@ test("平台管理员直接访问考试业务路由会回到概览", () => {
 
   expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "阅卷中心" })).not.toBeInTheDocument();
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test("租户用户直接访问平台治理路由会回到概览且不触发平台 API", () => {
+  storeTenantTeacherSession();
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+
+  renderApp(["/tenants"]);
+
+  expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "租户管理" })).not.toBeInTheDocument();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -705,9 +745,48 @@ test("真实路由渲染空间管理时从 session 派生租户并请求后端 A
   expect(requestedURLs).not.toContain("/api/v1/spaces?tenant_id=0");
 });
 
+test("真实空间成员入口由授权空间列表渲染并读取成员", async () => {
+  storeSpaceAdminTeacherSession();
+  const requestedURLs: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    requestedURLs.push(url);
+    if (url === "/api/v1/spaces/301/members?tenant_id=77") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 1,
+            user_id: 55,
+            name: "空间管理员",
+            role: "space_admin",
+            status: "enabled",
+          }],
+          page: 1,
+          page_size: 20,
+          total: 1,
+        },
+      }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
+
+  renderApp(["/space-members"]);
+
+  expect(await screen.findByRole("heading", { name: "空间成员" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /空间成员/ })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /空间管理/ })).not.toBeInTheDocument();
+  expect(await screen.findByRole("row", { name: /空间管理员 55 空间管理员 启用/ })).toBeInTheDocument();
+  expect(screen.getByText("空间 301")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "创建空间" })).not.toBeInTheDocument();
+  expect(requestedURLs).toEqual(["/api/v1/spaces/301/members?tenant_id=77"]);
+});
+
 test("真实路由渲染用户管理时从 session 派生租户并请求后端 API", async () => {
   storeTenantAdminSession();
   let usersURL = "";
+  let spacesURL = "";
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url.startsWith("/api/v1/users?")) {
@@ -731,6 +810,14 @@ test("真实路由渲染用户管理时从 session 派生租户并请求后端 A
         },
       }));
     }
+    if (url.startsWith("/api/v1/spaces?")) {
+      spacesURL = url;
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { items: [], page: 1, page_size: 20, total: 0 },
+      }));
+    }
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
   });
 
@@ -738,6 +825,7 @@ test("真实路由渲染用户管理时从 session 派生租户并请求后端 A
 
   expect(await screen.findByText("tenant.admin")).toBeInTheDocument();
   await waitFor(() => expect(usersURL).toBe("/api/v1/users?tenant_id=77"));
+  await waitFor(() => expect(spacesURL).toBe("/api/v1/spaces?tenant_id=77"));
 });
 
 test("成绩页支持发布配置和成绩导出", async () => {

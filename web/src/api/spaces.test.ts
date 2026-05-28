@@ -40,6 +40,7 @@ describe("space api", () => {
         logoFileName: "未上传",
         members: [{
           id: 1,
+          userID: 20,
           name: "李老师",
           role: "space_admin",
           status: "enabled",
@@ -95,6 +96,42 @@ describe("space api", () => {
           admin_user_ids: [21],
         }),
       }),
+    );
+  });
+
+  test("空间成员列表会按授权空间接口读取", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 8,
+            user_id: 55,
+            name: "阅卷教师",
+            role: "space_admin",
+            status: "enabled",
+          }],
+          page: 1,
+          page_size: 20,
+          total: 1,
+        },
+      })),
+    );
+    const api = createSpaceAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.listSpaceMembers({ tenantID: 10, spaceID: 301 })).resolves.toEqual({
+      items: [{
+        id: 8,
+        userID: 55,
+        name: "阅卷教师",
+        role: "space_admin",
+        status: "enabled",
+      }],
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/spaces/301/members?tenant_id=10",
+      expect.objectContaining({ method: "GET" }),
     );
   });
 });

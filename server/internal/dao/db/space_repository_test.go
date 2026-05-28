@@ -70,6 +70,31 @@ func TestSpaceRepositoryAllowsChangingNonLastSpaceAdmin(t *testing.T) {
 	}
 }
 
+func TestSpaceRepositoryAllowsLosingLastSpaceAdminInDisabledSpace(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedSpaceAdminInvariantData(t, gormDB, false)
+	if err := gormDB.Table("spaces").
+		Where("tenant_id = ? AND id = ?", 10, 301).
+		Update("status", servicespace.StatusDisabled).Error; err != nil {
+		t.Fatalf("disable space: %v", err)
+	}
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	if err := repo.DisableMember(context.Background(), 10, 301, 20); err != nil {
+		t.Fatalf("DisableMember returned error: %v", err)
+	}
+	var status string
+	if err := gormDB.Table("space_members").
+		Select("status").
+		Where("tenant_id = ? AND space_id = ? AND user_id = ?", 10, 301, 20).
+		Scan(&status).Error; err != nil {
+		t.Fatalf("query member status: %v", err)
+	}
+	if status != servicespace.StatusDisabled {
+		t.Fatalf("expected member disabled in disabled space, got %q", status)
+	}
+}
+
 func TestSpaceRepositoryListEffectiveMembershipsForUserFiltersInactiveRows(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	seedUserMembershipListData(t, gormDB)

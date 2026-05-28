@@ -100,6 +100,7 @@ func TestManualPaperAddQuestionPreventsDuplicatesAndRecalculates(t *testing.T) {
 	}
 
 	repo.duplicatePaperQuestion = false
+	repo.questionUsableForPaper = true
 	shuffle := false
 	err = svc.AddManualQuestion(context.Background(), AddSectionQuestionInput{
 		TenantID:       10,
@@ -300,6 +301,7 @@ type fakeRepository struct {
 	createdPaper Paper
 
 	duplicatePaperQuestion                 bool
+	questionUsableForPaper                 bool
 	addQuestionAndRecalculateInTransaction bool
 	addedQuestion                          SectionQuestion
 
@@ -370,6 +372,10 @@ func (r *fakeRepository) CreatePaper(ctx context.Context, paper Paper) (Paper, e
 
 func (r *fakeRepository) PaperQuestionExists(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error) {
 	return r.duplicatePaperQuestion, nil
+}
+
+func (r *fakeRepository) QuestionUsableForPaper(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error) {
+	return r.questionUsableForPaper, nil
 }
 
 func (r *fakeRepository) AddSectionQuestionAndRecalculate(ctx context.Context, question SectionQuestion) error {

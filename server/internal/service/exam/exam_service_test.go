@@ -155,12 +155,22 @@ func TestTargetsRejectDuplicatesAndInviteRequiresLogin(t *testing.T) {
 }
 
 func TestStartExamIsIdempotentAndIssuesOpaqueAttemptToken(t *testing.T) {
+	existingTokenHash := HashExamToken("existing-token")
 	repo := &fakeRepository{
 		exams: map[uint64]Exam{
 			1: {ID: 1, TenantID: 10, PaperID: 100, StartTime: fixedUnixMilli - minuteMillis, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30, MaxAttempts: 2, Status: StatusPublished},
 		},
-		eligible:           true,
-		existingInProgress: &Attempt{ID: 99, TenantID: 10, ExamID: 1, UserID: 20, AttemptNo: 1, Status: AttemptStatusInProgress},
+		eligible: true,
+		existingInProgress: &Attempt{
+			ID:                 99,
+			TenantID:           10,
+			ExamID:             1,
+			UserID:             20,
+			AttemptNo:          1,
+			Status:             AttemptStatusInProgress,
+			ExamTokenHash:      existingTokenHash,
+			ExamTokenExpiresAt: fixedUnixMilli + 30*minuteMillis + defaultTokenBufferMillis,
+		},
 	}
 	svc := NewService(ServiceOptions{
 		Repo:        repo,
@@ -175,8 +185,11 @@ func TestStartExamIsIdempotentAndIssuesOpaqueAttemptToken(t *testing.T) {
 	if started.Attempt.ID != 99 || repo.createdAttempt.ID != 0 {
 		t.Fatalf("expected existing in_progress attempt, got started=%#v created=%#v", started.Attempt, repo.createdAttempt)
 	}
-	if started.ExamToken != "exam-token" || started.Attempt.ExamTokenHash == "" {
-		t.Fatalf("expected existing attempt token to be refreshed, got started=%#v", started)
+	if started.ExamToken != "" {
+		t.Fatalf("expected existing attempt not to issue a new token, got %q", started.ExamToken)
+	}
+	if started.Attempt.ExamTokenHash != existingTokenHash || repo.updateAttemptTokenCount != 0 {
+		t.Fatalf("expected existing attempt token not to be refreshed, got started=%#v updates=%d", started, repo.updateAttemptTokenCount)
 	}
 
 	repo.existingInProgress = nil
@@ -214,6 +227,9 @@ func TestStartExamIsIdempotentAndIssuesOpaqueAttemptToken(t *testing.T) {
 	}
 	if started.Attempt.ID != 100 || repo.retriedAfterConflict != 1 {
 		t.Fatalf("expected conflict to query existing in_progress only, got attempt=%#v retries=%d", started.Attempt, repo.retriedAfterConflict)
+	}
+	if started.ExamToken != "" || repo.updateAttemptTokenCount != 0 {
+		t.Fatalf("expected conflict path not to renew token, got token=%q updates=%d", started.ExamToken, repo.updateAttemptTokenCount)
 	}
 }
 
@@ -353,14 +369,15 @@ type fakeRepository struct {
 	addedTarget   Target
 	examsByInvite map[string]Exam
 
-	eligible             bool
-	existingInProgress   *Attempt
-	attemptCount         int
-	createdAttempt       Attempt
-	conflictOnCreate     bool
-	conflictCreated      bool
-	retriedAfterConflict int
-	attemptsByTokenHash  map[string]Attempt
+	eligible                bool
+	existingInProgress      *Attempt
+	attemptCount            int
+	createdAttempt          Attempt
+	updateAttemptTokenCount int
+	conflictOnCreate        bool
+	conflictCreated         bool
+	retriedAfterConflict    int
+	attemptsByTokenHash     map[string]Attempt
 
 	fixedQuestions     []SnapshotSourceQuestion
 	liveQuestions      []SnapshotSourceQuestion
@@ -455,6 +472,7 @@ func (r *fakeRepository) CreateAttempt(ctx context.Context, attempt Attempt) (At
 }
 
 func (r *fakeRepository) UpdateAttemptToken(ctx context.Context, attempt Attempt) (Attempt, error) {
+	r.updateAttemptTokenCount++
 	if r.existingInProgress != nil && r.existingInProgress.ID == attempt.ID {
 		*r.existingInProgress = attempt
 	}

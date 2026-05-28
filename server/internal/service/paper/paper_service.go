@@ -27,6 +27,7 @@ var (
 	ErrDuplicatePaperQuestion              = errors.New("duplicate paper question")
 	ErrQuestionPoolInsufficient            = errors.New("question pool insufficient")
 	ErrExamMustBeWithdrawnBeforeRuleChange = errors.New("exam must be withdrawn before rule change")
+	ErrQuestionOutOfScope                  = errors.New("question out of paper scope")
 )
 
 type Paper struct {
@@ -177,6 +178,7 @@ type Repository interface {
 	ListActiveSections(ctx context.Context, tenantID uint64, paperID uint64) ([]Section, error)
 	CreatePaper(ctx context.Context, paper Paper) (Paper, error)
 	PaperQuestionExists(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error)
+	QuestionUsableForPaper(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error)
 	AddSectionQuestionAndRecalculate(ctx context.Context, question SectionQuestion) error
 	CreateRule(ctx context.Context, rule Rule) (Rule, error)
 	MatchQuestionsForRule(ctx context.Context, tenantID uint64, paperID uint64, rule Rule) ([]uint64, error)
@@ -267,6 +269,13 @@ func (s *Service) AddManualQuestion(ctx context.Context, input AddSectionQuestio
 	}
 	if exists {
 		return ErrDuplicatePaperQuestion
+	}
+	usable, err := s.repo.QuestionUsableForPaper(ctx, input.TenantID, input.PaperID, input.QuestionID)
+	if err != nil {
+		return err
+	}
+	if !usable {
+		return ErrQuestionOutOfScope
 	}
 	return s.repo.AddSectionQuestionAndRecalculate(ctx, SectionQuestion{
 		TenantID:       input.TenantID,

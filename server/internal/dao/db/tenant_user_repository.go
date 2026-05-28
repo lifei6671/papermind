@@ -318,12 +318,18 @@ func (r *TenantUserRepository) validateTenantAdminInvariant(ctx context.Context,
 
 func (r *TenantUserRepository) validateSpaceAdminInvariantAfterUserStatusChange(ctx context.Context, tx *gorm.DB, tenantID uint64, userID uint64) error {
 	var memberRows []SpaceMemberDO
+	enabledSpaceIDs := tx.WithContext(ctx).Model(&SpaceDO{}).
+		Select(SpaceColumns.ID).
+		Where(SpaceColumns.TenantID+" = ?", tenantID).
+		Where(SpaceColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceColumns.DeletedAt+" = ?", 0)
 	if err := tx.WithContext(ctx).Model(&SpaceMemberDO{}).
 		Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
 		Where(SpaceMemberColumns.UserID+" = ?", userID).
 		Where(SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
 		Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
 		Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+		Where(SpaceMemberColumns.SpaceID+" IN (?)", enabledSpaceIDs).
 		Find(&memberRows).Error; err != nil {
 		return err
 	}

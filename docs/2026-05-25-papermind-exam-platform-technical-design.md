@@ -120,7 +120,9 @@ papermind
 
 职责边界：
 
-- `server/api`：所有路由注册、入参解析、调用 service、返回前端数据，类似 controller 层。
+- `server/api`：HTTP 入口层，负责核心路由装配、版本路由注册、入参解析、调用 service、返回前端数据，类似 controller 层。
+- `server/api/router`：核心 Gin Engine 装配、全局中间件挂载、静态上传目录挂载、后端 service / repository 依赖构造，并通过注册函数挂载具体版本 API。
+- `server/api/v1`：`/api/v1` 版本路由注册和业务 handler；handler 按认证、考试、租户、空间、用户、题库、试卷、上传等职责拆分文件，不再把业务 HTTP 逻辑集中在单个 `router.go`。
 - `server/bootstrap`：启动预加载、数据库初始化、配置加载、日志初始化、默认数据初始化。
 - `server/cmd`：程序 main 入口。
 - `server/conf`：开发环境 YAML 配置模板。
@@ -1117,7 +1119,7 @@ INDEX (exam_token_hash, status)
 - middleware 校验 exam token 时，通过 hash 查询 `exam_attempts`。
 - middleware 同时校验 attempt 状态，已提交、已强制交卷、考试已终止时拒绝继续自动保存或提交。
 - `exam_token` 只能访问当前 attempt 的自动保存、提交答卷和事件上报接口，不能访问其他业务接口。
-- `exam_token` 不支持刷新和续签，过期后不能延长为新的考试 token。
+- `exam_token` 不支持刷新和续签，过期后不能延长为新的考试 token；重复调用开考接口只能复用已有 attempt，不能返回或写入新的 exam_token。
 - 普通登录 session 不能调用自动保存、提交答卷和事件上报接口。
 - `exam_token` 不能调用 profile、tenant、questions、papers、grading、results 等后台接口。
 - exam token 物理有效期和考试业务作答时间必须分开校验。
@@ -1453,7 +1455,7 @@ page_size  默认 20，最大 100
 
 前端管理页不能内置核心业务 mock 数据。个人设置页必须通过 `/api/v1/profile` 读取当前账号资料并提交保存，不能只修改本地登录态；平台管理员登录账号在个人设置页只读，避免误改登录标识；租户用户保存成功后同步本地 session 的显示名称，让导航和页面标题立即刷新。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。空间管理、用户管理等租户级页面必须从租户用户 session 获取目标租户；缺失有效租户 ID 时只展示选择提示，不得使用 `10` 等前端默认值请求后端。后台左侧“租户空间”和“用户管理”菜单对 `tenant_admin` 显示；对空间管理员的可见性必须来自 `/api/v1/profile/spaces` 返回的当前用户启用空间成员关系和 `role = space_admin`，不能来自 session role，其中 `tenant_admin` 管理本租户全量空间和用户，`space_admin` 只能管理授权空间范围。后台左侧“考试业务”菜单对 `tenant_admin`、拥有授权空间的 `space_admin` 和 `teacher` 显示，其中 `tenant_admin` 管理本租户全量考试业务，`space_admin` / `teacher` 只能操作已加入且启用的空间范围。平台管理员直接访问租户业务后台路由时回到平台概览页，不渲染租户业务页面或触发租户业务 API 请求。平台管理员在租户管理列表中查看某个租户的空间或用户时，只在当前页面从右侧滑入抽屉并调用平台侧只读概览 API，不跳转到租户侧空间管理或用户管理页面；遮罩层固定铺满视口并随抽屉打开淡入、关闭淡出，抽屉使用右侧绝对定位叠在遮罩层上滑入滑出，不在遮罩层内预留白色占位；抽屉默认占用 50% 视口宽度，全屏按钮在 50% 与 100% 视口宽度之间切换，宽度变化保持过渡动画；返回和关闭按钮只触发滑出和遮罩淡出动画，待动画结束后再卸载抽屉，遮罩层不触发关闭；抽屉列表必须保持租户侧空间管理、用户管理列表的列结构，只改变承载方式。教师没有加入任何空间时，用户详情和业务页必须提示“该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷”。
 
-公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 只能由本租户 `tenant_admin` 创建或导入；`teacher` 和空间管理员只能写自己启用空间内的题库。已暴露的试卷写接口在修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。
+公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 只能由本租户 `tenant_admin` 创建或导入；`teacher` 和空间管理员只能写自己启用空间内的题库。已暴露的试卷写接口在修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
 
 成绩列表、发布配置和导出必须基于成绩行或考试范围反查真实空间。`teacher` 可以查看授权空间内成绩，但首版不能导出成绩；前端不展示教师导出入口，后端仍以 `CanExportExamResults` 作为最终拒绝边界。学生查分只走 `/api/v1/exam-entry/results/:id`，不能调用管理端成绩接口。
 

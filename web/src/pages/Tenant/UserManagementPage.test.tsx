@@ -48,9 +48,15 @@ function createUserAPI() {
   };
 }
 
+function createSpaceAPI() {
+  return {
+    listSpaces: vi.fn().mockResolvedValue({ items: [] }),
+  };
+}
+
 test("用户管理页展示用户列表和角色状态", async () => {
   const api = createUserAPI();
-  render(<UserManagementPage api={api} tenantID={10} />);
+  render(<UserManagementPage api={api} spaceApi={createSpaceAPI()} tenantID={10} />);
 
   expect(screen.getAllByRole("tab")).toHaveLength(1);
   expect(screen.getByRole("tab", { name: "用户管理" })).toHaveAttribute("aria-selected", "true");
@@ -71,10 +77,69 @@ test("用户管理页展示用户列表和角色状态", async () => {
   );
 });
 
+test("用户管理页展示教师空间分配状态", async () => {
+  const spaceApi = {
+    listSpaces: vi.fn().mockResolvedValue({
+      items: [{
+        id: 301,
+        tenantID: 10,
+        name: "高一一班",
+        description: "月考空间",
+        logoFileName: "class.png",
+        members: [{
+          id: 1,
+          userID: 20,
+          name: "李老师",
+          role: "teacher",
+          status: "enabled",
+        }],
+      }],
+    }),
+  };
+
+  render(<UserManagementPage api={createUserAPI()} spaceApi={spaceApi} tenantID={10} />);
+
+  const teacherRow = await screen.findByRole("row", { name: /李老师/ });
+  expect(within(teacherRow).getByText("已加入 1 个空间")).toBeInTheDocument();
+  expect(screen.getByRole("row", { name: /张同学/ })).toHaveTextContent("不适用");
+  expect(spaceApi.listSpaces).toHaveBeenCalledWith(10);
+});
+
+test("用户详情展示教师空间分配状态", async () => {
+  const user = userEvent.setup();
+  const spaceApi = {
+    listSpaces: vi.fn().mockResolvedValue({
+      items: [{
+        id: 301,
+        tenantID: 10,
+        name: "高一一班",
+        description: "月考空间",
+        logoFileName: "class.png",
+        members: [{
+          id: 1,
+          userID: 20,
+          name: "李老师",
+          role: "teacher",
+          status: "enabled",
+        }],
+      }],
+    }),
+  };
+  render(<UserManagementPage api={createUserAPI()} spaceApi={spaceApi} tenantID={10} />);
+
+  const teacherRow = await screen.findByRole("row", { name: /李老师/ });
+  await user.click(within(teacherRow).getByRole("button", { name: "查看详情" }));
+
+  const dialog = screen.getByRole("dialog", { name: "用户详情" });
+  expect(dialog).toHaveTextContent("李老师");
+  expect(dialog).toHaveTextContent("空间分配");
+  expect(dialog).toHaveTextContent("已加入 1 个空间");
+});
+
 test("缺少租户上下文时不请求用户接口", () => {
   const api = createUserAPI();
 
-  render(<UserManagementPage api={api} />);
+  render(<UserManagementPage api={api} spaceApi={createSpaceAPI()} />);
 
   expect(api.listUsers).not.toHaveBeenCalled();
   expect(screen.getByRole("alert")).toHaveTextContent("当前账号没有租户上下文");
@@ -83,7 +148,7 @@ test("缺少租户上下文时不请求用户接口", () => {
 test("租户管理员可以创建用户并上传头像", async () => {
   const user = userEvent.setup();
   const api = createUserAPI();
-  render(<UserManagementPage api={api} tenantID={10} />);
+  render(<UserManagementPage api={api} spaceApi={createSpaceAPI()} tenantID={10} />);
 
   await screen.findByText("李老师");
 
@@ -113,7 +178,7 @@ test("租户管理员可以创建用户并上传头像", async () => {
 
 test("租户管理员可以搜索和刷新用户列表", async () => {
   const user = userEvent.setup();
-  render(<UserManagementPage api={createUserAPI()} tenantID={10} />);
+  render(<UserManagementPage api={createUserAPI()} spaceApi={createSpaceAPI()} tenantID={10} />);
 
   await screen.findByText("李老师");
 
@@ -131,7 +196,7 @@ test("租户管理员可以搜索和刷新用户列表", async () => {
 
 test("用户列表查询不到数据时显示无记录", async () => {
   const user = userEvent.setup();
-  render(<UserManagementPage api={createUserAPI()} tenantID={10} />);
+  render(<UserManagementPage api={createUserAPI()} spaceApi={createSpaceAPI()} tenantID={10} />);
 
   await screen.findByText("李老师");
 
@@ -145,7 +210,7 @@ test("用户列表查询不到数据时显示无记录", async () => {
 
 test("租户管理员可以导入用户文件", async () => {
   const user = userEvent.setup();
-  render(<UserManagementPage api={createUserAPI()} tenantID={10} />);
+  render(<UserManagementPage api={createUserAPI()} spaceApi={createSpaceAPI()} tenantID={10} />);
 
   await screen.findByText("李老师");
 
@@ -163,7 +228,7 @@ test("租户管理员可以导入用户文件", async () => {
 test("禁用用户前展示影响范围并确认禁用", async () => {
   const user = userEvent.setup();
   const api = createUserAPI();
-  render(<UserManagementPage api={api} tenantID={10} actorID={99} />);
+  render(<UserManagementPage api={api} spaceApi={createSpaceAPI()} tenantID={10} actorID={99} />);
 
   await screen.findByText("李老师");
 

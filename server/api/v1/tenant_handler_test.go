@@ -159,6 +159,46 @@ func TestTenantManagementRoutesRejectAnonymousRequests(t *testing.T) {
 	}
 }
 
+func TestTenantManagementRoutesRejectTenantUsers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedTenantAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	cases := []struct {
+		name   string
+		method string
+		target string
+		body   []byte
+	}{
+		{name: "list", method: http.MethodGet, target: "/api/v1/tenants"},
+		{name: "create", method: http.MethodPost, target: "/api/v1/tenants", body: []byte(`{
+			"name": "越权租户",
+			"admin_username": "cross.admin",
+			"admin_real_name": "越权管理员",
+			"admin_password": "admin-secure-123"
+		}`)},
+		{name: "profile", method: http.MethodPost, target: "/api/v1/tenants/1/profile", body: []byte(`{"name":"越权修改"}`)},
+		{name: "reset code", method: http.MethodPost, target: "/api/v1/tenants/1/reset-code"},
+		{name: "register setting", method: http.MethodPost, target: "/api/v1/tenants/1/register-setting", body: []byte(`{"allow_register":false}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(tc.method, tc.target, tc.body, authHeader))
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("tenant user %s status = %d, body = %s", tc.name, recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestTenantAPIRoutesUpdateTenantOperationsWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

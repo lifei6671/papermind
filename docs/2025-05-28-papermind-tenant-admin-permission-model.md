@@ -898,7 +898,7 @@ type ExamEntryContext struct {
 - 中间件必须按 hash 找到未过期、未提交或仍允许保存的 attempt。
 - token 校验必须同时校验 tenant_id、exam_id、attempt_id、user_id 和作答截止时间。
 - exam_token 只能访问当前 attempt 的答题、提交和事件接口。
-- exam_token 不支持刷新和续签。
+- exam_token 不支持刷新和续签；重复调用开考接口只能复用已有 attempt，不能返回或写入新的 exam_token。
 - 普通登录 session 不能调用自动保存、提交答卷和考试事件接口。
 - exam_token 不能调用 profile、tenant、questions、papers、grading、results 等后台接口。
 - exam_token 过期、attempt 已提交、考试已超过可保存窗口时必须拒绝写入。

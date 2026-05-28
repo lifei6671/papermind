@@ -145,6 +145,7 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
       return;
     }
 
+    const localMemberID = Date.now();
     // 成员是空间的子资源，添加时只能写入当前打开的空间成员列表。
     setSpaces((items) =>
       items.map((space) =>
@@ -153,7 +154,7 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
               ...space,
               members: [
                 ...space.members,
-                { id: Date.now(), name: memberName, role: memberRole, status: "enabled" },
+                { id: localMemberID, userID: localMemberID, name: memberName, role: memberRole, status: "enabled" },
               ],
             }
           : space,

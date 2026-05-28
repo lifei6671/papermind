@@ -203,6 +203,23 @@ func TestChangeMemberRoleRejectsDowngradingLastEnabledSpaceAdmin(t *testing.T) {
 	}
 }
 
+func TestDisableMemberAllowsLastAdminWhenSpaceIsNotEnabled(t *testing.T) {
+	repo := &fakeRepository{
+		membersByKey: map[memberKey]Member{
+			{tenantID: 10, spaceID: 100, userID: 20}: {TenantID: 10, SpaceID: 100, UserID: 20, Role: RoleSpaceAdmin, Status: StatusEnabled},
+		},
+		enabledSpaceAdminCount: 0,
+	}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	if err := svc.DisableMember(context.Background(), MemberActionInput{TenantID: 10, SpaceID: 100, UserID: 20}); err != nil {
+		t.Fatalf("DisableMember returned error: %v", err)
+	}
+	if repo.disabledUserID != 20 {
+		t.Fatalf("expected disabled user 20, got %d", repo.disabledUserID)
+	}
+}
+
 func TestMemberOperationsCallUnifiedSpaceAdminInvariant(t *testing.T) {
 	repo := &fakeRepository{
 		membersByKey: map[memberKey]Member{

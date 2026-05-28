@@ -194,11 +194,14 @@ func (r *SpaceRepository) CountEnabledSpaceAdmins(ctx context.Context, tenantID 
 func (r *SpaceRepository) countEnabledSpaceAdmins(ctx context.Context, gormDB *gorm.DB, tenantID uint64, spaceID uint64) (int64, error) {
 	var count int64
 	err := gormDB.WithContext(ctx).Model(&SpaceMemberDO{}).
-		Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
-		Where(SpaceMemberColumns.SpaceID+" = ?", spaceID).
-		Where(SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
-		Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
-		Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+		Joins("JOIN spaces ON spaces.tenant_id = space_members.tenant_id AND spaces.id = space_members.space_id").
+		Where("space_members."+SpaceMemberColumns.TenantID+" = ?", tenantID).
+		Where("space_members."+SpaceMemberColumns.SpaceID+" = ?", spaceID).
+		Where("space_members."+SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
+		Where("space_members."+SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where("space_members."+SpaceMemberColumns.DeletedAt+" = ?", 0).
+		Where("spaces.status = ?", servicespace.StatusEnabled).
+		Where("spaces.deleted_at = ?", 0).
 		Count(&count).Error
 	return count, err
 }
@@ -257,6 +260,13 @@ func (r *SpaceRepository) updateMember(ctx context.Context, tenantID uint64, spa
 			Updates(updates).Error; err != nil {
 			return err
 		}
+		enabled, err := r.spaceEnabled(ctx, tx, tenantID, spaceID)
+		if err != nil {
+			return err
+		}
+		if !enabled {
+			return nil
+		}
 		count, err := r.countEnabledSpaceAdmins(ctx, tx, tenantID, spaceID)
 		if err != nil {
 			return err
@@ -266,6 +276,20 @@ func (r *SpaceRepository) updateMember(ctx context.Context, tenantID uint64, spa
 		}
 		return nil
 	})
+}
+
+func (r *SpaceRepository) spaceEnabled(ctx context.Context, gormDB *gorm.DB, tenantID uint64, spaceID uint64) (bool, error) {
+	var count int64
+	err := gormDB.WithContext(ctx).Model(&SpaceDO{}).
+		Where(SpaceColumns.TenantID+" = ?", tenantID).
+		Where(SpaceColumns.ID+" = ?", spaceID).
+		Where(SpaceColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceColumns.DeletedAt+" = ?", 0).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r *SpaceRepository) ListMemberNames(ctx context.Context, tenantID uint64, spaceID uint64) ([]SpaceMemberName, error) {

@@ -61,7 +61,8 @@ export function PlatformLoginPage({ api = authApi }: PlatformLoginPageProps) {
         username: username.trim(),
         password,
       });
-      signIn(session);
+      const profileSpaces = await api.listProfileSpaces();
+      signIn({ ...session, profileSpaces: profileSpaces.items });
       navigate(session.user.role === "student" ? "/exam-entry" : "/", { replace: true });
     } catch (err) {
       setError(formatApiErrorMessage(err, mode === "platform" ? "平台管理员登录失败" : "租户用户登录失败"));

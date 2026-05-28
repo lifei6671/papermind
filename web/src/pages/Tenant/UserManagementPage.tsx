@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { spaceApi as defaultSpaceApi } from "../../api/spaces";
+import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
 import { userApi } from "../../api/users";
 import type { TenantUserRow, UserManagementAPI, UserRole } from "../../api/users";
 
@@ -16,12 +18,19 @@ const roleLabels: Record<UserRole, string> = {
 
 type UserManagementPageProps = {
   api?: UserManagementAPI;
+  spaceApi?: Pick<SpaceManagementAPI, "listSpaces">;
   tenantID?: number;
   actorID?: number;
 };
 
-export function UserManagementPage({ api = userApi, tenantID, actorID }: UserManagementPageProps) {
+export function UserManagementPage({
+  api = userApi,
+  spaceApi = defaultSpaceApi,
+  tenantID,
+  actorID,
+}: UserManagementPageProps) {
   const [users, setUsers] = useState<TenantUserRow[]>([]);
+  const [spaces, setSpaces] = useState<SpaceRow[]>([]);
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -30,6 +39,7 @@ export function UserManagementPage({ api = userApi, tenantID, actorID }: UserMan
   const [avatarResetKey, setAvatarResetKey] = useState(0);
   const [importFileName, setImportFileName] = useState("");
   const [importMessage, setImportMessage] = useState("");
+  const [detailTarget, setDetailTarget] = useState<TenantUserRow | null>(null);
   const [disableTarget, setDisableTarget] = useState<TenantUserRow | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
@@ -46,23 +56,24 @@ export function UserManagementPage({ api = userApi, tenantID, actorID }: UserMan
     let ignore = false;
     const currentTenantID = tenantID;
 
-    api.listUsers(currentTenantID)
-      .then((data) => {
+    Promise.all([api.listUsers(currentTenantID), spaceApi.listSpaces(currentTenantID)])
+      .then(([userData, spaceData]) => {
         if (!ignore) {
-          setUsers(data.items);
+          setUsers(userData.items);
+          setSpaces(spaceData.items);
           setLoadError("");
         }
       })
       .catch(() => {
         if (!ignore) {
-          setLoadError("用户列表加载失败");
+          setLoadError("用户或空间列表加载失败");
         }
       });
 
     return () => {
       ignore = true;
     };
-  }, [api, tenantID]);
+  }, [api, spaceApi, tenantID]);
 
   const filteredUsers = users.filter((item) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
@@ -76,6 +87,7 @@ export function UserManagementPage({ api = userApi, tenantID, actorID }: UserMan
       item.username,
       item.avatarFileName,
       roleLabels[item.role],
+      teacherSpaceAssignmentLabel(item, spaces),
       item.status === "enabled" ? "启用" : "禁用",
     ].some((value) => value.toLowerCase().includes(keyword));
   });
@@ -232,24 +244,33 @@ export function UserManagementPage({ api = userApi, tenantID, actorID }: UserMan
                 <th scope="col">账号</th>
                 <th scope="col">头像</th>
                 <th scope="col">角色</th>
+                <th scope="col">空间分配</th>
                 <th scope="col">状态</th>
                 <th scope="col">操作</th>
               </tr>
             </thead>
             <tbody>
-              {filteredUsers.length === 0 && <EmptyTableRow colSpan={6} />}
+              {filteredUsers.length === 0 && <EmptyTableRow colSpan={7} />}
               {filteredUsers.map((item) => (
                 <tr key={item.id}>
                   <td>{item.name}</td>
                   <td>{item.username}</td>
                   <td>{item.avatarFileName}</td>
                   <td>{roleLabels[item.role]}</td>
+                  <td>{teacherSpaceAssignmentLabel(item, spaces)}</td>
                   <td>
                     <StatusBadge tone={item.status === "enabled" ? "success" : "info"}>
                       {item.status === "enabled" ? "启用" : "禁用"}
                     </StatusBadge>
                   </td>
                   <td>
+                    <Button
+                      variant="actionOpen"
+                      onClick={() => setDetailTarget(item)}
+                      type="button"
+                    >
+                      查看详情
+                    </Button>
                     <Button
                       variant="actionClose"
                       disabled={item.status === "disabled"}
@@ -341,6 +362,37 @@ export function UserManagementPage({ api = userApi, tenantID, actorID }: UserMan
         </div>
       )}
 
+      {detailTarget && (
+        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="用户详情">
+          <div className="platform-dialog__card">
+            <h2>{detailTarget.name}</h2>
+            <dl className="tenant-detail-list">
+              <div>
+                <dt>账号</dt>
+                <dd>{detailTarget.username}</dd>
+              </div>
+              <div>
+                <dt>角色</dt>
+                <dd>{roleLabels[detailTarget.role]}</dd>
+              </div>
+              <div>
+                <dt>空间分配</dt>
+                <dd>{teacherSpaceAssignmentLabel(detailTarget, spaces)}</dd>
+              </div>
+              <div>
+                <dt>状态</dt>
+                <dd>{detailTarget.status === "enabled" ? "启用" : "禁用"}</dd>
+              </div>
+            </dl>
+            <div className="platform-dialog__actions">
+              <Button variant="secondary" onClick={() => setDetailTarget(null)} type="button">
+                关闭
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {disableTarget && (
         <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="禁用用户提示">
           <div className="platform-dialog__card">
@@ -365,4 +417,21 @@ export function UserManagementPage({ api = userApi, tenantID, actorID }: UserMan
 
 function isPositiveInteger(value: number | undefined): value is number {
   return Number.isInteger(value) && Number(value) > 0;
+}
+
+function teacherSpaceAssignmentLabel(user: TenantUserRow, spaces: SpaceRow[]) {
+  if (user.role !== "teacher") {
+    return "不适用";
+  }
+
+  const assignedSpaceCount = spaces.reduce((count, space) => {
+    const isAssigned = space.members.some((member) =>
+      member.userID === user.id &&
+      member.status === "enabled" &&
+      (member.role === "teacher" || member.role === "space_admin"),
+    );
+    return isAssigned ? count + 1 : count;
+  }, 0);
+
+  return assignedSpaceCount > 0 ? `已加入 ${assignedSpaceCount} 个空间` : "暂未分配空间";
 }
