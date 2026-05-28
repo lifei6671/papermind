@@ -49,6 +49,7 @@ describe("StudentExamPage", () => {
         examToken: "exam-token",
       });
     });
+    expect(await screen.findByText("总分 8 分")).toBeInTheDocument();
   });
 
   test("窄屏答题页同样使用真实 API 题目", async () => {
@@ -126,6 +127,15 @@ function createStudentExamApiDouble(options: { options?: Array<{ id: number; key
     })),
     saveAnswer: vi.fn(async () => undefined),
     submitAttempt: vi.fn(async () => undefined),
+    getVisibleResult: vi.fn(async () => ({
+      attemptID: 99,
+      examID: 1,
+      attemptNo: 1,
+      objectiveScore: "6",
+      subjectiveScore: "2",
+      totalScore: "8",
+      analysisVisible: true,
+    })),
     recordEvent: vi.fn(async () => undefined),
   };
 }

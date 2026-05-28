@@ -38,6 +38,11 @@ func (h questionHandler) importQuestions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
 		return
 	}
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "file 不能为空"))
@@ -50,12 +55,13 @@ func (h questionHandler) importQuestions(c *gin.Context) {
 	}
 
 	result, err := h.service.ImportQuestions(c.Request.Context(), servicequestion.ImportQuestionsInput{
-		TenantID: tenantID,
-		SpaceID:  spaceID,
-		Rows:     rows,
+		Permission: permissionContext,
+		TenantID:   tenantID,
+		SpaceID:    spaceID,
+		Rows:       rows,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "导入题目失败"))
+		writeQuestionServiceError(c, err)
 		return
 	}
 	result.Errors = append(parseErrors, result.Errors...)

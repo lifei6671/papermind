@@ -26,6 +26,20 @@ func TestBaseFieldsUseExplicitColumnMapping(t *testing.T) {
 	}
 }
 
+func TestBaseFieldsKeepActorTypeForAuditIDs(t *testing.T) {
+	modelType := reflect.TypeOf(BaseFields{})
+	assertHasField(t, modelType, "CreatedByType")
+	assertHasField(t, modelType, "UpdatedByType")
+	assertFieldTagContains(t, modelType, "CreatedByType", "default:system")
+	assertFieldTagContains(t, modelType, "UpdatedByType", "default:system")
+	if BaseColumns.CreatedByType != "created_by_type" {
+		t.Fatalf("BaseColumns.CreatedByType = %q", BaseColumns.CreatedByType)
+	}
+	if BaseColumns.UpdatedByType != "updated_by_type" {
+		t.Fatalf("BaseColumns.UpdatedByType = %q", BaseColumns.UpdatedByType)
+	}
+}
+
 func TestBaseFieldsUseDatatypesJSONForExtJSON(t *testing.T) {
 	field, ok := reflect.TypeOf(BaseFields{}).FieldByName("ExtJSON")
 	if !ok {
@@ -57,10 +71,16 @@ func TestRelationFieldsOnlyKeepCreateAuditAndExtJSON(t *testing.T) {
 	assertHasField(t, modelType, "ID")
 	assertHasField(t, modelType, "CreatedAt")
 	assertHasField(t, modelType, "CreatedBy")
+	assertHasField(t, modelType, "CreatedByType")
+	assertFieldTagContains(t, modelType, "CreatedByType", "default:system")
 	assertHasField(t, modelType, "ExtJSON")
 	assertMissingField(t, modelType, "UpdatedAt")
 	assertMissingField(t, modelType, "UpdatedBy")
+	assertMissingField(t, modelType, "UpdatedByType")
 	assertMissingField(t, modelType, "Version")
+	if RelationColumns.CreatedByType != "created_by_type" {
+		t.Fatalf("RelationColumns.CreatedByType = %q", RelationColumns.CreatedByType)
+	}
 }
 
 func TestEventFieldsOnlyKeepCreateAuditAndExtJSON(t *testing.T) {
@@ -68,10 +88,16 @@ func TestEventFieldsOnlyKeepCreateAuditAndExtJSON(t *testing.T) {
 	assertHasField(t, modelType, "ID")
 	assertHasField(t, modelType, "CreatedAt")
 	assertHasField(t, modelType, "CreatedBy")
+	assertHasField(t, modelType, "CreatedByType")
+	assertFieldTagContains(t, modelType, "CreatedByType", "default:system")
 	assertHasField(t, modelType, "ExtJSON")
 	assertMissingField(t, modelType, "UpdatedAt")
 	assertMissingField(t, modelType, "UpdatedBy")
+	assertMissingField(t, modelType, "UpdatedByType")
 	assertMissingField(t, modelType, "Version")
+	if EventColumns.CreatedByType != "created_by_type" {
+		t.Fatalf("EventColumns.CreatedByType = %q", EventColumns.CreatedByType)
+	}
 }
 
 func TestBaseColumnMappingsStayWithBaseEntity(t *testing.T) {
@@ -137,5 +163,17 @@ func assertMissingField(t *testing.T, modelType reflect.Type, fieldName string) 
 
 	if _, ok := modelType.FieldByName(fieldName); ok {
 		t.Fatalf("%s field should be omitted", fieldName)
+	}
+}
+
+func assertFieldTagContains(t *testing.T, modelType reflect.Type, fieldName string, want string) {
+	t.Helper()
+
+	field, ok := modelType.FieldByName(fieldName)
+	if !ok {
+		t.Fatalf("%s field missing", fieldName)
+	}
+	if !strings.Contains(field.Tag.Get("gorm"), want) {
+		t.Fatalf("%s gorm tag = %q, want %q", fieldName, field.Tag.Get("gorm"), want)
 	}
 }

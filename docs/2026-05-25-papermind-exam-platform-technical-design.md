@@ -172,11 +172,19 @@ server/internal/service/permission
 
 ```go
 type PermissionChecker interface {
-    CanManageTenant(ctx PermissionContext, tenantID uint64) error
-    CanManageSpace(ctx PermissionContext, spaceID uint64) error
+    CanManagePlatform(ctx PermissionContext) error
+    CanManageTenantLifecycle(ctx PermissionContext, tenantID uint64) error
+    CanManageTenantBusiness(ctx PermissionContext, tenantID uint64) error
+    CanManageTenantUsers(ctx PermissionContext, tenantID uint64) error
+    CanManageSpaceProfile(ctx PermissionContext, spaceID uint64) error
+    CanManageSpaceMembers(ctx PermissionContext, spaceID uint64) error
     CanManageQuestion(ctx PermissionContext, questionID uint64) error
+    CanManagePaper(ctx PermissionContext, paperID uint64) error
     CanPublishExam(ctx PermissionContext, paperID uint64) error
     CanGradeAttempt(ctx PermissionContext, attemptID uint64) error
+    CanViewExamResults(ctx PermissionContext, examID uint64) error
+    CanExportExamResults(ctx PermissionContext, examID uint64) error
+    CanViewOwnResult(ctx PermissionContext, resultID uint64) error
     CanTakeExam(ctx PermissionContext, examID uint64) error
 }
 ```
@@ -185,8 +193,16 @@ type PermissionChecker interface {
 
 - API 层不做业务权限判断，只做认证和上下文解析。
 - Service 层调用 `PermissionChecker`，不直接判断角色字符串。
-- 首版 `fixed_role` 实现使用平台管理员、租户管理员、空间管理员、教师、考生固定角色。
+- 首版 `fixed_role` 实现使用平台管理员、租户级角色和空间成员身份；`space_admin` 来自 `space_members.role_in_space`，不是 session 中的租户级角色。
+- `CanManageTenantLifecycle` 只表示平台侧租户生命周期管理，包括创建租户、启停租户、重置租户码、注册开关和租户基础资料。
+- `CanManageTenantBusiness` 只表示租户内业务管理，包括用户、空间、题库、试卷、考试、阅卷和成绩。
+- `CanManageSpaceProfile` 只表示空间基础资料管理，包括修改空间名称、Logo、描述和状态；首版只有 `tenant_admin` 可通过。
+- `CanManageSpaceMembers` 只表示空间成员管理，包括查看、添加、移除和修改空间成员；首版允许 `tenant_admin` 或当前空间 `space_admin` 通过。
 - 后续 RBAC 扩展时，优先替换 `PermissionChecker` 实现，不改业务 service 调用方式。
+- `tenant_admin` 管理租户内业务时，不要求写入 `space_members`；权限实现必须通过资源反查 `tenant_id`，并校验目标资源属于当前租户。
+- `space_admin` 和 `teacher` 的业务范围来自 `space_members`，必须校验成员关系存在、状态启用、空间归属租户一致。
+- `ActorContext.Role` 和 `PermissionContext.Role` 只保存租户级角色，不保存 `space_admin`；空间管理员只能从 `space_members.role_in_space` 动态判断。
+- `teacher` 没有加入任何启用空间时是合法状态，但没有题库、试卷、考试和阅卷操作权限；前端用户详情和空间分配入口必须提示“该教师暂未加入任何空间”。
 
 ## 5. 数据库规范
 
@@ -262,6 +278,7 @@ server/data/migrations
 - 迁移文件放在对应数据库目录中，文件名必须以递增数字版本号开头，例如 `001_create_tenants.sql`。
 - 服务启动时根据 `database.driver` 自动选择迁移目录，并按版本号从小到大执行。
 - 已执行版本记录到 `schema_migrations`，重复执行时自动跳过。
+- 已发布或已执行的迁移版本不得改写；新增字段、索引调整和约束收口必须通过更高版本追加迁移落地，避免旧库因版本已记录而跳过结构变更。
 - 任意迁移失败必须立即停止启动流程，禁止服务运行在半迁移状态。
 - 首版不提供单独数据库迁移脚本，避免部署流程和应用启动流程产生两套迁移入口。
 - 迁移期间 HTTP 层必须返回“系统升级中”的中间页或稳定 JSON 响应，并带 `Retry-After`，避免迁移耗时较长时前端白屏或接口表现为未知错误。
@@ -281,9 +298,11 @@ server/data/migrations
 
 ```text
 created_at   创建时间
-created_by   创建人
+created_by   创建人主体 ID
+created_by_type 创建人主体类型：platform_user / tenant_user / system
 updated_at   更新时间
-updated_by   更新人
+updated_by   更新人主体 ID
+updated_by_type 更新人主体类型：platform_user / tenant_user / system
 version      数据版本号
 ext_json     JSON 扩展字段
 ```
@@ -291,9 +310,9 @@ ext_json     JSON 扩展字段
 基础规则：
 
 - `created_at` 创建时写入。
-- `created_by` 创建时写入当前用户 ID。
+- `created_by` 创建时写入当前主体 ID，`created_by_type` 同步写入主体类型。
 - `updated_at` 每次更新时写入。
-- `updated_by` 每次更新时写入当前用户 ID。
+- `updated_by` 每次更新时写入当前主体 ID，`updated_by_type` 同步写入主体类型。
 - `version` 每次更新递增，用于乐观锁。
 - `ext_json` 用于保存不影响主流程的扩展元数据，默认值为空 JSON 对象。
 
@@ -309,11 +328,11 @@ ext_json     JSON 扩展字段
 - 软删除表的唯一约束必须包含 `deleted_at`，例如 `UNIQUE (tenant_id, username, deleted_at)`。
 - `deleted_at = 0` 表示未删除，删除后写入删除时间戳。
 
-追加写日志表和纯关系表可以按业务语义豁免 `updated_at`、`updated_by` 和 `version`。
+追加写日志表和纯关系表可以按业务语义豁免 `updated_at`、`updated_by`、`updated_by_type` 和 `version`。
 
-- `exam_events` 是不可修改的考试事件流水，只保留 `created_at` 和 `created_by` 用于审计，不使用乐观锁字段，避免误导维护者认为事件可以被更新。
-- `question_tags`、`exam_targets` 这类纯关系表只通过 INSERT / DELETE 维护关系，不做 UPDATE，可以只保留 `created_at` 和 `created_by`。
-- 带状态字段的关系表不属于纯关系表，例如 `space_members` 有 `status` 和 `role_in_space`，仍然保留 `updated_at`、`updated_by` 和 `version`。
+- `exam_events` 是不可修改的考试事件流水，只保留 `created_at`、`created_by` 和 `created_by_type` 用于审计，不使用乐观锁字段，避免误导维护者认为事件可以被更新。
+- `question_tags`、`exam_targets` 这类纯关系表只通过 INSERT / DELETE 维护关系，不做 UPDATE，可以只保留 `created_at`、`created_by` 和 `created_by_type`。
+- 带状态字段的关系表不属于纯关系表，例如 `space_members` 有 `status` 和 `role_in_space`，仍然保留 `updated_at`、`updated_by`、`updated_by_type` 和 `version`。
 
 `ext_json` 使用规则：
 
@@ -492,6 +511,8 @@ space_configs
 业务规则：
 
 - 平台管理员创建租户时，系统自动生成全平台唯一的 `tenant_code`。
+- 创建租户必须在同一事务内初始化首个启用状态的 `tenant_admin`，租户和首个管理员任一步失败都必须回滚。
+- 首版创建租户时不自动创建默认空间，也不自动把首个 `tenant_admin` 写入 `space_members`；`tenant_admin` 通过租户级权限管理所有空间资源。
 - 新租户的 `allow_register` 可以在创建时显式指定；未指定时继承 `security.allow_register_default`。
 - 平台管理员可以查看、复制、重置租户码；重置前必须二次确认，并提示当前租户码会立即失效，已发出的注册链接和手动注册时填写的旧租户码都需要改用新租户码。
 - 平台管理员可以控制租户是否允许用户自注册；关闭注册前必须二次确认，并提示新的租户用户将无法通过注册链接或手动输入租户码自注册，已注册用户不受影响。
@@ -509,7 +530,7 @@ space_configs
 - 禁用或移除空间成员时，如果会导致空间失去最后一个启用状态的 `space_admin`，系统必须拒绝操作并提示操作者。
 - 修改空间成员角色时，如果会导致空间失去最后一个启用状态的 `space_admin`，系统必须拒绝操作并提示操作者。
 - 空间管理员数量约束必须由 service 层统一不变式函数校验，例如 `ValidateSpaceAdminInvariant`，不能散落在各个接口里。
-- 禁用成员、移除成员、修改角色、禁用租户用户等影响空间管理员数量的操作，都必须在同一事务提交前调用该不变式校验。
+- 禁用成员、移除成员、修改角色、禁用租户用户等影响空间管理员数量的操作，都必须在同一事务内先执行目标变更，再基于即将提交后的状态调用不变式校验；数量不足则回滚。
 - 空间配置通过 `space_configs` 保存，配置项在同一空间内按 `config_key` 唯一。
 - `space_configs` 必须建立 `UNIQUE (tenant_id, space_id, config_key)`。
 - 配置表不使用软删除，删除配置项直接硬删除；平台配置和空间配置保持一致。
@@ -592,13 +613,17 @@ user_roles
 
 首版不做复杂 RBAC。角色权限由 service 层通过 `PermissionChecker` 抽象统一判断，首版实现基于固定角色和空间成员关系。
 
-`user_roles` 必须建立 `UNIQUE (tenant_id, user_id, role)`，防止同一用户重复分配同一角色。
+首版只支持单角色，不支持同一租户用户同时拥有多个租户级角色。`user_roles` 必须建立 `UNIQUE (tenant_id, user_id)`，强制 `tenant_admin / teacher / student` 三选一。
+
+本技术方案中涉及权限模型、用户角色、API 分组和认证上下文的细节，以 `docs/2025-05-28-papermind-tenant-admin-permission-model.md` 为准。首版 `user_roles` 使用 `UNIQUE (tenant_id, user_id)`；`UNIQUE (tenant_id, user_id, role)` 只作为后续多角色扩展方案，不在首版实现。
 
 账号禁用规则：
 
 - 禁止用户禁用自己的账号。
 - 平台必须至少保留一个启用状态的 `platform_admin`。
 - 如果禁用平台管理员会导致平台没有启用状态的 `platform_admin`，系统必须拒绝操作。
+- 租户必须至少保留一个启用状态的 `tenant_admin`。
+- 禁用、删除或改角色必须在同一数据库事务内先执行目标变更，再基于即将提交后的状态校验剩余有效管理员数量；数量不足则回滚。
 - 禁用租户用户时，系统需要提醒操作者该用户会失去登录、考试、阅卷或空间管理能力。
 - 禁用租户用户时，需要同步判断其空间成员身份；如果会导致某个空间失去最后一个启用状态的 `space_admin`，系统必须拒绝操作。
 - 禁用租户用户、修改空间角色、禁用或移除空间成员，都必须复用统一空间管理员不变式校验。
@@ -629,6 +654,7 @@ user_roles
 通用文件上传规则：
 
 - 文件上传统一走 `/api/v1/uploads`，业务表只保存上传接口返回的 URL 或对象 key。
+- 当前通用上传接口同时承载平台侧租户 Logo 和租户侧头像、空间 Logo 等图片上传；平台管理员只允许在平台租户管理流程中上传租户 Logo，租户管理员按租户内业务用途上传。
 - 服务端通过 `ObjectStore` 抽象写入对象存储；本地开发使用本地文件系统实现，后续 S3、OSS、MinIO 等远端协议只新增实现，不修改业务 handler。
 - 上传接口负责生成对象 key，不信任客户端原始文件名作为存储路径。
 - 服务端必须基于文件内容识别真实 MIME，不信任 multipart `Content-Type` 或扩展名；保存后缀由识别结果派生。
@@ -749,6 +775,8 @@ tags
 - 选择题判分必须基于选项 ID 或快照内选项 ID，不基于 A/B/C/D 字母。
 - 选项随机后，A/B/C/D 由前端按最终展示顺序动态生成。
 - `questions.space_id = NULL` 表示租户级公共题库，租户内所有空间可见。
+- 首版公共题库只允许 `tenant_admin` 创建、修改、删除和导入；`space_admin` / `teacher` 只能管理自己已加入且启用空间内的题库。
+- `space_admin` / `teacher` 可以在组卷、发布考试等流程中读取公共题库，但是否允许引用公共题库必须由对应业务 service 显式校验，不能把公共题库视为任意教师可写资源。
 - `questions.space_id` 非空表示空间题库，仅该空间成员中的教师、租户管理员和有权限的组卷流程可见。
 
 在线手工出题和 CSV/Excel 导入都落到同一套题库模型。
@@ -834,6 +862,8 @@ paper_section_rules
 - `rule_fixed`：教师按大题配置规则，触发生成后固化为 `paper_section_questions`，发布前可以审题和手动调整，适合正式考试。
 - `rule_live`：教师按大题配置规则，考试开始时为每个考生实时抽题，适合练习和模拟考试。
 - `papers.space_id` 可为空；为空表示租户级公共试卷，非空表示空间内试卷。
+- 首版公共试卷只允许 `tenant_admin` 创建、修改和删除；`space_admin` / `teacher` 只能管理自己已加入且启用空间内的试卷。
+- `space_admin` / `teacher` 可以在发布考试等流程中读取公共试卷，但是否允许引用公共试卷必须由对应业务 service 显式校验，不能把公共试卷视为任意教师可写资源。
 - `papers.shuffle_questions` 控制整张试卷的题目顺序是否对每个考生随机。
 - `papers.show_analysis` 控制成绩可见后是否展示题目解析；未公布成绩前不展示解析。
 - `paper_sections` 承载大题结构、题型边界、作答说明、小计分和题号连续编排锚点。
@@ -1087,6 +1117,9 @@ INDEX (exam_token_hash, status)
 - middleware 校验 exam token 时，通过 hash 查询 `exam_attempts`。
 - middleware 同时校验 attempt 状态，已提交、已强制交卷、考试已终止时拒绝继续自动保存或提交。
 - `exam_token` 只能访问当前 attempt 的自动保存、提交答卷和事件上报接口，不能访问其他业务接口。
+- `exam_token` 不支持刷新和续签，过期后不能延长为新的考试 token。
+- 普通登录 session 不能调用自动保存、提交答卷和事件上报接口。
+- `exam_token` 不能调用 profile、tenant、questions、papers、grading、results 等后台接口。
 - exam token 物理有效期和考试业务作答时间必须分开校验。
 - 自动保存、提交答卷和事件上报必须校验业务作答截止时间：`min(started_at + duration_minutes, exam.end_time)`。
 - 超过业务作答截止时间后，自动保存接口必须拒绝继续写入答案。
@@ -1094,6 +1127,21 @@ INDEX (exam_token_hash, status)
 - 手动提交和到时自动交卷可能并发触发，提交接口必须使用带 `status` 和 `version` 条件的状态更新保护。
 - 将 attempt 从 `in_progress` 改为 `submitted` 时，更新条件必须包含 `status = 'in_progress'` 和当前 `version`。
 - 更新行数为 0 时，说明该 attempt 已被另一个提交请求处理，当前请求按幂等成功返回。
+
+考试入口接口使用独立认证上下文，不复用平台/租户管理端 session 权限：
+
+```go
+type ExamEntryContext struct {
+    ActorType string // 固定为 tenant_user。
+    Role      string // 固定为 student。
+    TenantID  uint64
+    UserID    uint64
+    ExamID    uint64
+    AttemptID uint64
+}
+```
+
+`/api/v1/exam-entry/**` 中间件必须按 `exam_token` hash 找到 attempt，并校验 `tenant_id`、`exam_id`、`attempt_id`、`user_id`、attempt 状态、token 过期时间和业务作答截止时间。`exam_token` 只能构造 `ExamEntryContext`，不能升级成后台 `ActorContext`，不能刷新或续签，也不能访问 profile、tenant、questions、papers、grading、results 等后台接口。普通登录 session 不能调用答题、提交和事件接口。用户被禁用或不再属于考试目标时，新的开考请求必须拒绝；已签发 `exam_token` 的自动保存按 attempt 状态和作答截止时间收口。
 
 随机规则：
 
@@ -1270,7 +1318,8 @@ API 分组：
 ├── 基于邀请码入口 session 开始考试并返回 exam_token
 ├── 使用 exam_token 自动保存
 ├── 使用 exam_token 提交答卷
-└── 使用 exam_token 记录切屏事件
+├── 使用 exam_token 记录切屏事件
+└── 通过 /api/v1/exam-entry/results/:id 查看自己的已发布成绩
 
 /api/v1/grading
 ├── 待阅卷列表
@@ -1290,13 +1339,15 @@ API 分组：
 
 认证上下文规则：
 
-- session 中只保存当前主体类型、用户 ID、租户 ID 和角色，不保存密码、密码哈希或业务表快照。
+- session 中只保存当前主体类型、用户 ID、租户 ID 和租户级角色，不保存密码、密码哈希、空间管理员身份或业务表快照。
+- 首版最低要求是租户、用户、空间、题库、试卷、考试、阅卷、成绩发布、成绩导出和上传等关键写接口实时从数据库重建权限上下文；用户被禁用后，关键写接口必须立即失效。
+- session 主动 revoke 作为增强项；如果当前 session provider 暂时不支持按用户主动 revoke，不阻塞首版权限主线。增强实现可以让 memory provider 维护 `actor_type + tenant_id + user_id -> session_key` 反向索引，让 redis provider 维护 `actor_type + tenant_id + user_id -> session_key set` 后批量删除。
 - HTTP Router 必须接收启动配置中的 `security.allow_register_default` 和 `security.password_min_length`，避免配置只被加载但不影响运行行为。
 - 登录页同时提供平台管理员和租户用户模式；租户学生登录成功后进入考试入口，再通过邀请码进入考试端。
 - 个人设置页通过当前 session 主体调用 `/api/v1/profile` 查询和更新当前账号基础资料；平台管理员登录账号只读，可更新头像、手机号和邮箱，租户用户可更新真实姓名、头像、手机号和邮箱，前端保存成功后同步本地 session 的 `displayName`。
 - 平台侧租户管理查询和写操作必须携带有效平台管理员 Bearer token 或 session cookie。
-- 平台侧租户、空间、用户和上传接口按各自管理边界校验登录态；租户用户只能操作 session 所属 `tenant_id`，禁止信任请求体跨租户切换。
-- 后台考试业务接口，包括题库、题目导入、试卷、组卷规则、考试发布、阅卷和成绩，只允许本租户 `space_admin` 或 `teacher` 角色访问；平台管理员和 `tenant_admin` 不进入考试业务菜单，也不能通过直接请求操作考试资源。
+- 平台侧接口按平台管理边界校验登录态；租户用户只能操作 session 所属 `tenant_id`，禁止信任请求体跨租户切换。
+- 后台考试业务接口，包括题库、题目导入、试卷、组卷规则、考试发布、阅卷和成绩，允许本租户 `tenant_admin` 访问；`space_admin` 和 `teacher` 只能访问自己已加入且启用的空间范围。`space_admin` 必须从 `space_members.role_in_space` 动态判断，不能来自 session role。平台管理员不进入租户业务菜单，也不能通过直接请求操作考试资源。
 - 平台侧写操作统一从当前主体上下文获取平台管理员用户 ID，禁止再从请求体信任 `actor_id` 写审计字段。
 - 邀请码解析必须从租户用户 session 派生 `user_id` 和 `tenant_id`，禁止信任请求体里的考生 ID。
 - 未携带有效平台管理员 Bearer token 或 session cookie 时，平台侧接口返回 HTTP 401 未登录错误；前端 API client 收到 401 后必须清空本地登录态，并由后台路由守卫跳转登录页。
@@ -1305,11 +1356,15 @@ API 分组：
 租户管理操作的鉴权和审计规则：
 
 - 创建租户时，`created_by` 和 `updated_by` 写入当前平台管理员用户 ID。
+- 创建租户必须同时写入首个租户管理员账号和对应 `tenant_admin` 角色；首版不创建默认空间，也不创建首个管理员的空间成员记录。
 - 编辑租户资料、重置租户码、修改注册开关时，`updated_by` 写入当前平台管理员用户 ID。
 - 列表、创建、编辑租户资料、重置租户码和修改注册开关都只允许平台管理员访问。
 - 管理端创建租户用户时必须显式提交初始密码并写入哈希；后端不得使用固定默认密码或固定临时密码。
+- `tenant_admin` 创建 `teacher` 用户时，只创建租户用户和租户级 `teacher` 角色，不自动写入 `space_members`。教师加入空间必须通过空间成员接口显式分配；没有任何启用空间成员关系时允许登录，但不能操作题库、试卷、考试或阅卷。
 
-阅卷和成绩 API 必须从登录态解析调用人身份。教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。成绩发布配置属于考试级管理操作，只允许具备对应空间权限的 `space_admin` 或 `teacher` 修改。
+阅卷和成绩 API 必须从登录态解析调用人身份。`tenant_admin` 可以管理本租户内成绩和阅卷；教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。成绩发布配置属于考试级管理操作，只允许本租户 `tenant_admin` 或具备对应空间权限的 `space_admin` / `teacher` 修改。成绩导出必须单独走 `CanExportExamResults`，首版只允许 `tenant_admin` 和当前空间 `space_admin`，默认不开放给教师和学生。
+
+学生成绩查看不走 `/api/v1/tenant/results/:id`。`GET /api/v1/tenant/results/:id` 仅用于管理端成绩详情，允许 `tenant_admin` / 授权空间 `space_admin` / 授权空间 `teacher`，不允许 `student`。`GET /api/v1/exam-entry/results/:id` 用于学生查看自己的已发布成绩，只允许目标 `student`，并且必须满足成绩发布策略和可见时间。
 
 ```text
 POST /api/v1/auth/tenant/register
@@ -1343,6 +1398,10 @@ POST /api/v1/exam-attempts/:attempt_id/questions/:attempt_question_id/grade
 
 GET  /api/v1/results
      query: tenant_id, exam_id, space_id?
+GET  /api/v1/tenant/results/:id
+     管理端成绩详情，仅 tenant_admin / 授权空间 space_admin / 授权空间 teacher
+GET  /api/v1/exam-entry/results/:id
+     学生查看自己的已发布成绩，必须满足成绩发布策略和可见时间；首版没有独立成绩表时，`:id` 使用 attempt_id，并由服务端反查 exam、paper 和 user_id 后再判断本人可见性。
 
 POST /api/v1/results/publish-config
      body: tenant_id, exam_id, publish_mode, score_publish_time?
@@ -1390,7 +1449,11 @@ page_size  默认 20，最大 100
 - 默认考试每次开发环境启动都会滚动到当前可作答时间窗口内，避免长期复用 SQLite 数据库后考试过期。
 - 该种子数据只用于本地开发和演示，不进入 PostgreSQL、MySQL 或生产环境。
 
-前端管理页不能内置核心业务 mock 数据。个人设置页必须通过 `/api/v1/profile` 读取当前账号资料并提交保存，不能只修改本地登录态；平台管理员登录账号在个人设置页只读，避免误改登录标识；租户用户保存成功后同步本地 session 的显示名称，让导航和页面标题立即刷新。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。空间管理、用户管理等租户级页面必须从租户用户 session 或平台管理员 URL `tenant_id` 获取目标租户；缺失有效租户 ID 时只展示选择提示，不得使用 `10` 等前端默认值请求后端。后台左侧“租户空间”菜单只对 `space_admin` 显示，平台管理员不展示空间管理和用户管理入口，避免误入没有目标租户上下文的页面。后台左侧“考试业务”菜单只对 `space_admin` 和 `teacher` 显示，平台管理员直接访问考试业务后台路由时回到概览页，不渲染考试业务页面或触发考试业务 API 请求。平台管理员在租户管理列表中查看某个租户的空间或用户时，只在当前页面从右侧滑入抽屉并调用空间、用户列表 API，不跳转到租户侧空间管理或用户管理页面；遮罩层固定铺满视口并随抽屉打开淡入、关闭淡出，抽屉使用右侧绝对定位叠在遮罩层上滑入滑出，不在遮罩层内预留白色占位；抽屉默认占用 50% 视口宽度，全屏按钮在 50% 与 100% 视口宽度之间切换，宽度变化保持过渡动画；返回和关闭按钮只触发滑出和遮罩淡出动画，待动画结束后再卸载抽屉，遮罩层不触发关闭；抽屉列表必须保持租户侧空间管理、用户管理列表的列结构，只改变承载方式。
+前端管理页不能内置核心业务 mock 数据。个人设置页必须通过 `/api/v1/profile` 读取当前账号资料并提交保存，不能只修改本地登录态；平台管理员登录账号在个人设置页只读，避免误改登录标识；租户用户保存成功后同步本地 session 的显示名称，让导航和页面标题立即刷新。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。空间管理、用户管理等租户级页面必须从租户用户 session 获取目标租户；缺失有效租户 ID 时只展示选择提示，不得使用 `10` 等前端默认值请求后端。后台左侧“租户空间”和“用户管理”菜单对 `tenant_admin` 显示；对空间管理员的可见性必须来自空间成员接口返回的授权空间和 `role_in_space = space_admin`，不能来自 session role，其中 `tenant_admin` 管理本租户全量空间和用户，`space_admin` 只能管理授权空间范围。后台左侧“考试业务”菜单对 `tenant_admin`、拥有授权空间的 `space_admin` 和 `teacher` 显示，其中 `tenant_admin` 管理本租户全量考试业务，`space_admin` / `teacher` 只能操作已加入且启用的空间范围。平台管理员直接访问租户业务后台路由时回到平台概览页，不渲染租户业务页面或触发租户业务 API 请求。平台管理员在租户管理列表中查看某个租户的空间或用户时，只在当前页面从右侧滑入抽屉并调用平台侧只读概览 API，不跳转到租户侧空间管理或用户管理页面；遮罩层固定铺满视口并随抽屉打开淡入、关闭淡出，抽屉使用右侧绝对定位叠在遮罩层上滑入滑出，不在遮罩层内预留白色占位；抽屉默认占用 50% 视口宽度，全屏按钮在 50% 与 100% 视口宽度之间切换，宽度变化保持过渡动画；返回和关闭按钮只触发滑出和遮罩淡出动画，待动画结束后再卸载抽屉，遮罩层不触发关闭；抽屉列表必须保持租户侧空间管理、用户管理列表的列结构，只改变承载方式。教师没有加入任何空间时，用户详情和业务页必须提示“该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷”。
+
+公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 只能由本租户 `tenant_admin` 创建或导入；`teacher` 和空间管理员只能写自己启用空间内的题库。已暴露的试卷写接口在修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。
+
+成绩列表、发布配置和导出必须基于成绩行或考试范围反查真实空间。`teacher` 可以查看授权空间内成绩，但首版不能导出成绩；前端不展示教师导出入口，后端仍以 `CanExportExamResults` 作为最终拒绝边界。学生查分只走 `/api/v1/exam-entry/results/:id`，不能调用管理端成绩接口。
 
 ## 8. 配置设计
 
@@ -1488,6 +1551,14 @@ service 单元测试：
 - 禁止禁用最后一个平台管理员
 - 禁止禁用或移除空间最后一个空间管理员
 - 禁止修改角色导致空间失去最后一个空间管理员
+- `user_roles` 单角色唯一约束为 `(tenant_id, user_id)`
+- `tenant_admin` 不在 `space_members` 中也可以管理本租户空间资源
+- `space_admin` 不能修改空间基础资料或删除空间
+- `tenant_admin` 创建 `teacher` 时不自动写入 `space_members`
+- 教师未加入任何启用空间时不能操作题库、试卷、考试或阅卷
+- 公共题库和公共试卷只允许 `tenant_admin` 创建、修改、删除和导入
+- 学生不能访问 `/api/v1/tenant/results/:id`，只能通过 `/api/v1/exam-entry/results/:id` 查看自己的已发布成绩
+- 角色变更后，关键写接口必须从数据库重建权限上下文，不能继续信任旧 session 角色快照
 - 多选题答案排序归一化后判分
 - 非关键考试事件异步入队和队列满降级
 - 试卷大题顺序和题号连续编排
@@ -1495,6 +1566,9 @@ service 单元测试：
 - rule_live 跨规则去重和题库数量不足失败
 - rule_live 发布时冻结候选题池，开考只从冻结题池抽题
 - exam token 校验必须同时校验业务作答截止时间
+- exam token 只能构造考试入口上下文，不能访问管理端接口
+- exam token 不支持刷新和续签
+- 普通登录 session 不能调用自动保存、提交答卷和事件上报接口
 - 多选题判分必须反序列化后比较选项 ID 集合
 - 规则组卷数量校验
 - 考生级随机抽题不重复
@@ -1625,6 +1699,8 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - 组织模型采用租户、空间、用户。
 - 角色采用平台管理员、租户管理员、教师、考生。
 - 首版使用固定角色权限判断，但通过 `PermissionChecker` 抽象层隔离权限实现，方便后续扩展 RBAC。
+- `PermissionChecker` 拆分 `CanManageTenantLifecycle` 和 `CanManageTenantBusiness`，避免平台侧租户生命周期和租户内业务管理语义混淆。
+- `PermissionChecker` 使用 `CanManageSpaceProfile` 和 `CanManageSpaceMembers` 区分空间基础资料管理与空间成员管理。
 - 平台管理员使用独立 `platform_users` 表，不进入租户用户表。
 - 平台配置使用 `platform_configs` 表保存，`config_key` 全平台唯一。
 - 租户用户表增加 `real_name`，并声明同租户内用户名、手机号、邮箱唯一。
@@ -1637,7 +1713,9 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - 平台配置和空间配置表不使用软删除，删除配置项直接硬删除。
 - 支持用户自注册，但注册后默认不属于任何空间。
 - 租户码由平台管理员创建租户时系统生成。
-- `user_roles` 使用 `UNIQUE (tenant_id, user_id, role)` 防止重复角色。
+- 创建租户时必须初始化首个启用状态 `tenant_admin`；首版不自动创建默认空间，也不自动把 `tenant_admin` 写入 `space_members`。
+- `user_roles` 使用 `UNIQUE (tenant_id, user_id)` 强制租户用户首版只能拥有一个租户级角色。
+- `space_admin` 不是租户级角色，不写入 `ActorContext.Role` 或 `PermissionContext.Role`，只能通过 `space_members.role_in_space` 动态判断。
 - `space_members` 使用 `UNIQUE (tenant_id, space_id, user_id, deleted_at)` 防止重复有效成员。
 - 支持 `manual`、`rule_fixed`、`rule_live` 三种组卷模式，并统一使用 `paper_sections` 大题结构。
 - 题型支持单选、多选、判断、填空和简答。
@@ -1649,7 +1727,7 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - `question_options` 使用 `UNIQUE (tenant_id, question_id, option_key)` 防止同题选项 key 重复。
 - `question_options` 使用 `UNIQUE (tenant_id, question_id, sort_order)` 防止同题选项排序重复。
 - 题目选项编辑采用全量替换策略，已生成考试快照不受后续选项编辑影响。
-- 公共题库使用 `questions.space_id = NULL`，空间题库只对对应空间可见。
+- 公共题库使用 `questions.space_id = NULL`，公共试卷使用 `papers.space_id = NULL`；首版公共资源只允许 `tenant_admin` 写入，空间角色只能按业务规则读取或引用。
 - `rule_fixed` 先按规则生成固化题目，教师审题调整后再发布，适合正式考试。
 - `rule_live` 考试开始时按大题规则为每个考生实时抽题，适合练习和模拟考试。
 - `rule_live` 发布时冻结候选题池到 `exam_live_question_pools`，开考时只从冻结题池抽题。
@@ -1671,6 +1749,7 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - 支持服务端自动保存答案。
 - 考试过程使用独立 `exam_token`，避免普通登录 token 过期影响自动保存和提交。
 - `exam_token` 使用有状态不透明 token，库里只保存 hash 和过期时间。
+- `exam_token` 不支持刷新和续签，普通登录 session 不能调用自动保存、提交答卷和事件上报接口。
 - `exam_attempts` 使用 `UNIQUE (tenant_id, exam_id, user_id, attempt_no)` 约束多次作答序号。
 - `exam_token_hash` 建立 `(exam_token_hash, status)` 索引。
 - `exam_targets` 使用 `UNIQUE (tenant_id, exam_id, target_type, target_id)` 防止发布范围重复。

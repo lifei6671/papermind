@@ -29,16 +29,17 @@ const (
 )
 
 var (
-	ErrTenantNotFound        = errors.New("tenant not found")
-	ErrTenantDisabled        = errors.New("tenant disabled")
-	ErrRegisterNotAllowed    = errors.New("tenant register not allowed")
-	ErrUserNotFound          = errors.New("tenant user not found")
-	ErrDisplayNameRequired   = errors.New("display name required")
-	ErrInvalidCredential     = errors.New("invalid tenant user credential")
-	ErrUserDisabled          = errors.New("tenant user disabled")
-	ErrUnsupportedAvatarType = errors.New("unsupported avatar content type")
-	ErrAvatarTooLarge        = errors.New("avatar file too large")
-	ErrCannotDisableSelf     = errors.New("cannot disable self")
+	ErrTenantNotFound            = errors.New("tenant not found")
+	ErrTenantDisabled            = errors.New("tenant disabled")
+	ErrRegisterNotAllowed        = errors.New("tenant register not allowed")
+	ErrUserNotFound              = errors.New("tenant user not found")
+	ErrDisplayNameRequired       = errors.New("display name required")
+	ErrInvalidCredential         = errors.New("invalid tenant user credential")
+	ErrUserDisabled              = errors.New("tenant user disabled")
+	ErrUnsupportedAvatarType     = errors.New("unsupported avatar content type")
+	ErrAvatarTooLarge            = errors.New("avatar file too large")
+	ErrCannotDisableSelf         = errors.New("cannot disable self")
+	ErrCannotLoseLastTenantAdmin = errors.New("cannot lose last enabled tenant admin")
 )
 
 type Tenant struct {

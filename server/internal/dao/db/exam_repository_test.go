@@ -3,11 +3,11 @@ package db
 import (
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/lifei6671/papermind/server/bootstrap/migration"
 	serviceexam "github.com/lifei6671/papermind/server/internal/service/exam"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -172,13 +172,9 @@ func openExamRepositoryTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	sqlPath := filepath.Join("..", "..", "..", "data", "migrations", "sqlite", "001_tenant_space.sql")
-	sqlBytes, err := os.ReadFile(sqlPath)
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
-	}
-	if err := gormDB.Exec(string(sqlBytes)).Error; err != nil {
-		t.Fatalf("apply migration: %v", err)
+	migrationDir := filepath.Join("..", "..", "..", "data", "migrations", "sqlite")
+	if err := migration.Run(gormDB, migrationDir); err != nil {
+		t.Fatalf("run migration: %v", err)
 	}
 	return gormDB
 }

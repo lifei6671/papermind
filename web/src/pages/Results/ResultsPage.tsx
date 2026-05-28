@@ -4,6 +4,7 @@ import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Download, Save } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
 import type { ActorRole } from "../../api/grading";
 import { resultsApi } from "../../api/results";
@@ -30,6 +31,8 @@ export function ResultsPage({
   actorRole = "tenant_admin",
   spaceID,
 }: ResultsPageProps) {
+  const [searchParams] = useSearchParams();
+  const effectiveSpaceID = spaceID ?? positiveID(searchParams.get("space_id"));
   const [resultRows, setResultRows] = useState<ResultRow[]>([]);
   const [publishMode, setPublishMode] = useState("manual_publish");
   const [publishTime, setPublishTime] = useState("");
@@ -38,10 +41,15 @@ export function ResultsPage({
   const [exportMessage, setExportMessage] = useState("");
   const [exportHref, setExportHref] = useState("");
   const [loadError, setLoadError] = useState("");
+  const teacherNeedsSpace = actorRole === "teacher" && !effectiveSpaceID;
+  const canExportResults = actorRole !== "teacher";
 
   useEffect(() => {
+    if (teacherNeedsSpace) {
+      return undefined;
+    }
     let ignore = false;
-    api.listResults({ tenantID, examID, actorID, actorRole, spaceID })
+    api.listResults({ tenantID, examID, actorID, actorRole, spaceID: effectiveSpaceID })
       .then((result) => {
         if (!ignore) {
           setResultRows(result.items);
@@ -56,7 +64,7 @@ export function ResultsPage({
     return () => {
       ignore = true;
     };
-  }, [api, tenantID, examID, actorID, actorRole, spaceID]);
+  }, [api, tenantID, examID, actorID, actorRole, effectiveSpaceID, teacherNeedsSpace]);
 
   async function handleSavePublishConfig(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -75,7 +83,7 @@ export function ResultsPage({
         examID,
         actorID,
         actorRole,
-        spaceID,
+        spaceID: effectiveSpaceID,
         publishMode: publishMode as "immediate_score" | "manual_publish",
         scorePublishTime,
       });
@@ -90,13 +98,30 @@ export function ResultsPage({
 
   async function handleExportResults() {
     try {
-      const result = await api.exportResults({ tenantID, examID, actorID, actorRole, spaceID });
+      const result = await api.exportResults({ tenantID, examID, actorID, actorRole, spaceID: effectiveSpaceID });
       setExportHref(result.filePath);
       setExportMessage(`成绩导出完成：已导出 ${result.rowCount} 行，文件 ${result.filePath}`);
     } catch (err) {
       setExportHref("");
       setExportMessage(formatApiErrorMessage(err, "成绩导出失败"));
     }
+  }
+
+  if (teacherNeedsSpace) {
+    return (
+      <section className="page platform-page results-page">
+        <nav aria-label="成绩菜单" className="platform-tabbar" role="tablist">
+          <span className="platform-tab platform-tab--active" role="tab" aria-selected="true">
+            成绩
+          </span>
+        </nav>
+        <Panel>
+          <div className="empty-state">
+            <strong>该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷</strong>
+          </div>
+        </Panel>
+      </section>
+    );
   }
 
   return (
@@ -112,10 +137,12 @@ export function ResultsPage({
           <h1>成绩</h1>
           <p>查看考试成绩、配置发布策略，并导出成绩文件。</p>
         </div>
-        <Button variant="toolbarPrimary" onClick={handleExportResults} type="button">
-          <Download aria-hidden="true" size={16} />
-          导出成绩
-        </Button>
+        {canExportResults && (
+          <Button variant="toolbarPrimary" onClick={handleExportResults} type="button">
+            <Download aria-hidden="true" size={16} />
+            导出成绩
+          </Button>
+        )}
       </div>
 
       <Panel title="高一语文期中考试" subtitle="result_strategy: highest，解析展示：成绩可见后展示。">
@@ -196,4 +223,9 @@ export function ResultsPage({
       </Panel>
     </section>
   );
+}
+
+function positiveID(value?: string | number | null) {
+  const numberValue = Number(value);
+  return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : undefined;
 }

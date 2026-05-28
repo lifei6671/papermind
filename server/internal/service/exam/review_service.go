@@ -169,7 +169,10 @@ func cloneScope(scope map[uint64]uint64) map[uint64]uint64 {
 }
 
 func hasPossibleGradeRole(ctx permission.PermissionContext) bool {
-	for _, role := range ctx.SpaceRoles {
+	if ctx.Role == permission.RoleTenantAdmin {
+		return true
+	}
+	for _, role := range ctx.SpaceMemberships {
 		if role == permission.RoleSpaceAdmin || role == permission.RoleTeacher {
 			return true
 		}

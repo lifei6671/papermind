@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
+	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
+	"github.com/lifei6671/papermind/server/library/constant"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -135,10 +137,12 @@ func (r *TenantUserRepository) createUser(ctx context.Context, gormDB *gorm.DB, 
 	now := r.now()
 	row := UserDO{
 		BaseFields: BaseFields{
-			CreatedAt: now,
-			UpdatedAt: now,
-			Version:   1,
-			ExtJSON:   datatypes.JSON("{}"),
+			CreatedAt:     now,
+			CreatedByType: AuditActorTenantUser,
+			UpdatedAt:     now,
+			UpdatedByType: AuditActorTenantUser,
+			Version:       1,
+			ExtJSON:       datatypes.JSON("{}"),
 		},
 		TenantID:     user.TenantID,
 		Username:     user.Username,
@@ -165,10 +169,12 @@ func (r *TenantUserRepository) createUserRole(ctx context.Context, gormDB *gorm.
 	now := r.now()
 	row := UserRoleDO{
 		BaseFields: BaseFields{
-			CreatedAt: now,
-			UpdatedAt: now,
-			Version:   1,
-			ExtJSON:   datatypes.JSON("{}"),
+			CreatedAt:     now,
+			CreatedByType: AuditActorTenantUser,
+			UpdatedAt:     now,
+			UpdatedByType: AuditActorTenantUser,
+			Version:       1,
+			ExtJSON:       datatypes.JSON("{}"),
 		},
 		TenantID: tenantID,
 		UserID:   userID,
@@ -203,10 +209,11 @@ func (r *TenantUserRepository) UpdateLoginAudit(ctx context.Context, tenantID ui
 		Where(UserColumns.ID+" = ?", userID).
 		Where(UserColumns.DeletedAt+" = ?", 0).
 		Updates(map[string]any{
-			UserColumns.LastLoginIP: ip,
-			UserColumns.LastLoginAt: at,
-			BaseColumns.UpdatedAt:   r.now(),
-			BaseColumns.Version:     gorm.Expr(BaseColumns.Version + " + 1"),
+			UserColumns.LastLoginIP:   ip,
+			UserColumns.LastLoginAt:   at,
+			BaseColumns.UpdatedAt:     r.now(),
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error
 }
 
@@ -216,12 +223,13 @@ func (r *TenantUserRepository) UpdateProfile(ctx context.Context, input servicet
 		Where(UserColumns.ID+" = ?", input.UserID).
 		Where(UserColumns.DeletedAt+" = ?", 0).
 		Updates(map[string]any{
-			UserColumns.RealName:  input.DisplayName,
-			UserColumns.AvatarURL: input.AvatarURL,
-			UserColumns.Phone:     input.Phone,
-			UserColumns.Email:     input.Email,
-			BaseColumns.UpdatedAt: r.now(),
-			BaseColumns.Version:   gorm.Expr(BaseColumns.Version + " + 1"),
+			UserColumns.RealName:      input.DisplayName,
+			UserColumns.AvatarURL:     input.AvatarURL,
+			UserColumns.Phone:         input.Phone,
+			UserColumns.Email:         input.Email,
+			BaseColumns.UpdatedAt:     r.now(),
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error
 	if err != nil {
 		return servicetenantuser.User{}, err
@@ -235,30 +243,113 @@ func (r *TenantUserRepository) UpdateAvatarURL(ctx context.Context, tenantID uin
 		Where(UserColumns.ID+" = ?", userID).
 		Where(UserColumns.DeletedAt+" = ?", 0).
 		Updates(map[string]any{
-			UserColumns.AvatarURL: url,
-			BaseColumns.UpdatedAt: r.now(),
-			BaseColumns.Version:   gorm.Expr(BaseColumns.Version + " + 1"),
+			UserColumns.AvatarURL:     url,
+			BaseColumns.UpdatedAt:     r.now(),
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error
 }
 
 func (r *TenantUserRepository) BuildDisableImpact(ctx context.Context, tenantID uint64, userID uint64) (servicetenantuser.DisableImpact, error) {
+	var adminSpaceIDs []uint64
+	if err := r.db.WithContext(ctx).Model(&SpaceMemberDO{}).
+		Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
+		Where(SpaceMemberColumns.UserID+" = ?", userID).
+		Where(SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
+		Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+		Pluck(SpaceMemberColumns.SpaceID, &adminSpaceIDs).Error; err != nil {
+		return servicetenantuser.DisableImpact{}, err
+	}
 	return servicetenantuser.DisableImpact{
 		LoseLogin:       true,
 		LoseExamAccess:  true,
 		LoseGradeAccess: true,
+		AdminSpaceIDs:   adminSpaceIDs,
 	}, nil
 }
 
 func (r *TenantUserRepository) UpdateStatus(ctx context.Context, tenantID uint64, userID uint64, status string) error {
-	return r.db.WithContext(ctx).Model(&UserDO{}).
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&UserDO{}).
+			Where(UserColumns.TenantID+" = ?", tenantID).
+			Where(UserColumns.ID+" = ?", userID).
+			Where(UserColumns.DeletedAt+" = ?", 0).
+			Updates(map[string]any{
+				UserColumns.Status:        status,
+				BaseColumns.UpdatedAt:     r.now(),
+				BaseColumns.UpdatedByType: AuditActorTenantUser,
+				BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+			}).Error; err != nil {
+			return err
+		}
+		if status == servicetenantuser.StatusDisabled {
+			if err := r.validateTenantAdminInvariant(ctx, tx, tenantID); err != nil {
+				return err
+			}
+			if err := r.validateSpaceAdminInvariantAfterUserStatusChange(ctx, tx, tenantID, userID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *TenantUserRepository) validateTenantAdminInvariant(ctx context.Context, tx *gorm.DB, tenantID uint64) error {
+	var count int64
+	adminUserIDs := tx.WithContext(ctx).Model(&UserRoleDO{}).
+		Select(UserRoleColumns.UserID).
+		Where(UserRoleColumns.TenantID+" = ?", tenantID).
+		Where(UserRoleColumns.Role+" = ?", constant.RoleTenantAdmin)
+	err := tx.WithContext(ctx).Model(&UserDO{}).
 		Where(UserColumns.TenantID+" = ?", tenantID).
-		Where(UserColumns.ID+" = ?", userID).
+		Where(UserColumns.ID+" IN (?)", adminUserIDs).
+		Where(UserColumns.Status+" = ?", servicetenantuser.StatusEnabled).
 		Where(UserColumns.DeletedAt+" = ?", 0).
-		Updates(map[string]any{
-			UserColumns.Status:    status,
-			BaseColumns.UpdatedAt: r.now(),
-			BaseColumns.Version:   gorm.Expr(BaseColumns.Version + " + 1"),
-		}).Error
+		Count(&count).Error
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return servicetenantuser.ErrCannotLoseLastTenantAdmin
+	}
+	return nil
+}
+
+func (r *TenantUserRepository) validateSpaceAdminInvariantAfterUserStatusChange(ctx context.Context, tx *gorm.DB, tenantID uint64, userID uint64) error {
+	var memberRows []SpaceMemberDO
+	if err := tx.WithContext(ctx).Model(&SpaceMemberDO{}).
+		Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
+		Where(SpaceMemberColumns.UserID+" = ?", userID).
+		Where(SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
+		Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+		Find(&memberRows).Error; err != nil {
+		return err
+	}
+	enabledUserIDs := tx.WithContext(ctx).Model(&UserDO{}).
+		Select(UserColumns.ID).
+		Where(UserColumns.TenantID+" = ?", tenantID).
+		Where(UserColumns.Status+" = ?", servicetenantuser.StatusEnabled).
+		Where(UserColumns.DeletedAt+" = ?", 0)
+	for _, member := range memberRows {
+		var count int64
+		err := tx.WithContext(ctx).Model(&SpaceMemberDO{}).
+			Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
+			Where(SpaceMemberColumns.SpaceID+" = ?", member.SpaceID).
+			Where(SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
+			Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
+			Where(SpaceMemberColumns.UserID+" IN (?)", enabledUserIDs).
+			Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+			Count(&count).Error
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return servicespace.ErrCannotLoseLastSpaceAdmin
+		}
+	}
+	return nil
 }
 
 func tenantUserFromDO(row UserDO, role string) servicetenantuser.User {

@@ -64,7 +64,7 @@ func NewExportService(options ExportServiceOptions) *ExportService {
 }
 
 func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamScoresInput) (ExportResult, error) {
-	rows, err := s.ListExamScores(ctx, ListExamScoresInput(input))
+	rows, err := s.listExamScoresByPermission(ctx, ListExamScoresInput(input), s.canExportExamInAnySpace)
 	if err != nil {
 		return ExportResult{}, err
 	}
@@ -85,6 +85,10 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 }
 
 func (s *ExportService) ListExamScores(ctx context.Context, input ListExamScoresInput) ([]ScoreExportRow, error) {
+	return s.listExamScoresByPermission(ctx, input, s.canViewExamResultsInAnySpace)
+}
+
+func (s *ExportService) listExamScoresByPermission(ctx context.Context, input ListExamScoresInput, allow func(permission.PermissionContext, uint64, []uint64) bool) ([]ScoreExportRow, error) {
 	if !hasPossibleGradeRole(input.Permission) {
 		return nil, permission.ErrForbidden
 	}
@@ -92,18 +96,41 @@ func (s *ExportService) ListExamScores(ctx context.Context, input ListExamScores
 	if err != nil {
 		return nil, err
 	}
+	if len(rows) == 0 && allow(input.Permission, input.ExamID, examScopeSpaceIDs(input.Permission, input.ExamID)) {
+		return []ScoreExportRow{}, nil
+	}
 	allowed := make([]ScoreExportRow, 0, len(rows))
 	for _, row := range rows {
-		if s.canGradeExamInAnySpace(input.Permission, input.ExamID, scoreExportSpaceIDs(row)) {
+		if allow(input.Permission, input.ExamID, scoreExportSpaceIDs(row)) {
 			allowed = append(allowed, row)
 		}
+	}
+	if len(allowed) == 0 {
+		return nil, permission.ErrForbidden
 	}
 	return allowed, nil
 }
 
-func (s *ExportService) canGradeExamInAnySpace(ctx permission.PermissionContext, examID uint64, spaces []uint64) bool {
+func examScopeSpaceIDs(ctx permission.PermissionContext, examID uint64) []uint64 {
+	spaceID, ok := ctx.ExamScope[examID]
+	if !ok {
+		return nil
+	}
+	return []uint64{spaceID}
+}
+
+func (s *ExportService) canViewExamResultsInAnySpace(ctx permission.PermissionContext, examID uint64, spaces []uint64) bool {
 	for _, spaceID := range spaces {
-		if err := s.permissionChecker.CanGradeExam(permissionWithExamScope(ctx, examID, spaceID), examID); err == nil {
+		if err := s.permissionChecker.CanViewExamResults(permissionWithExamScope(ctx, examID, spaceID), examID); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *ExportService) canExportExamInAnySpace(ctx permission.PermissionContext, examID uint64, spaces []uint64) bool {
+	for _, spaceID := range spaces {
+		if err := s.permissionChecker.CanExportExamResults(permissionWithExamScope(ctx, examID, spaceID), examID); err == nil {
 			return true
 		}
 	}

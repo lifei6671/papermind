@@ -96,6 +96,16 @@ export type SubmitAttemptInput = {
   examToken: string;
 };
 
+export type StudentVisibleResult = {
+  attemptID: number;
+  examID: number;
+  attemptNo: number;
+  objectiveScore: string;
+  subjectiveScore: string;
+  totalScore: string;
+  analysisVisible: boolean;
+};
+
 export type RecordExamEventInput = {
   tenantID: number;
   attemptID: number;
@@ -108,6 +118,7 @@ export type StudentExamAPI = {
   startAttempt(input: StartAttemptInput): Promise<StartAttemptResult>;
   saveAnswer(input: SaveStudentAnswerInput): Promise<void>;
   submitAttempt(input: SubmitAttemptInput): Promise<void>;
+  getVisibleResult(attemptID: number): Promise<StudentVisibleResult>;
   recordEvent(input: RecordExamEventInput): Promise<void>;
 };
 
@@ -132,6 +143,16 @@ type StartAttemptAPIResponse = {
   };
   exam_token: string;
   questions: AttemptQuestionAPIResponse[];
+};
+
+type StudentVisibleResultAPIResponse = {
+  attempt_id: number;
+  exam_id: number;
+  attempt_no: number;
+  objective_score: string;
+  subjective_score: string;
+  total_score: string;
+  analysis_visible: boolean;
 };
 
 type AttemptQuestionAPIResponse = {
@@ -185,13 +206,13 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
       return mapExamResponse(data);
     },
     async resolveInvite(input) {
-      const data = await apiClient.post<ExamAPIResponse>("/api/v1/exams/invite/resolve", {
+      const data = await apiClient.post<ExamAPIResponse>("/api/v1/exam-entry/invite/resolve", {
         invite_code: input.inviteCode,
       });
       return mapExamResponse(data);
     },
     async startAttempt(input) {
-      const data = await apiClient.post<StartAttemptAPIResponse>(`/api/v1/exams/${input.examID}/attempts/start`, {
+      const data = await apiClient.post<StartAttemptAPIResponse>(`/api/v1/exam-entry/exams/${input.examID}/attempts/start`, {
         tenant_id: input.tenantID,
       });
       return {
@@ -202,7 +223,7 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
       };
     },
     async saveAnswer(input) {
-      await apiClient.post(`/api/v1/exam-attempts/${input.attemptID}/answers/${input.attemptQuestionID}`, {
+      await apiClient.post(`/api/v1/exam-entry/attempts/${input.attemptID}/answers/${input.attemptQuestionID}`, {
         tenant_id: input.tenantID,
         exam_token: input.examToken,
         question_type: input.questionType,
@@ -211,14 +232,26 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
       });
     },
     async submitAttempt(input) {
-      await apiClient.post(`/api/v1/exam-attempts/${input.attemptID}/submit`, {
+      await apiClient.post(`/api/v1/exam-entry/attempts/${input.attemptID}/submit`, {
         tenant_id: input.tenantID,
         exam_token: input.examToken,
         event_type: "submit",
       });
     },
+    async getVisibleResult(attemptID) {
+      const data = await apiClient.get<StudentVisibleResultAPIResponse>(`/api/v1/exam-entry/results/${attemptID}`);
+      return {
+        attemptID: data.attempt_id,
+        examID: data.exam_id,
+        attemptNo: data.attempt_no,
+        objectiveScore: data.objective_score,
+        subjectiveScore: data.subjective_score,
+        totalScore: data.total_score,
+        analysisVisible: data.analysis_visible,
+      };
+    },
     async recordEvent(input) {
-      await apiClient.post(`/api/v1/exam-attempts/${input.attemptID}/events`, {
+      await apiClient.post(`/api/v1/exam-entry/attempts/${input.attemptID}/events`, {
         tenant_id: input.tenantID,
         exam_token: input.examToken,
         event_type: input.eventType,

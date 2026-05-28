@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
+	"github.com/lifei6671/papermind/server/internal/service/permission"
 )
 
 func TestCreateQuestionSupportsAllTypesAndBaseFields(t *testing.T) {
@@ -86,6 +87,7 @@ func TestCreateQuestionSupportsAllTypesAndBaseFields(t *testing.T) {
 
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {
+			item.input.Permission = tenantAdminQuestionPermission()
 			created, err := svc.CreateQuestion(context.Background(), item.input)
 			if err != nil {
 				t.Fatalf("CreateQuestion returned error: %v", err)
@@ -141,9 +143,10 @@ func TestChoiceQuestionValidation(t *testing.T) {
 	svc := NewQuestionService(QuestionServiceOptions{Repo: &fakeQuestionRepository{}})
 
 	_, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{
-		TenantID: 10,
-		Type:     QuestionTypeSingle,
-		Title:    "没有正确答案",
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Type:       QuestionTypeSingle,
+		Title:      "没有正确答案",
 		Options: []QuestionOptionInput{
 			{OptionKey: "A", Content: "错"},
 		},
@@ -153,9 +156,10 @@ func TestChoiceQuestionValidation(t *testing.T) {
 	}
 
 	_, err = svc.CreateQuestion(context.Background(), CreateQuestionInput{
-		TenantID: 10,
-		Type:     QuestionTypeSingle,
-		Title:    "两个正确答案",
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Type:       QuestionTypeSingle,
+		Title:      "两个正确答案",
 		Options: []QuestionOptionInput{
 			{OptionKey: "A", Content: "对", IsCorrect: true},
 			{OptionKey: "B", Content: "也对", IsCorrect: true},
@@ -166,9 +170,10 @@ func TestChoiceQuestionValidation(t *testing.T) {
 	}
 
 	_, err = svc.CreateQuestion(context.Background(), CreateQuestionInput{
-		TenantID: 10,
-		Type:     QuestionTypeMultiple,
-		Title:    "多个正确答案",
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Type:       QuestionTypeMultiple,
+		Title:      "多个正确答案",
 		Options: []QuestionOptionInput{
 			{OptionKey: "A", Content: "对", IsCorrect: true},
 			{OptionKey: "B", Content: "也对", IsCorrect: true},
@@ -206,6 +211,7 @@ func TestChoiceDisplayCountAndDistractorArePersisted(t *testing.T) {
 	displayCount := 4
 
 	_, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission:         tenantAdminQuestionPermission(),
 		TenantID:           10,
 		Type:               QuestionTypeSingle,
 		Title:              "选项展示数量",
@@ -253,6 +259,7 @@ func TestFillBlankAndShortTextRules(t *testing.T) {
 	svc := NewQuestionService(QuestionServiceOptions{Repo: &fakeQuestionRepository{}})
 
 	_, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission:     tenantAdminQuestionPermission(),
 		TenantID:       10,
 		Type:           QuestionTypeFillBlank,
 		Title:          "多空题",
@@ -271,6 +278,7 @@ func TestFillBlankAndShortTextRules(t *testing.T) {
 	}
 
 	created, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission:      tenantAdminQuestionPermission(),
 		TenantID:        10,
 		Type:            QuestionTypeShortText,
 		Title:           "简答",
@@ -298,7 +306,8 @@ func TestImportTemplateAndImportRows(t *testing.T) {
 	}
 
 	result, err := svc.ImportQuestions(context.Background(), ImportQuestionsInput{
-		TenantID: 10,
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
 		Rows: []ImportRow{
 			{RowNumber: 2, Type: QuestionTypeSingle, Title: "合法题", Options: "A.对|B.错", CorrectAnswer: "A", Difficulty: DifficultyEasy, Tags: "数学,基础"},
 			{RowNumber: 3, Type: QuestionTypeSingle, Title: "错误题", Options: "A.错|B.也错", CorrectAnswer: "", Difficulty: DifficultyEasy},
@@ -318,6 +327,61 @@ func TestImportTemplateAndImportRows(t *testing.T) {
 	}
 	if len(repo.importedTags[0]) != 2 || repo.importedTags[0][0] != "数学" || repo.importedTags[0][1] != "基础" {
 		t.Fatalf("expected imported tags, got %#v", repo.importedTags)
+	}
+}
+
+func TestQuestionPublicWritesRequireTenantAdmin(t *testing.T) {
+	svc := NewQuestionService(QuestionServiceOptions{Repo: &fakeQuestionRepository{}})
+
+	_, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission:   teacherQuestionPermission(100),
+		TenantID:     10,
+		Type:         QuestionTypeSingle,
+		Title:        "教师公共题",
+		ScoreDefault: "2",
+		Options: []QuestionOptionInput{
+			{OptionKey: "A", Content: "对", IsCorrect: true},
+			{OptionKey: "B", Content: "错"},
+		},
+	})
+	if !errors.Is(err, permission.ErrForbidden) {
+		t.Fatalf("expected teacher public question write forbidden, got %v", err)
+	}
+
+	spaceID := uint64(100)
+	_, err = svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission:   teacherQuestionPermission(spaceID),
+		TenantID:     10,
+		SpaceID:      &spaceID,
+		Type:         QuestionTypeSingle,
+		Title:        "教师空间题",
+		ScoreDefault: "2",
+		Options: []QuestionOptionInput{
+			{OptionKey: "A", Content: "对", IsCorrect: true},
+			{OptionKey: "B", Content: "错"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected teacher space question write allowed, got %v", err)
+	}
+}
+
+func tenantAdminQuestionPermission() permission.PermissionContext {
+	return permission.PermissionContext{
+		SubjectType: permission.SubjectTenantUser,
+		UserID:      1,
+		TenantID:    10,
+		Role:        permission.RoleTenantAdmin,
+	}
+}
+
+func teacherQuestionPermission(spaceID uint64) permission.PermissionContext {
+	return permission.PermissionContext{
+		SubjectType:      permission.SubjectTenantUser,
+		UserID:           2,
+		TenantID:         10,
+		Role:             permission.RoleTeacher,
+		SpaceMemberships: map[uint64]string{spaceID: permission.RoleTeacher},
 	}
 }
 

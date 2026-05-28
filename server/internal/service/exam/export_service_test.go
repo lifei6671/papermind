@@ -76,7 +76,7 @@ func TestExportServiceFiltersRowsByActualSpaceScope(t *testing.T) {
 	svc := NewExportService(ExportServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), ExportDir: t.TempDir(), Now: fixedNow})
 
 	rows, err := svc.ListExamScores(context.Background(), ListExamScoresInput{
-		Permission: exportPermissionContext(),
+		Permission: teacherScorePermissionContext(),
 		TenantID:   10,
 		ExamID:     20,
 	})
@@ -85,6 +85,30 @@ func TestExportServiceFiltersRowsByActualSpaceScope(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].StudentName != "张三" {
 		t.Fatalf("expected only rows in actual allowed space, got %#v", rows)
+	}
+}
+
+func TestExportServiceRejectsTeacherExportEvenWhenTeacherCanViewScores(t *testing.T) {
+	repo := &fakeExportRepository{
+		rows: []ScoreExportRow{{StudentName: "张三", SpaceID: 301, SpaceName: "一班", TotalScore: "10"}},
+	}
+	svc := NewExportService(ExportServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), ExportDir: t.TempDir(), Now: fixedNow})
+
+	rows, err := svc.ListExamScores(context.Background(), ListExamScoresInput{
+		Permission: teacherScorePermissionContext(),
+		TenantID:   10,
+		ExamID:     20,
+	})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("teacher should view scoped score rows, rows = %#v, err = %v", rows, err)
+	}
+	_, err = svc.ExportExamScores(context.Background(), ExportExamScoresInput{
+		Permission: teacherScorePermissionContext(),
+		TenantID:   10,
+		ExamID:     20,
+	})
+	if !errors.Is(err, permission.ErrForbidden) {
+		t.Fatalf("teacher should not export scores, got %v", err)
 	}
 }
 
@@ -114,11 +138,23 @@ func TestWriteScoreExportCSVReturnsFlushErrors(t *testing.T) {
 
 func exportPermissionContext() permission.PermissionContext {
 	return permission.PermissionContext{
-		SubjectType: permission.SubjectTenantUser,
-		UserID:      601,
-		TenantID:    10,
-		SpaceRoles:  map[uint64]string{301: permission.RoleTeacher},
-		ExamScope:   map[uint64]uint64{20: 301},
+		SubjectType:      permission.SubjectTenantUser,
+		UserID:           601,
+		TenantID:         10,
+		Role:             permission.RoleTeacher,
+		SpaceMemberships: map[uint64]string{301: permission.RoleSpaceAdmin},
+		ExamScope:        map[uint64]uint64{20: 301},
+	}
+}
+
+func teacherScorePermissionContext() permission.PermissionContext {
+	return permission.PermissionContext{
+		SubjectType:      permission.SubjectTenantUser,
+		UserID:           601,
+		TenantID:         10,
+		Role:             permission.RoleTeacher,
+		SpaceMemberships: map[uint64]string{301: permission.RoleTeacher},
+		ExamScope:        map[uint64]uint64{20: 301},
 	}
 }
 

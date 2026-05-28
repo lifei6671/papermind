@@ -17,6 +17,11 @@ export type CreateTenantInput = {
   description: string;
   logoFileName: string;
   allowRegister: boolean;
+  adminUsername: string;
+  adminRealName: string;
+  adminPhone: string;
+  adminEmail: string;
+  adminPassword: string;
 };
 
 export type UpdateTenantProfileInput = {
@@ -74,6 +79,11 @@ export function createTenantAPI(apiClient: ApiClient): TenantManagementAPI {
         description: input.description,
         logo_url: input.logoFileName,
         allow_register: input.allowRegister,
+        admin_username: input.adminUsername,
+        admin_real_name: input.adminRealName,
+        admin_phone: input.adminPhone,
+        admin_email: input.adminEmail,
+        admin_password: input.adminPassword,
       });
       return mapTenantResponse(data);
     },

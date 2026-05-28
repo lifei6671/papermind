@@ -12,8 +12,14 @@ export function SessionProvider({ children }: SessionProviderProps) {
   const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
 
   const signIn = useCallback((nextSession: AuthSession) => {
-    setSession(nextSession);
-    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextSession));
+    const normalized = normalizeSession(nextSession);
+    if (!normalized) {
+      setSession(null);
+      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      return;
+    }
+    setSession(normalized);
+    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(normalized));
   }, []);
 
   const signOut = useCallback(() => {
@@ -45,9 +51,24 @@ function readStoredSession() {
   }
 
   try {
-    return JSON.parse(rawSession) as AuthSession;
+    const session = normalizeSession(JSON.parse(rawSession) as AuthSession);
+    if (!session) {
+      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+    return session;
   } catch {
     window.localStorage.removeItem(SESSION_STORAGE_KEY);
     return null;
   }
+}
+
+function normalizeSession(session: AuthSession | null): AuthSession | null {
+  if (!session || !isSessionRole(session.user.role)) {
+    return null;
+  }
+  return session;
+}
+
+function isSessionRole(role: string) {
+  return role === "platform_admin" || role === "tenant_admin" || role === "teacher" || role === "student";
 }

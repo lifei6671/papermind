@@ -78,20 +78,35 @@ function storeTenantAdminSession() {
 function mockStudentExamFetch() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/v1/exams/1/attempts/start" && init?.method === "POST") {
+    if (url === "/api/v1/exam-entry/exams/1/attempts/start" && init?.method === "POST") {
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
         data: mockStartAttemptPayload(),
       }));
     }
-    if (url.startsWith("/api/v1/exam-attempts/99/answers/") && init?.method === "POST") {
+    if (url.startsWith("/api/v1/exam-entry/attempts/99/answers/") && init?.method === "POST") {
       return new Response(JSON.stringify({ code: 0, message: "ok", data: { saved: true } }));
     }
-    if (url === "/api/v1/exam-attempts/99/submit" && init?.method === "POST") {
+    if (url === "/api/v1/exam-entry/attempts/99/submit" && init?.method === "POST") {
       return new Response(JSON.stringify({ code: 0, message: "ok", data: { submitted: true } }));
     }
-    if (url === "/api/v1/exam-attempts/99/events" && init?.method === "POST") {
+    if (url === "/api/v1/exam-entry/results/99" && init?.method === "GET") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          attempt_id: 99,
+          exam_id: 1,
+          attempt_no: 1,
+          objective_score: "56",
+          subjective_score: "30",
+          total_score: "86",
+          analysis_visible: true,
+        },
+      }));
+    }
+    if (url === "/api/v1/exam-entry/attempts/99/events" && init?.method === "POST") {
       return new Response(JSON.stringify({ code: 0, message: "ok", data: { recorded: true } }));
     }
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
@@ -290,7 +305,7 @@ test("平台管理员直接访问考试业务路由会回到概览", () => {
   storePlatformSession();
   const fetchMock = vi.spyOn(globalThis, "fetch");
 
-  renderApp(["/grading"]);
+  renderApp(["/grading?space_id=301"]);
 
   expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "阅卷中心" })).not.toBeInTheDocument();
@@ -453,7 +468,7 @@ test("考试端上报切屏事件并在交卷后展示成绩和解析", async ()
   });
 
   expect(screen.getByRole("status", { name: "切屏事件上报" })).toHaveTextContent("已上报切屏事件");
-  expect(screen.queryByText("岑参（cén），怅然（chàng）。")).not.toBeInTheDocument();
+  expect(screen.queryByText("题目解析已开放，可在成绩公布页查看解析内容。")).not.toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "交 卷" }));
 
@@ -462,7 +477,7 @@ test("考试端上报切屏事件并在交卷后展示成绩和解析", async ()
 
   expect(screen.getByRole("heading", { name: "成绩可见页" })).toBeInTheDocument();
   expect(screen.getByText("总分 86 分")).toBeInTheDocument();
-  expect(screen.getByText("岑参（cén），怅然（chàng）。")).toBeInTheDocument();
+  expect(screen.getByText("题目解析已开放，可在成绩公布页查看解析内容。")).toBeInTheDocument();
 });
 
 test("简答题作答效果不作为当前考试页面正文展示", () => {
@@ -497,7 +512,7 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
   storeTenantStudentSession();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/v1/exams/invite/resolve" && init?.method === "POST") {
+    if (url === "/api/v1/exam-entry/invite/resolve" && init?.method === "POST") {
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
@@ -517,7 +532,7 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
         },
       }));
     }
-    if (url === "/api/v1/exams/42/attempts/start" && init?.method === "POST") {
+    if (url === "/api/v1/exam-entry/exams/42/attempts/start" && init?.method === "POST") {
       expect(init.body).toBe(JSON.stringify({ tenant_id: 77 }));
       return new Response(JSON.stringify({
         code: 0,
@@ -538,7 +553,7 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
 
   await waitFor(() => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/v1/exams/invite/resolve",
+      "/api/v1/exam-entry/invite/resolve",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ invite_code: "PM2026" }),
@@ -582,7 +597,7 @@ test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async ()
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
   });
 
-  renderApp(["/grading"]);
+  renderApp(["/grading?space_id=301"]);
 
   expect(screen.getByRole("heading", { name: "阅卷中心" })).toBeInTheDocument();
   expect(await screen.findByText("张三")).toBeInTheDocument();
@@ -616,11 +631,22 @@ test("真实路由渲染阅卷中心时从 session 派生租户和阅卷人", as
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
   });
 
-  renderApp(["/grading"]);
+  renderApp(["/grading?space_id=301"]);
 
   await waitFor(() => expect(pendingURL).toContain("tenant_id=77"));
   expect(pendingURL).toContain("actor_id=55");
   expect(pendingURL).toContain("actor_role=teacher");
+  expect(pendingURL).toContain("space_id=301");
+});
+
+test("教师未加入空间时阅卷中心展示受限提示且不请求列表", () => {
+  storeTenantTeacherSession();
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+
+  renderApp(["/grading"]);
+
+  expect(screen.getByText("该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷")).toBeInTheDocument();
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 test("真实路由渲染空间管理时从 session 派生租户并请求后端 API", async () => {
@@ -716,7 +742,7 @@ test("真实路由渲染用户管理时从 session 派生租户并请求后端 A
 
 test("成绩页支持发布配置和成绩导出", async () => {
   const user = userEvent.setup();
-  storeTenantTeacherSession();
+  storeTenantAdminSession();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.startsWith("/api/v1/results?")) {

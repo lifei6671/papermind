@@ -65,10 +65,12 @@ func (r *SpaceRepository) CreateSpace(ctx context.Context, space servicespace.Sp
 		now := r.now()
 		row := SpaceDO{
 			BaseFields: BaseFields{
-				CreatedAt: now,
-				UpdatedAt: now,
-				Version:   1,
-				ExtJSON:   datatypes.JSON("{}"),
+				CreatedAt:     now,
+				CreatedByType: AuditActorTenantUser,
+				UpdatedAt:     now,
+				UpdatedByType: AuditActorTenantUser,
+				Version:       1,
+				ExtJSON:       datatypes.JSON("{}"),
 			},
 			TenantID:    space.TenantID,
 			Name:        space.Name,
@@ -84,10 +86,12 @@ func (r *SpaceRepository) CreateSpace(ctx context.Context, space servicespace.Sp
 		for _, userID := range adminUserIDs {
 			member := SpaceMemberDO{
 				BaseFields: BaseFields{
-					CreatedAt: now,
-					UpdatedAt: now,
-					Version:   1,
-					ExtJSON:   datatypes.JSON("{}"),
+					CreatedAt:     now,
+					CreatedByType: AuditActorTenantUser,
+					UpdatedAt:     now,
+					UpdatedByType: AuditActorTenantUser,
+					Version:       1,
+					ExtJSON:       datatypes.JSON("{}"),
 				},
 				TenantID:    space.TenantID,
 				SpaceID:     row.ID,
@@ -111,10 +115,12 @@ func (r *SpaceRepository) AddMember(ctx context.Context, member servicespace.Mem
 	now := r.now()
 	row := SpaceMemberDO{
 		BaseFields: BaseFields{
-			CreatedAt: now,
-			UpdatedAt: now,
-			Version:   1,
-			ExtJSON:   datatypes.JSON([]byte("{}")),
+			CreatedAt:     now,
+			CreatedByType: AuditActorTenantUser,
+			UpdatedAt:     now,
+			UpdatedByType: AuditActorTenantUser,
+			Version:       1,
+			ExtJSON:       datatypes.JSON([]byte("{}")),
 		},
 		TenantID:    member.TenantID,
 		SpaceID:     member.SpaceID,
@@ -164,8 +170,12 @@ func (r *SpaceRepository) FindMember(ctx context.Context, tenantID uint64, space
 }
 
 func (r *SpaceRepository) CountEnabledSpaceAdmins(ctx context.Context, tenantID uint64, spaceID uint64) (int64, error) {
+	return r.countEnabledSpaceAdmins(ctx, r.db, tenantID, spaceID)
+}
+
+func (r *SpaceRepository) countEnabledSpaceAdmins(ctx context.Context, gormDB *gorm.DB, tenantID uint64, spaceID uint64) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&SpaceMemberDO{}).
+	err := gormDB.WithContext(ctx).Model(&SpaceMemberDO{}).
 		Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
 		Where(SpaceMemberColumns.SpaceID+" = ?", spaceID).
 		Where(SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
@@ -218,13 +228,26 @@ func (r *SpaceRepository) UpdateMemberRole(ctx context.Context, tenantID uint64,
 
 func (r *SpaceRepository) updateMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64, updates map[string]any) error {
 	updates[BaseColumns.UpdatedAt] = r.now()
+	updates[BaseColumns.UpdatedByType] = AuditActorTenantUser
 	updates[BaseColumns.Version] = gorm.Expr(BaseColumns.Version + " + 1")
-	return r.db.WithContext(ctx).Model(&SpaceMemberDO{}).
-		Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
-		Where(SpaceMemberColumns.SpaceID+" = ?", spaceID).
-		Where(SpaceMemberColumns.UserID+" = ?", userID).
-		Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
-		Updates(updates).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&SpaceMemberDO{}).
+			Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
+			Where(SpaceMemberColumns.SpaceID+" = ?", spaceID).
+			Where(SpaceMemberColumns.UserID+" = ?", userID).
+			Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+		count, err := r.countEnabledSpaceAdmins(ctx, tx, tenantID, spaceID)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return servicespace.ErrCannotLoseLastSpaceAdmin
+		}
+		return nil
+	})
 }
 
 func (r *SpaceRepository) ListMemberNames(ctx context.Context, tenantID uint64, spaceID uint64) ([]SpaceMemberName, error) {

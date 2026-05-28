@@ -41,7 +41,12 @@ func TestTenantAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 		"name": "星海大学",
 		"logo_url": "xinghai.png",
 		"description": "面向公共课和企业培训的考试空间",
-		"allow_register": false
+		"allow_register": false,
+		"admin_username": "xinghai.admin",
+		"admin_real_name": "星海管理员",
+		"admin_phone": "13800001000",
+		"admin_email": "admin@xinghai.example",
+		"admin_password": "admin-secure-123"
 	}`)
 	createRecorder := httptest.NewRecorder()
 	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/tenants", payload, authHeader))
@@ -67,6 +72,30 @@ func TestTenantAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	}
 	if createdAudit.CreatedBy != 1 || createdAudit.UpdatedBy != 1 {
 		t.Fatalf("expected created_by and updated_by to be login user 1, got %#v", createdAudit)
+	}
+	var adminRow struct {
+		ID       uint64
+		Username string
+		RealName string
+		Role     string
+		Status   string
+	}
+	if err := gormDB.Table("users").
+		Select("users.id, users.username, users.real_name, users.status, user_roles.role").
+		Joins("JOIN user_roles ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id").
+		Where("users.tenant_id = ? AND users.username = ?", createBody.Data.ID, "xinghai.admin").
+		First(&adminRow).Error; err != nil {
+		t.Fatalf("query first tenant admin: %v", err)
+	}
+	if adminRow.RealName != "星海管理员" || adminRow.Role != "tenant_admin" || adminRow.Status != "enabled" {
+		t.Fatalf("expected enabled first tenant admin role, got %#v", adminRow)
+	}
+	var memberCount int64
+	if err := gormDB.Table("space_members").Where("tenant_id = ? AND user_id = ?", createBody.Data.ID, adminRow.ID).Count(&memberCount).Error; err != nil {
+		t.Fatalf("query first tenant admin space member count: %v", err)
+	}
+	if memberCount != 0 {
+		t.Fatalf("first tenant admin should not be added to any space, got %d memberships", memberCount)
 	}
 }
 

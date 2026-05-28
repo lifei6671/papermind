@@ -86,6 +86,11 @@ describe("tenant api", () => {
       description: "新租户",
       logoFileName: "tenant.png",
       allowRegister: false,
+      adminUsername: "tenant.admin",
+      adminRealName: "租户管理员",
+      adminPhone: "13800000000",
+      adminEmail: "admin@example.test",
+      adminPassword: "admin-secure-123",
     })).resolves.toMatchObject({
       id: 11,
       code: "NO2",
@@ -102,6 +107,11 @@ describe("tenant api", () => {
           description: "新租户",
           logo_url: "tenant.png",
           allow_register: false,
+          admin_username: "tenant.admin",
+          admin_real_name: "租户管理员",
+          admin_phone: "13800000000",
+          admin_email: "admin@example.test",
+          admin_password: "admin-secure-123",
         }),
       }),
     );

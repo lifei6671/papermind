@@ -181,8 +181,6 @@ function roleLabel(role: string) {
       return "平台管理员";
     case "tenant_admin":
       return "租户管理员";
-    case "space_admin":
-      return "空间管理员";
     case "teacher":
       return "教师";
     case "student":

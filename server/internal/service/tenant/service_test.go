@@ -27,6 +27,13 @@ func TestCreateTenantGeneratesUniqueCodeAndInheritsDefaultRegisterSetting(t *tes
 		LogoURL:     "logos/tenant.png",
 		Description: "面向校内考试的租户",
 		ActorID:     99,
+		InitialAdmin: InitialAdmin{
+			Username:     "tenant.admin",
+			RealName:     "租户管理员",
+			Phone:        "13800000000",
+			Email:        "admin@example.test",
+			PasswordHash: "hashed-password",
+		},
 	})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
@@ -51,6 +58,9 @@ func TestCreateTenantGeneratesUniqueCodeAndInheritsDefaultRegisterSetting(t *tes
 	}
 	if repo.created.CreatedBy != 99 || repo.created.UpdatedBy != 99 {
 		t.Fatalf("expected tenant audit user 99, got created_by=%d updated_by=%d", repo.created.CreatedBy, repo.created.UpdatedBy)
+	}
+	if repo.createdAdmin.Username != "tenant.admin" || repo.createdAdmin.PasswordHash != "hashed-password" {
+		t.Fatalf("expected first tenant admin saved with tenant, got %#v", repo.createdAdmin)
 	}
 }
 
@@ -265,7 +275,8 @@ func TestRandomCodeGeneratorReturnsTenantCode(t *testing.T) {
 }
 
 type fakeRepository struct {
-	created Tenant
+	created      Tenant
+	createdAdmin InitialAdmin
 
 	tenantsByID   map[uint64]Tenant
 	existingCodes map[string]bool
@@ -299,9 +310,10 @@ func (r *fakeRepository) List(ctx context.Context, input ListInput) (pagination.
 	}, nil
 }
 
-func (r *fakeRepository) Create(ctx context.Context, tenant Tenant) (Tenant, error) {
+func (r *fakeRepository) CreateWithAdmin(ctx context.Context, tenant Tenant, admin InitialAdmin) (Tenant, error) {
 	tenant.ID = 1
 	r.created = tenant
+	r.createdAdmin = admin
 	return tenant, nil
 }
 

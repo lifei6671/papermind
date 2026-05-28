@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { expect, test, vi } from "vitest";
 import type { ResultsAPI } from "../../api/results";
 import { ResultsPage } from "./ResultsPage";
@@ -27,7 +28,11 @@ test("成绩页从真实 API 加载成绩、保存发布配置并导出", async 
     }),
   };
 
-  render(<ResultsPage api={api} tenantID={10} examID={1} actorID={501} actorRole="teacher" spaceID={301} />);
+  render(
+    <MemoryRouter>
+      <ResultsPage api={api} tenantID={10} examID={1} actorID={501} actorRole="tenant_admin" />
+    </MemoryRouter>,
+  );
 
   expect(await screen.findByText("张三")).toBeInTheDocument();
   expect(screen.getByText("6.5")).toBeInTheDocument();
@@ -40,8 +45,8 @@ test("成绩页从真实 API 加载成绩、保存发布配置并导出", async 
     tenantID: 10,
     examID: 1,
     actorID: 501,
-    actorRole: "teacher",
-    spaceID: 301,
+    actorRole: "tenant_admin",
+    spaceID: undefined,
     publishMode: "manual_publish",
     scorePublishTime: new Date("2026-05-30T10:00").getTime(),
   });
@@ -53,9 +58,27 @@ test("成绩页从真实 API 加载成绩、保存发布配置并导出", async 
     tenantID: 10,
     examID: 1,
     actorID: 501,
-    actorRole: "teacher",
-    spaceID: 301,
+    actorRole: "tenant_admin",
+    spaceID: undefined,
   });
   expect(await screen.findByRole("status", { name: "result-export" })).toHaveTextContent("已导出 1 行");
   expect(screen.getByRole("link", { name: "下载导出文件" })).toHaveAttribute("href", "server/data/exports/exam-1-scores.csv");
+});
+
+test("教师成绩页不展示导出入口", async () => {
+  const api: ResultsAPI = {
+    listResults: vi.fn().mockResolvedValue({ items: [] }),
+    savePublishConfig: vi.fn(),
+    exportResults: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter>
+      <ResultsPage api={api} tenantID={10} examID={1} actorID={501} actorRole="teacher" spaceID={301} />
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByRole("heading", { name: "成绩" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "导出成绩" })).not.toBeInTheDocument();
+  expect(api.exportResults).not.toHaveBeenCalled();
 });

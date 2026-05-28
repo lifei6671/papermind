@@ -10,20 +10,29 @@ func NewFixedRoleChecker() PermissionChecker {
 	return FixedRoleChecker{}
 }
 
-func (FixedRoleChecker) CanManageTenant(ctx PermissionContext, tenantID uint64) error {
-	if ctx.SubjectType == SubjectPlatformUser {
-		return nil
-	}
-	if ctx.SubjectType == SubjectTenantUser && ctx.TenantID == tenantID && ctx.hasTenantRole(RoleTenantAdmin) {
+func (FixedRoleChecker) CanManageTenantLifecycle(ctx PermissionContext, tenantID uint64) error {
+	if ctx.SubjectType == SubjectPlatformUser && ctx.Role == RolePlatformAdmin {
 		return nil
 	}
 	return ErrForbidden
 }
 
-func (FixedRoleChecker) CanManageSpace(ctx PermissionContext, spaceID uint64) error {
-	if ctx.SubjectType == SubjectPlatformUser {
+func (FixedRoleChecker) CanManageTenantBusiness(ctx PermissionContext, tenantID uint64) error {
+	return canManageTenant(ctx, tenantID)
+}
+
+func (FixedRoleChecker) CanManageTenantUsers(ctx PermissionContext, tenantID uint64) error {
+	return canManageTenant(ctx, tenantID)
+}
+
+func (FixedRoleChecker) CanManageSpaceProfile(ctx PermissionContext, spaceID uint64) error {
+	if ctx.SubjectType == SubjectTenantUser && ctx.hasTenantRole(RoleTenantAdmin) {
 		return nil
 	}
+	return ErrForbidden
+}
+
+func (FixedRoleChecker) CanManageSpaceMembers(ctx PermissionContext, spaceID uint64) error {
 	if ctx.SubjectType != SubjectTenantUser {
 		return ErrForbidden
 	}
@@ -41,7 +50,7 @@ func (FixedRoleChecker) CanManageQuestion(ctx PermissionContext, questionID uint
 	return canManageSpaceResource(ctx, spaceID)
 }
 
-func (FixedRoleChecker) CanPublishExam(ctx PermissionContext, paperID uint64) error {
+func (FixedRoleChecker) CanManagePaper(ctx PermissionContext, paperID uint64) error {
 	spaceID, ok := ctx.PaperScope[paperID]
 	if !ok {
 		return ErrForbidden
@@ -49,8 +58,8 @@ func (FixedRoleChecker) CanPublishExam(ctx PermissionContext, paperID uint64) er
 	return canManageSpaceResource(ctx, spaceID)
 }
 
-func (FixedRoleChecker) CanGradeExam(ctx PermissionContext, examID uint64) error {
-	spaceID, ok := ctx.ExamScope[examID]
+func (FixedRoleChecker) CanPublishExam(ctx PermissionContext, paperID uint64) error {
+	spaceID, ok := ctx.PaperScope[paperID]
 	if !ok {
 		return ErrForbidden
 	}
@@ -65,15 +74,47 @@ func (FixedRoleChecker) CanGradeAttempt(ctx PermissionContext, attemptID uint64)
 	return canManageSpaceResource(ctx, spaceID)
 }
 
-func (FixedRoleChecker) CanTakeExam(ctx PermissionContext, examID uint64) error {
-	if ctx.SubjectType != SubjectTenantUser {
-		return ErrForbidden
-	}
+func (FixedRoleChecker) CanViewExamResults(ctx PermissionContext, examID uint64) error {
 	spaceID, ok := ctx.ExamScope[examID]
 	if !ok {
 		return ErrForbidden
 	}
-	if ctx.hasTenantRole(RoleStudent) || ctx.hasSpaceRole(spaceID, RoleStudent) {
+	return canManageSpaceResource(ctx, spaceID)
+}
+
+func (FixedRoleChecker) CanExportExamResults(ctx PermissionContext, examID uint64) error {
+	spaceID, ok := ctx.ExamScope[examID]
+	if !ok {
+		return ErrForbidden
+	}
+	if ctx.hasTenantRole(RoleTenantAdmin) || ctx.hasSpaceRole(spaceID, RoleSpaceAdmin) {
+		return nil
+	}
+	return ErrForbidden
+}
+
+func (FixedRoleChecker) CanViewOwnResult(ctx PermissionContext, resultID uint64) error {
+	if ctx.SubjectType == SubjectTenantUser && ctx.hasTenantRole(RoleStudent) {
+		return nil
+	}
+	return ErrForbidden
+}
+
+func (FixedRoleChecker) CanTakeExam(ctx PermissionContext, examID uint64) error {
+	if ctx.SubjectType != SubjectTenantUser {
+		return ErrForbidden
+	}
+	if _, ok := ctx.ExamScope[examID]; !ok {
+		return ErrForbidden
+	}
+	if ctx.hasTenantRole(RoleStudent) {
+		return nil
+	}
+	return ErrForbidden
+}
+
+func canManageTenant(ctx PermissionContext, tenantID uint64) error {
+	if ctx.SubjectType == SubjectTenantUser && ctx.TenantID == tenantID && ctx.hasTenantRole(RoleTenantAdmin) {
 		return nil
 	}
 	return ErrForbidden
@@ -83,7 +124,7 @@ func canManageSpaceResource(ctx PermissionContext, spaceID uint64) error {
 	if ctx.SubjectType != SubjectTenantUser {
 		return ErrForbidden
 	}
-	if ctx.hasSpaceRole(spaceID, RoleSpaceAdmin, RoleTeacher) {
+	if ctx.hasTenantRole(RoleTenantAdmin) || ctx.hasSpaceRole(spaceID, RoleSpaceAdmin, RoleTeacher) {
 		return nil
 	}
 	return ErrForbidden

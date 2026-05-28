@@ -41,10 +41,12 @@ func (r *PlatformUserRepository) Create(ctx context.Context, user serviceplatfor
 	now := r.now()
 	row := PlatformUserDO{
 		BaseFields: BaseFields{
-			CreatedAt: now,
-			UpdatedAt: now,
-			Version:   1,
-			ExtJSON:   datatypes.JSON("{}"),
+			CreatedAt:     now,
+			CreatedByType: AuditActorPlatformUser,
+			UpdatedAt:     now,
+			UpdatedByType: AuditActorPlatformUser,
+			Version:       1,
+			ExtJSON:       datatypes.JSON("{}"),
 		},
 		Username:     user.Username,
 		AvatarURL:    user.AvatarURL,
@@ -112,6 +114,7 @@ func (r *PlatformUserRepository) UpdateLoginAudit(ctx context.Context, userID ui
 			PlatformUserColumns.LastLoginIP: ip,
 			PlatformUserColumns.LastLoginAt: at,
 			BaseColumns.UpdatedAt:           r.now(),
+			BaseColumns.UpdatedByType:       AuditActorPlatformUser,
 			BaseColumns.Version:             gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error
 }
@@ -123,6 +126,7 @@ func (r *PlatformUserRepository) UpdateStatus(ctx context.Context, userID uint64
 		Updates(map[string]any{
 			PlatformUserColumns.Status: status,
 			BaseColumns.UpdatedAt:      r.now(),
+			BaseColumns.UpdatedByType:  AuditActorPlatformUser,
 			BaseColumns.Version:        gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error
 }
@@ -136,6 +140,7 @@ func (r *PlatformUserRepository) UpdateProfile(ctx context.Context, input servic
 			PlatformUserColumns.Phone:     input.Phone,
 			PlatformUserColumns.Email:     input.Email,
 			BaseColumns.UpdatedAt:         r.now(),
+			BaseColumns.UpdatedByType:     AuditActorPlatformUser,
 			BaseColumns.Version:           gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error
 	if err != nil {
@@ -151,6 +156,7 @@ func (r *PlatformUserRepository) UpdateAvatarURL(ctx context.Context, userID uin
 		Updates(map[string]any{
 			PlatformUserColumns.AvatarURL: url,
 			BaseColumns.UpdatedAt:         r.now(),
+			BaseColumns.UpdatedByType:     AuditActorPlatformUser,
 			BaseColumns.Version:           gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error
 }

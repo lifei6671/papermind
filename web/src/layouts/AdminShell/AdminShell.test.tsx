@@ -46,7 +46,7 @@ test("租户业务导航保留当前目标租户 ID", () => {
     JSON.stringify({
       accessToken: "access-token",
       refreshToken: "refresh-token",
-      user: { displayName: "空间管理员", role: "space_admin", tenantID: 10, userID: 2 },
+      user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
     }),
   );
 
@@ -94,13 +94,13 @@ test("平台管理员不展示租户空间菜单", () => {
   expect(screen.queryByRole("link", { name: /阅卷中心/ })).not.toBeInTheDocument();
 });
 
-test("空间管理员展示租户空间菜单", () => {
+test("租户管理员展示租户空间菜单", () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
       accessToken: "access-token",
       refreshToken: "refresh-token",
-      user: { displayName: "空间管理员", role: "space_admin", tenantID: 10, userID: 2 },
+      user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
     }),
   );
 

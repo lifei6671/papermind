@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { expect, test, vi } from "vitest";
 import type { GradingAPI } from "../../api/grading";
 import { GradingPage } from "./GradingPage";
@@ -26,7 +27,11 @@ test("阅卷页从真实 API 加载待阅卷列表并保存评分", async () => 
     gradeShortText: vi.fn().mockResolvedValue(undefined),
   };
 
-  render(<GradingPage api={api} tenantID={10} examID={1} actorID={501} actorRole="teacher" spaceID={301} />);
+  render(
+    <MemoryRouter>
+      <GradingPage api={api} tenantID={10} examID={1} actorID={501} actorRole="teacher" spaceID={301} />
+    </MemoryRouter>,
+  );
 
   expect(await screen.findByText("张三")).toBeInTheDocument();
   expect(screen.getByText("岳阳楼记思想内涵")).toBeInTheDocument();

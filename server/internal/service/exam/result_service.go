@@ -113,7 +113,7 @@ func (s *ResultService) canViewResult(ctx permission.PermissionContext, snapshot
 	if ctx.SubjectType != permission.SubjectTenantUser || ctx.UserID != snapshot.UserID {
 		return false
 	}
-	return s.permissionChecker.CanTakeExam(ctx, snapshot.ExamID) == nil
+	return s.permissionChecker.CanViewOwnResult(ctx, snapshot.AttemptID) == nil
 }
 
 func (s *ResultService) visibleResult(snapshot ResultSnapshot) (VisibleResult, error) {

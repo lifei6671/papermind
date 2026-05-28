@@ -85,3 +85,51 @@ func TestUserRoleSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.
 		})
 	}
 }
+
+func TestUserRoleSingleRoleConstraintUsesAppendOnlyMigration(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want []string
+	}{
+		{
+			name: "postgres",
+			path: filepath.Join("..", "..", "data", "migrations", "postgres", "002_audit_actor_type.sql"),
+			want: []string{
+				"DROP INDEX IF EXISTS uk_user_roles_role",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
+			},
+		},
+		{
+			name: "mysql",
+			path: filepath.Join("..", "..", "data", "migrations", "mysql", "002_audit_actor_type.sql"),
+			want: []string{
+				"ALTER TABLE user_roles DROP INDEX uk_user_roles_role",
+				"ALTER TABLE user_roles ADD UNIQUE INDEX uk_user_roles_user (tenant_id, user_id)",
+			},
+		},
+		{
+			name: "sqlite",
+			path: filepath.Join("..", "..", "data", "migrations", "sqlite", "002_audit_actor_type.sql"),
+			want: []string{
+				"DROP INDEX IF EXISTS uk_user_roles_role",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := os.ReadFile(tt.path)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			sql := string(content)
+			for _, want := range tt.want {
+				if !strings.Contains(sql, want) {
+					t.Fatalf("%s missing %q", tt.path, want)
+				}
+			}
+		})
+	}
+}

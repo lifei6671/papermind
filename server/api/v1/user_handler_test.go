@@ -15,13 +15,12 @@ func TestUserAPIRoutesListCreateAndDisableWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedUserAPITestData(t, gormDB)
-	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
-	authHeader := platformAuthHeader(t, router)
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
 
 	listRecorder := httptest.NewRecorder()
 	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/users?tenant_id=10&page=1&page_size=1", nil, authHeader))
@@ -151,18 +150,59 @@ func TestTenantAdminCannotDisableSelfByForgingActorID(t *testing.T) {
 	}
 }
 
+func TestCannotDisableLastTenantAdminReturnsBusinessError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedUserAPITestData(t, gormDB)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash second admin password: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, tenant_id, username, real_name, avatar_url, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES (100, 10, 'last.admin', '最后管理员', 'last.png', '13800001100', 'last-admin@example.test', ?, 'enabled', ?, ?, '{}')
+	`, passwordHash, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed second admin user: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO user_roles (
+			id, tenant_id, user_id, role, created_at, updated_at, ext_json
+		) VALUES (4, 10, 100, 'tenant_admin', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed second admin role: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	if err := gormDB.Table("users").
+		Where("tenant_id = ? AND id = ?", 10, 99).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable acting admin after login: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/users/100/disable", []byte(`{"tenant_id":10}`), authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected last tenant admin disable to be rejected as business error, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestCreateUserRejectsShortPassword(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedUserAPITestData(t, gormDB)
-	seedPlatformLoginAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:                gormDB,
 		Now:               func() int64 { return fixedAPINow },
 		PasswordMinLength: 8,
 	})
-	authHeader := platformAuthHeader(t, router)
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
 
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/users", []byte(`{

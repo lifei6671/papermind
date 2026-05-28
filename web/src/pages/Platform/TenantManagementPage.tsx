@@ -37,6 +37,11 @@ export function TenantManagementPage({
   const [description, setDescription] = useState("");
   const [logoFileName, setLogoFileName] = useState("");
   const [allowRegister, setAllowRegister] = useState(true);
+  const [adminUsername, setAdminUsername] = useState("");
+  const [adminRealName, setAdminRealName] = useState("");
+  const [adminPhone, setAdminPhone] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
   const [uploadResetKey, setUploadResetKey] = useState(0);
   const [isLogoUploading, setIsLogoUploading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -98,6 +103,11 @@ export function TenantManagementPage({
       description,
       logoFileName: logoFileName || "未上传",
       allowRegister,
+      adminUsername,
+      adminRealName,
+      adminPhone,
+      adminEmail,
+      adminPassword,
     });
 
     setTenants((items) => [nextTenant, ...items]);
@@ -105,6 +115,11 @@ export function TenantManagementPage({
     setDescription("");
     setLogoFileName("");
     setAllowRegister(true);
+    setAdminUsername("");
+    setAdminRealName("");
+    setAdminPhone("");
+    setAdminEmail("");
+    setAdminPassword("");
     setUploadResetKey((value) => value + 1);
     setIsCreateDialogOpen(false);
   }
@@ -378,7 +393,7 @@ export function TenantManagementPage({
         <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="创建租户弹窗">
           <div className="platform-dialog__card">
             <h2>创建租户</h2>
-            <p>创建后生成租户码，用于注册链接和手动注册归属。</p>
+            <p>创建后生成租户码，并初始化首个租户管理员；班级空间需要后续手动创建。</p>
             <form className="platform-form" onSubmit={handleCreateTenant}>
               <label className="field">
                 <span className="field-label">租户名称<span className="required-marker" aria-hidden="true">*</span></span>
@@ -405,6 +420,26 @@ export function TenantManagementPage({
                   type="checkbox"
                 />
                 <span>是否开放注册</span>
+              </label>
+              <label className="field">
+                <span className="field-label">管理员用户名<span className="required-marker" aria-hidden="true">*</span></span>
+                <input aria-label="管理员用户名" onChange={(event) => setAdminUsername(event.target.value)} required value={adminUsername} />
+              </label>
+              <label className="field">
+                <span className="field-label">管理员姓名<span className="required-marker" aria-hidden="true">*</span></span>
+                <input aria-label="管理员姓名" onChange={(event) => setAdminRealName(event.target.value)} required value={adminRealName} />
+              </label>
+              <label className="field">
+                <span className="field-label">管理员手机号</span>
+                <input aria-label="管理员手机号" onChange={(event) => setAdminPhone(event.target.value)} value={adminPhone} />
+              </label>
+              <label className="field">
+                <span className="field-label">管理员邮箱</span>
+                <input aria-label="管理员邮箱" onChange={(event) => setAdminEmail(event.target.value)} value={adminEmail} />
+              </label>
+              <label className="field">
+                <span className="field-label">管理员初始密码<span className="required-marker" aria-hidden="true">*</span></span>
+                <input aria-label="管理员初始密码" onChange={(event) => setAdminPassword(event.target.value)} required type="password" value={adminPassword} />
               </label>
               <FileUploadField
                 accept={["image/png", "image/jpeg"]}

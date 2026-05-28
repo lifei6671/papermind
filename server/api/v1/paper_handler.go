@@ -1,18 +1,26 @@
 package v1
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	servicepaper "github.com/lifei6671/papermind/server/internal/service/paper"
+	"github.com/lifei6671/papermind/server/internal/service/permission"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/response"
 )
 
 type paperHandler struct {
 	service *servicepaper.Service
+	papers  paperScopeFinder
+	members spaceMemberFinder
+}
+
+type paperScopeFinder interface {
+	GetPaperSpaceID(ctx context.Context, tenantID uint64, paperID uint64) (*uint64, error)
 }
 
 type paperResponse struct {
@@ -176,6 +184,9 @@ func (h paperHandler) createSection(c *gin.Context) {
 	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
 	sections, err := h.service.ListSections(c.Request.Context(), request.TenantID, paperID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷大题失败"))
@@ -218,6 +229,9 @@ func (h paperHandler) addManualQuestion(c *gin.Context) {
 		return
 	}
 	if !authorizeExamBusiness(c, request.TenantID) {
+		return
+	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
 		return
 	}
 	questions, err := h.service.ListSectionQuestions(c.Request.Context(), request.TenantID, paperID)
@@ -297,6 +311,9 @@ func (h paperHandler) createRule(c *gin.Context) {
 	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
 	// 组卷规则持久化为 paper_section_rules，tag_ids 在 service 层稳定排序为 JSON，便于后续规则生成和预检查复用同一来源。
 	rule, err := h.service.ConfigureRule(c.Request.Context(), servicepaper.ConfigureRuleInput{
 		TenantID:         request.TenantID,
@@ -334,6 +351,9 @@ func (h paperHandler) generateRuleFixed(c *gin.Context) {
 	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
 	if err := h.service.GenerateRuleFixed(c.Request.Context(), request.TenantID, paperID); err != nil {
 		writePaperServiceError(c, err)
 		return
@@ -357,6 +377,9 @@ func (h paperHandler) precheckRuleLive(c *gin.Context) {
 		return
 	}
 	if !authorizeExamBusiness(c, request.TenantID) {
+		return
+	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
 		return
 	}
 	rules, err := h.service.ListRules(c.Request.Context(), request.TenantID, paperID)
@@ -424,7 +447,37 @@ func (r paperRuleActionRequest) validate() error {
 	return nil
 }
 
+func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paperID uint64) bool {
+	spaceID, err := h.papers.GetPaperSpaceID(c.Request.Context(), tenantID, paperID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷权限范围失败"))
+		return false
+	}
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
+		return false
+	}
+	if spaceID == nil {
+		if permissionContext.Role != permission.RoleTenantAdmin {
+			writePermissionOrInternalError(c, permission.ErrForbidden, "公共试卷仅租户管理员可维护")
+			return false
+		}
+		return true
+	}
+	permissionContext.PaperScope = map[uint64]uint64{paperID: *spaceID}
+	if err := permission.NewFixedRoleChecker().CanManagePaper(permissionContext, paperID); err != nil {
+		writePermissionOrInternalError(c, err, "校验试卷写权限失败")
+		return false
+	}
+	return true
+}
+
 func writePaperServiceError(c *gin.Context, err error) {
+	if errors.Is(err, permission.ErrForbidden) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return
+	}
 	if errors.Is(err, servicepaper.ErrDuplicatePaperQuestion) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return

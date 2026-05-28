@@ -145,10 +145,11 @@ func newFakeReviewRepository() *fakeReviewRepository {
 
 func teacherPermissionContext() permission.PermissionContext {
 	return permission.PermissionContext{
-		SubjectType: permission.SubjectTenantUser,
-		UserID:      501,
-		TenantID:    10,
-		SpaceRoles:  map[uint64]string{301: permission.RoleTeacher},
+		SubjectType:      permission.SubjectTenantUser,
+		UserID:           501,
+		TenantID:         10,
+		Role:             permission.RoleTeacher,
+		SpaceMemberships: map[uint64]string{301: permission.RoleTeacher},
 		AttemptScope: map[uint64]uint64{
 			1001: 301,
 			1002: 301,

@@ -24,8 +24,8 @@ const (
 	authPrincipalGinKey = "auth_principal"
 	authSessionName     = "papermind.sid"
 
-	authSessionSubjectTypeKey = "subject_type"
-	authSessionUserIDKey      = "user_id"
+	authSessionSubjectTypeKey = "actor_type"
+	authSessionUserIDKey      = "actor_id"
 	authSessionTenantIDKey    = "tenant_id"
 	authSessionRoleKey        = "role"
 )
@@ -305,7 +305,7 @@ func requireTenantAdminOrPlatformPrincipalMiddleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
 			return
 		}
-		if principal.SubjectType == permission.SubjectPlatformUser {
+		if principal.SubjectType == permission.SubjectPlatformUser && principal.Role == permission.RolePlatformAdmin {
 			c.Next()
 			return
 		}
@@ -325,7 +325,7 @@ func requireExamBusinessPrincipalMiddleware() gin.HandlerFunc {
 			return
 		}
 		if principal.SubjectType == permission.SubjectTenantUser &&
-			(principal.Role == permission.RoleSpaceAdmin || principal.Role == permission.RoleTeacher) {
+			(principal.Role == permission.RoleTenantAdmin || principal.Role == permission.RoleTeacher) {
 			c.Next()
 			return
 		}

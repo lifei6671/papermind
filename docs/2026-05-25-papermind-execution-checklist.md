@@ -208,13 +208,15 @@ P0 文档与项目骨架
 
 - [x] 所有业务表包含 `created_at`。
 - [x] 所有业务表包含 `created_by`。
+- [x] 所有业务表包含 `created_by_type`，用于区分 `created_by` 来自平台用户、租户用户或系统任务。
 - [x] 所有非豁免表包含 `updated_at`。
 - [x] 所有非豁免表包含 `updated_by`。
+- [x] 所有非豁免表包含 `updated_by_type`，用于区分 `updated_by` 来自平台用户、租户用户或系统任务。
 - [x] 所有非豁免表包含 `version`。
 - [x] 所有表包含 `ext_json`。
 - [x] 核心主表包含 `deleted_at`。
-- [x] 纯关系表按方案豁免 `updated_at`、`updated_by`、`version`。
-- [x] `exam_events` 按方案豁免 `updated_at`、`updated_by`、`version`。
+- [x] 纯关系表按方案豁免 `updated_at`、`updated_by`、`updated_by_type`、`version`。
+- [x] `exam_events` 按方案豁免 `updated_at`、`updated_by`、`updated_by_type`、`version`。
 
 ### P2.3 租户与空间表
 
@@ -253,7 +255,7 @@ P0 文档与项目骨架
 - [x] `users` 建立 `UNIQUE (tenant_id, phone, deleted_at)`。
 - [x] `users` 建立 `UNIQUE (tenant_id, email, deleted_at)`。
 - [x] 创建 `user_roles`。
-- [x] `user_roles` 建立 `UNIQUE (tenant_id, user_id, role)`。
+- [x] `user_roles` 建立 `UNIQUE (tenant_id, user_id)`，首版保证同一租户用户只有一个租户级角色。
 
 ### P2.5 题库表
 
@@ -339,13 +341,14 @@ P0 文档与项目骨架
 - [x] 创建 `server/internal/service/permission/context.go`。
 - [x] 定义 `PermissionContext`。
 - [x] 创建 `server/internal/service/permission/fixed_role.go`。
-- [x] 实现 `CanManageTenant`。
-- [x] 实现 `CanManageSpace`。
+- [x] 实现 `CanManageTenantLifecycle`、`CanManageTenantBusiness`、`CanManageTenantUsers`，区分平台租户生命周期和租户内业务管理。
+- [x] 实现 `CanManageSpaceProfile`、`CanManageSpaceMembers`，区分空间资料和空间成员管理。
 - [x] 实现 `CanManageQuestion`。
 - [x] 实现 `CanPublishExam`。
 - [x] 实现 `CanGradeAttempt`。
 - [x] 实现 `CanTakeExam`。
-- [ ] service 层统一调用 `PermissionChecker`。
+- [x] 实现 `CanViewExamResults`、`CanExportExamResults` 和 `CanViewOwnResult`，成绩查看、导出和学生查分使用独立语义。
+- [x] service 层统一调用 `PermissionChecker`。
 
 ### P3.2 平台用户
 
@@ -366,6 +369,7 @@ P0 文档与项目骨架
 - [x] 创建租户时生成唯一 `tenant_code`。
 - [x] 新租户 `allow_register` 继承 `security.allow_register_default`。
 - [x] 创建租户时支持显式设置 `allow_register`。
+- [x] 创建租户时初始化首个启用状态 `tenant_admin`，且不自动创建默认空间或空间成员。
 - [x] 实现查看租户码。
 - [x] 实现重置租户码。
 - [x] 实现启用租户。
@@ -912,12 +916,17 @@ P0 文档与项目骨架
 - [x] 租户管理列表和写接口要求平台管理员登录态。
 - [x] 租户管理写接口从 Bearer 登录态解析平台管理员 ID，并写入 `created_by` / `updated_by`。
 - [x] 后台考试、空间、用户、题库、试卷和组卷规则读取接口拒绝匿名访问。
-- [x] 考试业务 API 只允许本租户 `space_admin` 或 `teacher` 访问，平台管理员和 `tenant_admin` 不再拥有考试业务操作入口。
+- [x] 考试业务 API 允许本租户 `tenant_admin` 或授权空间内 `space_admin` / `teacher` 访问，平台管理员和学生不拥有考试业务操作入口。
 - [x] 租户、空间、用户等后台管理写接口要求平台管理员或本租户 `tenant_admin`，并拒绝学生越权访问。
 - [x] 管理端创建用户必须提交初始密码，不再写入固定临时密码。
 - [x] 管理端创建用户密码遵守 `security.password_min_length`。
+- [x] 管理端创建教师不要求选择空间，教师初始不自动加入 `space_members`。
+- [x] 零空间教师访问题库、试卷、考试或阅卷页面时展示无空间提示，不触发越权业务列表请求。
+- [x] 公共题库和已暴露公共试卷写接口按真实资源范围校验，教师不能把 `space_id = NULL` 当成可写资源。
+- [x] 学生查分接入 `/api/v1/exam-entry/results/:id`，提交后按发布策略展示本人分数或等待公布提示。
+- [x] 教师成绩页不展示成绩导出入口，后端导出接口继续由 `CanExportExamResults` 拒绝教师导出。
 - [x] 开始考试 API 从邀请码入口 session 派生考生身份，不再信任开考请求体里的 `user_id`。
-- [x] 文件上传 API handler 覆盖 multipart 上传、缺少文件错误和伪造图片 MIME 拒绝。
+- [x] 文件上传 API handler 覆盖 multipart 上传、平台管理员租户 Logo 上传、缺少文件错误和伪造图片 MIME 拒绝。
 - [x] 空间管理 API handler 使用 SQLite 覆盖列表和创建链路。
 - [x] 用户管理 API handler 使用 SQLite 覆盖列表、创建和禁用链路。
 - [x] 用户管理 API handler 覆盖租户管理员仅能管理本租户、学生不能创建用户。

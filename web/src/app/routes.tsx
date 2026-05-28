@@ -44,7 +44,8 @@ export type AdminRoute = {
   menuRoles?: string[];
 };
 
-export const examBusinessRoles = ["space_admin", "teacher"];
+export const tenantAdminRoles = ["tenant_admin"];
+export const examBusinessRoles = ["tenant_admin", "teacher"];
 
 export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
   const sessionTenantID = user?.tenantID;
@@ -89,7 +90,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
       />
     ),
     group: "tenant",
-    menuRoles: ["space_admin"],
+    menuRoles: tenantAdminRoles,
   },
   {
     path: "/users",
@@ -104,7 +105,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
       />
     ),
     group: "tenant",
-    menuRoles: ["space_admin"],
+    menuRoles: tenantAdminRoles,
   },
   {
     path: "/questions",
@@ -187,7 +188,6 @@ export function routeVisibleForRole(route: AdminRoute, role?: string) {
 
 function routeActorRole(role?: string): ActorRole {
   switch (role) {
-    case "space_admin":
     case "teacher":
     case "student":
       return role;

@@ -95,3 +95,41 @@ func TestPermissionContextFromSessionRequiresAuthenticatedPrincipal(t *testing.T
 		t.Fatalf("expected missing authenticated principal to be rejected")
 	}
 }
+
+func TestExamBusinessMiddlewareRejectsSpaceAdminSessionRole(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set(authPrincipalGinKey, AuthPrincipal{
+		SubjectType: permission.SubjectTenantUser,
+		UserID:      20,
+		TenantID:    10,
+		Role:        permission.RoleSpaceAdmin,
+	})
+
+	requireExamBusinessPrincipalMiddleware()(c)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("space_admin session role should be forbidden, got status = %d", recorder.Code)
+	}
+}
+
+func TestExamBusinessMiddlewareAllowsTenantLevelExamRoles(t *testing.T) {
+	for _, role := range []string{permission.RoleTenantAdmin, permission.RoleTeacher} {
+		t.Run(role, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Set(authPrincipalGinKey, AuthPrincipal{
+				SubjectType: permission.SubjectTenantUser,
+				UserID:      20,
+				TenantID:    10,
+				Role:        role,
+			})
+
+			requireExamBusinessPrincipalMiddleware()(c)
+
+			if c.IsAborted() {
+				t.Fatalf("%s should pass exam business middleware", role)
+			}
+		})
+	}
+}

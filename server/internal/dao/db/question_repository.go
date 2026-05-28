@@ -35,10 +35,12 @@ func (r *QuestionRepository) CreateQuestion(ctx context.Context, item serviceque
 		now := r.now()
 		row := QuestionDO{
 			BaseFields: BaseFields{
-				CreatedAt: now,
-				UpdatedAt: now,
-				Version:   1,
-				ExtJSON:   datatypes.JSON("{}"),
+				CreatedAt:     now,
+				CreatedByType: AuditActorTenantUser,
+				UpdatedAt:     now,
+				UpdatedByType: AuditActorTenantUser,
+				Version:       1,
+				ExtJSON:       datatypes.JSON("{}"),
 			},
 			TenantID:           item.TenantID,
 			SpaceID:            item.SpaceID,
@@ -144,10 +146,12 @@ func (r *QuestionRepository) createOptions(ctx context.Context, tx *gorm.DB, ten
 	for index, option := range options {
 		row := QuestionOptionDO{
 			BaseFields: BaseFields{
-				CreatedAt: now,
-				UpdatedAt: now,
-				Version:   1,
-				ExtJSON:   datatypes.JSON("{}"),
+				CreatedAt:     now,
+				CreatedByType: AuditActorTenantUser,
+				UpdatedAt:     now,
+				UpdatedByType: AuditActorTenantUser,
+				Version:       1,
+				ExtJSON:       datatypes.JSON("{}"),
 			},
 			TenantID:     tenantID,
 			QuestionID:   questionID,
@@ -180,8 +184,9 @@ func (r *QuestionRepository) bindTags(ctx context.Context, tx *gorm.DB, tenantID
 		}
 		relation := QuestionTagDO{
 			RelationFields: RelationFields{
-				CreatedAt: r.now(),
-				ExtJSON:   datatypes.JSON("{}"),
+				CreatedAt:     r.now(),
+				CreatedByType: AuditActorTenantUser,
+				ExtJSON:       datatypes.JSON("{}"),
 			},
 			TenantID:   tenantID,
 			QuestionID: questionID,
@@ -211,10 +216,12 @@ func (r *QuestionRepository) findOrCreateTag(ctx context.Context, tx *gorm.DB, t
 	now := r.now()
 	tag = TagDO{
 		BaseFields: BaseFields{
-			CreatedAt: now,
-			UpdatedAt: now,
-			Version:   1,
-			ExtJSON:   datatypes.JSON("{}"),
+			CreatedAt:     now,
+			CreatedByType: AuditActorTenantUser,
+			UpdatedAt:     now,
+			UpdatedByType: AuditActorTenantUser,
+			Version:       1,
+			ExtJSON:       datatypes.JSON("{}"),
 		},
 		TenantID: tenantID,
 		Name:     name,

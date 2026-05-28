@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
+	"github.com/lifei6671/papermind/server/internal/service/permission"
 	"github.com/lifei6671/papermind/server/library/constant"
 )
 
@@ -71,20 +72,21 @@ type QuestionOption struct {
 }
 
 type CreateQuestionInput struct {
-	TenantID           uint64                // 所属租户 ID。
-	SpaceID            *uint64               // 所属空间 ID，nil 表示租户公共题库。
-	Type               string                // 题型。
-	Difficulty         string                // 难度。
-	Title              string                // 题干内容。
-	Analysis           string                // 题目解析，可选。
-	ScoreDefault       string                // 默认分值。
-	ChoiceDisplayCount *int                  // 选择题展示选项数量。
-	ShuffleOptions     bool                  // 题库默认选项随机设置。
-	Options            []QuestionOptionInput // 选择题选项。
-	StandardAnswer     string                // 填空题标准答案或判断题答案。
-	ReferenceAnswer    string                // 简答题参考答案。
-	BlankCount         int                   // 填空数量，首版只允许 0 或 1。
-	Tags               []string              // 题目标签名称。
+	Permission         permission.PermissionContext // 当前写入人权限上下文。
+	TenantID           uint64                       // 所属租户 ID。
+	SpaceID            *uint64                      // 所属空间 ID，nil 表示租户公共题库。
+	Type               string                       // 题型。
+	Difficulty         string                       // 难度。
+	Title              string                       // 题干内容。
+	Analysis           string                       // 题目解析，可选。
+	ScoreDefault       string                       // 默认分值。
+	ChoiceDisplayCount *int                         // 选择题展示选项数量。
+	ShuffleOptions     bool                         // 题库默认选项随机设置。
+	Options            []QuestionOptionInput        // 选择题选项。
+	StandardAnswer     string                       // 填空题标准答案或判断题答案。
+	ReferenceAnswer    string                       // 简答题参考答案。
+	BlankCount         int                          // 填空数量，首版只允许 0 或 1。
+	Tags               []string                     // 题目标签名称。
 }
 
 type ListQuestionsInput struct {
@@ -123,9 +125,10 @@ type ChoiceSnapshotAnswer struct {
 }
 
 type ImportQuestionsInput struct {
-	TenantID uint64      // 所属租户 ID。
-	SpaceID  *uint64     // 所属空间 ID。
-	Rows     []ImportRow // 导入数据行。
+	Permission permission.PermissionContext // 当前导入人权限上下文。
+	TenantID   uint64                       // 所属租户 ID。
+	SpaceID    *uint64                      // 所属空间 ID。
+	Rows       []ImportRow                  // 导入数据行。
 }
 
 type ImportRow struct {
@@ -168,6 +171,9 @@ func NewQuestionService(options QuestionServiceOptions) *QuestionService {
 }
 
 func (s *QuestionService) CreateQuestion(ctx context.Context, input CreateQuestionInput) (Question, error) {
+	if err := canWriteQuestionScope(input.Permission, input.TenantID, input.SpaceID); err != nil {
+		return Question{}, err
+	}
 	options := toQuestionOptions(input.Options)
 	if err := validateQuestionInput(input, options); err != nil {
 		return Question{}, err
@@ -225,9 +231,13 @@ func (s *QuestionService) ImportTemplateHeaders() []string {
 }
 
 func (s *QuestionService) ImportQuestions(ctx context.Context, input ImportQuestionsInput) (ImportResult, error) {
+	if err := canWriteQuestionScope(input.Permission, input.TenantID, input.SpaceID); err != nil {
+		return ImportResult{}, err
+	}
 	result := ImportResult{}
 	for _, row := range input.Rows {
 		questionInput := row.toCreateQuestionInput(input.TenantID, input.SpaceID)
+		questionInput.Permission = input.Permission
 		if _, err := s.CreateQuestion(ctx, questionInput); err != nil {
 			result.Errors = append(result.Errors, ImportError{
 				RowNumber: row.RowNumber,
@@ -238,6 +248,23 @@ func (s *QuestionService) ImportQuestions(ctx context.Context, input ImportQuest
 		result.SuccessCount++
 	}
 	return result, nil
+}
+
+func canWriteQuestionScope(ctx permission.PermissionContext, tenantID uint64, spaceID *uint64) error {
+	if ctx.SubjectType != permission.SubjectTenantUser || ctx.TenantID != tenantID {
+		return permission.ErrForbidden
+	}
+	if ctx.Role == permission.RoleTenantAdmin {
+		return nil
+	}
+	if spaceID == nil {
+		return permission.ErrForbidden
+	}
+	role := ctx.SpaceMemberships[*spaceID]
+	if role == permission.RoleSpaceAdmin || role == permission.RoleTeacher {
+		return nil
+	}
+	return permission.ErrForbidden
 }
 
 func validateQuestionInput(input CreateQuestionInput, options []QuestionOption) error {

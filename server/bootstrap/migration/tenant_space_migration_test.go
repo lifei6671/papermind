@@ -26,11 +26,18 @@ func TestSQLiteTenantSpaceMigrationCreatesTablesAndIndexes(t *testing.T) {
 	}
 	assertSQLiteColumnExists(t, gormDB, "tenants", "logo_url")
 	assertSQLiteColumnExists(t, gormDB, "tenants", "description")
+	assertSQLiteColumnExists(t, gormDB, "tenants", "created_by_type")
+	assertSQLiteColumnExists(t, gormDB, "tenants", "updated_by_type")
 	assertSQLiteColumnExists(t, gormDB, "spaces", "logo_url")
 	assertSQLiteColumnExists(t, gormDB, "spaces", "description")
+	assertSQLiteColumnExists(t, gormDB, "user_roles", "created_by_type")
+	assertSQLiteColumnExists(t, gormDB, "user_roles", "updated_by_type")
+	assertSQLiteColumnExists(t, gormDB, "question_tags", "created_by_type")
+	assertSQLiteColumnExists(t, gormDB, "exam_events", "created_by_type")
 	assertSQLiteUniqueIndexContains(t, gormDB, "tenants", []string{"tenant_code", "deleted_at"})
 	assertSQLiteUniqueIndexContains(t, gormDB, "space_members", []string{"tenant_id", "space_id", "user_id", "deleted_at"})
 	assertSQLiteUniqueIndexContains(t, gormDB, "space_configs", []string{"tenant_id", "space_id", "config_key"})
+	assertSQLiteUniqueIndexContains(t, gormDB, "user_roles", []string{"tenant_id", "user_id"})
 }
 
 func openSQLiteForActualMigrationTest(t *testing.T) (*gorm.DB, func()) {

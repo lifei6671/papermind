@@ -1,6 +1,26 @@
 package constant
 
 const (
+	// SubjectPlatformUser 表示平台侧账号主体。
+	SubjectPlatformUser = "platform_user"
+	// SubjectTenantUser 表示租户侧账号主体。
+	SubjectTenantUser = "tenant_user"
+)
+
+const (
+	// RolePlatformAdmin 表示平台管理员。
+	RolePlatformAdmin = "platform_admin"
+	// RoleTenantAdmin 表示租户管理员。
+	RoleTenantAdmin = "tenant_admin"
+	// RoleTeacher 表示教师。
+	RoleTeacher = "teacher"
+	// RoleStudent 表示学生。
+	RoleStudent = "student"
+	// RoleSpaceAdmin 表示空间成员中的空间管理员角色。
+	RoleSpaceAdmin = "space_admin"
+)
+
+const (
 	// QuestionTypeSingle 表示单选题。
 	QuestionTypeSingle = "single"
 	// QuestionTypeMultiple 表示多选题。

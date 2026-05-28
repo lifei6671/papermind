@@ -35,12 +35,21 @@ type Tenant struct {
 	UpdatedBy     uint64 // 最近更新租户的平台管理员用户 ID。
 }
 
+type InitialAdmin struct {
+	Username     string // 首个租户管理员登录名。
+	RealName     string // 首个租户管理员真实姓名。
+	Phone        string // 首个租户管理员手机号。
+	Email        string // 首个租户管理员邮箱。
+	PasswordHash string // 首个租户管理员密码哈希。
+}
+
 type CreateInput struct {
 	Name          string // 租户名称。
 	LogoURL       string // 企业或机构 Logo 地址。
 	Description   string // 企业或机构描述。
 	AllowRegister *bool  // 是否允许该租户用户自注册；为空时继承平台默认值。
 	ActorID       uint64 // 执行创建操作的平台管理员用户 ID。
+	InitialAdmin  InitialAdmin
 }
 
 type ListInput struct {
@@ -75,7 +84,7 @@ type UpdateStatusInput struct {
 
 type Repository interface {
 	List(ctx context.Context, input ListInput) (pagination.Result[Tenant], error)
-	Create(ctx context.Context, tenant Tenant) (Tenant, error)
+	CreateWithAdmin(ctx context.Context, tenant Tenant, admin InitialAdmin) (Tenant, error)
 	FindByID(ctx context.Context, tenantID uint64) (Tenant, error)
 	TenantCodeExists(ctx context.Context, code string) (bool, error)
 	UpdateTenantCode(ctx context.Context, tenantID uint64, code string, actorID uint64) (Tenant, error)
@@ -159,7 +168,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Tenant, error)
 	if input.AllowRegister != nil {
 		allowRegister = *input.AllowRegister
 	}
-	return s.repo.Create(ctx, Tenant{
+	return s.repo.CreateWithAdmin(ctx, Tenant{
 		Name:          input.Name,
 		LogoURL:       input.LogoURL,
 		Description:   input.Description,
@@ -168,7 +177,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Tenant, error)
 		Status:        StatusEnabled,
 		CreatedBy:     input.ActorID,
 		UpdatedBy:     input.ActorID,
-	})
+	}, input.InitialAdmin)
 }
 
 func (s *Service) GetTenantCode(ctx context.Context, tenantID uint64) (string, error) {

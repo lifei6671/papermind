@@ -265,13 +265,19 @@ test("平台管理员可以创建租户并上传 logo", async () => {
   await user.click(screen.getByRole("button", { name: "创建租户" }));
 
   expect(screen.getByRole("dialog", { name: "创建租户弹窗" })).toBeInTheDocument();
-  expect(screen.getAllByText("*", { selector: ".required-marker" })).toHaveLength(2);
+  expect(screen.getByText("创建后生成租户码，并初始化首个租户管理员；班级空间需要后续手动创建。")).toBeInTheDocument();
+  expect(screen.getAllByText("*", { selector: ".required-marker" })).toHaveLength(5);
   expect(screen.getByLabelText("是否开放注册")).toBeChecked();
   expect(screen.getByLabelText("租户 Logo上传区域")).toBeInTheDocument();
   expect(screen.getByLabelText("租户 Logo预览")).toBeInTheDocument();
 
   await user.type(screen.getByLabelText("租户名称"), "星海大学");
   await user.type(screen.getByLabelText("租户描述"), "面向公共课和企业培训的考试空间");
+  await user.type(screen.getByLabelText("管理员用户名"), "xinghai.admin");
+  await user.type(screen.getByLabelText("管理员姓名"), "星海管理员");
+  await user.type(screen.getByLabelText("管理员手机号"), "13800001000");
+  await user.type(screen.getByLabelText("管理员邮箱"), "admin@xinghai.example");
+  await user.type(screen.getByLabelText("管理员初始密码"), "admin-secure-123");
   const logo = new File(["logo"], "xinghai.png", { type: "image/png" });
   await user.upload(screen.getByLabelText("租户 Logo"), logo);
   await waitFor(() => {
@@ -285,6 +291,11 @@ test("平台管理员可以创建租户并上传 logo", async () => {
     logoFileName: "/uploads/tenant-logos/xinghai.png",
     name: "星海大学",
     allowRegister: false,
+    adminUsername: "xinghai.admin",
+    adminRealName: "星海管理员",
+    adminPhone: "13800001000",
+    adminEmail: "admin@xinghai.example",
+    adminPassword: "admin-secure-123",
   });
   expect(await screen.findByText("星海大学")).toBeInTheDocument();
   const tableRows = screen.getAllByRole("row");

@@ -81,10 +81,12 @@ func (r *ExamRepository) CreateExam(ctx context.Context, exam serviceexam.Exam) 
 	now := r.now()
 	row := ExamDO{
 		BaseFields: BaseFields{
-			CreatedAt: now,
-			UpdatedAt: now,
-			Version:   1,
-			ExtJSON:   datatypes.JSON("{}"),
+			CreatedAt:     now,
+			CreatedByType: AuditActorTenantUser,
+			UpdatedAt:     now,
+			UpdatedByType: AuditActorTenantUser,
+			Version:       1,
+			ExtJSON:       datatypes.JSON("{}"),
 		},
 		TenantID:       exam.TenantID,
 		PaperID:        exam.PaperID,
@@ -246,6 +248,7 @@ func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam 
 			ExamColumns.InviteCode:       exam.InviteCode,
 			ExamColumns.Status:           exam.Status,
 			BaseColumns.UpdatedAt:        r.now(),
+			BaseColumns.UpdatedByType:    AuditActorTenantUser,
 			BaseColumns.Version:          gorm.Expr(BaseColumns.Version + " + 1"),
 		}
 		result := tx.Model(&ExamDO{}).
@@ -264,8 +267,9 @@ func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam 
 			// 后续题库内容或规则变更不会改变已经发布考试的出题范围。
 			row := ExamLiveQuestionPoolDO{
 				RelationFields: RelationFields{
-					CreatedAt: r.now(),
-					ExtJSON:   datatypes.JSON([]byte("{}")),
+					CreatedAt:     r.now(),
+					CreatedByType: AuditActorTenantUser,
+					ExtJSON:       datatypes.JSON([]byte("{}")),
 				},
 				TenantID:   exam.TenantID,
 				ExamID:     exam.ID,
@@ -305,8 +309,9 @@ func (r *ExamRepository) TargetExists(ctx context.Context, tenantID uint64, exam
 func (r *ExamRepository) AddTarget(ctx context.Context, target serviceexam.Target) error {
 	row := ExamTargetDO{
 		RelationFields: RelationFields{
-			CreatedAt: r.now(),
-			ExtJSON:   datatypes.JSON([]byte("{}")),
+			CreatedAt:     r.now(),
+			CreatedByType: AuditActorTenantUser,
+			ExtJSON:       datatypes.JSON([]byte("{}")),
 		},
 		TenantID:   target.TenantID,
 		ExamID:     target.ExamID,
@@ -433,10 +438,12 @@ func (r *ExamRepository) CreateAttempt(ctx context.Context, attempt serviceexam.
 	now := r.now()
 	row := ExamAttemptDO{
 		BaseFields: BaseFields{
-			CreatedAt: now,
-			UpdatedAt: now,
-			Version:   1,
-			ExtJSON:   datatypes.JSON([]byte("{}")),
+			CreatedAt:     now,
+			CreatedByType: AuditActorTenantUser,
+			UpdatedAt:     now,
+			UpdatedByType: AuditActorTenantUser,
+			Version:       1,
+			ExtJSON:       datatypes.JSON([]byte("{}")),
 		},
 		TenantID:           attempt.TenantID,
 		ExamID:             attempt.ExamID,
@@ -468,6 +475,7 @@ func (r *ExamRepository) UpdateAttemptToken(ctx context.Context, attempt service
 			ExamAttemptColumns.ExamTokenHash:      attempt.ExamTokenHash,
 			ExamAttemptColumns.ExamTokenExpiresAt: attempt.ExamTokenExpiresAt,
 			BaseColumns.UpdatedAt:                 now,
+			BaseColumns.UpdatedByType:             AuditActorTenantUser,
 			BaseColumns.Version:                   gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error; err != nil {
 		return serviceexam.Attempt{}, err
@@ -602,10 +610,12 @@ func (r *ExamRepository) SaveAttemptQuestions(ctx context.Context, questions []s
 		// 小节、题干、选项和正确答案都保存为 JSON 快照，后续题库编辑不会影响本次作答展示和判分。
 		rows = append(rows, ExamAttemptQuestionDO{
 			BaseFields: BaseFields{
-				CreatedAt: now,
-				UpdatedAt: now,
-				Version:   1,
-				ExtJSON:   datatypes.JSON([]byte("{}")),
+				CreatedAt:     now,
+				CreatedByType: AuditActorTenantUser,
+				UpdatedAt:     now,
+				UpdatedByType: AuditActorTenantUser,
+				Version:       1,
+				ExtJSON:       datatypes.JSON([]byte("{}")),
 			},
 			TenantID:              question.TenantID,
 			AttemptID:             question.AttemptID,
@@ -797,6 +807,7 @@ func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade
 				ExamAnswerColumns.GradedAt:      &now,
 				ExamAnswerColumns.GraderComment: grade.Comment,
 				BaseColumns.UpdatedAt:           now,
+				BaseColumns.UpdatedByType:       AuditActorTenantUser,
 				BaseColumns.Version:             gorm.Expr(BaseColumns.Version + " + 1"),
 			})
 		if result.Error != nil {
@@ -829,6 +840,7 @@ func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade
 				ExamAttemptColumns.SubjectiveScore: formatScoreString(subjectiveScore),
 				ExamAttemptColumns.TotalScore:      formatScoreString(objectiveScore + subjectiveScore),
 				BaseColumns.UpdatedAt:              now,
+				BaseColumns.UpdatedByType:          AuditActorTenantUser,
 				BaseColumns.Version:                gorm.Expr(BaseColumns.Version + " + 1"),
 			}).Error
 	})
@@ -881,6 +893,115 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 	return items, nil
 }
 
+// GetResultSnapshot 读取单次作答成绩，并带出考试发布策略和试卷解析开关。
+// 学生查分入口以 attempt 为成绩标识，避免在没有独立 result 表时引入额外状态。
+func (r *ExamRepository) GetResultSnapshot(ctx context.Context, tenantID uint64, attemptID uint64) (serviceexam.ResultSnapshot, error) {
+	var row struct {
+		AttemptID        uint64
+		ExamID           uint64
+		UserID           uint64
+		AttemptNo        int
+		TotalScore       string
+		ObjectiveScore   string
+		SubjectiveScore  string
+		PublishMode      string
+		ScorePublishTime *int64
+		ShowAnalysis     bool
+	}
+	err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
+		Select(`
+			attempts.id AS attempt_id,
+			attempts.exam_id AS exam_id,
+			attempts.user_id AS user_id,
+			attempts.attempt_no AS attempt_no,
+			attempts.total_score AS total_score,
+			attempts.objective_score AS objective_score,
+			attempts.subjective_score AS subjective_score,
+			exams.publish_mode AS publish_mode,
+			exams.score_publish_time AS score_publish_time,
+			papers.show_analysis AS show_analysis
+		`).
+		Joins("JOIN exams ON exams.tenant_id = attempts.tenant_id AND exams.id = attempts.exam_id AND exams.deleted_at = 0").
+		Joins("JOIN papers ON papers.tenant_id = exams.tenant_id AND papers.id = exams.paper_id AND papers.deleted_at = 0").
+		Where("attempts.tenant_id = ?", tenantID).
+		Where("attempts.id = ?", attemptID).
+		Where("attempts.submitted_at IS NOT NULL").
+		Scan(&row).Error
+	if err != nil {
+		return serviceexam.ResultSnapshot{}, err
+	}
+	if row.AttemptID == 0 {
+		return serviceexam.ResultSnapshot{}, gorm.ErrRecordNotFound
+	}
+	return serviceexam.ResultSnapshot{
+		AttemptID:        row.AttemptID,
+		ExamID:           row.ExamID,
+		UserID:           row.UserID,
+		AttemptNo:        row.AttemptNo,
+		TotalScore:       row.TotalScore,
+		ObjectiveScore:   row.ObjectiveScore,
+		SubjectiveScore:  row.SubjectiveScore,
+		PublishMode:      row.PublishMode,
+		ScorePublishTime: row.ScorePublishTime,
+		ShowAnalysis:     row.ShowAnalysis,
+	}, nil
+}
+
+// ListUserResultSnapshots 读取某个考生在同一考试下的所有已提交成绩，用于 latest/highest 策略选择。
+func (r *ExamRepository) ListUserResultSnapshots(ctx context.Context, tenantID uint64, examID uint64, userID uint64) ([]serviceexam.ResultSnapshot, error) {
+	var rows []struct {
+		AttemptID        uint64
+		ExamID           uint64
+		UserID           uint64
+		AttemptNo        int
+		TotalScore       string
+		ObjectiveScore   string
+		SubjectiveScore  string
+		PublishMode      string
+		ScorePublishTime *int64
+		ShowAnalysis     bool
+	}
+	if err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
+		Select(`
+			attempts.id AS attempt_id,
+			attempts.exam_id AS exam_id,
+			attempts.user_id AS user_id,
+			attempts.attempt_no AS attempt_no,
+			attempts.total_score AS total_score,
+			attempts.objective_score AS objective_score,
+			attempts.subjective_score AS subjective_score,
+			exams.publish_mode AS publish_mode,
+			exams.score_publish_time AS score_publish_time,
+			papers.show_analysis AS show_analysis
+		`).
+		Joins("JOIN exams ON exams.tenant_id = attempts.tenant_id AND exams.id = attempts.exam_id AND exams.deleted_at = 0").
+		Joins("JOIN papers ON papers.tenant_id = exams.tenant_id AND papers.id = exams.paper_id AND papers.deleted_at = 0").
+		Where("attempts.tenant_id = ?", tenantID).
+		Where("attempts.exam_id = ?", examID).
+		Where("attempts.user_id = ?", userID).
+		Where("attempts.submitted_at IS NOT NULL").
+		Order("attempts.attempt_no ASC, attempts.id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	items := make([]serviceexam.ResultSnapshot, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, serviceexam.ResultSnapshot{
+			AttemptID:        row.AttemptID,
+			ExamID:           row.ExamID,
+			UserID:           row.UserID,
+			AttemptNo:        row.AttemptNo,
+			TotalScore:       row.TotalScore,
+			ObjectiveScore:   row.ObjectiveScore,
+			SubjectiveScore:  row.SubjectiveScore,
+			PublishMode:      row.PublishMode,
+			ScorePublishTime: row.ScorePublishTime,
+			ShowAnalysis:     row.ShowAnalysis,
+		})
+	}
+	return items, nil
+}
+
 // UpdateScorePublishConfig 更新考试成绩发布方式。
 // 修改后重新读取考试，确保调用方拿到包含最新发布配置和试卷组卷模式的业务对象。
 func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64) (serviceexam.Exam, error) {
@@ -892,6 +1013,7 @@ func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID 
 			ExamColumns.PublishMode:      publishMode,
 			ExamColumns.ScorePublishTime: scorePublishTime,
 			BaseColumns.UpdatedAt:        r.now(),
+			BaseColumns.UpdatedByType:    AuditActorTenantUser,
 			BaseColumns.Version:          gorm.Expr(BaseColumns.Version + " + 1"),
 		}).Error; err != nil {
 		return serviceexam.Exam{}, err
@@ -941,10 +1063,12 @@ func (r *ExamRepository) UpsertAnswer(ctx context.Context, answer serviceexam.An
 	now := r.now()
 	row := ExamAnswerDO{
 		BaseFields: BaseFields{
-			CreatedAt: now,
-			UpdatedAt: now,
-			Version:   1,
-			ExtJSON:   datatypes.JSON([]byte("{}")),
+			CreatedAt:     now,
+			CreatedByType: AuditActorTenantUser,
+			UpdatedAt:     now,
+			UpdatedByType: AuditActorTenantUser,
+			Version:       1,
+			ExtJSON:       datatypes.JSON([]byte("{}")),
 		},
 		TenantID:          answer.TenantID,
 		AttemptID:         answer.AttemptID,
@@ -962,6 +1086,7 @@ func (r *ExamRepository) UpsertAnswer(ctx context.Context, answer serviceexam.An
 		DoUpdates: clause.Assignments(map[string]any{
 			ExamAnswerColumns.AnswerContent: answer.AnswerContent,
 			BaseColumns.UpdatedAt:           now,
+			BaseColumns.UpdatedByType:       AuditActorTenantUser,
 			BaseColumns.Version:             gorm.Expr(BaseColumns.Version + " + 1"),
 		}),
 	}).Create(&row).Error
@@ -983,6 +1108,7 @@ func (r *ExamRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Con
 				ExamAttemptColumns.Status:      status,
 				ExamAttemptColumns.SubmittedAt: submittedAt,
 				BaseColumns.UpdatedAt:          submittedAt,
+				BaseColumns.UpdatedByType:      AuditActorTenantUser,
 				BaseColumns.Version:            gorm.Expr(BaseColumns.Version + " + 1"),
 			})
 		if result.Error != nil {
@@ -1013,6 +1139,7 @@ func (r *ExamRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Con
 				ExamAttemptColumns.ObjectiveScore: objectiveScore,
 				ExamAttemptColumns.TotalScore:     objectiveScore,
 				BaseColumns.UpdatedAt:             submittedAt,
+				BaseColumns.UpdatedByType:         AuditActorTenantUser,
 			}).Error; err != nil {
 			return err
 		}
@@ -1111,10 +1238,12 @@ func (r *ExamRepository) saveAnswerGrades(tx *gorm.DB, tenantID uint64, attemptI
 	for _, grade := range grades {
 		row := ExamAnswerDO{
 			BaseFields: BaseFields{
-				CreatedAt: now,
-				UpdatedAt: now,
-				Version:   1,
-				ExtJSON:   datatypes.JSON([]byte("{}")),
+				CreatedAt:     now,
+				CreatedByType: AuditActorTenantUser,
+				UpdatedAt:     now,
+				UpdatedByType: AuditActorTenantUser,
+				Version:       1,
+				ExtJSON:       datatypes.JSON([]byte("{}")),
 			},
 			TenantID:          tenantID,
 			AttemptID:         attemptID,
@@ -1132,6 +1261,7 @@ func (r *ExamRepository) saveAnswerGrades(tx *gorm.DB, tenantID uint64, attemptI
 				ExamAnswerColumns.Score:         grade.Score,
 				ExamAnswerColumns.GradingStatus: grade.GradingStatus,
 				BaseColumns.UpdatedAt:           now,
+				BaseColumns.UpdatedByType:       AuditActorTenantUser,
 				BaseColumns.Version:             gorm.Expr(BaseColumns.Version + " + 1"),
 			}),
 		}).Create(&row).Error; err != nil {
@@ -1150,8 +1280,9 @@ func appendEventWithDB(tx *gorm.DB, event serviceexam.ExamEvent) error {
 	}
 	return tx.Create(&ExamEventDO{
 		EventFields: EventFields{
-			CreatedAt: event.EventTime,
-			ExtJSON:   datatypes.JSON([]byte("{}")),
+			CreatedAt:     event.EventTime,
+			CreatedByType: AuditActorTenantUser,
+			ExtJSON:       datatypes.JSON([]byte("{}")),
 		},
 		TenantID:  event.TenantID,
 		AttemptID: event.AttemptID,

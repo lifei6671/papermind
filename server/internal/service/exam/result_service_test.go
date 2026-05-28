@@ -125,7 +125,7 @@ func studentPermissionContext() permission.PermissionContext {
 		SubjectType: permission.SubjectTenantUser,
 		UserID:      30,
 		TenantID:    10,
-		TenantRoles: []string{permission.RoleStudent},
+		Role:        permission.RoleStudent,
 		ExamScope:   map[uint64]uint64{20: 301},
 	}
 }

@@ -1,6 +1,6 @@
 import { createApiClient } from "./client";
 import type { ApiClient } from "./client";
-import type { AuthSession } from "../auth/session-context";
+import type { AuthSession, SessionRole } from "../auth/session-context";
 
 export type PlatformLoginInput = {
   username: string;
@@ -103,10 +103,22 @@ function mapAuthSessionResponse(response: AuthSessionAPIResponse): AuthSession {
     user: {
       userID: response.user.user_id,
       displayName: response.user.display_name,
-      role: response.user.role,
+      role: toSessionRole(response.user.role),
       tenantID: response.user.tenant_id,
     },
   };
+}
+
+function toSessionRole(role: string): SessionRole {
+  switch (role) {
+    case "platform_admin":
+    case "tenant_admin":
+    case "teacher":
+    case "student":
+      return role;
+    default:
+      throw new Error(`unsupported session role: ${role}`);
+  }
 }
 
 function mapTenantRegisterResponse(response: TenantRegisterAPIResponse): TenantRegisterResult {

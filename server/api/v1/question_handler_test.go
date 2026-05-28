@@ -17,13 +17,13 @@ func TestQuestionAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedQuestionAPITestData(t, gormDB)
-	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
-	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
 
 	listRecorder := httptest.NewRecorder()
 	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/questions?tenant_id=10", nil, authHeader))
@@ -72,12 +72,12 @@ func TestQuestionAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 func TestQuestionImportAPIRouteParsesCSVAndReturnsRowErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
-	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
 	router := NewRouter(RouterOptions{
 		DB:  gormDB,
 		Now: func() int64 { return fixedAPINow },
 	})
-	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
 
 	requestBody, contentType := buildQuestionImportMultipart(t, fmt.Sprintf(`type,title,options,correct_answer,analysis,difficulty,tags
 %s,函数单调性判断,A.y = x|B.y = -x,A,一次函数斜率为正时单调递增。,medium,函数

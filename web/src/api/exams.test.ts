@@ -33,7 +33,7 @@ describe("examApi", () => {
     const exam = await api.resolveInvite({ inviteCode: "PM2026" });
 
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/exams/invite/resolve",
+      "/api/v1/exam-entry/invite/resolve",
       expect.objectContaining({ method: "POST" }),
     );
     expect(exam).toEqual({
@@ -54,7 +54,7 @@ describe("examApi", () => {
   test("答题 API 封装开始考试、保存答案和交卷请求", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/v1/exams/1/attempts/start")) {
+      if (url.endsWith("/api/v1/exam-entry/exams/1/attempts/start")) {
         expect(init?.method).toBe("POST");
         expect(JSON.parse(init?.body as string)).toEqual({ tenant_id: 10 });
         return jsonResponse({
@@ -70,7 +70,7 @@ describe("examApi", () => {
           }],
         });
       }
-      if (url.endsWith("/api/v1/exam-attempts/99/answers/9001")) {
+      if (url.endsWith("/api/v1/exam-entry/attempts/99/answers/9001")) {
         expect(init?.method).toBe("POST");
         expect(JSON.parse(init?.body as string)).toEqual({
           tenant_id: 10,
@@ -81,7 +81,7 @@ describe("examApi", () => {
         });
         return jsonResponse({ saved: true, updated_at: 1779792000000 });
       }
-      if (url.endsWith("/api/v1/exam-attempts/99/submit")) {
+      if (url.endsWith("/api/v1/exam-entry/attempts/99/submit")) {
         expect(init?.method).toBe("POST");
         expect(JSON.parse(init?.body as string)).toEqual({
           tenant_id: 10,
@@ -89,6 +89,18 @@ describe("examApi", () => {
           event_type: "submit",
         });
         return jsonResponse({ submitted: true });
+      }
+      if (url.endsWith("/api/v1/exam-entry/results/99")) {
+        expect(init?.method).toBe("GET");
+        return jsonResponse({
+          attempt_id: 99,
+          exam_id: 1,
+          attempt_no: 1,
+          objective_score: "6",
+          subjective_score: "2",
+          total_score: "8",
+          analysis_visible: true,
+        });
       }
       throw new Error(`unexpected request: ${url}`);
     });
@@ -104,6 +116,7 @@ describe("examApi", () => {
       optionIDs: [101],
     });
     await api.submitAttempt({ tenantID: 10, attemptID: started.attemptID, examToken: started.examToken });
+    const result = await api.getVisibleResult(started.attemptID);
 
     expect(started).toEqual({
       attemptID: 99,
@@ -119,6 +132,15 @@ describe("examApi", () => {
         score: 2,
         options: [{ id: 101, key: "A", content: "正确选项" }],
       }],
+    });
+    expect(result).toEqual({
+      attemptID: 99,
+      examID: 1,
+      attemptNo: 1,
+      objectiveScore: "6",
+      subjectiveScore: "2",
+      totalScore: "8",
+      analysisVisible: true,
     });
   });
 });

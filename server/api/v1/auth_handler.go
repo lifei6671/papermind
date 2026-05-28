@@ -15,7 +15,7 @@ import (
 	"github.com/lifei6671/papermind/server/library/response"
 )
 
-const platformAdminRole = "platform_admin"
+const platformAdminRole = permission.RolePlatformAdmin
 
 type authHandler struct {
 	platformUsers        *serviceplatformuser.Service

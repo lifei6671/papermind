@@ -2,7 +2,7 @@ import { Button } from "../../components/ui/Button";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { examApi } from "../../api/exams";
-import type { StudentExamAPI, StudentExamOption, StudentExamQuestion as APIStudentExamQuestion } from "../../api/exams";
+import type { StudentExamAPI, StudentExamOption, StudentExamQuestion as APIStudentExamQuestion, StudentVisibleResult } from "../../api/exams";
 import {
   Bookmark,
   CheckCircle2,
@@ -241,7 +241,13 @@ function DesktopQuestionBody({
   );
 }
 
-function DesktopResultView() {
+function DesktopResultView({
+  message,
+  result,
+}: {
+  message: string;
+  result: StudentVisibleResult | null;
+}) {
   return (
     <div className="student-exam-shell">
       <header className="student-exam-header">
@@ -255,12 +261,20 @@ function DesktopResultView() {
         <section className="exam-card exam-result-card">
           <span className="mobile-status-pill"><CheckCircle2 aria-hidden="true" size={16} />已交卷</span>
           <h2>成绩可见页</h2>
-          <strong>总分 86 分</strong>
-          <p>客观题 56 分，主观题 30 分。成绩已按统一公布策略展示。</p>
-          <div className="analysis-box">
-            <strong>题目解析</strong>
-            <p>岑参（cén），怅然（chàng）。</p>
-          </div>
+          {result ? (
+            <>
+              <strong>总分 {result.totalScore} 分</strong>
+              <p>客观题 {result.objectiveScore} 分，主观题 {result.subjectiveScore} 分。成绩已按统一公布策略展示。</p>
+              {result.analysisVisible ? (
+                <div className="analysis-box">
+                  <strong>题目解析</strong>
+                  <p>题目解析已开放，可在成绩公布页查看解析内容。</p>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <strong>{message}</strong>
+          )}
         </section>
       </main>
     </div>
@@ -299,6 +313,8 @@ function DesktopStudentExamPage({
   const [saveMessage, setSaveMessage] = useState("");
   const [eventReportMessage, setEventReportMessage] = useState("");
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [visibleResult, setVisibleResult] = useState<StudentVisibleResult | null>(null);
+  const [resultMessage, setResultMessage] = useState("成绩暂未公布，请等待老师统一公布。");
   const [apiQuestions, setApiQuestions] = useState<ExamQuestion[]>([]);
   const [examSession, setExamSession] = useState<ExamSession | null>(null);
   const [answerDeadline, setAnswerDeadline] = useState<number | null>(null);
@@ -418,7 +434,16 @@ function DesktopStudentExamPage({
           attemptID: examSession.attemptID,
           examToken: examSession.examToken,
         });
+        try {
+          const result = await api.getVisibleResult(examSession.attemptID);
+          setVisibleResult(result);
+          setResultMessage("");
+        } catch {
+          setVisibleResult(null);
+          setResultMessage("成绩暂未公布，请等待老师统一公布。");
+        }
       }
+      setIsSubmitDialogOpen(false);
       setIsSubmitted(true);
     } catch {
       setSaveMessage("交卷失败，请稍后重试");
@@ -426,7 +451,7 @@ function DesktopStudentExamPage({
   };
 
   if (isSubmitted) {
-    return <DesktopResultView />;
+    return <DesktopResultView message={resultMessage} result={visibleResult} />;
   }
 
   if (!currentQuestion) {

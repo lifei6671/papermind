@@ -4,6 +4,7 @@ import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { PenLine, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
 import { gradingApi } from "../../api/grading";
 import type { ActorRole, GradingAPI, PendingReviewRow } from "../../api/grading";
@@ -25,6 +26,8 @@ export function GradingPage({
   actorRole = "tenant_admin",
   spaceID,
 }: GradingPageProps) {
+  const [searchParams] = useSearchParams();
+  const effectiveSpaceID = spaceID ?? positiveID(searchParams.get("space_id"));
   const [attempts, setAttempts] = useState<PendingReviewRow[]>([]);
   const [selectedAttempt, setSelectedAttempt] = useState<PendingReviewRow | null>(null);
   const [score, setScore] = useState("7");
@@ -34,6 +37,7 @@ export function GradingPage({
   const [loadError, setLoadError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
+  const teacherNeedsSpace = actorRole === "teacher" && !effectiveSpaceID;
 
   const pendingCount = attempts.filter((attempt) => attempt.status === "pending").length;
 
@@ -50,7 +54,7 @@ export function GradingPage({
 
   async function loadPendingAttempts() {
     try {
-      const result = await api.listPendingAttempts({ tenantID, examID, actorID, actorRole, spaceID });
+      const result = await api.listPendingAttempts({ tenantID, examID, actorID, actorRole, spaceID: effectiveSpaceID });
       setAttempts(result.items);
       setLoadError("");
     } catch (err) {
@@ -59,8 +63,11 @@ export function GradingPage({
   }
 
   useEffect(() => {
+    if (teacherNeedsSpace) {
+      return undefined;
+    }
     let ignore = false;
-    api.listPendingAttempts({ tenantID, examID, actorID, actorRole, spaceID })
+    api.listPendingAttempts({ tenantID, examID, actorID, actorRole, spaceID: effectiveSpaceID })
       .then((result) => {
         if (!ignore) {
           setAttempts(result.items);
@@ -75,7 +82,7 @@ export function GradingPage({
     return () => {
       ignore = true;
     };
-  }, [api, tenantID, examID, actorID, actorRole, spaceID]);
+  }, [api, tenantID, examID, actorID, actorRole, effectiveSpaceID, teacherNeedsSpace]);
 
   function openGradingDialog(attempt: PendingReviewRow) {
     setSelectedAttempt(attempt);
@@ -98,7 +105,7 @@ export function GradingPage({
         examID,
         actorID,
         actorRole,
-        spaceID,
+        spaceID: effectiveSpaceID,
         attemptID: selectedAttempt.attemptID,
         attemptQuestionID: selectedAttempt.attemptQuestionID,
         answerVersion: selectedAttempt.answerVersion,
@@ -118,6 +125,23 @@ export function GradingPage({
     } catch (err) {
       setSaveMessage(formatApiErrorMessage(err, "保存阅卷结果失败"));
     }
+  }
+
+  if (teacherNeedsSpace) {
+    return (
+      <section className="page platform-page grading-page">
+        <nav aria-label="阅卷菜单" className="platform-tabbar" role="tablist">
+          <span className="platform-tab platform-tab--active" role="tab" aria-selected="true">
+            阅卷中心
+          </span>
+        </nav>
+        <Panel>
+          <div className="empty-state">
+            <strong>该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷</strong>
+          </div>
+        </Panel>
+      </section>
+    );
   }
 
   return (
@@ -254,4 +278,12 @@ export function GradingPage({
       )}
     </section>
   );
+}
+
+function positiveID(value?: string | number | null) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }

@@ -84,6 +84,11 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		ExportDir:         defaultExportDir(options.ExportDir),
 		Now:               options.Now,
 	})
+	resultService := serviceexam.NewResultService(serviceexam.ResultServiceOptions{
+		Repo:              examRepository,
+		PermissionChecker: permission.NewFixedRoleChecker(),
+		Now:               options.Now,
+	})
 	tenantRepository := dbdao.NewTenantRepository(options.DB, dbdao.TenantRepositoryOptions{Now: options.Now})
 	tenantService := servicetenant.NewService(servicetenant.ServiceOptions{
 		Repo:                 tenantRepository,
@@ -102,12 +107,12 @@ func NewRouter(options RouterOptions) *gin.Engine {
 		SpaceAdminInvariantChecker: spaceRepository,
 		Now:                        options.Now,
 	})
-	examHandler := examHandler{service: examService, taking: takingService, review: reviewService, export: exportService, members: spaceRepository, now: defaultRouterNow(options.Now)}
+	examHandler := examHandler{service: examService, taking: takingService, review: reviewService, export: exportService, result: resultService, members: spaceRepository, now: defaultRouterNow(options.Now)}
 	tenantHandler := tenantHandler{service: tenantService}
 	spaceHandler := spaceHandler{service: spaceService, members: spaceRepository}
 	userHandler := userHandler{service: userService, passwordMinLength: options.PasswordMinLength}
-	questionHandler := questionHandler{service: questionService}
-	paperHandler := paperHandler{service: paperService}
+	questionHandler := questionHandler{service: questionService, members: spaceRepository}
+	paperHandler := paperHandler{service: paperService, papers: paperRepository, members: spaceRepository}
 	authHandler := authHandler{platformUsers: platformUserService, tenantUsers: userService, sessionMaxAgeSeconds: options.AuthSessionTTL, passwordMinLength: options.PasswordMinLength}
 	uploadDir := defaultUploadDir(options.UploadDir)
 	uploadHandler := uploadHandler{store: defaultUploadStore(options.UploadStore, uploadDir), now: time.Now}
@@ -130,6 +135,12 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	api.POST("/exam-attempts/:attempt_id/answers/:attempt_question_id", examHandler.saveAnswer)
 	api.POST("/exam-attempts/:attempt_id/submit", examHandler.submitAttempt)
 	api.POST("/exam-attempts/:attempt_id/events", examHandler.recordEvent)
+	api.POST("/exam-entry/invite/resolve", examHandler.resolveInvite)
+	api.POST("/exam-entry/exams/:id/attempts/start", examHandler.startAttempt)
+	api.POST("/exam-entry/attempts/:attempt_id/answers/:attempt_question_id", examHandler.saveAnswer)
+	api.POST("/exam-entry/attempts/:attempt_id/submit", examHandler.submitAttempt)
+	api.POST("/exam-entry/attempts/:attempt_id/events", examHandler.recordEvent)
+	api.GET("/exam-entry/results/:id", requireAuthPrincipalMiddleware(), examHandler.getExamEntryResult)
 	api.GET("/grading/pending", requireExamBusinessPrincipalMiddleware(), examHandler.listPendingReviews)
 	api.POST("/exam-attempts/:attempt_id/questions/:attempt_question_id/grade", requireExamBusinessPrincipalMiddleware(), examHandler.gradeShortText)
 	api.GET("/results", requireExamBusinessPrincipalMiddleware(), examHandler.listResults)
@@ -143,6 +154,10 @@ func NewRouter(options RouterOptions) *gin.Engine {
 	api.POST("/uploads", requireTenantAdminOrPlatformPrincipalMiddleware(), uploadHandler.create)
 	api.GET("/spaces", requireTenantAdminOrPlatformPrincipalMiddleware(), spaceHandler.list)
 	api.POST("/spaces", requireTenantAdminOrPlatformPrincipalMiddleware(), spaceHandler.create)
+	api.GET("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.listMembers)
+	api.POST("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.addMember)
+	api.PUT("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.updateMember)
+	api.DELETE("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.removeMember)
 	api.GET("/users", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.list)
 	api.POST("/users", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.create)
 	api.POST("/users/:id/disable", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.disable)
@@ -214,6 +229,7 @@ type examHandler struct {
 	taking  *serviceexam.TakingService
 	review  *serviceexam.ReviewService
 	export  *serviceexam.ExportService
+	result  *serviceexam.ResultService
 	members spaceMemberFinder
 	now     func() int64
 }
@@ -418,6 +434,16 @@ type resultPublishConfigResponse struct {
 type resultExportResponse struct {
 	FilePath string `json:"file_path"`
 	RowCount int    `json:"row_count"`
+}
+
+type visibleResultResponse struct {
+	AttemptID       uint64 `json:"attempt_id"`
+	ExamID          uint64 `json:"exam_id"`
+	AttemptNo       int    `json:"attempt_no"`
+	ObjectiveScore  string `json:"objective_score"`
+	SubjectiveScore string `json:"subjective_score"`
+	TotalScore      string `json:"total_score"`
+	AnalysisVisible bool   `json:"analysis_visible"`
 }
 
 type examListResponse struct {
@@ -745,6 +771,39 @@ func (h examHandler) recordEvent(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(examEventResponse{Recorded: true}))
 }
 
+func (h examHandler) getExamEntryResult(c *gin.Context) {
+	attemptID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "成绩 ID 必须是正整数"))
+		return
+	}
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return
+	}
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID == 0 {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "只有租户用户可以查看考试成绩"))
+		return
+	}
+	permissionContext := permission.PermissionContext{
+		SubjectType: principal.SubjectType,
+		UserID:      principal.UserID,
+		TenantID:    principal.TenantID,
+		Role:        principal.Role,
+	}
+	visible, err := h.result.GetVisibleResult(c.Request.Context(), serviceexam.ResultQueryInput{
+		Permission: permissionContext,
+		TenantID:   principal.TenantID,
+		AttemptID:  attemptID,
+	})
+	if err != nil {
+		writeVisibleResultError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(visibleResultToResponse(visible)))
+}
+
 func (h examHandler) listPendingReviews(c *gin.Context) {
 	tenantID, err := readUintQuery(c, "tenant_id")
 	if err != nil {
@@ -869,7 +928,7 @@ func (h examHandler) saveResultPublishConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if err := permission.NewFixedRoleChecker().CanGradeExam(permissionContextWithExamScope(permissionContext, request.ExamID, request.SpaceID), request.ExamID); err != nil {
+	if err := permission.NewFixedRoleChecker().CanViewExamResults(permissionContextWithExamScope(permissionContext, request.ExamID, request.SpaceID), request.ExamID); err != nil {
 		writePermissionOrInternalError(c, err, "保存成绩发布配置失败")
 		return
 	}
@@ -983,6 +1042,18 @@ func writeTakingServiceError(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "作答操作失败"))
 }
 
+func writeVisibleResultError(c *gin.Context, err error) {
+	if errors.Is(err, serviceexam.ErrResultNotVisible) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "成绩暂未公布或无权查看"))
+		return
+	}
+	if errors.Is(err, serviceexam.ErrResultNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, response.Fail(code.InvalidParam, "成绩不存在"))
+		return
+	}
+	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取成绩失败"))
+}
+
 func (h examHandler) readActorPermissionQuery(c *gin.Context, tenantID uint64) (permission.PermissionContext, error) {
 	spaceID, err := readOptionalUintQueryValue(c, "space_id")
 	if err != nil {
@@ -1024,12 +1095,13 @@ func (h examHandler) permissionContextFromSession(c *gin.Context, tenantID uint6
 		return permission.PermissionContext{}, errors.New("请先登录")
 	}
 	ctx := permission.PermissionContext{
-		SubjectType:  principal.SubjectType,
-		UserID:       principal.UserID,
-		TenantID:     tenantID,
-		SpaceRoles:   map[uint64]string{},
-		ExamScope:    map[uint64]uint64{},
-		AttemptScope: map[uint64]uint64{},
+		SubjectType:      principal.SubjectType,
+		UserID:           principal.UserID,
+		TenantID:         tenantID,
+		Role:             principal.Role,
+		SpaceMemberships: map[uint64]string{},
+		ExamScope:        map[uint64]uint64{},
+		AttemptScope:     map[uint64]uint64{},
 	}
 	if principal.SubjectType == permission.SubjectPlatformUser {
 		return permission.PermissionContext{}, permission.ErrForbidden
@@ -1038,7 +1110,9 @@ func (h examHandler) permissionContextFromSession(c *gin.Context, tenantID uint6
 		return permission.PermissionContext{}, permission.ErrForbidden
 	}
 	switch principal.Role {
-	case permission.RoleSpaceAdmin, permission.RoleTeacher:
+	case permission.RoleTenantAdmin:
+		return ctx, nil
+	case permission.RoleTeacher:
 		if spaceID == 0 {
 			return permission.PermissionContext{}, errors.New("space_id 必须是正整数")
 		}
@@ -1052,7 +1126,7 @@ func (h examHandler) permissionContextFromSession(c *gin.Context, tenantID uint6
 		if member.Status != servicespace.StatusEnabled {
 			return permission.PermissionContext{}, permission.ErrForbidden
 		}
-		ctx.SpaceRoles[spaceID] = member.Role
+		ctx.SpaceMemberships[spaceID] = member.Role
 	default:
 		return permission.PermissionContext{}, permission.ErrForbidden
 	}
@@ -1093,11 +1167,46 @@ func authorizeExamBusiness(c *gin.Context, tenantID uint64) bool {
 	}
 	if principal.SubjectType == permission.SubjectTenantUser &&
 		principal.TenantID == tenantID &&
-		(principal.Role == permission.RoleSpaceAdmin || principal.Role == permission.RoleTeacher) {
+		(principal.Role == permission.RoleTenantAdmin || principal.Role == permission.RoleTeacher) {
 		return true
 	}
 	c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
 	return false
+}
+
+func permissionContextForResourceScope(c *gin.Context, tenantID uint64, spaceID *uint64, members spaceMemberFinder) (permission.PermissionContext, error) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		return permission.PermissionContext{}, errors.New("请先登录")
+	}
+	ctx := permission.PermissionContext{
+		SubjectType:      principal.SubjectType,
+		UserID:           principal.UserID,
+		TenantID:         tenantID,
+		Role:             principal.Role,
+		SpaceMemberships: map[uint64]string{},
+	}
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
+		return permission.PermissionContext{}, permission.ErrForbidden
+	}
+	if principal.Role == permission.RoleTenantAdmin {
+		return ctx, nil
+	}
+	if spaceID == nil {
+		return permission.PermissionContext{}, permission.ErrForbidden
+	}
+	member, err := members.FindMember(c.Request.Context(), tenantID, *spaceID, principal.UserID)
+	if errors.Is(err, servicespace.ErrMemberNotFound) {
+		return permission.PermissionContext{}, permission.ErrForbidden
+	}
+	if err != nil {
+		return permission.PermissionContext{}, err
+	}
+	if member.Status != servicespace.StatusEnabled {
+		return permission.PermissionContext{}, permission.ErrForbidden
+	}
+	ctx.SpaceMemberships[*spaceID] = member.Role
+	return ctx, nil
 }
 
 func readUintQuery(c *gin.Context, key string) (uint64, error) {
@@ -1188,6 +1297,18 @@ func scoreRowToResponse(id uint64, row serviceexam.ScoreExportRow) resultRespons
 	}
 }
 
+func visibleResultToResponse(result serviceexam.VisibleResult) visibleResultResponse {
+	return visibleResultResponse{
+		AttemptID:       result.AttemptID,
+		ExamID:          result.ExamID,
+		AttemptNo:       result.AttemptNo,
+		ObjectiveScore:  result.ObjectiveScore,
+		SubjectiveScore: result.SubjectiveScore,
+		TotalScore:      result.TotalScore,
+		AnalysisVisible: result.AnalysisVisible,
+	}
+}
+
 func attemptToResponse(attempt serviceexam.Attempt, exam serviceexam.Exam) attemptResponse {
 	return attemptResponse{
 		ID:             attempt.ID,
@@ -1254,6 +1375,11 @@ type createTenantRequest struct {
 	LogoURL       string `json:"logo_url"`
 	Description   string `json:"description"`
 	AllowRegister *bool  `json:"allow_register"`
+	AdminUsername string `json:"admin_username"`
+	AdminRealName string `json:"admin_real_name"`
+	AdminPhone    string `json:"admin_phone"`
+	AdminEmail    string `json:"admin_email"`
+	AdminPassword string `json:"admin_password"`
 }
 
 type updateTenantProfileRequest struct {
@@ -1325,12 +1451,28 @@ func (h tenantHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "name 不能为空"))
 		return
 	}
+	if request.AdminUsername == "" || request.AdminRealName == "" || request.AdminPassword == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "首个租户管理员用户名、姓名和初始密码不能为空"))
+		return
+	}
+	passwordHash, err := crypto.HashPassword(request.AdminPassword)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "生成首个租户管理员密码失败"))
+		return
+	}
 	tenant, err := h.service.Create(c.Request.Context(), servicetenant.CreateInput{
 		Name:          request.Name,
 		LogoURL:       request.LogoURL,
 		Description:   request.Description,
 		AllowRegister: request.AllowRegister,
 		ActorID:       actorID,
+		InitialAdmin: servicetenant.InitialAdmin{
+			Username:     request.AdminUsername,
+			RealName:     request.AdminRealName,
+			Phone:        request.AdminPhone,
+			Email:        request.AdminEmail,
+			PasswordHash: passwordHash,
+		},
 	})
 	if err != nil {
 		writeTenantInternalError(c, "创建租户失败", err)
@@ -1444,6 +1586,7 @@ func tenantToResponse(tenant servicetenant.Tenant) tenantResponse {
 
 type spaceMemberLister interface {
 	ListMemberNames(ctx context.Context, tenantID uint64, spaceID uint64) ([]dbdao.SpaceMemberName, error)
+	FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (servicespace.Member, error)
 }
 
 type spaceHandler struct {
@@ -1477,6 +1620,18 @@ type spaceMemberResponse struct {
 	Name   string `json:"name"`
 	Role   string `json:"role"`
 	Status string `json:"status"`
+}
+
+type addSpaceMemberRequest struct {
+	TenantID uint64 `json:"tenant_id"`
+	UserID   uint64 `json:"user_id"`
+	Role     string `json:"role"`
+}
+
+type updateSpaceMemberRequest struct {
+	TenantID uint64 `json:"tenant_id"`
+	Role     string `json:"role"`
+	Status   string `json:"status"`
 }
 
 type spaceListResponse struct {
@@ -1556,6 +1711,151 @@ func (h spaceHandler) create(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(result))
 }
 
+func (h spaceHandler) listMembers(c *gin.Context) {
+	spaceID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space id 必须是正整数"))
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !h.authorizeSpaceMembers(c, tenantID, spaceID) {
+		return
+	}
+	members, err := h.members.ListMemberNames(c.Request.Context(), tenantID, spaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取空间成员失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(spaceMemberNamesToResponse(members)))
+}
+
+func (h spaceHandler) addMember(c *gin.Context) {
+	spaceID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space id 必须是正整数"))
+		return
+	}
+	var request addSpaceMemberRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 || request.UserID == 0 || request.Role == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、user_id 和 role 不能为空"))
+		return
+	}
+	if !h.authorizeSpaceMembers(c, request.TenantID, spaceID) {
+		return
+	}
+	member, err := h.service.JoinMember(c.Request.Context(), servicespace.JoinMemberInput{
+		TenantID: request.TenantID,
+		SpaceID:  spaceID,
+		UserID:   request.UserID,
+		Role:     request.Role,
+	})
+	if err != nil {
+		writeSpaceServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(spaceMemberToResponse(member, "")))
+}
+
+func (h spaceHandler) updateMember(c *gin.Context) {
+	spaceID, userID, ok := readSpaceMemberParams(c)
+	if !ok {
+		return
+	}
+	var request updateSpaceMemberRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !h.authorizeSpaceMembers(c, request.TenantID, spaceID) {
+		return
+	}
+	if request.Role != "" {
+		if err := h.service.ChangeMemberRole(c.Request.Context(), servicespace.ChangeRoleInput{TenantID: request.TenantID, SpaceID: spaceID, UserID: userID, Role: request.Role}); err != nil {
+			writeSpaceServiceError(c, err)
+			return
+		}
+	}
+	if request.Status == servicespace.StatusDisabled {
+		if err := h.service.DisableMember(c.Request.Context(), servicespace.MemberActionInput{TenantID: request.TenantID, SpaceID: spaceID, UserID: userID}); err != nil {
+			writeSpaceServiceError(c, err)
+			return
+		}
+	}
+	member, err := h.members.FindMember(c.Request.Context(), request.TenantID, spaceID, userID)
+	if err != nil {
+		writeSpaceServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(spaceMemberToResponse(member, "")))
+}
+
+func (h spaceHandler) removeMember(c *gin.Context) {
+	spaceID, userID, ok := readSpaceMemberParams(c)
+	if !ok {
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !h.authorizeSpaceMembers(c, tenantID, spaceID) {
+		return
+	}
+	if err := h.service.RemoveMember(c.Request.Context(), servicespace.MemberActionInput{TenantID: tenantID, SpaceID: spaceID, UserID: userID}); err != nil {
+		writeSpaceServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(gin.H{"removed": true}))
+}
+
+func (h spaceHandler) authorizeSpaceMembers(c *gin.Context, tenantID uint64, spaceID uint64) bool {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return false
+	}
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return false
+	}
+	if principal.Role == permission.RoleTenantAdmin {
+		return true
+	}
+	member, err := h.members.FindMember(c.Request.Context(), tenantID, spaceID, principal.UserID)
+	if err != nil || member.Status != servicespace.StatusEnabled || member.Role != servicespace.RoleSpaceAdmin {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return false
+	}
+	return true
+}
+
+func readSpaceMemberParams(c *gin.Context) (uint64, uint64, bool) {
+	spaceID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space id 必须是正整数"))
+		return 0, 0, false
+	}
+	userID, err := readUintParam(c, "user_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "user_id 必须是正整数"))
+		return 0, 0, false
+	}
+	return spaceID, userID, true
+}
+
 func (r createSpaceRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -1588,23 +1888,50 @@ func (h spaceHandler) spaceToResponse(ctx context.Context, space servicespace.Sp
 		Members:     make([]spaceMemberResponse, 0, len(members)),
 	}
 	for _, member := range members {
-		name := member.Name
-		if name == "" {
-			name = "用户 " + strconv.FormatUint(member.UserID, 10)
-		}
-		result.Members = append(result.Members, spaceMemberResponse{
-			ID:     member.ID,
-			UserID: member.UserID,
-			Name:   name,
-			Role:   member.Role,
-			Status: member.Status,
-		})
+		result.Members = append(result.Members, spaceMemberNameToResponse(member))
 	}
 	return result, nil
 }
 
+func spaceMemberNamesToResponse(members []dbdao.SpaceMemberName) []spaceMemberResponse {
+	items := make([]spaceMemberResponse, 0, len(members))
+	for _, member := range members {
+		items = append(items, spaceMemberNameToResponse(member))
+	}
+	return items
+}
+
+func spaceMemberNameToResponse(member dbdao.SpaceMemberName) spaceMemberResponse {
+	return spaceMemberResponse{
+		ID:     member.ID,
+		UserID: member.UserID,
+		Name:   displaySpaceMemberName(member.UserID, member.Name),
+		Role:   member.Role,
+		Status: member.Status,
+	}
+}
+
+func spaceMemberToResponse(member servicespace.Member, name string) spaceMemberResponse {
+	return spaceMemberResponse{
+		ID:     member.ID,
+		UserID: member.UserID,
+		Name:   displaySpaceMemberName(member.UserID, name),
+		Role:   member.Role,
+		Status: member.Status,
+	}
+}
+
+func displaySpaceMemberName(userID uint64, name string) string {
+	if name != "" {
+		return name
+	}
+	return "用户 " + strconv.FormatUint(userID, 10)
+}
+
 func writeSpaceServiceError(c *gin.Context, err error) {
-	if errors.Is(err, servicespace.ErrSpaceAdminRequired) {
+	if errors.Is(err, servicespace.ErrSpaceAdminRequired) ||
+		errors.Is(err, servicespace.ErrCannotLoseLastSpaceAdmin) ||
+		errors.Is(err, servicespace.ErrMemberNotFound) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
@@ -1786,6 +2113,7 @@ func userToResponse(user servicetenantuser.User) userResponse {
 
 func writeUserServiceError(c *gin.Context, err error) {
 	if errors.Is(err, servicetenantuser.ErrCannotDisableSelf) ||
+		errors.Is(err, servicetenantuser.ErrCannotLoseLastTenantAdmin) ||
 		errors.Is(err, servicespace.ErrCannotLoseLastSpaceAdmin) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
@@ -1808,6 +2136,7 @@ func readUintParam(c *gin.Context, key string) (uint64, error) {
 
 type questionHandler struct {
 	service *servicequestion.QuestionService
+	members spaceMemberFinder
 }
 
 type createQuestionRequest struct {
@@ -1914,7 +2243,13 @@ func (h questionHandler) create(c *gin.Context) {
 	if !authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
+	permissionContext, err := permissionContextForResourceScope(c, request.TenantID, request.SpaceID, h.members)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
 	created, err := h.service.CreateQuestion(c.Request.Context(), servicequestion.CreateQuestionInput{
+		Permission:   permissionContext,
 		TenantID:     request.TenantID,
 		SpaceID:      request.SpaceID,
 		Type:         request.Type,
@@ -1993,6 +2328,10 @@ func questionToResponse(item servicequestion.Question) questionResponse {
 }
 
 func writeQuestionServiceError(c *gin.Context, err error) {
+	if errors.Is(err, permission.ErrForbidden) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return
+	}
 	if errors.Is(err, servicequestion.ErrChoiceQuestionNeedsCorrectAnswer) ||
 		errors.Is(err, servicequestion.ErrSingleQuestionOnlyOneCorrectAnswer) ||
 		errors.Is(err, servicequestion.ErrFillBlankOnlySupportsSingleBlank) {

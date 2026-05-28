@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lifei6671/papermind/server/bootstrap/migration"
 	"github.com/lifei6671/papermind/server/library/constant"
 	"github.com/lifei6671/papermind/server/library/crypto"
 	"gorm.io/driver/sqlite"
@@ -235,6 +235,37 @@ func TestStudentTakingAPIRoutesStartSaveAndSubmitWithSQLite(t *testing.T) {
 	}
 }
 
+func TestExamEntryResultVisibleForOwnerOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+	seedVisibleResultAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	ownerAuthHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/exam-entry/results/700", nil, ownerAuthHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("owner result status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[visibleResultResponse](t, recorder.Body.Bytes())
+	if body.Data.AttemptID != 700 || body.Data.TotalScore != "8" || !body.Data.AnalysisVisible {
+		t.Fatalf("unexpected visible result response: %#v", body.Data)
+	}
+
+	otherAuthHeader := tenantAuthHeader(t, router, 10, "student21", "papermind123")
+	forbiddenRecorder := httptest.NewRecorder()
+	router.ServeHTTP(forbiddenRecorder, authorizedRequest(http.MethodGet, "/api/v1/exam-entry/results/700", nil, otherAuthHeader))
+	if forbiddenRecorder.Code != http.StatusForbidden {
+		t.Fatalf("other student result status = %d, body = %s", forbiddenRecorder.Code, forbiddenRecorder.Body.String())
+	}
+}
+
 func TestStudentTakingAPIRoutesPersistNonCriticalEvents(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -420,12 +451,8 @@ func TestReviewAndResultAPIRoutesWithSQLite(t *testing.T) {
 		"exam_id": 1,
 		"space_id": 301
 	}`), authHeader))
-	if exportRecorder.Code != http.StatusOK {
+	if exportRecorder.Code != http.StatusForbidden {
 		t.Fatalf("export status = %d, body = %s", exportRecorder.Code, exportRecorder.Body.String())
-	}
-	exportBody := decodeExamAPIResponse[resultExportResponse](t, exportRecorder.Body.Bytes())
-	if exportBody.Data.RowCount != 1 || !strings.Contains(exportBody.Data.FilePath, "exam-1-scores") {
-		t.Fatalf("unexpected export response: %#v", exportBody.Data)
 	}
 }
 
@@ -438,13 +465,9 @@ func openExamAPITestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open sqlite: %v", err)
 	}
 
-	sqlPath := filepath.Join("..", "..", "data", "migrations", "sqlite", "001_tenant_space.sql")
-	sqlBytes, err := os.ReadFile(sqlPath)
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
-	}
-	if err := gormDB.Exec(string(sqlBytes)).Error; err != nil {
-		t.Fatalf("apply migration: %v", err)
+	migrationDir := filepath.Join("..", "..", "data", "migrations", "sqlite")
+	if err := migration.Run(gormDB, migrationDir); err != nil {
+		t.Fatalf("run migration: %v", err)
 	}
 	return gormDB
 }
@@ -639,6 +662,34 @@ func seedReviewResultAPITestData(t *testing.T, gormDB *gorm.DB) {
 		) VALUES (902, 10, 900, 901, '先忧后乐体现了责任意识。', 0, 'pending', ?, ?, 7, '{}')
 	`, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed answer: %v", err)
+	}
+}
+
+func seedVisibleResultAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+	publishTime := fixedAPINow - 60_000
+	if err := gormDB.Exec(`
+		UPDATE papers
+		SET show_analysis = TRUE
+		WHERE tenant_id = 10 AND id = 100
+	`).Error; err != nil {
+		t.Fatalf("enable paper analysis: %v", err)
+	}
+	if err := gormDB.Exec(`
+		UPDATE exams
+		SET score_publish_time = ?
+		WHERE tenant_id = 10 AND id = 1
+	`, publishTime).Error; err != nil {
+		t.Fatalf("publish exam score: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_attempts (
+			id, tenant_id, exam_id, user_id, attempt_no, status, started_at, submitted_at,
+			exam_token_hash, exam_token_expires_at, objective_score, subjective_score, total_score,
+			created_at, updated_at, version, ext_json
+		) VALUES (700, 10, 1, 20, 1, 'submitted', ?, ?, 'hash-result', ?, 6, 2, 8, ?, ?, 1, '{}')
+	`, fixedAPINow-3_600_000, fixedAPINow-60_000, fixedAPINow+3_600_000, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed visible result attempt: %v", err)
 	}
 }
 
