@@ -163,7 +163,7 @@ describe("authApi", () => {
     const result = await api.listProfileSpaces();
 
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/profile/spaces",
+      "/api/v1/tenant/profile/spaces",
       expect.objectContaining({ method: "GET" }),
     );
     expect(result.items).toEqual([{

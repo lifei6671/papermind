@@ -59,11 +59,11 @@ export const userApi = createUserAPI(defaultApiClient);
 export function createUserAPI(apiClient: ApiClient): UserManagementAPI {
   return {
     async listUsers(tenantID) {
-      const data = await apiClient.get<PageData<TenantUserAPIResponse>>(`/api/v1/users?tenant_id=${tenantID}`);
+      const data = await apiClient.get<PageData<TenantUserAPIResponse>>(`/api/v1/tenant/users?tenant_id=${tenantID}`);
       return { items: data.items.map(mapUserResponse) };
     },
     async createUser(input) {
-      const data = await apiClient.post<TenantUserAPIResponse>("/api/v1/users", {
+      const data = await apiClient.post<TenantUserAPIResponse>("/api/v1/tenant/users", {
         tenant_id: input.tenantID,
         username: input.username,
         real_name: input.name,
@@ -74,7 +74,7 @@ export function createUserAPI(apiClient: ApiClient): UserManagementAPI {
       return mapUserResponse(data);
     },
     async disableUser(input) {
-      const data = await apiClient.post<TenantUserAPIResponse>(`/api/v1/users/${input.userID}/disable`, {
+      const data = await apiClient.post<TenantUserAPIResponse>(`/api/v1/tenant/users/${input.userID}/disable`, {
         tenant_id: input.tenantID,
         actor_id: input.actorID,
       });

@@ -158,6 +158,17 @@ function createPaperApiDouble(): PaperAssemblyAPI {
         status: "draft" as const,
       }],
     })),
+    createPaper: vi.fn(async (input) => ({
+      id: 101,
+      tenantID: input.tenantID,
+      ...(input.spaceID === undefined ? {} : { spaceID: input.spaceID }),
+      name: input.name,
+      description: input.description ?? "",
+      totalScore: "0",
+      buildMode: "manual",
+      status: "draft" as const,
+    })),
+    deletePaper: vi.fn(async () => undefined),
     listSections: vi.fn(async () => ({
       items: [
         {

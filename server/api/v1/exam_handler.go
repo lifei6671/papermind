@@ -40,6 +40,7 @@ type examHandler struct {
 type spaceMemberFinder interface {
 	FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (servicespace.Member, error)
 	ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]servicespace.Member, error)
+	SpaceExists(ctx context.Context, tenantID uint64, spaceID uint64) (bool, error)
 }
 
 type publishExamRequest struct {

@@ -36,7 +36,7 @@ export function App() {
 }
 
 function routeRequiresRouteGuard(group: string) {
-  return group === "platform" || group === "exam";
+  return group === "platform" || group === "tenant" || group === "exam";
 }
 
 function RequireSession({ children }: { children: ReactNode }) {

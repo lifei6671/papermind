@@ -47,7 +47,7 @@ describe("space api", () => {
         }],
       }],
     });
-    expect(fetcher).toHaveBeenCalledWith("/api/v1/spaces?tenant_id=10", expect.objectContaining({ method: "GET" }));
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/tenant/spaces?tenant_id=10", expect.objectContaining({ method: "GET" }));
   });
 
   test("创建空间会提交真实管理员用户 ID", async () => {
@@ -84,7 +84,7 @@ describe("space api", () => {
       members: [{ id: 2, name: "周老师", role: "space_admin", status: "enabled" }],
     });
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/spaces",
+      "/api/v1/tenant/spaces",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
@@ -130,7 +130,7 @@ describe("space api", () => {
       }],
     });
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/spaces/301/members?tenant_id=10",
+      "/api/v1/tenant/spaces/301/members?tenant_id=10",
       expect.objectContaining({ method: "GET" }),
     );
   });

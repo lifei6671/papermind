@@ -789,6 +789,104 @@ func TestExamEntryMiddlewareValidatesTokenBeforeHandlerPayload(t *testing.T) {
 	}
 }
 
+func TestExamEntryMiddlewareRejectsTenantAndAttemptMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+	started := startExamEntryAttemptForTest(t, router, authHeader)
+
+	for _, tc := range []struct {
+		name      string
+		attemptID uint64
+		tenantID  uint64
+	}{
+		{name: "tenant mismatch", attemptID: started.Attempt.ID, tenantID: 20},
+		{name: "attempt mismatch", attemptID: started.Attempt.ID + 999, tenantID: 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/exam-entry/attempts/"+strconv.FormatUint(tc.attemptID, 10)+"/answers/"+strconv.FormatUint(started.Questions[0].ID, 10),
+				bytes.NewReader([]byte(fmt.Sprintf(`{
+					"tenant_id": %d,
+					"exam_token": %q,
+					"question_type": %q,
+					"option_ids": [101]
+				}`, tc.tenantID, started.ExamToken, constant.QuestionTypeSingle))),
+			))
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected mismatch to be rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+
+			var answerCount int64
+			if err := gormDB.Table("exam_answers").
+				Where("tenant_id = ? AND attempt_id = ?", 10, started.Attempt.ID).
+				Count(&answerCount).Error; err != nil {
+				t.Fatalf("count answers after rejected write: %v", err)
+			}
+			if answerCount != 0 {
+				t.Fatalf("expected rejected request not to save answers, got %d", answerCount)
+			}
+		})
+	}
+}
+
+func TestExamEntryMiddlewareDerivesExamAndUserFromToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+	started := startExamEntryAttemptForTest(t, router, authHeader)
+
+	// exam-entry 写入口的 exam_id / user_id 由 exam_token 绑定的 attempt 派生，
+	// 客户端额外传入的同名字段不能改变保存答案的真实考生身份。
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/exam-entry/attempts/"+strconv.FormatUint(started.Attempt.ID, 10)+"/answers/"+strconv.FormatUint(started.Questions[0].ID, 10),
+		bytes.NewReader([]byte(fmt.Sprintf(`{
+			"tenant_id": 10,
+			"exam_id": 999,
+			"user_id": 999,
+			"exam_token": %q,
+			"question_type": %q,
+			"option_ids": [101]
+		}`, started.ExamToken, constant.QuestionTypeSingle))),
+	))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected token-scoped save to succeed, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var saved struct {
+		TenantID  uint64 `gorm:"column:tenant_id"`
+		AttemptID uint64 `gorm:"column:attempt_id"`
+		UpdatedBy uint64 `gorm:"column:updated_by"`
+	}
+	if err := gormDB.Table("exam_answers").
+		Select("tenant_id", "attempt_id", "updated_by").
+		Where("tenant_id = ? AND attempt_id = ? AND attempt_question_id = ?", 10, started.Attempt.ID, started.Questions[0].ID).
+		Scan(&saved).Error; err != nil {
+		t.Fatalf("query saved answer: %v", err)
+	}
+	if saved.TenantID != 10 || saved.AttemptID != started.Attempt.ID || saved.UpdatedBy != started.Attempt.UserID {
+		t.Fatalf("expected answer scope to come from token-bound attempt, got %#v", saved)
+	}
+}
+
 func TestExamEntryResultVisibleForOwnerOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

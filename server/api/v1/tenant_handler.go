@@ -6,7 +6,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lifei6671/papermind/server/api/middleware"
+	dbdao "github.com/lifei6671/papermind/server/internal/dao/db"
+	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenant "github.com/lifei6671/papermind/server/internal/service/tenant"
+	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/crypto"
 	"github.com/lifei6671/papermind/server/library/response"
@@ -18,6 +21,9 @@ import (
 // 进入平台治理能力。
 type tenantHandler struct {
 	service *servicetenant.Service
+	spaces  *servicespace.Service
+	users   *servicetenantuser.Service
+	members *dbdao.SpaceRepository
 }
 
 type createTenantRequest struct {
@@ -80,6 +86,75 @@ func (h tenantHandler) list(c *gin.Context) {
 	}
 	paged := response.Page(items, result.Page, result.PageSize, result.Total)
 	c.JSON(http.StatusOK, response.OK(tenantListResponse{
+		Items:    paged.Items,
+		Page:     paged.Page,
+		PageSize: paged.PageSize,
+		Total:    paged.Total,
+	}))
+}
+
+func (h tenantHandler) listTenantSpaces(c *gin.Context) {
+	if _, ok := requirePlatformActor(c); !ok {
+		return
+	}
+	tenantID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "租户 ID 必须是正整数"))
+		return
+	}
+	page, pageSize, err := readPaginationQuery(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
+		return
+	}
+	result, err := h.spaces.List(c.Request.Context(), servicespace.ListInput{TenantID: tenantID, Page: page, PageSize: pageSize})
+	if err != nil {
+		writeTenantInternalError(c, "读取租户空间列表失败", err)
+		return
+	}
+	items := make([]spaceResponse, 0, len(result.Items))
+	for _, space := range result.Items {
+		item, err := (spaceHandler{members: h.members}).spaceToResponse(c.Request.Context(), space)
+		if err != nil {
+			writeTenantInternalError(c, "读取租户空间成员失败", err)
+			return
+		}
+		items = append(items, item)
+	}
+	paged := response.Page(items, result.Page, result.PageSize, result.Total)
+	c.JSON(http.StatusOK, response.OK(spaceListResponse{
+		Items:    paged.Items,
+		Page:     paged.Page,
+		PageSize: paged.PageSize,
+		Total:    paged.Total,
+	}))
+}
+
+func (h tenantHandler) listTenantUsers(c *gin.Context) {
+	if _, ok := requirePlatformActor(c); !ok {
+		return
+	}
+	tenantID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "租户 ID 必须是正整数"))
+		return
+	}
+	page, pageSize, err := readPaginationQuery(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
+		return
+	}
+	result, err := h.users.List(c.Request.Context(), servicetenantuser.ListInput{TenantID: tenantID, Page: page, PageSize: pageSize})
+	if err != nil {
+		writeTenantInternalError(c, "读取租户用户列表失败", err)
+		return
+	}
+	items := make([]userResponse, 0, len(result.Items))
+	for _, user := range result.Items {
+		items = append(items, userToResponse(user))
+	}
+	paged := response.Page(items, result.Page, result.PageSize, result.Total)
+	c.JSON(http.StatusOK, response.OK(userListResponse{
 		Items:    paged.Items,
 		Page:     paged.Page,
 		PageSize: paged.PageSize,

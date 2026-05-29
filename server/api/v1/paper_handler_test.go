@@ -162,6 +162,72 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 	}
 }
 
+func TestTenantAdminCanCreateAndDeletePublicPaperWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers", []byte(`{
+		"tenant_id": 10,
+		"name": "租户公共试卷",
+		"description": "租户管理员维护的公共试卷",
+		"shuffle_questions": true,
+		"show_analysis": true
+	}`), authHeader))
+	if createRecorder.Code != http.StatusOK {
+		t.Fatalf("create public paper status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
+	}
+	createBody := decodeExamAPIResponse[paperResponse](t, createRecorder.Body.Bytes())
+	if createBody.Data.SpaceID != nil || createBody.Data.BuildMode != constant.BuildModeManual || createBody.Data.Status != constant.PaperStatusDraft {
+		t.Fatalf("unexpected created public paper: %#v", createBody.Data)
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, fmt.Sprintf("/api/v1/papers/%d?tenant_id=10", createBody.Data.ID), nil, authHeader))
+	if deleteRecorder.Code != http.StatusOK {
+		t.Fatalf("delete public paper status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+
+	var activeCount int64
+	if err := gormDB.Table("papers").
+		Where("tenant_id = ? AND id = ? AND deleted_at = 0", 10, createBody.Data.ID).
+		Count(&activeCount).Error; err != nil {
+		t.Fatalf("count active public paper: %v", err)
+	}
+	if activeCount != 0 {
+		t.Fatalf("expected public paper to be soft deleted, got active count %d", activeCount)
+	}
+}
+
+func TestTenantAdminCannotCreatePaperForMissingSpaceWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/papers", []byte(`{
+		"tenant_id": 10,
+		"space_id": 404,
+		"name": "无效空间试卷"
+	}`), authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing space paper create to be rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestTeacherCannotWritePublicPaper(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -193,6 +259,100 @@ func TestTeacherCannotWritePublicPaper(t *testing.T) {
 	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/papers/200/sections", payload, authHeader))
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("expected teacher public paper write to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestTeacherCannotCreateOrDeletePublicPaperWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPaperAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+
+	if err := gormDB.Exec(`
+		INSERT INTO papers (
+			id, tenant_id, space_id, name, description, total_score, build_mode, status,
+			created_at, updated_at, ext_json
+		) VALUES (?, ?, NULL, ?, '', 0, ?, 'draft', ?, ?, '{}')
+	`, 200, 10, "租户公共试卷", constant.BuildModeManual, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed public paper: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers", []byte(`{
+		"tenant_id": 10,
+		"name": "教师越权公共试卷"
+	}`), authHeader))
+	if createRecorder.Code != http.StatusForbidden {
+		t.Fatalf("expected teacher public paper create to be forbidden, got status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/papers/200?tenant_id=10", nil, authHeader))
+	if deleteRecorder.Code != http.StatusForbidden {
+		t.Fatalf("expected teacher public paper delete to be forbidden, got status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+
+	var activeCount int64
+	if err := gormDB.Table("papers").
+		Where("tenant_id = ? AND id = ? AND deleted_at = 0", 10, 200).
+		Count(&activeCount).Error; err != nil {
+		t.Fatalf("count public paper after forbidden delete: %v", err)
+	}
+	if activeCount != 1 {
+		t.Fatalf("expected forbidden delete to keep public paper active, got %d", activeCount)
+	}
+}
+
+func TestCannotDeletePaperReferencedByExamWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/papers/100?tenant_id=10", nil, authHeader))
+	if deleteRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected referenced paper delete to be rejected, got status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+
+	var activeCount int64
+	if err := gormDB.Table("papers").
+		Where("tenant_id = ? AND id = ? AND deleted_at = 0", 10, 100).
+		Count(&activeCount).Error; err != nil {
+		t.Fatalf("count referenced paper after rejected delete: %v", err)
+	}
+	if activeCount != 1 {
+		t.Fatalf("expected referenced paper to stay active, got %d", activeCount)
+	}
+}
+
+func TestDeleteMissingPaperReturnsBusinessErrorWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodDelete, "/api/v1/papers/404?tenant_id=10", nil, authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing paper delete to return business error, got status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

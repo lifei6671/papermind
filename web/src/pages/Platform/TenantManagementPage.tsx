@@ -9,16 +9,12 @@ import { tenantApi } from "../../api/tenants";
 import type { TenantManagementAPI, TenantRow } from "../../api/tenants";
 import { uploadApi } from "../../api/uploads";
 import type { UploadAPI } from "../../api/uploads";
-import { spaceApi as defaultSpaceApi } from "../../api/spaces";
-import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
-import { userApi as defaultUserApi } from "../../api/users";
-import type { TenantUserRow, UserManagementAPI } from "../../api/users";
+import type { SpaceRow } from "../../api/spaces";
+import type { TenantUserRow } from "../../api/users";
 
 type TenantManagementPageProps = {
   api?: TenantManagementAPI;
-  spaceAPI?: Pick<SpaceManagementAPI, "listSpaces">;
   uploadAPI?: UploadAPI;
-  userAPI?: Pick<UserManagementAPI, "listUsers">;
 };
 
 type TenantResourceDrawer = {
@@ -28,9 +24,7 @@ type TenantResourceDrawer = {
 
 export function TenantManagementPage({
   api = tenantApi,
-  spaceAPI = defaultSpaceApi,
   uploadAPI = uploadApi,
-  userAPI = defaultUserApi,
 }: TenantManagementPageProps) {
   const [tenants, setTenants] = useState<TenantRow[]>([]);
   const [name, setName] = useState("");
@@ -256,10 +250,10 @@ export function TenantManagementPage({
 
     try {
       if (kind === "spaces") {
-        const data = await spaceAPI.listSpaces(tenant.id);
+        const data = await api.listTenantSpaces(tenant.id);
         setResourceSpaces(data.items);
       } else {
-        const data = await userAPI.listUsers(tenant.id);
+        const data = await api.listTenantUsers(tenant.id);
         setResourceUsers(data.items);
       }
     } catch {

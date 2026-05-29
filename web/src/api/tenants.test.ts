@@ -183,4 +183,58 @@ describe("tenant api", () => {
       }),
     );
   });
+
+  test("平台租户资源抽屉会读取平台侧只读空间和用户接口", async () => {
+    const fetcher = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/tenants/10/spaces") {
+        return Promise.resolve(new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: {
+            items: [{
+              id: 301,
+              tenant_id: 10,
+              name: "高一一班",
+              logo_url: "",
+              description: "理科班",
+              members: [{ id: 1, user_id: 20, name: "李老师", role: "space_admin", status: "enabled" }],
+            }],
+            page: 1,
+            page_size: 20,
+            total: 1,
+          },
+        })));
+      }
+      return Promise.resolve(new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 20,
+            tenant_id: 10,
+            username: "teacher01",
+            real_name: "李老师",
+            avatar_url: "",
+            role: "teacher",
+            status: "enabled",
+          }],
+          page: 1,
+          page_size: 20,
+          total: 1,
+        },
+      })));
+    });
+    const api = createTenantAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.listTenantSpaces(10)).resolves.toMatchObject({
+      items: [{ id: 301, tenantID: 10, name: "高一一班" }],
+    });
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/tenants/10/spaces", expect.objectContaining({ method: "GET" }));
+
+    await expect(api.listTenantUsers(10)).resolves.toMatchObject({
+      items: [{ id: 20, tenantID: 10, username: "teacher01", name: "李老师" }],
+    });
+    expect(fetcher).toHaveBeenLastCalledWith("/api/v1/tenants/10/users", expect.objectContaining({ method: "GET" }));
+  });
 });

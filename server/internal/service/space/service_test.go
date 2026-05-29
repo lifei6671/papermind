@@ -71,6 +71,41 @@ func TestCreateSpaceAllowsEmptyLogoAndDescription(t *testing.T) {
 	}
 }
 
+func TestUpdateProfileSavesSpaceProfileFields(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	updated, err := svc.UpdateProfile(context.Background(), UpdateProfileInput{
+		TenantID:    10,
+		SpaceID:     100,
+		Name:        "高一二班",
+		LogoURL:     "logos/class2.png",
+		Description: "高一二班考试空间",
+		Type:        "class",
+	})
+	if err != nil {
+		t.Fatalf("UpdateProfile returned error: %v", err)
+	}
+	if updated.Name != "高一二班" || updated.LogoURL != "logos/class2.png" {
+		t.Fatalf("unexpected updated space: %#v", updated)
+	}
+	if repo.updatedProfile.SpaceID != 100 || repo.updatedProfile.Description != "高一二班考试空间" {
+		t.Fatalf("expected repository update input, got %#v", repo.updatedProfile)
+	}
+}
+
+func TestDeleteSpaceUsesTenantAndSpaceScope(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	if err := svc.Delete(context.Background(), DeleteInput{TenantID: 10, SpaceID: 100}); err != nil {
+		t.Fatalf("Delete returned error: %v", err)
+	}
+	if repo.deletedTenantID != 10 || repo.deletedSpaceID != 100 {
+		t.Fatalf("expected delete tenant=10 space=100, got tenant=%d space=%d", repo.deletedTenantID, repo.deletedSpaceID)
+	}
+}
+
 func TestJoinMemberCreatesEnabledMember(t *testing.T) {
 	repo := &fakeRepository{}
 	svc := NewService(ServiceOptions{Repo: repo})
@@ -92,6 +127,45 @@ func TestJoinMemberCreatesEnabledMember(t *testing.T) {
 	}
 	if repo.addedMember.Role != RoleTeacher {
 		t.Fatalf("expected teacher role, got %q", repo.addedMember.Role)
+	}
+}
+
+func TestJoinMemberRejectsInvalidRole(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	err := func() error {
+		_, err := svc.JoinMember(context.Background(), JoinMemberInput{
+			TenantID: 10,
+			SpaceID:  100,
+			UserID:   20,
+			Role:     "owner",
+		})
+		return err
+	}()
+	if !errors.Is(err, ErrInvalidMemberRole) {
+		t.Fatalf("expected ErrInvalidMemberRole, got %v", err)
+	}
+	if repo.addedMember.UserID != 0 {
+		t.Fatalf("expected invalid role not to reach repository, got %#v", repo.addedMember)
+	}
+}
+
+func TestChangeMemberRoleRejectsInvalidRole(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	err := svc.ChangeMemberRole(context.Background(), ChangeRoleInput{
+		TenantID: 10,
+		SpaceID:  100,
+		UserID:   20,
+		Role:     "owner",
+	})
+	if !errors.Is(err, ErrInvalidMemberRole) {
+		t.Fatalf("expected ErrInvalidMemberRole, got %v", err)
+	}
+	if repo.changedRole != "" {
+		t.Fatalf("expected invalid role not to reach repository, got %q", repo.changedRole)
 	}
 }
 
@@ -255,6 +329,10 @@ type fakeRepository struct {
 	createdSpace        Space
 	createdAdminUserIDs []uint64
 
+	updatedProfile  UpdateProfileInput
+	deletedTenantID uint64
+	deletedSpaceID  uint64
+
 	addedMember Member
 
 	effectiveMembers    []Member
@@ -290,6 +368,25 @@ func (r *fakeRepository) CreateSpace(ctx context.Context, space Space, adminUser
 	r.createdSpace = space
 	r.createdAdminUserIDs = adminUserIDs
 	return space, nil
+}
+
+func (r *fakeRepository) UpdateSpaceProfile(ctx context.Context, input UpdateProfileInput) (Space, error) {
+	r.updatedProfile = input
+	return Space{
+		ID:          input.SpaceID,
+		TenantID:    input.TenantID,
+		Name:        input.Name,
+		LogoURL:     input.LogoURL,
+		Description: input.Description,
+		Type:        input.Type,
+		Status:      StatusEnabled,
+	}, nil
+}
+
+func (r *fakeRepository) DeleteSpace(ctx context.Context, tenantID uint64, spaceID uint64) error {
+	r.deletedTenantID = tenantID
+	r.deletedSpaceID = spaceID
+	return nil
 }
 
 func (r *fakeRepository) AddMember(ctx context.Context, member Member) (Member, error) {

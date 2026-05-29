@@ -12,6 +12,7 @@ import (
 	"github.com/lifei6671/papermind/server/library/constant"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type TenantUserRepository struct {
@@ -271,7 +272,15 @@ func (r *TenantUserRepository) BuildDisableImpact(ctx context.Context, tenantID 
 
 func (r *TenantUserRepository) UpdateStatus(ctx context.Context, tenantID uint64, userID uint64, status string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&UserDO{}).
+		if status == servicetenantuser.StatusDisabled {
+			if err := r.lockTenantAdminRows(ctx, tx, tenantID); err != nil {
+				return err
+			}
+			if err := r.lockSpaceAdminRowsForUserDisable(ctx, tx, tenantID, userID); err != nil {
+				return err
+			}
+		}
+		result := tx.Model(&UserDO{}).
 			Where(UserColumns.TenantID+" = ?", tenantID).
 			Where(UserColumns.ID+" = ?", userID).
 			Where(UserColumns.DeletedAt+" = ?", 0).
@@ -280,8 +289,12 @@ func (r *TenantUserRepository) UpdateStatus(ctx context.Context, tenantID uint64
 				BaseColumns.UpdatedAt:     r.now(),
 				BaseColumns.UpdatedByType: AuditActorTenantUser,
 				BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
-			}).Error; err != nil {
-			return err
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicetenantuser.ErrUserNotFound
 		}
 		if status == servicetenantuser.StatusDisabled {
 			if err := r.validateTenantAdminInvariant(ctx, tx, tenantID); err != nil {
@@ -293,6 +306,246 @@ func (r *TenantUserRepository) UpdateStatus(ctx context.Context, tenantID uint64
 		}
 		return nil
 	})
+}
+
+func (r *TenantUserRepository) DeleteUser(ctx context.Context, tenantID uint64, userID uint64) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := r.lockTenantAdminRows(ctx, tx, tenantID); err != nil {
+			return err
+		}
+		if err := r.lockSpaceAdminRowsForUserDisable(ctx, tx, tenantID, userID); err != nil {
+			return err
+		}
+		now := r.now()
+		result := tx.Model(&UserDO{}).
+			Where(UserColumns.TenantID+" = ?", tenantID).
+			Where(UserColumns.ID+" = ?", userID).
+			Where(UserColumns.DeletedAt+" = ?", 0).
+			Updates(map[string]any{
+				UserColumns.DeletedAt:     now,
+				BaseColumns.UpdatedAt:     now,
+				BaseColumns.UpdatedByType: AuditActorTenantUser,
+				BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicetenantuser.ErrUserNotFound
+		}
+		// 用户删除会让租户角色和空间管理员身份同时失效，两个不变式必须基于删除后的状态校验。
+		if err := r.validateTenantAdminInvariant(ctx, tx, tenantID); err != nil {
+			return err
+		}
+		return r.validateSpaceAdminInvariantAfterUserStatusChange(ctx, tx, tenantID, userID)
+	})
+}
+
+func (r *TenantUserRepository) UpdateRole(ctx context.Context, tenantID uint64, userID uint64, role string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := r.lockTenantAdminRows(ctx, tx, tenantID); err != nil {
+			return err
+		}
+		if err := r.lockUserRow(ctx, tx, tenantID, userID); err != nil {
+			return err
+		}
+		result := tx.Model(&UserRoleDO{}).
+			Where(UserRoleColumns.TenantID+" = ?", tenantID).
+			Where(UserRoleColumns.UserID+" = ?", userID).
+			Updates(map[string]any{
+				UserRoleColumns.Role:      role,
+				BaseColumns.UpdatedAt:     r.now(),
+				BaseColumns.UpdatedByType: AuditActorTenantUser,
+				BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicetenantuser.ErrUserNotFound
+		}
+		// 租户级角色变更会让 tenant_admin 身份立即生效或失效，必须按变更后状态校验。
+		return r.validateTenantAdminInvariant(ctx, tx, tenantID)
+	})
+}
+
+func (r *TenantUserRepository) ImportUsers(ctx context.Context, input servicetenantuser.ImportUsersRepositoryInput) (servicetenantuser.ImportUsersResult, error) {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := r.lockTenantAdminRows(ctx, tx, input.TenantID); err != nil {
+			return err
+		}
+		for _, row := range input.Rows {
+			user, err := r.findUserByUsernameForUpdate(ctx, tx, input.TenantID, row.Username)
+			if errors.Is(err, servicetenantuser.ErrUserNotFound) {
+				if err := r.createImportedUser(ctx, tx, input.TenantID, row); err != nil {
+					return err
+				}
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			currentRole, err := r.findRoleByUserIDWithDB(ctx, tx, input.TenantID, user.ID)
+			if err != nil {
+				return err
+			}
+			if user.ID == input.ActorID && currentRole != row.Role {
+				return servicetenantuser.ErrCannotChangeSelfRole
+			}
+			if err := r.updateImportedUser(ctx, tx, user.ID, input.TenantID, row); err != nil {
+				return err
+			}
+		}
+		// 批量导入允许一次提交内完成租户管理员交接，最终状态仍必须保留至少一个启用管理员。
+		return r.validateTenantAdminInvariant(ctx, tx, input.TenantID)
+	})
+	if err != nil {
+		return servicetenantuser.ImportUsersResult{}, err
+	}
+	return servicetenantuser.ImportUsersResult{SuccessCount: len(input.Rows)}, nil
+}
+
+func (r *TenantUserRepository) createImportedUser(ctx context.Context, tx *gorm.DB, tenantID uint64, row servicetenantuser.ImportUsersRepositoryRow) error {
+	user, err := r.createUser(ctx, tx, servicetenantuser.User{
+		TenantID:     tenantID,
+		Username:     row.Username,
+		RealName:     row.RealName,
+		AvatarURL:    row.AvatarURL,
+		PasswordHash: row.PasswordHash,
+		Role:         row.Role,
+		Status:       servicetenantuser.StatusEnabled,
+	})
+	if err != nil {
+		return err
+	}
+	return r.createUserRole(ctx, tx, tenantID, user.ID, row.Role)
+}
+
+func (r *TenantUserRepository) updateImportedUser(ctx context.Context, tx *gorm.DB, userID uint64, tenantID uint64, row servicetenantuser.ImportUsersRepositoryRow) error {
+	now := r.now()
+	userResult := tx.WithContext(ctx).Model(&UserDO{}).
+		Where(UserColumns.TenantID+" = ?", tenantID).
+		Where(UserColumns.ID+" = ?", userID).
+		Where(UserColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			UserColumns.RealName:      row.RealName,
+			UserColumns.AvatarURL:     row.AvatarURL,
+			UserColumns.PasswordHash:  row.PasswordHash,
+			BaseColumns.UpdatedAt:     now,
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if userResult.Error != nil {
+		return userResult.Error
+	}
+	if userResult.RowsAffected == 0 {
+		return servicetenantuser.ErrUserNotFound
+	}
+	roleResult := tx.WithContext(ctx).Model(&UserRoleDO{}).
+		Where(UserRoleColumns.TenantID+" = ?", tenantID).
+		Where(UserRoleColumns.UserID+" = ?", userID).
+		Updates(map[string]any{
+			UserRoleColumns.Role:      row.Role,
+			BaseColumns.UpdatedAt:     now,
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if roleResult.Error != nil {
+		return roleResult.Error
+	}
+	if roleResult.RowsAffected == 0 {
+		return servicetenantuser.ErrUserNotFound
+	}
+	return nil
+}
+
+func (r *TenantUserRepository) findUserByUsernameForUpdate(ctx context.Context, tx *gorm.DB, tenantID uint64, username string) (servicetenantuser.User, error) {
+	var row UserDO
+	err := tx.WithContext(ctx).Model(&UserDO{}).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(UserColumns.TenantID+" = ?", tenantID).
+		Where(UserColumns.Username+" = ?", username).
+		Where(UserColumns.DeletedAt+" = ?", 0).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return servicetenantuser.User{}, servicetenantuser.ErrUserNotFound
+	}
+	if err != nil {
+		return servicetenantuser.User{}, err
+	}
+	return tenantUserFromDO(row, ""), nil
+}
+
+func (r *TenantUserRepository) lockUserRow(ctx context.Context, tx *gorm.DB, tenantID uint64, userID uint64) error {
+	var row UserDO
+	err := tx.WithContext(ctx).Model(&UserDO{}).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(UserColumns.TenantID+" = ?", tenantID).
+		Where(UserColumns.ID+" = ?", userID).
+		Where(UserColumns.DeletedAt+" = ?", 0).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return servicetenantuser.ErrUserNotFound
+	}
+	return err
+}
+
+func (r *TenantUserRepository) lockTenantAdminRows(ctx context.Context, tx *gorm.DB, tenantID uint64) error {
+	var rows []UserDO
+	return r.tenantAdminLockQuery(ctx, tx, tenantID).Find(&rows).Error
+}
+
+func (r *TenantUserRepository) tenantAdminLockQuery(ctx context.Context, gormDB *gorm.DB, tenantID uint64) *gorm.DB {
+	adminUserIDs := gormDB.WithContext(ctx).Model(&UserRoleDO{}).
+		Select(UserRoleColumns.UserID).
+		Where(UserRoleColumns.TenantID+" = ?", tenantID).
+		Where(UserRoleColumns.Role+" = ?", constant.RoleTenantAdmin)
+	return gormDB.WithContext(ctx).Model(&UserDO{}).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(UserColumns.TenantID+" = ?", tenantID).
+		Where(UserColumns.ID+" IN (?)", adminUserIDs).
+		Where(UserColumns.Status+" = ?", servicetenantuser.StatusEnabled).
+		Where(UserColumns.DeletedAt+" = ?", 0)
+}
+
+func (r *TenantUserRepository) lockSpaceAdminRowsForUserDisable(ctx context.Context, tx *gorm.DB, tenantID uint64, userID uint64) error {
+	var spaceIDs []uint64
+	enabledSpaceIDs := tx.WithContext(ctx).Model(&SpaceDO{}).
+		Select(SpaceColumns.ID).
+		Where(SpaceColumns.TenantID+" = ?", tenantID).
+		Where(SpaceColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceColumns.DeletedAt+" = ?", 0)
+	if err := tx.WithContext(ctx).Model(&SpaceMemberDO{}).
+		Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
+		Where(SpaceMemberColumns.UserID+" = ?", userID).
+		Where(SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
+		Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+		Where(SpaceMemberColumns.SpaceID+" IN (?)", enabledSpaceIDs).
+		Pluck(SpaceMemberColumns.SpaceID, &spaceIDs).Error; err != nil {
+		return err
+	}
+	if len(spaceIDs) == 0 {
+		return nil
+	}
+	var rows []SpaceMemberDO
+	return r.spaceAdminLockQuery(ctx, tx, tenantID, spaceIDs).Find(&rows).Error
+}
+
+func (r *TenantUserRepository) spaceAdminLockQuery(ctx context.Context, gormDB *gorm.DB, tenantID uint64, spaceIDs []uint64) *gorm.DB {
+	enabledSpaceIDs := gormDB.WithContext(ctx).Model(&SpaceDO{}).
+		Select(SpaceColumns.ID).
+		Where(SpaceColumns.TenantID+" = ?", tenantID).
+		Where(SpaceColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceColumns.DeletedAt+" = ?", 0)
+	return gormDB.WithContext(ctx).Model(&SpaceMemberDO{}).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
+		Where(SpaceMemberColumns.SpaceID+" IN ?", spaceIDs).
+		Where(SpaceMemberColumns.SpaceID+" IN (?)", enabledSpaceIDs).
+		Where(SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
+		Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceMemberColumns.DeletedAt+" = ?", 0)
 }
 
 func (r *TenantUserRepository) validateTenantAdminInvariant(ctx context.Context, tx *gorm.DB, tenantID uint64) error {
@@ -394,8 +647,12 @@ func (r *TenantUserRepository) listRolesByUserIDs(ctx context.Context, tenantID 
 }
 
 func (r *TenantUserRepository) findRoleByUserID(ctx context.Context, tenantID uint64, userID uint64) (string, error) {
+	return r.findRoleByUserIDWithDB(ctx, r.db, tenantID, userID)
+}
+
+func (r *TenantUserRepository) findRoleByUserIDWithDB(ctx context.Context, gormDB *gorm.DB, tenantID uint64, userID uint64) (string, error) {
 	var row UserRoleDO
-	err := r.db.WithContext(ctx).
+	err := gormDB.WithContext(ctx).
 		Where(UserRoleColumns.TenantID+" = ?", tenantID).
 		Where(UserRoleColumns.UserID+" = ?", userID).
 		First(&row).Error

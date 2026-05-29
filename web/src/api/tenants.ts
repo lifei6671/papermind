@@ -1,6 +1,8 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
 import { readStoredAccessToken } from "./session-token";
+import type { MemberRole, SpaceListResult } from "./spaces";
+import type { TenantUserListResult, UserRole } from "./users";
 
 export type TenantRow = {
   id: number;
@@ -46,6 +48,8 @@ export type TenantManagementAPI = {
   resetTenantCode(tenantID: number): Promise<TenantRow>;
   disableTenantRegistration(tenantID: number): Promise<TenantRow>;
   enableTenantRegistration(tenantID: number): Promise<TenantRow>;
+  listTenantSpaces(tenantID: number): Promise<SpaceListResult>;
+  listTenantUsers(tenantID: number): Promise<TenantUserListResult>;
 };
 
 type TenantAPIResponse = {
@@ -55,6 +59,33 @@ type TenantAPIResponse = {
   description: string;
   tenant_code: string;
   allow_register: boolean;
+  status: "enabled" | "disabled";
+};
+
+type PlatformTenantSpaceMemberAPIResponse = {
+  id: number;
+  user_id: number;
+  name: string;
+  role: MemberRole;
+  status: "enabled" | "disabled";
+};
+
+type PlatformTenantSpaceAPIResponse = {
+  id: number;
+  tenant_id: number;
+  name: string;
+  logo_url: string;
+  description: string;
+  members: PlatformTenantSpaceMemberAPIResponse[];
+};
+
+type PlatformTenantUserAPIResponse = {
+  id: number;
+  tenant_id: number;
+  username: string;
+  real_name: string;
+  avatar_url: string;
+  role: UserRole;
   status: "enabled" | "disabled";
 };
 
@@ -104,6 +135,39 @@ export function createTenantAPI(apiClient: ApiClient): TenantManagementAPI {
     },
     async enableTenantRegistration(tenantID) {
       return updateTenantRegisterSetting(apiClient, tenantID, true);
+    },
+    async listTenantSpaces(tenantID) {
+      const data = await apiClient.get<PageData<PlatformTenantSpaceAPIResponse>>(`/api/v1/tenants/${tenantID}/spaces`);
+      return {
+        items: data.items.map((row) => ({
+          id: row.id,
+          tenantID: row.tenant_id,
+          name: row.name,
+          description: row.description,
+          logoFileName: row.logo_url || "未上传",
+          members: row.members.map((member) => ({
+            id: member.id,
+            userID: member.user_id,
+            name: member.name,
+            role: member.role,
+            status: member.status,
+          })),
+        })),
+      };
+    },
+    async listTenantUsers(tenantID) {
+      const data = await apiClient.get<PageData<PlatformTenantUserAPIResponse>>(`/api/v1/tenants/${tenantID}/users`);
+      return {
+        items: data.items.map((row) => ({
+          id: row.id,
+          tenantID: row.tenant_id,
+          name: row.real_name,
+          username: row.username,
+          role: row.role,
+          avatarFileName: row.avatar_url || "未上传",
+          status: row.status,
+        })),
+      };
     },
   };
 }

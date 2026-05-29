@@ -111,6 +111,90 @@ func TestQuestionImportAPIRouteParsesCSVAndReturnsRowErrors(t *testing.T) {
 	}
 }
 
+func TestTeacherCannotCreateQuestionInInactiveSpace(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		update string
+	}{
+		{name: "disabled space", update: "status = 'disabled'"},
+		{name: "deleted space", update: "deleted_at = 1700000000000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			gormDB := openExamAPITestDB(t)
+			seedSpaceAPITestData(t, gormDB)
+			seedProfileSpacesAPITestData(t, gormDB)
+			if err := gormDB.Exec("UPDATE spaces SET "+tc.update+" WHERE tenant_id = ? AND id = ?", 10, 100).Error; err != nil {
+				t.Fatalf("mark space inactive: %v", err)
+			}
+
+			router := NewRouter(RouterOptions{
+				DB:  gormDB,
+				Now: func() int64 { return fixedAPINow },
+			})
+			authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+			payload := []byte(fmt.Sprintf(`{
+				"tenant_id": 10,
+				"space_id": 100,
+				"type": "%s",
+				"difficulty": "medium",
+				"title": "空间失效后不可写题",
+				"analysis": "空间不可用时拒绝题库写入。",
+				"score_default": "2",
+				"tags": ["权限"],
+				"options": [
+					{"option_key": "A", "content": "拒绝", "is_correct": true},
+					{"option_key": "B", "content": "允许", "is_distractor": true}
+				]
+			}`, constant.QuestionTypeSingle))
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/questions", payload, authHeader))
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("expected inactive space create to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestDisabledTeacherCannotCreateQuestionWithStaleSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedProfileSpacesAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+	if err := gormDB.Table("users").
+		Where("tenant_id = ? AND id = ?", 10, 20).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable teacher after login: %v", err)
+	}
+	payload := []byte(fmt.Sprintf(`{
+		"tenant_id": 10,
+		"space_id": 100,
+		"type": "%s",
+		"difficulty": "medium",
+		"title": "禁用用户旧会话不可写题",
+		"analysis": "用户禁用后空间授权立即失效。",
+		"score_default": "2",
+		"tags": ["权限"],
+		"options": [
+			{"option_key": "A", "content": "拒绝", "is_correct": true},
+			{"option_key": "B", "content": "允许", "is_distractor": true}
+		]
+	}`, constant.QuestionTypeSingle))
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/questions", payload, authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled user stale session to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func seedQuestionAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
 

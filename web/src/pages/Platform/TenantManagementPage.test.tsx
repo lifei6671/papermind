@@ -71,24 +71,7 @@ function createTenantAPI() {
       logoFileName: "zhixing.png",
       allowRegister: true,
     }),
-  };
-}
-
-function createUploadAPI() {
-  return {
-    uploadFile: vi.fn().mockResolvedValue({
-      key: "tenant-logos/20260527/xinghai.png",
-      url: "/uploads/tenant-logos/xinghai.png",
-      fileName: "xinghai.png",
-      contentType: "image/png",
-      size: 4,
-    }),
-  };
-}
-
-function createSpaceAPI() {
-  return {
-    listSpaces: vi.fn().mockResolvedValue({
+    listTenantSpaces: vi.fn().mockResolvedValue({
       items: [{
         id: 101,
         tenantID: 1,
@@ -101,12 +84,7 @@ function createSpaceAPI() {
         ],
       }],
     }),
-  };
-}
-
-function createUserAPI() {
-  return {
-    listUsers: vi.fn().mockResolvedValue({
+    listTenantUsers: vi.fn().mockResolvedValue({
       items: [{
         id: 201,
         tenantID: 1,
@@ -116,6 +94,18 @@ function createUserAPI() {
         avatarFileName: "lin.png",
         status: "enabled",
       }],
+    }),
+  };
+}
+
+function createUploadAPI() {
+  return {
+    uploadFile: vi.fn().mockResolvedValue({
+      key: "tenant-logos/20260527/xinghai.png",
+      url: "/uploads/tenant-logos/xinghai.png",
+      fileName: "xinghai.png",
+      contentType: "image/png",
+      size: 4,
     }),
   };
 }
@@ -145,13 +135,11 @@ test("租户管理页展示租户列表和租户码", async () => {
 test("租户管理页通过右侧抽屉查看租户空间", async () => {
   const user = userEvent.setup();
   const api = createTenantAPI();
-  const spaceAPI = createSpaceAPI();
-  const userAPI = createUserAPI();
-  render(<TenantManagementPage api={api} spaceAPI={spaceAPI} userAPI={userAPI} />);
+  render(<TenantManagementPage api={api} />);
 
   await user.click(await screen.findByRole("button", { name: "查看青藤一中空间" }));
 
-  expect(spaceAPI.listSpaces).toHaveBeenCalledWith(1);
+  expect(api.listTenantSpaces).toHaveBeenCalledWith(1);
   const drawer = await screen.findByRole("dialog", { name: "青藤一中空间抽屉" });
   const drawerLayer = screen.getByTestId("tenant-resource-drawer-layer");
   expect(drawerLayer).toHaveClass("tenant-resource-drawer-layer--overlay");
@@ -197,13 +185,11 @@ test("租户管理页通过右侧抽屉查看租户空间", async () => {
 test("租户管理页通过右侧抽屉查看租户用户", async () => {
   const user = userEvent.setup();
   const api = createTenantAPI();
-  const spaceAPI = createSpaceAPI();
-  const userAPI = createUserAPI();
-  render(<TenantManagementPage api={api} spaceAPI={spaceAPI} userAPI={userAPI} />);
+  render(<TenantManagementPage api={api} />);
 
   await user.click(await screen.findByRole("button", { name: "查看青藤一中用户" }));
 
-  expect(userAPI.listUsers).toHaveBeenCalledWith(1);
+  expect(api.listTenantUsers).toHaveBeenCalledWith(1);
   const drawer = await screen.findByRole("dialog", { name: "青藤一中用户抽屉" });
   const drawerLayer = screen.getByTestId("tenant-resource-drawer-layer");
   expect(drawer).toHaveClass("tenant-resource-drawer--half");

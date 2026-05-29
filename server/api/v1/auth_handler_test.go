@@ -200,6 +200,70 @@ func TestProfileSpacesAPIRouteListsCurrentTenantUserMemberships(t *testing.T) {
 	}
 }
 
+func TestProfileSpacesAPIRouteExcludesInactiveSpaces(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		update string
+	}{
+		{name: "disabled space", update: "status = 'disabled'"},
+		{name: "deleted space", update: "deleted_at = 1700000000000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			gormDB := openExamAPITestDB(t)
+			seedSpaceAPITestData(t, gormDB)
+			seedProfileSpacesAPITestData(t, gormDB)
+			if err := gormDB.Exec("UPDATE spaces SET "+tc.update+" WHERE tenant_id = ? AND id = ?", 10, 100).Error; err != nil {
+				t.Fatalf("mark space inactive: %v", err)
+			}
+
+			router := NewRouter(RouterOptions{
+				DB:  gormDB,
+				Now: func() int64 { return fixedAPINow },
+			})
+			authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/tenant/profile/spaces", nil, authHeader))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("profile spaces status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			body := decodeExamAPIResponse[profileSpaceListResponse](t, recorder.Body.Bytes())
+			if len(body.Data.Items) != 0 {
+				t.Fatalf("expected inactive space memberships to be hidden, got %#v", body.Data.Items)
+			}
+		})
+	}
+}
+
+func TestProfileSpacesAPIRouteExcludesDisabledTenantUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedProfileSpacesAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+	if err := gormDB.Table("users").
+		Where("tenant_id = ? AND id = ?", 10, 20).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable tenant user after login: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/tenant/profile/spaces", nil, authHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("profile spaces status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[profileSpaceListResponse](t, recorder.Body.Bytes())
+	if len(body.Data.Items) != 0 {
+		t.Fatalf("expected disabled tenant user memberships to be hidden, got %#v", body.Data.Items)
+	}
+}
+
 func TestTeacherGainsProfileSpaceOnlyAfterSpaceMemberAssignment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

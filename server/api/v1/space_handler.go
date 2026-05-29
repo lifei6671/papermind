@@ -10,6 +10,7 @@ import (
 	dbdao "github.com/lifei6671/papermind/server/internal/dao/db"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
+	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/response"
 )
@@ -25,6 +26,7 @@ type spaceMemberLister interface {
 // 关系校验 tenant_admin 或当前空间 space_admin。
 type spaceHandler struct {
 	service *servicespace.Service
+	users   *servicetenantuser.Service
 	members spaceMemberLister
 }
 
@@ -35,6 +37,14 @@ type createSpaceRequest struct {
 	Description  string   `json:"description"`
 	Type         string   `json:"type"`
 	AdminUserIDs []uint64 `json:"admin_user_ids"`
+}
+
+type updateSpaceProfileRequest struct {
+	TenantID    uint64 `json:"tenant_id"`
+	Name        string `json:"name"`
+	LogoURL     string `json:"logo_url"`
+	Description string `json:"description"`
+	Type        string `json:"type"`
 }
 
 type spaceResponse struct {
@@ -76,12 +86,8 @@ type spaceListResponse struct {
 }
 
 func (h spaceHandler) list(c *gin.Context) {
-	tenantID, err := readUintQuery(c, "tenant_id")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
-		return
-	}
-	if !authorizeTenantManagement(c, tenantID) {
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.users)
+	if !ok {
 		return
 	}
 	page, pageSize, err := readPaginationQuery(c)
@@ -89,7 +95,7 @@ func (h spaceHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), servicespace.ListInput{TenantID: tenantID, Page: page, PageSize: pageSize})
+	result, err := h.service.List(c.Request.Context(), servicespace.ListInput{TenantID: principal.TenantID, Page: page, PageSize: pageSize})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取空间列表失败"))
 		return
@@ -122,11 +128,12 @@ func (h spaceHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeTenantManagement(c, request.TenantID) {
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.users)
+	if !ok {
 		return
 	}
 	space, err := h.service.Create(c.Request.Context(), servicespace.CreateInput{
-		TenantID:     request.TenantID,
+		TenantID:     principal.TenantID,
 		Name:         request.Name,
 		LogoURL:      request.LogoURL,
 		Description:  request.Description,
@@ -145,18 +152,72 @@ func (h spaceHandler) create(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(result))
 }
 
+func (h spaceHandler) updateProfile(c *gin.Context) {
+	spaceID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space id 必须是正整数"))
+		return
+	}
+	var request updateSpaceProfileRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.users)
+	if !ok {
+		return
+	}
+	// 空间基础资料属于租户级治理能力，当前空间 space_admin 只能管理成员。
+	space, err := h.service.UpdateProfile(c.Request.Context(), servicespace.UpdateProfileInput{
+		TenantID:    principal.TenantID,
+		SpaceID:     spaceID,
+		Name:        request.Name,
+		LogoURL:     request.LogoURL,
+		Description: request.Description,
+		Type:        request.Type,
+	})
+	if err != nil {
+		writeSpaceServiceError(c, err)
+		return
+	}
+	result, err := h.spaceToResponse(c.Request.Context(), space)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取空间成员失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(result))
+}
+
+func (h spaceHandler) delete(c *gin.Context) {
+	spaceID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space id 必须是正整数"))
+		return
+	}
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.users)
+	if !ok {
+		return
+	}
+	// 删除空间会移除后续业务入口，不能授权给空间内管理员自行执行。
+	if err := h.service.Delete(c.Request.Context(), servicespace.DeleteInput{TenantID: principal.TenantID, SpaceID: spaceID}); err != nil {
+		writeSpaceServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(gin.H{"deleted": true}))
+}
+
 func (h spaceHandler) listMembers(c *gin.Context) {
 	spaceID, err := readUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space id 必须是正整数"))
 		return
 	}
-	tenantID, err := readUintQuery(c, "tenant_id")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
-		return
-	}
-	if !h.authorizeSpaceMembers(c, tenantID, spaceID) {
+	tenantID, ok := h.authorizeSpaceMembers(c, spaceID)
+	if !ok {
 		return
 	}
 	members, err := h.members.ListMemberNames(c.Request.Context(), tenantID, spaceID)
@@ -178,15 +239,16 @@ func (h spaceHandler) addMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
 		return
 	}
-	if request.TenantID == 0 || request.UserID == 0 || request.Role == "" {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、user_id 和 role 不能为空"))
+	if request.UserID == 0 || request.Role == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "user_id 和 role 不能为空"))
 		return
 	}
-	if !h.authorizeSpaceMembers(c, request.TenantID, spaceID) {
+	tenantID, ok := h.authorizeSpaceMembers(c, spaceID)
+	if !ok {
 		return
 	}
 	member, err := h.service.JoinMember(c.Request.Context(), servicespace.JoinMemberInput{
-		TenantID: request.TenantID,
+		TenantID: tenantID,
 		SpaceID:  spaceID,
 		UserID:   request.UserID,
 		Role:     request.Role,
@@ -208,26 +270,23 @@ func (h spaceHandler) updateMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
 		return
 	}
-	if request.TenantID == 0 {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
-		return
-	}
-	if !h.authorizeSpaceMembers(c, request.TenantID, spaceID) {
+	tenantID, ok := h.authorizeSpaceMembers(c, spaceID)
+	if !ok {
 		return
 	}
 	if request.Role != "" {
-		if err := h.service.ChangeMemberRole(c.Request.Context(), servicespace.ChangeRoleInput{TenantID: request.TenantID, SpaceID: spaceID, UserID: userID, Role: request.Role}); err != nil {
+		if err := h.service.ChangeMemberRole(c.Request.Context(), servicespace.ChangeRoleInput{TenantID: tenantID, SpaceID: spaceID, UserID: userID, Role: request.Role}); err != nil {
 			writeSpaceServiceError(c, err)
 			return
 		}
 	}
 	if request.Status == servicespace.StatusDisabled {
-		if err := h.service.DisableMember(c.Request.Context(), servicespace.MemberActionInput{TenantID: request.TenantID, SpaceID: spaceID, UserID: userID}); err != nil {
+		if err := h.service.DisableMember(c.Request.Context(), servicespace.MemberActionInput{TenantID: tenantID, SpaceID: spaceID, UserID: userID}); err != nil {
 			writeSpaceServiceError(c, err)
 			return
 		}
 	}
-	member, err := h.members.FindMember(c.Request.Context(), request.TenantID, spaceID, userID)
+	member, err := h.members.FindMember(c.Request.Context(), tenantID, spaceID, userID)
 	if err != nil {
 		writeSpaceServiceError(c, err)
 		return
@@ -240,12 +299,8 @@ func (h spaceHandler) removeMember(c *gin.Context) {
 	if !ok {
 		return
 	}
-	tenantID, err := readUintQuery(c, "tenant_id")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
-		return
-	}
-	if !h.authorizeSpaceMembers(c, tenantID, spaceID) {
+	tenantID, ok := h.authorizeSpaceMembers(c, spaceID)
+	if !ok {
 		return
 	}
 	if err := h.service.RemoveMember(c.Request.Context(), servicespace.MemberActionInput{TenantID: tenantID, SpaceID: spaceID, UserID: userID}); err != nil {
@@ -255,25 +310,29 @@ func (h spaceHandler) removeMember(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(gin.H{"removed": true}))
 }
 
-func (h spaceHandler) authorizeSpaceMembers(c *gin.Context, tenantID uint64, spaceID uint64) bool {
+func (h spaceHandler) authorizeSpaceMembers(c *gin.Context, spaceID uint64) (uint64, bool) {
 	principal, ok := currentAuthPrincipal(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
-		return false
+		return 0, false
 	}
-	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID == 0 {
 		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
-		return false
+		return 0, false
 	}
+	tenantID := principal.TenantID
 	if principal.Role == permission.RoleTenantAdmin {
-		return true
+		if _, ok := currentLiveTenantAdminPrincipal(c, h.users); !ok {
+			return 0, false
+		}
+		return tenantID, true
 	}
 	member, err := h.members.FindMember(c.Request.Context(), tenantID, spaceID, principal.UserID)
 	if err != nil || member.Status != servicespace.StatusEnabled || member.Role != servicespace.RoleSpaceAdmin {
 		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
-		return false
+		return 0, false
 	}
-	return true
+	return tenantID, true
 }
 
 func readSpaceMemberParams(c *gin.Context) (uint64, uint64, bool) {
@@ -291,9 +350,6 @@ func readSpaceMemberParams(c *gin.Context) (uint64, uint64, bool) {
 }
 
 func (r createSpaceRequest) validate() error {
-	if r.TenantID == 0 {
-		return errors.New("tenant_id 必须是正整数")
-	}
 	if r.Name == "" {
 		return errors.New("name 不能为空")
 	}
@@ -302,6 +358,16 @@ func (r createSpaceRequest) validate() error {
 	}
 	if len(r.AdminUserIDs) == 0 {
 		return errors.New("admin_user_ids 不能为空")
+	}
+	return nil
+}
+
+func (r updateSpaceProfileRequest) validate() error {
+	if r.Name == "" {
+		return errors.New("name 不能为空")
+	}
+	if r.Type == "" {
+		return errors.New("type 不能为空")
 	}
 	return nil
 }
@@ -365,7 +431,10 @@ func displaySpaceMemberName(userID uint64, name string) string {
 func writeSpaceServiceError(c *gin.Context, err error) {
 	if errors.Is(err, servicespace.ErrSpaceAdminRequired) ||
 		errors.Is(err, servicespace.ErrCannotLoseLastSpaceAdmin) ||
-		errors.Is(err, servicespace.ErrMemberNotFound) {
+		errors.Is(err, servicespace.ErrMemberNotFound) ||
+		errors.Is(err, servicespace.ErrSpaceNotFound) ||
+		errors.Is(err, servicespace.ErrInvalidMemberRole) ||
+		errors.Is(err, servicespace.ErrMemberUserUnavailable) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}

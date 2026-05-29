@@ -9,6 +9,7 @@ import (
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
+	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/response"
 )
@@ -21,25 +22,42 @@ func writePermissionOrInternalError(c *gin.Context, err error, fallback string) 
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, fallback))
 }
 
-// authorizeTenantManagement 校验当前主体是否能管理指定租户。
-//
-// 平台管理员可进入平台侧租户治理；租户侧管理必须是当前租户的 tenant_admin。
-func authorizeTenantManagement(c *gin.Context, tenantID uint64) bool {
+func currentTenantAdminPrincipal(c *gin.Context) (AuthPrincipal, bool) {
 	principal, ok := currentAuthPrincipal(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
-		return false
+		return AuthPrincipal{}, false
 	}
-	if principal.SubjectType == permission.SubjectPlatformUser {
-		return true
-	}
+	// 租户管理接口只能绑定当前租户管理员会话，平台账号不能借 tenant_id 进入租户业务。
 	if principal.SubjectType == permission.SubjectTenantUser &&
 		principal.Role == permission.RoleTenantAdmin &&
-		principal.TenantID == tenantID {
-		return true
+		principal.TenantID != 0 {
+		return principal, true
 	}
 	c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
-	return false
+	return AuthPrincipal{}, false
+}
+
+func currentLiveTenantAdminPrincipal(c *gin.Context, users *servicetenantuser.Service) (AuthPrincipal, bool) {
+	principal, ok := currentTenantAdminPrincipal(c)
+	if !ok {
+		return AuthPrincipal{}, false
+	}
+	user, err := users.Get(c.Request.Context(), principal.TenantID, principal.UserID)
+	if errors.Is(err, servicetenantuser.ErrUserNotFound) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return AuthPrincipal{}, false
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取当前账号权限失败"))
+		return AuthPrincipal{}, false
+	}
+	// 租户管理写入口必须实时读取当前用户状态和角色，避免旧 session 在降权、禁用或删除后继续生效。
+	if user.Status != servicetenantuser.StatusEnabled || user.Role != servicetenantuser.RoleTenantAdmin {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return AuthPrincipal{}, false
+	}
+	return principal, true
 }
 
 // authorizeExamBusiness 校验当前主体是否能进入租户考试业务接口。

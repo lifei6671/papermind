@@ -78,11 +78,11 @@ export const spaceApi = createSpaceAPI(defaultApiClient);
 export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI & SpaceMemberAPI {
   return {
     async listSpaces(tenantID) {
-      const data = await apiClient.get<PageData<SpaceAPIResponse>>(`/api/v1/spaces?tenant_id=${tenantID}`);
+      const data = await apiClient.get<PageData<SpaceAPIResponse>>(`/api/v1/tenant/spaces?tenant_id=${tenantID}`);
       return { items: data.items.map((row) => mapSpaceResponse(row)) };
     },
     async createSpace(input) {
-      const data = await apiClient.post<SpaceAPIResponse>("/api/v1/spaces", {
+      const data = await apiClient.post<SpaceAPIResponse>("/api/v1/tenant/spaces", {
         tenant_id: input.tenantID,
         name: input.name,
         description: input.description,
@@ -94,7 +94,7 @@ export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI & Space
     },
     async listSpaceMembers(input) {
       const data = await apiClient.get<PageData<SpaceMemberAPIResponse>>(
-        `/api/v1/spaces/${input.spaceID}/members?tenant_id=${input.tenantID}`,
+        `/api/v1/tenant/spaces/${input.spaceID}/members?tenant_id=${input.tenantID}`,
       );
       return { items: data.items.map((member) => mapSpaceMemberResponse(member)) };
     },

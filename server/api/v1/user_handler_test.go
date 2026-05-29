@@ -81,6 +81,45 @@ func TestUserAPIRoutesListCreateAndDisableWithSQLite(t *testing.T) {
 	if disableBody.Data.Status != "disabled" {
 		t.Fatalf("expected disabled user, got %#v", disableBody.Data)
 	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/users/21?tenant_id=10", nil, authHeader))
+	if deleteRecorder.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+	var deletedAt int64
+	if err := gormDB.Table("users").Select("deleted_at").Where("tenant_id = ? AND id = ?", 10, 21).Scan(&deletedAt).Error; err != nil {
+		t.Fatalf("query deleted user: %v", err)
+	}
+	if deletedAt == 0 {
+		t.Fatalf("expected deleted user to be soft deleted")
+	}
+
+	roleRecorder := httptest.NewRecorder()
+	router.ServeHTTP(roleRecorder, authorizedRequest(http.MethodPut, "/api/v1/users/20/role", []byte(`{"tenant_id":10,"role":"student"}`), authHeader))
+	if roleRecorder.Code != http.StatusOK {
+		t.Fatalf("role update status = %d, body = %s", roleRecorder.Code, roleRecorder.Body.String())
+	}
+	roleBody := decodeExamAPIResponse[userResponse](t, roleRecorder.Body.Bytes())
+	if roleBody.Data.Role != "student" || roleBody.Data.TenantID != 10 {
+		t.Fatalf("expected updated role student in session tenant, got %#v", roleBody.Data)
+	}
+
+	importRecorder := httptest.NewRecorder()
+	router.ServeHTTP(importRecorder, authorizedRequest(http.MethodPost, "/api/v1/users/import", []byte(`{
+		"tenant_id": 10,
+		"users": [
+			{"username": "import.teacher", "real_name": "导入教师", "password": "import-teacher-123", "role": "teacher"},
+			{"username": "import.student", "real_name": "导入学生", "password": "import-student-123", "role": "student"}
+		]
+	}`), authHeader))
+	if importRecorder.Code != http.StatusOK {
+		t.Fatalf("import users status = %d, body = %s", importRecorder.Code, importRecorder.Body.String())
+	}
+	importBody := decodeExamAPIResponse[importUsersResponse](t, importRecorder.Body.Bytes())
+	if importBody.Data.SuccessCount != 2 {
+		t.Fatalf("expected import success count 2, got %#v", importBody.Data)
+	}
 }
 
 func TestTenantStudentCannotCreateUsers(t *testing.T) {
@@ -105,6 +144,59 @@ func TestTenantStudentCannotCreateUsers(t *testing.T) {
 	}`), authHeader))
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("expected forbidden create for student, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestPlatformUserCannotEnterTenantUserRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	seedUserAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		target string
+		body   []byte
+	}{
+		{name: "list users", method: http.MethodGet, target: "/api/v1/users?tenant_id=10"},
+		{name: "create user", method: http.MethodPost, target: "/api/v1/users", body: []byte(`{
+			"tenant_id": 10,
+			"username": "platform.created",
+			"real_name": "平台越权创建",
+			"password": "platform-secure-123",
+			"role": "student"
+		}`)},
+		{name: "disable user", method: http.MethodPost, target: "/api/v1/users/20/disable", body: []byte(`{"tenant_id":10}`)},
+		{name: "delete user", method: http.MethodDelete, target: "/api/v1/users/20?tenant_id=10"},
+		{name: "update role", method: http.MethodPut, target: "/api/v1/users/20/role", body: []byte(`{"tenant_id":10,"role":"student"}`)},
+		{name: "import users", method: http.MethodPost, target: "/api/v1/users/import", body: []byte(`{"tenant_id":10,"users":[{"username":"x","real_name":"x","password":"import-secure-123","role":"student"}]}`)},
+		{name: "tenant-prefixed list users", method: http.MethodGet, target: "/api/v1/tenant/users?tenant_id=10"},
+		{name: "tenant-prefixed create user", method: http.MethodPost, target: "/api/v1/tenant/users", body: []byte(`{
+			"tenant_id": 10,
+			"username": "platform.tenant.created",
+			"real_name": "平台越权创建",
+			"password": "platform-secure-123",
+			"role": "student"
+		}`)},
+		{name: "tenant-prefixed disable user", method: http.MethodPost, target: "/api/v1/tenant/users/20/disable", body: []byte(`{"tenant_id":10}`)},
+		{name: "tenant-prefixed delete user", method: http.MethodDelete, target: "/api/v1/tenant/users/20?tenant_id=10"},
+		{name: "tenant-prefixed update role", method: http.MethodPut, target: "/api/v1/tenant/users/20/role", body: []byte(`{"tenant_id":10,"role":"student"}`)},
+		{name: "tenant-prefixed import users", method: http.MethodPost, target: "/api/v1/tenant/users/import", body: []byte(`{"tenant_id":10,"users":[{"username":"tenant.x","real_name":"x","password":"import-secure-123","role":"student"}]}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(tc.method, tc.target, tc.body, authHeader))
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("%s status = %d, body = %s", tc.name, recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
@@ -151,7 +243,7 @@ func TestCreateTeacherDoesNotAutoJoinSpaceMembers(t *testing.T) {
 	}
 }
 
-func TestTenantAdminCanManageOnlyOwnTenantUsers(t *testing.T) {
+func TestTenantAdminUserRoutesUseSessionTenant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedUserAPITestData(t, gormDB)
@@ -170,8 +262,80 @@ func TestTenantAdminCanManageOnlyOwnTenantUsers(t *testing.T) {
 
 	otherTenantRecorder := httptest.NewRecorder()
 	router.ServeHTTP(otherTenantRecorder, authorizedRequest(http.MethodGet, "/api/v1/users?tenant_id=20", nil, authHeader))
-	if otherTenantRecorder.Code != http.StatusForbidden {
+	if otherTenantRecorder.Code != http.StatusOK {
 		t.Fatalf("other tenant list status = %d, body = %s", otherTenantRecorder.Code, otherTenantRecorder.Body.String())
+	}
+	otherTenantBody := decodeExamAPIResponse[userListResponse](t, otherTenantRecorder.Body.Bytes())
+	if otherTenantBody.Data.Total != 3 || otherTenantBody.Data.Items[0].TenantID != 10 {
+		t.Fatalf("expected list to use session tenant, got %#v", otherTenantBody.Data)
+	}
+
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/users", []byte(`{
+		"tenant_id": 20,
+		"username": "session.tenant.student",
+		"real_name": "会话租户学生",
+		"password": "session-tenant-123",
+		"role": "student"
+	}`), authHeader))
+	if createRecorder.Code != http.StatusOK {
+		t.Fatalf("create with forged tenant status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
+	}
+	createBody := decodeExamAPIResponse[userResponse](t, createRecorder.Body.Bytes())
+	if createBody.Data.TenantID != 10 {
+		t.Fatalf("expected created user to use session tenant, got %#v", createBody.Data)
+	}
+
+	disableRecorder := httptest.NewRecorder()
+	router.ServeHTTP(disableRecorder, authorizedRequest(http.MethodPost, "/api/v1/users/20/disable", []byte(`{"tenant_id":20}`), authHeader))
+	if disableRecorder.Code != http.StatusOK {
+		t.Fatalf("disable with forged tenant status = %d, body = %s", disableRecorder.Code, disableRecorder.Body.String())
+	}
+	disableBody := decodeExamAPIResponse[userResponse](t, disableRecorder.Body.Bytes())
+	if disableBody.Data.TenantID != 10 || disableBody.Data.Status != "disabled" {
+		t.Fatalf("expected disable to use session tenant, got %#v", disableBody.Data)
+	}
+
+	roleRecorder := httptest.NewRecorder()
+	router.ServeHTTP(roleRecorder, authorizedRequest(http.MethodPut, "/api/v1/users/21/role", []byte(`{"tenant_id":20,"role":"teacher"}`), authHeader))
+	if roleRecorder.Code != http.StatusOK {
+		t.Fatalf("role update with forged tenant status = %d, body = %s", roleRecorder.Code, roleRecorder.Body.String())
+	}
+	roleBody := decodeExamAPIResponse[userResponse](t, roleRecorder.Body.Bytes())
+	if roleBody.Data.TenantID != 10 || roleBody.Data.Role != "teacher" {
+		t.Fatalf("expected role update to use session tenant, got %#v", roleBody.Data)
+	}
+
+	importRecorder := httptest.NewRecorder()
+	router.ServeHTTP(importRecorder, authorizedRequest(http.MethodPost, "/api/v1/users/import", []byte(`{
+		"tenant_id": 20,
+		"users": [{"username": "session.imported", "real_name": "会话导入", "password": "session-import-123", "role": "student"}]
+	}`), authHeader))
+	if importRecorder.Code != http.StatusOK {
+		t.Fatalf("import with forged tenant status = %d, body = %s", importRecorder.Code, importRecorder.Body.String())
+	}
+	var importedTenantID uint64
+	if err := gormDB.Table("users").Select("tenant_id").Where("username = ?", "session.imported").Scan(&importedTenantID).Error; err != nil {
+		t.Fatalf("query imported tenant: %v", err)
+	}
+	if importedTenantID != 10 {
+		t.Fatalf("expected import to use session tenant 10, got %d", importedTenantID)
+	}
+
+	tenantPrefixedRecorder := httptest.NewRecorder()
+	router.ServeHTTP(tenantPrefixedRecorder, authorizedRequest(http.MethodPost, "/api/v1/tenant/users/import", []byte(`{
+		"tenant_id": 20,
+		"users": [{"username": "tenant.prefixed.imported", "real_name": "租户前缀导入", "password": "tenant-prefixed-123", "role": "student"}]
+	}`), authHeader))
+	if tenantPrefixedRecorder.Code != http.StatusOK {
+		t.Fatalf("tenant-prefixed import with forged tenant status = %d, body = %s", tenantPrefixedRecorder.Code, tenantPrefixedRecorder.Body.String())
+	}
+	var tenantPrefixedTenantID uint64
+	if err := gormDB.Table("users").Select("tenant_id").Where("username = ?", "tenant.prefixed.imported").Scan(&tenantPrefixedTenantID).Error; err != nil {
+		t.Fatalf("query tenant-prefixed imported tenant: %v", err)
+	}
+	if tenantPrefixedTenantID != 10 {
+		t.Fatalf("expected tenant-prefixed import to use session tenant 10, got %d", tenantPrefixedTenantID)
 	}
 }
 
@@ -193,7 +357,98 @@ func TestTenantAdminCannotDisableSelfByForgingActorID(t *testing.T) {
 	}
 }
 
-func TestCannotDisableLastTenantAdminReturnsBusinessError(t *testing.T) {
+func TestTenantAdminCannotDeleteSelf(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedUserAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodDelete, "/api/v1/users/99?tenant_id=10", nil, authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected self-delete to be rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestTenantAdminDeleteMissingUserReturnsNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedUserAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodDelete, "/api/v1/tenant/users/404?tenant_id=10", nil, authHeader))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected missing user delete to return not found, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestTenantAdminCannotChangeOwnRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedUserAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPut, "/api/v1/users/99/role", []byte(`{"tenant_id":10,"role":"teacher"}`), authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected self role change to be rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestTenantAdminRoutesRejectStaleSessionAfterPrivilegeLoss(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate string
+	}{
+		{name: "role downgraded", mutate: "UPDATE user_roles SET role = 'teacher' WHERE tenant_id = 10 AND user_id = 99"},
+		{name: "user disabled", mutate: "UPDATE users SET status = 'disabled' WHERE tenant_id = 10 AND id = 99"},
+		{name: "user deleted", mutate: "UPDATE users SET deleted_at = 1700000000000 WHERE tenant_id = 10 AND id = 99"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			gormDB := openExamAPITestDB(t)
+			seedUserAPITestData(t, gormDB)
+
+			router := NewRouter(RouterOptions{
+				DB:  gormDB,
+				Now: func() int64 { return fixedAPINow },
+			})
+			authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+			if err := gormDB.Exec(tc.mutate).Error; err != nil {
+				t.Fatalf("mutate acting tenant admin: %v", err)
+			}
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/tenant/users", []byte(`{
+				"username": "stale.session.user",
+				"real_name": "旧会话用户",
+				"password": "stale-session-123",
+				"role": "student"
+			}`), authHeader))
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("expected stale tenant admin session to be rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestCannotDisableLastTenantAdminWithStaleActorSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedUserAPITestData(t, gormDB)
@@ -230,8 +485,98 @@ func TestCannotDisableLastTenantAdminReturnsBusinessError(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/users/100/disable", []byte(`{"tenant_id":10}`), authHeader))
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("expected last tenant admin disable to be rejected as business error, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected stale actor session to be rejected before disabling last tenant admin, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCannotChangeLastTenantAdminRoleWithStaleActorSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedUserAPITestData(t, gormDB)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash second admin password: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, tenant_id, username, real_name, avatar_url, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES (100, 10, 'last.admin', '最后管理员', 'last.png', '13800001100', 'last-admin@example.test', ?, 'enabled', ?, ?, '{}')
+	`, passwordHash, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed second admin user: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO user_roles (
+			id, tenant_id, user_id, role, created_at, updated_at, ext_json
+		) VALUES (4, 10, 100, 'tenant_admin', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed second admin role: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	if err := gormDB.Table("users").
+		Where("tenant_id = ? AND id = ?", 10, 99).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable acting admin after login: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPut, "/api/v1/users/100/role", []byte(`{"tenant_id":10,"role":"teacher"}`), authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected stale actor session to be rejected before changing last tenant admin role, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCannotImportUsersWhenActorSessionIsStale(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedUserAPITestData(t, gormDB)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash second admin password: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, tenant_id, username, real_name, avatar_url, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES (100, 10, 'last.admin', '最后管理员', 'last.png', '13800001100', 'last-admin@example.test', ?, 'enabled', ?, ?, '{}')
+	`, passwordHash, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed second admin user: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO user_roles (
+			id, tenant_id, user_id, role, created_at, updated_at, ext_json
+		) VALUES (4, 10, 100, 'tenant_admin', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed second admin role: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	if err := gormDB.Table("users").
+		Where("tenant_id = ? AND id = ?", 10, 99).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable acting admin after login: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/users/import", []byte(`{
+		"tenant_id": 10,
+		"users": [
+			{"username": "last.admin", "real_name": "最后管理员", "password": "last-admin-123", "role": "teacher"},
+			{"username": "import.student", "real_name": "导入学生", "password": "import-student-123", "role": "student"}
+		]
+	}`), authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected stale actor session to be rejected before import role coverage, got status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

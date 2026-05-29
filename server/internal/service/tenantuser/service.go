@@ -39,6 +39,9 @@ var (
 	ErrUnsupportedAvatarType     = errors.New("unsupported avatar content type")
 	ErrAvatarTooLarge            = errors.New("avatar file too large")
 	ErrCannotDisableSelf         = errors.New("cannot disable self")
+	ErrCannotChangeSelfRole      = errors.New("cannot change self role")
+	ErrInvalidRole               = errors.New("invalid tenant user role")
+	ErrInvalidImportRow          = errors.New("invalid tenant user import row")
 	ErrCannotLoseLastTenantAdmin = errors.New("cannot lose last enabled tenant admin")
 )
 
@@ -124,6 +127,51 @@ type DisableInput struct {
 	TargetID uint64 // 将被禁用的用户 ID。
 }
 
+type DeleteInput struct {
+	TenantID uint64 // 所属租户 ID。
+	ActorID  uint64 // 执行删除操作的用户 ID。
+	TargetID uint64 // 将被删除的用户 ID。
+}
+
+type UpdateRoleInput struct {
+	TenantID uint64 // 所属租户 ID。
+	ActorID  uint64 // 执行角色变更的用户 ID。
+	TargetID uint64 // 将被变更角色的用户 ID。
+	Role     string // 新租户固定角色。
+}
+
+type ImportUsersInput struct {
+	TenantID uint64          // 所属租户 ID。
+	ActorID  uint64          // 执行批量导入的租户用户 ID。
+	Rows     []ImportUserRow // 导入用户行。
+}
+
+type ImportUserRow struct {
+	Username  string // 租户内登录名。
+	RealName  string // 真实姓名。
+	AvatarURL string // 用户头像地址。
+	Password  string // 初始或覆盖密码明文。
+	Role      string // 租户固定角色。
+}
+
+type ImportUsersRepositoryInput struct {
+	TenantID uint64                     // 所属租户 ID。
+	ActorID  uint64                     // 执行批量导入的租户用户 ID。
+	Rows     []ImportUsersRepositoryRow // 已完成密码哈希的导入用户行。
+}
+
+type ImportUsersRepositoryRow struct {
+	Username     string // 租户内登录名。
+	RealName     string // 真实姓名。
+	AvatarURL    string // 用户头像地址。
+	PasswordHash string // 密码哈希。
+	Role         string // 租户固定角色。
+}
+
+type ImportUsersResult struct {
+	SuccessCount int // 成功导入行数。
+}
+
 type UpdateProfileInput struct {
 	TenantID    uint64 // 所属租户 ID。
 	UserID      uint64 // 当前租户用户 ID。
@@ -153,6 +201,9 @@ type Repository interface {
 	UpdateAvatarURL(ctx context.Context, tenantID uint64, userID uint64, url string) error
 	BuildDisableImpact(ctx context.Context, tenantID uint64, userID uint64) (DisableImpact, error)
 	UpdateStatus(ctx context.Context, tenantID uint64, userID uint64, status string) error
+	DeleteUser(ctx context.Context, tenantID uint64, userID uint64) error
+	UpdateRole(ctx context.Context, tenantID uint64, userID uint64, role string) error
+	ImportUsers(ctx context.Context, input ImportUsersRepositoryInput) (ImportUsersResult, error)
 }
 
 type PasswordVerifier interface {
@@ -323,6 +374,54 @@ func (s *Service) Disable(ctx context.Context, input DisableInput) error {
 	return s.repo.UpdateStatus(ctx, input.TenantID, input.TargetID, StatusDisabled)
 }
 
+func (s *Service) Delete(ctx context.Context, input DeleteInput) error {
+	if input.ActorID == input.TargetID {
+		return ErrCannotDisableSelf
+	}
+	if err := s.spaceAdminInvariantChecker.ValidateBeforeDisableTenantUser(ctx, input.TenantID, input.TargetID); err != nil {
+		return err
+	}
+	return s.repo.DeleteUser(ctx, input.TenantID, input.TargetID)
+}
+
+func (s *Service) UpdateRole(ctx context.Context, input UpdateRoleInput) error {
+	if input.ActorID == input.TargetID {
+		return ErrCannotChangeSelfRole
+	}
+	if !validTenantUserRole(input.Role) {
+		return ErrInvalidRole
+	}
+	return s.repo.UpdateRole(ctx, input.TenantID, input.TargetID, input.Role)
+}
+
+func (s *Service) ImportUsers(ctx context.Context, input ImportUsersInput) (ImportUsersResult, error) {
+	rows := make([]ImportUsersRepositoryRow, 0, len(input.Rows))
+	for _, row := range input.Rows {
+		if row.Username == "" || row.RealName == "" || row.Password == "" {
+			return ImportUsersResult{}, ErrInvalidImportRow
+		}
+		if !validTenantUserRole(row.Role) {
+			return ImportUsersResult{}, ErrInvalidRole
+		}
+		passwordHash, err := crypto.HashPassword(row.Password)
+		if err != nil {
+			return ImportUsersResult{}, err
+		}
+		rows = append(rows, ImportUsersRepositoryRow{
+			Username:     row.Username,
+			RealName:     row.RealName,
+			AvatarURL:    row.AvatarURL,
+			PasswordHash: passwordHash,
+			Role:         row.Role,
+		})
+	}
+	return s.repo.ImportUsers(ctx, ImportUsersRepositoryInput{
+		TenantID: input.TenantID,
+		ActorID:  input.ActorID,
+		Rows:     rows,
+	})
+}
+
 func (s *Service) UpdateProfile(ctx context.Context, input UpdateProfileInput) (User, error) {
 	if input.DisplayName == "" {
 		return User{}, ErrDisplayNameRequired
@@ -365,6 +464,10 @@ func (s *Service) isAllowedAvatarContentType(contentType string) bool {
 		}
 	}
 	return false
+}
+
+func validTenantUserRole(role string) bool {
+	return role == RoleTenantAdmin || role == RoleTeacher || role == RoleStudent
 }
 
 type defaultPasswordVerifier struct{}

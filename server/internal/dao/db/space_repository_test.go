@@ -5,8 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func TestSpaceRepositoryRejectsLosingLastSpaceAdminAfterMemberChanges(t *testing.T) {
@@ -70,6 +72,42 @@ func TestSpaceRepositoryAllowsChangingNonLastSpaceAdmin(t *testing.T) {
 	}
 }
 
+func TestSpaceRepositoryRejectsMissingMemberChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		act  func(*SpaceRepository) error
+	}{
+		{name: "disable", act: func(repo *SpaceRepository) error {
+			return repo.DisableMember(context.Background(), 10, 301, 404)
+		}},
+		{name: "remove", act: func(repo *SpaceRepository) error {
+			return repo.RemoveMember(context.Background(), 10, 301, 404)
+		}},
+		{name: "role", act: func(repo *SpaceRepository) error {
+			return repo.UpdateMemberRole(context.Background(), 10, 301, 23, servicespace.RoleTeacher)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gormDB := openExamRepositoryTestDB(t)
+			seedSpaceAdminInvariantData(t, gormDB, true)
+			if err := gormDB.Exec(`
+				INSERT INTO users (
+					id, tenant_id, username, real_name, phone, email, password_hash, status,
+					created_at, updated_at, ext_json
+				) VALUES (23, 10, 'teacher.not.member', '非成员教师', '13800000023', 'teacher23@example.test', 'hash', 'enabled', 1000, 1000, '{}')
+			`).Error; err != nil {
+				t.Fatalf("seed non-member user: %v", err)
+			}
+			repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
+
+			err := tc.act(repo)
+			if !errors.Is(err, servicespace.ErrMemberNotFound) {
+				t.Fatalf("expected ErrMemberNotFound, got %v", err)
+			}
+		})
+	}
+}
+
 func TestSpaceRepositoryAllowsLosingLastSpaceAdminInDisabledSpace(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	seedSpaceAdminInvariantData(t, gormDB, false)
@@ -95,6 +133,39 @@ func TestSpaceRepositoryAllowsLosingLastSpaceAdminInDisabledSpace(t *testing.T) 
 	}
 }
 
+func TestSpaceRepositoryUpdateAndDeleteSpaceProfile(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedSpaceAdminInvariantData(t, gormDB, true)
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	updated, err := repo.UpdateSpaceProfile(context.Background(), servicespace.UpdateProfileInput{
+		TenantID:    10,
+		SpaceID:     301,
+		Name:        "高一二班",
+		LogoURL:     "logos/class2.png",
+		Description: "期中考试空间",
+		Type:        "class",
+	})
+	if err != nil {
+		t.Fatalf("UpdateSpaceProfile returned error: %v", err)
+	}
+	if updated.Name != "高一二班" || updated.LogoURL != "logos/class2.png" || updated.Description != "期中考试空间" {
+		t.Fatalf("unexpected updated space: %#v", updated)
+	}
+
+	// 删除空间保留成员审计记录，但空间本身不再出现在有效列表。
+	if err := repo.DeleteSpace(context.Background(), 10, 301); err != nil {
+		t.Fatalf("DeleteSpace returned error: %v", err)
+	}
+	result, err := repo.ListSpaces(context.Background(), 10, pagination.Input{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListSpaces returned error: %v", err)
+	}
+	if result.Total != 0 || len(result.Items) != 0 {
+		t.Fatalf("expected deleted space hidden from list, got %#v", result)
+	}
+}
+
 func TestSpaceRepositoryListEffectiveMembershipsForUserFiltersInactiveRows(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	seedUserMembershipListData(t, gormDB)
@@ -112,6 +183,96 @@ func TestSpaceRepositoryListEffectiveMembershipsForUserFiltersInactiveRows(t *te
 	}
 	if members[1].SpaceID != 302 || members[1].Role != servicespace.RoleSpaceAdmin {
 		t.Fatalf("unexpected second membership: %#v", members[1])
+	}
+}
+
+func TestSpaceRepositoryEffectiveMembershipQueriesIgnoreInactiveSpaces(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedUserMembershipListData(t, gormDB)
+	if err := gormDB.Exec(`
+		UPDATE spaces
+		SET status = 'disabled'
+		WHERE tenant_id = 10 AND id = 301
+	`).Error; err != nil {
+		t.Fatalf("disable space: %v", err)
+	}
+	if err := gormDB.Exec(`
+		UPDATE spaces
+		SET deleted_at = 1700000000000
+		WHERE tenant_id = 10 AND id = 302
+	`).Error; err != nil {
+		t.Fatalf("delete space: %v", err)
+	}
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	members, err := repo.ListEffectiveMembershipsForUser(context.Background(), 10, 21)
+	if err != nil {
+		t.Fatalf("ListEffectiveMembershipsForUser returned error: %v", err)
+	}
+	if len(members) != 0 {
+		t.Fatalf("expected inactive spaces hidden from memberships, got %#v", members)
+	}
+	_, err = repo.FindMember(context.Background(), 10, 301, 21)
+	if !errors.Is(err, servicespace.ErrMemberNotFound) {
+		t.Fatalf("expected disabled space member lookup to miss, got %v", err)
+	}
+}
+
+func TestSpaceRepositoryEffectiveMembershipQueriesIgnoreInactiveUsers(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedUserMembershipListData(t, gormDB)
+	if err := gormDB.Table("users").
+		Where("tenant_id = ? AND id = ?", 10, 21).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable user: %v", err)
+	}
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	members, err := repo.ListEffectiveMembershipsForUser(context.Background(), 10, 21)
+	if err != nil {
+		t.Fatalf("ListEffectiveMembershipsForUser returned error: %v", err)
+	}
+	if len(members) != 0 {
+		t.Fatalf("expected disabled users hidden from memberships, got %#v", members)
+	}
+	_, err = repo.FindMember(context.Background(), 10, 301, 21)
+	if !errors.Is(err, servicespace.ErrMemberNotFound) {
+		t.Fatalf("expected disabled user member lookup to miss, got %v", err)
+	}
+}
+
+func TestSpaceRepositoryCountsOnlyEnabledUsersAsSpaceAdmins(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedSpaceAdminInvariantData(t, gormDB, true)
+	if err := gormDB.Table("users").
+		Where("tenant_id = ? AND id = ?", 10, 22).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable second admin user: %v", err)
+	}
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	err := repo.UpdateMemberRole(context.Background(), 10, 301, 20, servicespace.RoleTeacher)
+	if !errors.Is(err, servicespace.ErrCannotLoseLastSpaceAdmin) {
+		t.Fatalf("expected disabled user not to count as space admin, got %v", err)
+	}
+}
+
+func TestSpaceRepositoryInvariantQueryLocksSpaceAdminRows(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{})
+
+	query := repo.spaceAdminLockQuery(context.Background(), gormDB, 10, 301)
+	assertUpdateLockingClause(t, query.Statement.Clauses["FOR"])
+}
+
+func assertUpdateLockingClause(t *testing.T, lockClause clause.Clause) {
+	t.Helper()
+	locking, ok := lockClause.Expression.(clause.Locking)
+	if !ok {
+		t.Fatalf("expected locking clause, got %#v", lockClause.Expression)
+	}
+	if locking.Strength != "UPDATE" {
+		t.Fatalf("expected UPDATE lock, got %q", locking.Strength)
 	}
 }
 

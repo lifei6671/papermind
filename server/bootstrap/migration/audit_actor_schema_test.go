@@ -7,34 +7,30 @@ import (
 	"testing"
 )
 
-func TestAuditActorTypeColumnsUseAppendOnlyMigration(t *testing.T) {
+func TestAuditActorTypeColumnsAreInInitialSchema(t *testing.T) {
 	tests := []struct {
 		name               string
-		initialPath        string
-		auditPath          string
+		path               string
 		createTypeFragment string
 		updateTypeFragment string
 	}{
 		{
 			name:               "postgres",
-			initialPath:        filepath.Join("..", "..", "data", "migrations", "postgres", "001_tenant_space.sql"),
-			auditPath:          filepath.Join("..", "..", "data", "migrations", "postgres", "002_audit_actor_type.sql"),
-			createTypeFragment: "ADD COLUMN created_by_type VARCHAR(32) NOT NULL DEFAULT 'system'",
-			updateTypeFragment: "ADD COLUMN updated_by_type VARCHAR(32) NOT NULL DEFAULT 'system'",
+			path:               filepath.Join("..", "..", "data", "migrations", "postgres", "001_tenant_space.sql"),
+			createTypeFragment: "created_by_type VARCHAR(32) NOT NULL DEFAULT 'system'",
+			updateTypeFragment: "updated_by_type VARCHAR(32) NOT NULL DEFAULT 'system'",
 		},
 		{
 			name:               "mysql",
-			initialPath:        filepath.Join("..", "..", "data", "migrations", "mysql", "001_tenant_space.sql"),
-			auditPath:          filepath.Join("..", "..", "data", "migrations", "mysql", "002_audit_actor_type.sql"),
-			createTypeFragment: "ADD COLUMN created_by_type VARCHAR(32) NOT NULL DEFAULT 'system' COMMENT '创建人主体类型：platform_user / tenant_user / system'",
-			updateTypeFragment: "ADD COLUMN updated_by_type VARCHAR(32) NOT NULL DEFAULT 'system' COMMENT '更新人主体类型：platform_user / tenant_user / system'",
+			path:               filepath.Join("..", "..", "data", "migrations", "mysql", "001_tenant_space.sql"),
+			createTypeFragment: "created_by_type VARCHAR(32) NOT NULL DEFAULT 'system' COMMENT '创建人主体类型：platform_user / tenant_user / system'",
+			updateTypeFragment: "updated_by_type VARCHAR(32) NOT NULL DEFAULT 'system' COMMENT '更新人主体类型：platform_user / tenant_user / system'",
 		},
 		{
 			name:               "sqlite",
-			initialPath:        filepath.Join("..", "..", "data", "migrations", "sqlite", "001_tenant_space.sql"),
-			auditPath:          filepath.Join("..", "..", "data", "migrations", "sqlite", "002_audit_actor_type.sql"),
-			createTypeFragment: "ADD COLUMN created_by_type TEXT NOT NULL DEFAULT 'system'",
-			updateTypeFragment: "ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'system'",
+			path:               filepath.Join("..", "..", "data", "migrations", "sqlite", "001_tenant_space.sql"),
+			createTypeFragment: "created_by_type TEXT NOT NULL DEFAULT 'system'",
+			updateTypeFragment: "updated_by_type TEXT NOT NULL DEFAULT 'system'",
 		},
 	}
 
@@ -68,18 +64,15 @@ func TestAuditActorTypeColumnsUseAppendOnlyMigration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			initial := readMigrationSQL(t, tt.initialPath)
-			assertNotContains(t, initial, "created_by_type")
-			assertNotContains(t, initial, "updated_by_type")
-
-			audit := readMigrationSQL(t, tt.auditPath)
+			initial := readMigrationSQL(t, tt.path)
 			for _, table := range normalTables {
-				assertContains(t, audit, "ALTER TABLE "+table+" "+tt.createTypeFragment)
-				assertContains(t, audit, "ALTER TABLE "+table+" "+tt.updateTypeFragment)
+				assertContains(t, initial, "CREATE TABLE IF NOT EXISTS "+table)
+				assertContains(t, initial, tt.createTypeFragment)
+				assertContains(t, initial, tt.updateTypeFragment)
 			}
 			for _, table := range createOnlyTables {
-				assertContains(t, audit, "ALTER TABLE "+table+" "+tt.createTypeFragment)
-				assertNotContains(t, audit, "ALTER TABLE "+table+" "+tt.updateTypeFragment)
+				assertContains(t, initial, "CREATE TABLE IF NOT EXISTS "+table)
+				assertContains(t, initial, tt.createTypeFragment)
 			}
 		})
 	}

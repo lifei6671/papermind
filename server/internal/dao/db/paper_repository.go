@@ -10,6 +10,7 @@ import (
 	servicepaper "github.com/lifei6671/papermind/server/internal/service/paper"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/plugin/soft_delete"
 )
 
 type PaperRepository struct {
@@ -53,6 +54,9 @@ func (r *PaperRepository) GetPaperSpaceID(ctx context.Context, tenantID uint64, 
 		Where(PaperColumns.ID+" = ?", paperID).
 		Where(PaperColumns.DeletedAt+" = ?", 0).
 		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, servicepaper.ErrPaperNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -189,6 +193,60 @@ func (r *PaperRepository) CreatePaper(ctx context.Context, paper servicepaper.Pa
 		return servicepaper.Paper{}, err
 	}
 	return paperFromDO(row), nil
+}
+
+func (r *PaperRepository) DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error {
+	now := r.now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var examCount int64
+		if err := tx.Model(&ExamDO{}).
+			Where(ExamColumns.TenantID+" = ?", tenantID).
+			Where(ExamColumns.PaperID+" = ?", paperID).
+			Where(ExamColumns.DeletedAt+" = ?", 0).
+			Count(&examCount).Error; err != nil {
+			return err
+		}
+		if examCount > 0 {
+			return servicepaper.ErrPaperInUse
+		}
+		// 删除试卷先软删除主表，随后清理组卷关系；已删除试卷不会再参与列表、发布和权限反查。
+		result := tx.Model(&PaperDO{}).
+			Where(PaperColumns.TenantID+" = ?", tenantID).
+			Where(PaperColumns.ID+" = ?", paperID).
+			Where(PaperColumns.DeletedAt+" = ?", 0).
+			Updates(map[string]any{
+				PaperColumns.DeletedAt:    soft_delete.DeletedAt(now),
+				BaseColumns.UpdatedAt:     now,
+				BaseColumns.UpdatedByType: AuditActorTenantUser,
+				BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicepaper.ErrPaperNotFound
+		}
+		if err := tx.Model(&PaperSectionDO{}).
+			Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionColumns.PaperID+" = ?", paperID).
+			Where(PaperSectionColumns.DeletedAt+" = ?", 0).
+			Updates(map[string]any{
+				PaperSectionColumns.DeletedAt: soft_delete.DeletedAt(now),
+				BaseColumns.UpdatedAt:         now,
+				BaseColumns.UpdatedByType:     AuditActorTenantUser,
+				BaseColumns.Version:           gorm.Expr(BaseColumns.Version + " + 1"),
+			}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where(PaperSectionQuestionColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionQuestionColumns.PaperID+" = ?", paperID).
+			Delete(&PaperSectionQuestionDO{}).Error; err != nil {
+			return err
+		}
+		return tx.Where(PaperSectionRuleColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionRuleColumns.PaperID+" = ?", paperID).
+			Delete(&PaperSectionRuleDO{}).Error
+	})
 }
 
 func (r *PaperRepository) PaperQuestionExists(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error) {

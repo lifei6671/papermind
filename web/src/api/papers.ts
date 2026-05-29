@@ -34,6 +34,20 @@ export type ListPaperSectionsInput = {
   paperID: number;
 };
 
+export type CreatePaperInput = {
+  tenantID: number;
+  spaceID?: number;
+  name: string;
+  description?: string;
+  shuffleQuestions?: boolean;
+  showAnalysis?: boolean;
+};
+
+export type DeletePaperInput = {
+  tenantID: number;
+  paperID: number;
+};
+
 export type CreatePaperSectionInput = {
   tenantID: number;
   paperID: number;
@@ -118,6 +132,8 @@ export type PaperRuleListResult = {
 
 export type PaperAPI = {
   listPapers(input: ListPapersInput): Promise<PaperListResult>;
+  createPaper(input: CreatePaperInput): Promise<PaperRow>;
+  deletePaper(input: DeletePaperInput): Promise<void>;
   listSections(input: ListPaperSectionsInput): Promise<PaperSectionListResult>;
   createSection(input: CreatePaperSectionInput): Promise<PaperSectionRow>;
   addManualQuestion(input: AddManualQuestionInput): Promise<ManualQuestionRow>;
@@ -196,6 +212,20 @@ export function createPaperAPI(apiClient: ApiClient): PaperAPI {
     async listPapers(input) {
       const data = await apiClient.get<PageData<PaperAPIResponse>>(`/api/v1/papers?tenant_id=${input.tenantID}`);
       return { items: data.items.map(mapPaperResponse) };
+    },
+    async createPaper(input) {
+      const data = await apiClient.post<PaperAPIResponse>("/api/v1/papers", {
+        tenant_id: input.tenantID,
+        ...(input.spaceID === undefined ? {} : { space_id: input.spaceID }),
+        name: input.name,
+        description: input.description ?? "",
+        shuffle_questions: input.shuffleQuestions ?? false,
+        show_analysis: input.showAnalysis ?? false,
+      });
+      return mapPaperResponse(data);
+    },
+    async deletePaper(input) {
+      await apiClient.request(`/api/v1/papers/${input.paperID}?tenant_id=${input.tenantID}`, { method: "DELETE" });
     },
     async listSections(input) {
       const data = await apiClient.get<PageData<PaperSectionAPIResponse>>(

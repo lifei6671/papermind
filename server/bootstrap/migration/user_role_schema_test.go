@@ -28,7 +28,7 @@ func TestUserRoleSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.
 				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (tenant_id, phone, deleted_at)",
 				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (tenant_id, email, deleted_at)",
 				"CREATE TABLE IF NOT EXISTS user_roles",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_role ON user_roles (tenant_id, user_id, role)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
 			},
 		},
 		{
@@ -46,7 +46,7 @@ func TestUserRoleSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.
 				"UNIQUE KEY uk_users_phone_deleted_at (tenant_id, phone, deleted_at)",
 				"UNIQUE KEY uk_users_email_deleted_at (tenant_id, email, deleted_at)",
 				"CREATE TABLE IF NOT EXISTS user_roles",
-				"UNIQUE KEY uk_user_roles_role (tenant_id, user_id, role)",
+				"UNIQUE KEY uk_user_roles_user (tenant_id, user_id)",
 			},
 		},
 		{
@@ -64,7 +64,7 @@ func TestUserRoleSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.
 				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (tenant_id, phone, deleted_at)",
 				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (tenant_id, email, deleted_at)",
 				"CREATE TABLE IF NOT EXISTS user_roles",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_role ON user_roles (tenant_id, user_id, role)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
 			},
 		},
 	}
@@ -86,7 +86,7 @@ func TestUserRoleSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.
 	}
 }
 
-func TestUserRoleSingleRoleConstraintUsesAppendOnlyMigration(t *testing.T) {
+func TestUserRoleSingleRoleConstraintDoesNotRequireAppendMigration(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
@@ -94,25 +94,22 @@ func TestUserRoleSingleRoleConstraintUsesAppendOnlyMigration(t *testing.T) {
 	}{
 		{
 			name: "postgres",
-			path: filepath.Join("..", "..", "data", "migrations", "postgres", "002_audit_actor_type.sql"),
+			path: filepath.Join("..", "..", "data", "migrations", "postgres", "001_tenant_space.sql"),
 			want: []string{
-				"DROP INDEX IF EXISTS uk_user_roles_role",
 				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
 			},
 		},
 		{
 			name: "mysql",
-			path: filepath.Join("..", "..", "data", "migrations", "mysql", "002_audit_actor_type.sql"),
+			path: filepath.Join("..", "..", "data", "migrations", "mysql", "001_tenant_space.sql"),
 			want: []string{
-				"ALTER TABLE user_roles DROP INDEX uk_user_roles_role",
-				"ALTER TABLE user_roles ADD UNIQUE INDEX uk_user_roles_user (tenant_id, user_id)",
+				"UNIQUE KEY uk_user_roles_user (tenant_id, user_id)",
 			},
 		},
 		{
 			name: "sqlite",
-			path: filepath.Join("..", "..", "data", "migrations", "sqlite", "002_audit_actor_type.sql"),
+			path: filepath.Join("..", "..", "data", "migrations", "sqlite", "001_tenant_space.sql"),
 			want: []string{
-				"DROP INDEX IF EXISTS uk_user_roles_role",
 				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
 			},
 		},

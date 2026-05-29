@@ -126,6 +126,39 @@ func TestTenantAPIListFiltersByKeywordWithSQLite(t *testing.T) {
 	}
 }
 
+func TestTenantAPIListsTenantResourcesForPlatformOverviewWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	spacesRecorder := httptest.NewRecorder()
+	router.ServeHTTP(spacesRecorder, authorizedRequest(http.MethodGet, "/api/v1/tenants/10/spaces", nil, authHeader))
+	if spacesRecorder.Code != http.StatusOK {
+		t.Fatalf("platform tenant spaces status = %d, body = %s", spacesRecorder.Code, spacesRecorder.Body.String())
+	}
+	spacesBody := decodeExamAPIResponse[spaceListResponse](t, spacesRecorder.Body.Bytes())
+	if spacesBody.Data.Total != 1 || spacesBody.Data.Items[0].TenantID != 10 || spacesBody.Data.Items[0].Name != "高一 1 班" {
+		t.Fatalf("unexpected platform tenant spaces response: %#v", spacesBody.Data)
+	}
+
+	usersRecorder := httptest.NewRecorder()
+	router.ServeHTTP(usersRecorder, authorizedRequest(http.MethodGet, "/api/v1/tenants/10/users", nil, authHeader))
+	if usersRecorder.Code != http.StatusOK {
+		t.Fatalf("platform tenant users status = %d, body = %s", usersRecorder.Code, usersRecorder.Body.String())
+	}
+	usersBody := decodeExamAPIResponse[userListResponse](t, usersRecorder.Body.Bytes())
+	if usersBody.Data.Total != 4 || usersBody.Data.Items[0].TenantID != 10 {
+		t.Fatalf("unexpected platform tenant users response: %#v", usersBody.Data)
+	}
+}
+
 func TestTenantManagementRoutesRejectAnonymousRequests(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -147,6 +180,8 @@ func TestTenantManagementRoutesRejectAnonymousRequests(t *testing.T) {
 		{name: "profile", method: http.MethodPost, target: "/api/v1/tenants/1/profile", body: []byte(`{"name":"青藤一中"}`)},
 		{name: "reset code", method: http.MethodPost, target: "/api/v1/tenants/1/reset-code"},
 		{name: "register setting", method: http.MethodPost, target: "/api/v1/tenants/1/register-setting", body: []byte(`{"allow_register":false}`)},
+		{name: "tenant spaces", method: http.MethodGet, target: "/api/v1/tenants/1/spaces"},
+		{name: "tenant users", method: http.MethodGet, target: "/api/v1/tenants/1/users"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -187,6 +222,8 @@ func TestTenantManagementRoutesRejectTenantUsers(t *testing.T) {
 		{name: "profile", method: http.MethodPost, target: "/api/v1/tenants/1/profile", body: []byte(`{"name":"越权修改"}`)},
 		{name: "reset code", method: http.MethodPost, target: "/api/v1/tenants/1/reset-code"},
 		{name: "register setting", method: http.MethodPost, target: "/api/v1/tenants/1/register-setting", body: []byte(`{"allow_register":false}`)},
+		{name: "tenant spaces", method: http.MethodGet, target: "/api/v1/tenants/1/spaces"},
+		{name: "tenant users", method: http.MethodGet, target: "/api/v1/tenants/1/users"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

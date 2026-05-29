@@ -34,6 +34,24 @@ type disableUserRequest struct {
 	TenantID uint64 `json:"tenant_id"`
 }
 
+type updateUserRoleRequest struct {
+	TenantID uint64 `json:"tenant_id"`
+	Role     string `json:"role"`
+}
+
+type importUsersRequest struct {
+	TenantID uint64              `json:"tenant_id"`
+	Users    []importUserRequest `json:"users"`
+}
+
+type importUserRequest struct {
+	Username  string `json:"username"`
+	RealName  string `json:"real_name"`
+	AvatarURL string `json:"avatar_url"`
+	Password  string `json:"password"`
+	Role      string `json:"role"`
+}
+
 type userResponse struct {
 	ID        uint64 `json:"id"`
 	TenantID  uint64 `json:"tenant_id"`
@@ -51,13 +69,13 @@ type userListResponse struct {
 	Total    int64          `json:"total"`
 }
 
+type importUsersResponse struct {
+	SuccessCount int `json:"success_count"`
+}
+
 func (h userHandler) list(c *gin.Context) {
-	tenantID, err := readUintQuery(c, "tenant_id")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
-		return
-	}
-	if !authorizeTenantManagement(c, tenantID) {
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.service)
+	if !ok {
 		return
 	}
 	page, pageSize, err := readPaginationQuery(c)
@@ -65,7 +83,7 @@ func (h userHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), servicetenantuser.ListInput{TenantID: tenantID, Page: page, PageSize: pageSize})
+	result, err := h.service.List(c.Request.Context(), servicetenantuser.ListInput{TenantID: principal.TenantID, Page: page, PageSize: pageSize})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取用户列表失败"))
 		return
@@ -93,7 +111,8 @@ func (h userHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeTenantManagement(c, request.TenantID) {
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.service)
+	if !ok {
 		return
 	}
 	passwordHash, err := crypto.HashPassword(request.Password)
@@ -102,7 +121,7 @@ func (h userHandler) create(c *gin.Context) {
 		return
 	}
 	user, err := h.service.Create(c.Request.Context(), servicetenantuser.CreateInput{
-		TenantID:     request.TenantID,
+		TenantID:     principal.TenantID,
 		Username:     request.Username,
 		RealName:     request.RealName,
 		AvatarURL:    request.AvatarURL,
@@ -116,6 +135,42 @@ func (h userHandler) create(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
 }
 
+func (h userHandler) importUsers(c *gin.Context) {
+	var request importUsersRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(h.passwordMinLength); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.service)
+	if !ok {
+		return
+	}
+	rows := make([]servicetenantuser.ImportUserRow, 0, len(request.Users))
+	for _, user := range request.Users {
+		rows = append(rows, servicetenantuser.ImportUserRow{
+			Username:  user.Username,
+			RealName:  user.RealName,
+			AvatarURL: user.AvatarURL,
+			Password:  user.Password,
+			Role:      user.Role,
+		})
+	}
+	result, err := h.service.ImportUsers(c.Request.Context(), servicetenantuser.ImportUsersInput{
+		TenantID: principal.TenantID,
+		ActorID:  principal.UserID,
+		Rows:     rows,
+	})
+	if err != nil {
+		writeUserServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(importUsersResponse{SuccessCount: result.SuccessCount}))
+}
+
 func (h userHandler) disable(c *gin.Context) {
 	userID, err := readUintParam(c, "id")
 	if err != nil {
@@ -127,27 +182,72 @@ func (h userHandler) disable(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
 		return
 	}
-	if request.TenantID == 0 {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
-		return
-	}
-	if !authorizeTenantManagement(c, request.TenantID) {
-		return
-	}
-	principal, ok := currentAuthPrincipal(c)
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.service)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
 		return
 	}
 	if err := h.service.Disable(c.Request.Context(), servicetenantuser.DisableInput{
-		TenantID: request.TenantID,
+		TenantID: principal.TenantID,
 		ActorID:  principal.UserID,
 		TargetID: userID,
 	}); err != nil {
 		writeUserServiceError(c, err)
 		return
 	}
-	user, err := h.service.Get(c.Request.Context(), request.TenantID, userID)
+	user, err := h.service.Get(c.Request.Context(), principal.TenantID, userID)
+	if err != nil {
+		writeUserServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
+}
+
+func (h userHandler) delete(c *gin.Context) {
+	userID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "用户 ID 必须是正整数"))
+		return
+	}
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.service)
+	if !ok {
+		return
+	}
+	if err := h.service.Delete(c.Request.Context(), servicetenantuser.DeleteInput{
+		TenantID: principal.TenantID,
+		ActorID:  principal.UserID,
+		TargetID: userID,
+	}); err != nil {
+		writeUserServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(gin.H{"id": userID}))
+}
+
+func (h userHandler) updateRole(c *gin.Context) {
+	userID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "用户 ID 必须是正整数"))
+		return
+	}
+	var request updateUserRoleRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.service)
+	if !ok {
+		return
+	}
+	if err := h.service.UpdateRole(c.Request.Context(), servicetenantuser.UpdateRoleInput{
+		TenantID: principal.TenantID,
+		ActorID:  principal.UserID,
+		TargetID: userID,
+		Role:     request.Role,
+	}); err != nil {
+		writeUserServiceError(c, err)
+		return
+	}
+	user, err := h.service.Get(c.Request.Context(), principal.TenantID, userID)
 	if err != nil {
 		writeUserServiceError(c, err)
 		return
@@ -156,9 +256,37 @@ func (h userHandler) disable(c *gin.Context) {
 }
 
 func (r createUserRequest) validate(passwordMinLength int) error {
-	if r.TenantID == 0 {
-		return errors.New("tenant_id 必须是正整数")
+	if r.Username == "" {
+		return errors.New("username 不能为空")
 	}
+	if r.RealName == "" {
+		return errors.New("real_name 不能为空")
+	}
+	if r.Password == "" {
+		return errors.New("password 不能为空")
+	}
+	if err := validatePasswordMinLength(r.Password, passwordMinLength); err != nil {
+		return err
+	}
+	if r.Role != servicetenantuser.RoleTenantAdmin && r.Role != servicetenantuser.RoleTeacher && r.Role != servicetenantuser.RoleStudent {
+		return errors.New("role 只能是 tenant_admin、teacher 或 student")
+	}
+	return nil
+}
+
+func (r importUsersRequest) validate(passwordMinLength int) error {
+	if len(r.Users) == 0 {
+		return errors.New("users 不能为空")
+	}
+	for _, user := range r.Users {
+		if err := user.validate(passwordMinLength); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r importUserRequest) validate(passwordMinLength int) error {
 	if r.Username == "" {
 		return errors.New("username 不能为空")
 	}
@@ -191,6 +319,9 @@ func userToResponse(user servicetenantuser.User) userResponse {
 
 func writeUserServiceError(c *gin.Context, err error) {
 	if errors.Is(err, servicetenantuser.ErrCannotDisableSelf) ||
+		errors.Is(err, servicetenantuser.ErrCannotChangeSelfRole) ||
+		errors.Is(err, servicetenantuser.ErrInvalidRole) ||
+		errors.Is(err, servicetenantuser.ErrInvalidImportRow) ||
 		errors.Is(err, servicetenantuser.ErrCannotLoseLastTenantAdmin) ||
 		errors.Is(err, servicespace.ErrCannotLoseLastSpaceAdmin) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))

@@ -1064,8 +1064,10 @@ func (r *ExamRepository) UpsertAnswer(ctx context.Context, answer serviceexam.An
 	row := ExamAnswerDO{
 		BaseFields: BaseFields{
 			CreatedAt:     now,
+			CreatedBy:     answer.UpdatedBy,
 			CreatedByType: AuditActorTenantUser,
 			UpdatedAt:     now,
+			UpdatedBy:     answer.UpdatedBy,
 			UpdatedByType: AuditActorTenantUser,
 			Version:       1,
 			ExtJSON:       datatypes.JSON([]byte("{}")),
@@ -1086,6 +1088,7 @@ func (r *ExamRepository) UpsertAnswer(ctx context.Context, answer serviceexam.An
 		DoUpdates: clause.Assignments(map[string]any{
 			ExamAnswerColumns.AnswerContent: answer.AnswerContent,
 			BaseColumns.UpdatedAt:           now,
+			BaseColumns.UpdatedBy:           answer.UpdatedBy,
 			BaseColumns.UpdatedByType:       AuditActorTenantUser,
 			BaseColumns.Version:             gorm.Expr(BaseColumns.Version + " + 1"),
 		}),

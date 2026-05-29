@@ -122,6 +122,63 @@ describe("paperApi", () => {
     });
   });
 
+  test("创建和删除试卷时调用试卷主资源接口", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/papers/100?tenant_id=10")) {
+        expect(init?.method).toBe("DELETE");
+        return new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: { deleted: true },
+        }));
+      }
+      expect(url).toBe("/api/v1/papers");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        name: "租户公共试卷",
+        description: "公共资源",
+        shuffle_questions: true,
+        show_analysis: true,
+      });
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          id: 100,
+          tenant_id: 10,
+          space_id: null,
+          name: "租户公共试卷",
+          description: "公共资源",
+          total_score: "0",
+          build_mode: "manual",
+          shuffle_questions: true,
+          show_analysis: true,
+          status: "draft",
+        },
+      }));
+    });
+    const api = createPaperAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.createPaper({
+      tenantID: 10,
+      name: "租户公共试卷",
+      description: "公共资源",
+      shuffleQuestions: true,
+      showAnalysis: true,
+    })).resolves.toEqual({
+      id: 100,
+      tenantID: 10,
+      name: "租户公共试卷",
+      description: "公共资源",
+      buildMode: "manual",
+      status: "draft",
+      totalScore: "0",
+    });
+    await expect(api.deletePaper({ tenantID: 10, paperID: 100 })).resolves.toBeUndefined();
+  });
+
   test("手动选题时提交大题、题目和分值", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe("POST");

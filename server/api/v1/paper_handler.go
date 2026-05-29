@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	servicepaper "github.com/lifei6671/papermind/server/internal/service/paper"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
+	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/response"
 )
@@ -99,6 +100,15 @@ type createPaperSectionRequest struct {
 	Instructions string `json:"instructions"`
 }
 
+type createPaperRequest struct {
+	TenantID         uint64  `json:"tenant_id"`
+	SpaceID          *uint64 `json:"space_id"`
+	Name             string  `json:"name"`
+	Description      string  `json:"description"`
+	ShuffleQuestions bool    `json:"shuffle_questions"`
+	ShowAnalysis     bool    `json:"show_analysis"`
+}
+
 type addPaperSectionQuestionRequest struct {
 	TenantID   uint64 `json:"tenant_id"`
 	QuestionID uint64 `json:"question_id"`
@@ -138,6 +148,62 @@ func (h paperHandler) list(c *gin.Context) {
 		items = append(items, paperToResponse(paper))
 	}
 	c.JSON(http.StatusOK, response.OK(paperListResponse{Items: items}))
+}
+
+func (h paperHandler) create(c *gin.Context) {
+	var request createPaperRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID) {
+		return
+	}
+	if !h.authorizePaperCreate(c, request.TenantID, request.SpaceID) {
+		return
+	}
+	// 创建接口只生成草稿试卷壳；大题、选题和规则仍由后续组卷接口维护。
+	paper, err := h.service.CreateManualPaper(c.Request.Context(), servicepaper.CreatePaperInput{
+		TenantID:         request.TenantID,
+		SpaceID:          request.SpaceID,
+		Name:             request.Name,
+		Description:      request.Description,
+		ShuffleQuestions: request.ShuffleQuestions,
+		ShowAnalysis:     request.ShowAnalysis,
+	})
+	if err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(paperToResponse(paper)))
+}
+
+func (h paperHandler) delete(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, tenantID) {
+		return
+	}
+	if !h.authorizePaperWrite(c, tenantID, paperID) {
+		return
+	}
+	if err := h.service.DeletePaper(c.Request.Context(), tenantID, paperID); err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(gin.H{"deleted": true}))
 }
 
 func (h paperHandler) listSections(c *gin.Context) {
@@ -411,6 +477,19 @@ func (r createPaperSectionRequest) validate() error {
 	return nil
 }
 
+func (r createPaperRequest) validate() error {
+	if r.TenantID == 0 {
+		return errors.New("tenant_id 必须是正整数")
+	}
+	if r.SpaceID != nil && *r.SpaceID == 0 {
+		return errors.New("space_id 必须是正整数")
+	}
+	if r.Name == "" {
+		return errors.New("name 不能为空")
+	}
+	return nil
+}
+
 func (r addPaperSectionQuestionRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -450,6 +529,10 @@ func (r paperRuleActionRequest) validate() error {
 func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paperID uint64) bool {
 	spaceID, err := h.papers.GetPaperSpaceID(c.Request.Context(), tenantID, paperID)
 	if err != nil {
+		if errors.Is(err, servicepaper.ErrPaperNotFound) {
+			writePaperServiceError(c, err)
+			return false
+		}
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷权限范围失败"))
 		return false
 	}
@@ -473,9 +556,48 @@ func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paper
 	return true
 }
 
+func (h paperHandler) authorizePaperCreate(c *gin.Context, tenantID uint64, spaceID *uint64) bool {
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
+		return false
+	}
+	if spaceID == nil {
+		if permissionContext.Role != permission.RoleTenantAdmin {
+			writePermissionOrInternalError(c, permission.ErrForbidden, "公共试卷仅租户管理员可维护")
+			return false
+		}
+		return true
+	}
+	exists, err := h.members.SpaceExists(c.Request.Context(), tenantID, *spaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取空间权限范围失败"))
+		return false
+	}
+	if !exists {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, servicespace.ErrSpaceNotFound.Error()))
+		return false
+	}
+	// 新建空间试卷还没有 paper_id，使用临时作用域复用统一的试卷管理权限校验。
+	permissionContext.PaperScope = map[uint64]uint64{0: *spaceID}
+	if err := permission.NewFixedRoleChecker().CanManagePaper(permissionContext, 0); err != nil {
+		writePermissionOrInternalError(c, err, "校验试卷写权限失败")
+		return false
+	}
+	return true
+}
+
 func writePaperServiceError(c *gin.Context, err error) {
 	if errors.Is(err, permission.ErrForbidden) {
 		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return
+	}
+	if errors.Is(err, servicepaper.ErrPaperNotFound) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if errors.Is(err, servicepaper.ErrPaperInUse) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
 	if errors.Is(err, servicepaper.ErrDuplicatePaperQuestion) {

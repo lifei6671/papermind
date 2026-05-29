@@ -214,120 +214,24 @@ test("后台接口返回未认证时自动退出并跳转登录页", async () =>
   expect(window.localStorage.getItem("papermind.session.v1")).toBeNull();
 });
 
-test("平台管理员打开空间管理时使用 URL 租户 ID 接入后端 API", async () => {
+test("平台管理员直接访问空间管理会回到概览且不请求租户接口", () => {
   storePlatformSession();
-  const requests: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    requests.push(url);
-    if (url === "/api/v1/spaces?tenant_id=10") {
-      return new Response(JSON.stringify({
-        code: 0,
-        message: "ok",
-        data: {
-          items: [{
-            id: 100,
-            tenant_id: 10,
-            name: "高一全年级",
-            logo_url: "",
-            description: "联调空间",
-            members: [{
-              id: 1,
-              user_id: 20,
-              name: "租户管理员",
-              role: "space_admin",
-              status: "enabled",
-            }],
-          }],
-          total: 1,
-          page: 1,
-          page_size: 20,
-        },
-      }));
-    }
-    if (url === "/api/v1/users?tenant_id=10") {
-      return new Response(JSON.stringify({
-        code: 0,
-        message: "ok",
-        data: {
-          items: [{
-            id: 20,
-            tenant_id: 10,
-            username: "tenant.admin",
-            real_name: "租户管理员",
-            avatar_url: "",
-            role: "tenant_admin",
-            status: "enabled",
-          }],
-          total: 1,
-          page: 1,
-          page_size: 20,
-        },
-      }));
-    }
-    if (url === "/api/v1/spaces?tenant_id=10") {
-      return new Response(JSON.stringify({
-        code: 0,
-        message: "ok",
-        data: { items: [], total: 0, page: 1, page_size: 20 },
-      }));
-    }
-    return new Response(JSON.stringify({ code: 40001, message: "tenant_id 必须是正整数", data: null }), {
-      status: 400,
-    });
-  });
+  const fetchMock = vi.spyOn(globalThis, "fetch");
 
   renderApp(["/spaces?tenant_id=10"]);
 
-  expect(await screen.findByText("高一全年级")).toBeInTheDocument();
-  expect(requests).toContain("/api/v1/spaces?tenant_id=10");
-  expect(requests).toContain("/api/v1/users?tenant_id=10");
-  expect(requests).not.toContain("/api/v1/spaces?tenant_id=0");
+  expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
-test("平台管理员打开用户管理时使用 URL 租户 ID 接入后端 API", async () => {
+test("平台管理员直接访问用户管理会回到概览且不请求租户接口", () => {
   storePlatformSession();
-  const requests: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    requests.push(url);
-    if (url === "/api/v1/users?tenant_id=10") {
-      return new Response(JSON.stringify({
-        code: 0,
-        message: "ok",
-        data: {
-          items: [{
-            id: 20,
-            tenant_id: 10,
-            username: "tenant.admin",
-            real_name: "租户管理员",
-            avatar_url: "",
-            role: "tenant_admin",
-            status: "enabled",
-          }],
-          total: 1,
-          page: 1,
-          page_size: 20,
-        },
-      }));
-    }
-    if (url === "/api/v1/spaces?tenant_id=10") {
-      return new Response(JSON.stringify({
-        code: 0,
-        message: "ok",
-        data: { items: [], total: 0, page: 1, page_size: 20 },
-      }));
-    }
-    return new Response(JSON.stringify({ code: 40001, message: "tenant_id 必须是正整数", data: null }), {
-      status: 400,
-    });
-  });
+  const fetchMock = vi.spyOn(globalThis, "fetch");
 
   renderApp(["/users?tenant_id=10"]);
 
-  expect(await screen.findByText("tenant.admin")).toBeInTheDocument();
-  expect(requests).toContain("/api/v1/users?tenant_id=10");
-  expect(requests).not.toContain("/api/v1/users?tenant_id=0");
+  expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 test("平台管理员直接访问考试业务路由会回到概览", () => {
@@ -695,7 +599,7 @@ test("真实路由渲染空间管理时从 session 派生租户并请求后端 A
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     requestedURLs.push(url);
-    if (url === "/api/v1/spaces?tenant_id=77") {
+    if (url === "/api/v1/tenant/spaces?tenant_id=77") {
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
@@ -714,7 +618,7 @@ test("真实路由渲染空间管理时从 session 派生租户并请求后端 A
         },
       }));
     }
-    if (url === "/api/v1/users?tenant_id=77") {
+    if (url === "/api/v1/tenant/users?tenant_id=77") {
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
@@ -740,9 +644,9 @@ test("真实路由渲染空间管理时从 session 派生租户并请求后端 A
   renderApp(["/spaces"]);
 
   expect(await screen.findByText("高一 1 班")).toBeInTheDocument();
-  expect(requestedURLs).toContain("/api/v1/spaces?tenant_id=77");
-  expect(requestedURLs).toContain("/api/v1/users?tenant_id=77");
-  expect(requestedURLs).not.toContain("/api/v1/spaces?tenant_id=0");
+  expect(requestedURLs).toContain("/api/v1/tenant/spaces?tenant_id=77");
+  expect(requestedURLs).toContain("/api/v1/tenant/users?tenant_id=77");
+  expect(requestedURLs).not.toContain("/api/v1/tenant/spaces?tenant_id=0");
 });
 
 test("真实空间成员入口由授权空间列表渲染并读取成员", async () => {
@@ -751,7 +655,7 @@ test("真实空间成员入口由授权空间列表渲染并读取成员", async
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     requestedURLs.push(url);
-    if (url === "/api/v1/spaces/301/members?tenant_id=77") {
+    if (url === "/api/v1/tenant/spaces/301/members?tenant_id=77") {
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
@@ -780,7 +684,7 @@ test("真实空间成员入口由授权空间列表渲染并读取成员", async
   expect(await screen.findByRole("row", { name: /空间管理员 55 空间管理员 启用/ })).toBeInTheDocument();
   expect(screen.getByText("空间 301")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "创建空间" })).not.toBeInTheDocument();
-  expect(requestedURLs).toEqual(["/api/v1/spaces/301/members?tenant_id=77"]);
+  expect(requestedURLs).toEqual(["/api/v1/tenant/spaces/301/members?tenant_id=77"]);
 });
 
 test("真实路由渲染用户管理时从 session 派生租户并请求后端 API", async () => {
@@ -789,7 +693,7 @@ test("真实路由渲染用户管理时从 session 派生租户并请求后端 A
   let spacesURL = "";
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.startsWith("/api/v1/users?")) {
+    if (url.startsWith("/api/v1/tenant/users?")) {
       usersURL = url;
       return new Response(JSON.stringify({
         code: 0,
@@ -810,7 +714,7 @@ test("真实路由渲染用户管理时从 session 派生租户并请求后端 A
         },
       }));
     }
-    if (url.startsWith("/api/v1/spaces?")) {
+    if (url.startsWith("/api/v1/tenant/spaces?")) {
       spacesURL = url;
       return new Response(JSON.stringify({
         code: 0,
@@ -824,8 +728,8 @@ test("真实路由渲染用户管理时从 session 派生租户并请求后端 A
   renderApp(["/users"]);
 
   expect(await screen.findByText("tenant.admin")).toBeInTheDocument();
-  await waitFor(() => expect(usersURL).toBe("/api/v1/users?tenant_id=77"));
-  await waitFor(() => expect(spacesURL).toBe("/api/v1/spaces?tenant_id=77"));
+  await waitFor(() => expect(usersURL).toBe("/api/v1/tenant/users?tenant_id=77"));
+  await waitFor(() => expect(spacesURL).toBe("/api/v1/tenant/spaces?tenant_id=77"));
 });
 
 test("成绩页支持发布配置和成绩导出", async () => {

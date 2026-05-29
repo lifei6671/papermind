@@ -28,6 +28,8 @@ var (
 	ErrQuestionPoolInsufficient            = errors.New("question pool insufficient")
 	ErrExamMustBeWithdrawnBeforeRuleChange = errors.New("exam must be withdrawn before rule change")
 	ErrQuestionOutOfScope                  = errors.New("question out of paper scope")
+	ErrPaperNotFound                       = errors.New("paper not found")
+	ErrPaperInUse                          = errors.New("paper is referenced by exam")
 )
 
 type Paper struct {
@@ -177,6 +179,7 @@ type Repository interface {
 	DeleteSectionCascade(ctx context.Context, tenantID uint64, sectionID uint64) error
 	ListActiveSections(ctx context.Context, tenantID uint64, paperID uint64) ([]Section, error)
 	CreatePaper(ctx context.Context, paper Paper) (Paper, error)
+	DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error
 	PaperQuestionExists(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error)
 	QuestionUsableForPaper(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error)
 	AddSectionQuestionAndRecalculate(ctx context.Context, question SectionQuestion) error
@@ -260,6 +263,10 @@ func (s *Service) CreateManualPaper(ctx context.Context, input CreatePaperInput)
 		ShowAnalysis:     input.ShowAnalysis,
 		Status:           StatusDraft,
 	})
+}
+
+func (s *Service) DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error {
+	return s.repo.DeletePaper(ctx, tenantID, paperID)
 }
 
 func (s *Service) AddManualQuestion(ctx context.Context, input AddSectionQuestionInput) error {

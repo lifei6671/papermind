@@ -370,6 +370,10 @@ func (r *fakeRepository) CreatePaper(ctx context.Context, paper Paper) (Paper, e
 	return paper, nil
 }
 
+func (r *fakeRepository) DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error {
+	return nil
+}
+
 func (r *fakeRepository) PaperQuestionExists(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error) {
 	return r.duplicatePaperQuestion, nil
 }

@@ -45,6 +45,183 @@ func TestTenantUserRepositoryAllowsDisablingNonLastTenantAdmin(t *testing.T) {
 	}
 }
 
+func TestTenantUserRepositoryRejectsDisablingMissingUser(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, true)
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	err := repo.UpdateStatus(context.Background(), 10, 404, servicetenantuser.StatusDisabled)
+	if !errors.Is(err, servicetenantuser.ErrUserNotFound) {
+		t.Fatalf("expected ErrUserNotFound, got %v", err)
+	}
+}
+
+func TestTenantUserRepositoryRejectsDeletingLastTenantAdmin(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, false)
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	err := repo.DeleteUser(context.Background(), 10, 20)
+	if !errors.Is(err, servicetenantuser.ErrCannotLoseLastTenantAdmin) {
+		t.Fatalf("expected ErrCannotLoseLastTenantAdmin, got %v", err)
+	}
+	var deletedAt int64
+	if err := gormDB.Table("users").Select("deleted_at").Where("tenant_id = ? AND id = ?", 10, 20).Scan(&deletedAt).Error; err != nil {
+		t.Fatalf("query user deleted_at: %v", err)
+	}
+	if deletedAt != 0 {
+		t.Fatalf("last tenant admin delete should rollback, got deleted_at %d", deletedAt)
+	}
+}
+
+func TestTenantUserRepositoryAllowsDeletingNonLastTenantAdmin(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, true)
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	if err := repo.DeleteUser(context.Background(), 10, 20); err != nil {
+		t.Fatalf("DeleteUser returned error: %v", err)
+	}
+	var deletedAt int64
+	if err := gormDB.Table("users").Select("deleted_at").Where("tenant_id = ? AND id = ?", 10, 20).Scan(&deletedAt).Error; err != nil {
+		t.Fatalf("query user deleted_at: %v", err)
+	}
+	if deletedAt != 2000 {
+		t.Fatalf("expected target tenant admin soft deleted at 2000, got %d", deletedAt)
+	}
+}
+
+func TestTenantUserRepositoryRejectsChangingLastTenantAdminRole(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, false)
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	err := repo.UpdateRole(context.Background(), 10, 20, servicetenantuser.RoleTeacher)
+	if !errors.Is(err, servicetenantuser.ErrCannotLoseLastTenantAdmin) {
+		t.Fatalf("expected ErrCannotLoseLastTenantAdmin, got %v", err)
+	}
+	var role string
+	if err := gormDB.Table("user_roles").Select("role").Where("tenant_id = ? AND user_id = ?", 10, 20).Scan(&role).Error; err != nil {
+		t.Fatalf("query user role: %v", err)
+	}
+	if role != servicetenantuser.RoleTenantAdmin {
+		t.Fatalf("last tenant admin role change should rollback, got role %q", role)
+	}
+}
+
+func TestTenantUserRepositoryAllowsChangingNonLastTenantAdminRole(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, true)
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	if err := repo.UpdateRole(context.Background(), 10, 20, servicetenantuser.RoleTeacher); err != nil {
+		t.Fatalf("UpdateRole returned error: %v", err)
+	}
+	var role string
+	if err := gormDB.Table("user_roles").Select("role").Where("tenant_id = ? AND user_id = ?", 10, 20).Scan(&role).Error; err != nil {
+		t.Fatalf("query user role: %v", err)
+	}
+	if role != servicetenantuser.RoleTeacher {
+		t.Fatalf("expected target role teacher, got %q", role)
+	}
+}
+
+func TestTenantUserRepositoryAllowsPromotingTeacherToTenantAdmin(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, false)
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	if err := repo.UpdateRole(context.Background(), 10, 21, servicetenantuser.RoleTenantAdmin); err != nil {
+		t.Fatalf("UpdateRole returned error: %v", err)
+	}
+	var role string
+	if err := gormDB.Table("user_roles").Select("role").Where("tenant_id = ? AND user_id = ?", 10, 21).Scan(&role).Error; err != nil {
+		t.Fatalf("query user role: %v", err)
+	}
+	if role != servicetenantuser.RoleTenantAdmin {
+		t.Fatalf("expected promoted role tenant_admin, got %q", role)
+	}
+}
+
+func TestTenantUserRepositoryRejectsImportWhenRoleCoverageLosesLastTenantAdmin(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, false)
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	_, err := repo.ImportUsers(context.Background(), servicetenantuser.ImportUsersRepositoryInput{
+		TenantID: 10,
+		ActorID:  22,
+		Rows: []servicetenantuser.ImportUsersRepositoryRow{
+			{Username: "admin.one", RealName: "管理员一", PasswordHash: "hash-updated", Role: servicetenantuser.RoleTeacher},
+			{Username: "new.student", RealName: "新学生", PasswordHash: "hash-new", Role: servicetenantuser.RoleStudent},
+		},
+	})
+	if !errors.Is(err, servicetenantuser.ErrCannotLoseLastTenantAdmin) {
+		t.Fatalf("expected ErrCannotLoseLastTenantAdmin, got %v", err)
+	}
+	var role string
+	if err := gormDB.Table("user_roles").Select("role").Where("tenant_id = ? AND user_id = ?", 10, 20).Scan(&role).Error; err != nil {
+		t.Fatalf("query user role: %v", err)
+	}
+	if role != servicetenantuser.RoleTenantAdmin {
+		t.Fatalf("batch import should rollback downgraded admin role, got %q", role)
+	}
+	var count int64
+	if err := gormDB.Table("users").Where("tenant_id = ? AND username = ?", 10, "new.student").Count(&count).Error; err != nil {
+		t.Fatalf("count new user: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("batch import should rollback created users, got count %d", count)
+	}
+}
+
+func TestTenantUserRepositoryImportsUsersAndAllowsRoleSwap(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, false)
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	result, err := repo.ImportUsers(context.Background(), servicetenantuser.ImportUsersRepositoryInput{
+		TenantID: 10,
+		ActorID:  22,
+		Rows: []servicetenantuser.ImportUsersRepositoryRow{
+			{Username: "admin.one", RealName: "管理员一", PasswordHash: "hash-updated", Role: servicetenantuser.RoleTeacher},
+			{Username: "teacher.one", RealName: "教师一", PasswordHash: "hash-teacher", Role: servicetenantuser.RoleTenantAdmin},
+			{Username: "new.student", RealName: "新学生", PasswordHash: "hash-new", Role: servicetenantuser.RoleStudent},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportUsers returned error: %v", err)
+	}
+	if result.SuccessCount != 3 {
+		t.Fatalf("expected success count 3, got %d", result.SuccessCount)
+	}
+	var adminOneRole string
+	if err := gormDB.Table("user_roles").Select("role").Where("tenant_id = ? AND user_id = ?", 10, 20).Scan(&adminOneRole).Error; err != nil {
+		t.Fatalf("query admin role: %v", err)
+	}
+	if adminOneRole != servicetenantuser.RoleTeacher {
+		t.Fatalf("expected admin.one downgraded to teacher, got %q", adminOneRole)
+	}
+	var teacherOneRole string
+	if err := gormDB.Table("user_roles").Select("role").Where("tenant_id = ? AND user_id = ?", 10, 21).Scan(&teacherOneRole).Error; err != nil {
+		t.Fatalf("query teacher role: %v", err)
+	}
+	if teacherOneRole != servicetenantuser.RoleTenantAdmin {
+		t.Fatalf("expected teacher.one promoted to tenant_admin, got %q", teacherOneRole)
+	}
+	var newUserRole string
+	if err := gormDB.Table("users").
+		Select("user_roles.role").
+		Joins("JOIN user_roles ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id").
+		Where("users.tenant_id = ? AND users.username = ?", 10, "new.student").
+		Scan(&newUserRole).Error; err != nil {
+		t.Fatalf("query new user role: %v", err)
+	}
+	if newUserRole != servicetenantuser.RoleStudent {
+		t.Fatalf("expected new student role, got %q", newUserRole)
+	}
+}
+
 func TestTenantUserRepositoryRejectsDisablingUserWhenSpaceLosesLastAdmin(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	seedTenantAdminInvariantData(t, gormDB, true)
@@ -76,6 +253,40 @@ func TestTenantUserRepositoryRejectsDisablingUserWhenSpaceLosesLastAdmin(t *test
 	}
 	if status != servicetenantuser.StatusEnabled {
 		t.Fatalf("space admin invariant should rollback user disable, got status %q", status)
+	}
+}
+
+func TestTenantUserRepositoryRejectsDeletingUserWhenSpaceLosesLastAdmin(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedTenantAdminInvariantData(t, gormDB, true)
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, logo_url, description, type, status,
+			created_at, updated_at, ext_json
+		) VALUES (301, 10, '高一一班', '', '', 'class', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed space: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status,
+			created_at, updated_at, ext_json
+		) VALUES (20, 10, 301, 20, 'space_admin', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed space member: %v", err)
+	}
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	err := repo.DeleteUser(context.Background(), 10, 20)
+	if !errors.Is(err, servicespace.ErrCannotLoseLastSpaceAdmin) {
+		t.Fatalf("expected ErrCannotLoseLastSpaceAdmin, got %v", err)
+	}
+	var deletedAt int64
+	if err := gormDB.Table("users").Select("deleted_at").Where("tenant_id = ? AND id = ?", 10, 20).Scan(&deletedAt).Error; err != nil {
+		t.Fatalf("query user deleted_at: %v", err)
+	}
+	if deletedAt != 0 {
+		t.Fatalf("space admin invariant should rollback user delete, got deleted_at %d", deletedAt)
 	}
 }
 
@@ -144,6 +355,17 @@ func TestTenantUserRepositoryBuildDisableImpactReturnsAdminSpaceIDs(t *testing.T
 	if len(impact.AdminSpaceIDs) != 1 || impact.AdminSpaceIDs[0] != 301 {
 		t.Fatalf("expected admin space 301, got %#v", impact.AdminSpaceIDs)
 	}
+}
+
+func TestTenantUserRepositoryInvariantQueriesLockAdminRows(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{})
+
+	tenantAdminQuery := repo.tenantAdminLockQuery(context.Background(), gormDB, 10)
+	assertUpdateLockingClause(t, tenantAdminQuery.Statement.Clauses["FOR"])
+
+	spaceAdminQuery := repo.spaceAdminLockQuery(context.Background(), gormDB, 10, []uint64{301})
+	assertUpdateLockingClause(t, spaceAdminQuery.Statement.Clauses["FOR"])
 }
 
 func seedTenantAdminInvariantData(t *testing.T, gormDB interface {

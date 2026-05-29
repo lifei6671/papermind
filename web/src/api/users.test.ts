@@ -37,7 +37,7 @@ describe("user api", () => {
         status: "enabled",
       }],
     });
-    expect(fetcher).toHaveBeenCalledWith("/api/v1/users?tenant_id=10", expect.objectContaining({ method: "GET" }));
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/tenant/users?tenant_id=10", expect.objectContaining({ method: "GET" }));
   });
 
   test("创建用户会提交租户和角色字段", async () => {
@@ -72,7 +72,7 @@ describe("user api", () => {
       role: "student",
     });
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/users",
+      "/api/v1/tenant/users",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
@@ -110,7 +110,7 @@ describe("user api", () => {
       status: "disabled",
     });
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/users/21/disable",
+      "/api/v1/tenant/users/21/disable",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({

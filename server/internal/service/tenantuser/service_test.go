@@ -317,6 +317,131 @@ func TestDisableValidatesSpaceAdminInvariantBeforeStatusChange(t *testing.T) {
 	}
 }
 
+func TestDeleteRejectsSelf(t *testing.T) {
+	svc := NewService(ServiceOptions{Repo: &fakeRepository{}, Now: fixedNow})
+
+	err := svc.Delete(context.Background(), DeleteInput{
+		TenantID: 10,
+		ActorID:  20,
+		TargetID: 20,
+	})
+	if !errors.Is(err, ErrCannotDisableSelf) {
+		t.Fatalf("expected ErrCannotDisableSelf, got %v", err)
+	}
+}
+
+func TestDeleteValidatesSpaceAdminInvariantBeforeSoftDelete(t *testing.T) {
+	repo := &fakeRepository{}
+	checker := &fakeSpaceAdminInvariantChecker{}
+	svc := NewService(ServiceOptions{
+		Repo:                       repo,
+		SpaceAdminInvariantChecker: checker,
+		Now:                        fixedNow,
+	})
+
+	err := svc.Delete(context.Background(), DeleteInput{
+		TenantID: 10,
+		ActorID:  99,
+		TargetID: 20,
+	})
+	if err != nil {
+		t.Fatalf("Delete returned error: %v", err)
+	}
+	if checker.checkedTenantID != 10 || checker.checkedUserID != 20 {
+		t.Fatalf("expected invariant check tenant=10 user=20, got tenant=%d user=%d", checker.checkedTenantID, checker.checkedUserID)
+	}
+	if repo.deletedTenantID != 10 || repo.deletedUserID != 20 {
+		t.Fatalf("expected deleted tenant=10 user=20, got tenant=%d user=%d", repo.deletedTenantID, repo.deletedUserID)
+	}
+}
+
+func TestUpdateRoleRejectsSelf(t *testing.T) {
+	svc := NewService(ServiceOptions{Repo: &fakeRepository{}, Now: fixedNow})
+
+	err := svc.UpdateRole(context.Background(), UpdateRoleInput{
+		TenantID: 10,
+		ActorID:  20,
+		TargetID: 20,
+		Role:     RoleTeacher,
+	})
+	if !errors.Is(err, ErrCannotChangeSelfRole) {
+		t.Fatalf("expected ErrCannotChangeSelfRole, got %v", err)
+	}
+}
+
+func TestUpdateRoleRejectsInvalidRole(t *testing.T) {
+	svc := NewService(ServiceOptions{Repo: &fakeRepository{}, Now: fixedNow})
+
+	err := svc.UpdateRole(context.Background(), UpdateRoleInput{
+		TenantID: 10,
+		ActorID:  99,
+		TargetID: 20,
+		Role:     "space_admin",
+	})
+	if !errors.Is(err, ErrInvalidRole) {
+		t.Fatalf("expected ErrInvalidRole, got %v", err)
+	}
+}
+
+func TestUpdateRoleUsesRepositoryRoleChange(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(ServiceOptions{Repo: repo, Now: fixedNow})
+
+	err := svc.UpdateRole(context.Background(), UpdateRoleInput{
+		TenantID: 10,
+		ActorID:  99,
+		TargetID: 20,
+		Role:     RoleStudent,
+	})
+	if err != nil {
+		t.Fatalf("UpdateRole returned error: %v", err)
+	}
+	if repo.updatedRoleTenantID != 10 || repo.updatedRoleUserID != 20 || repo.updatedRole != RoleStudent {
+		t.Fatalf("expected role update tenant=10 user=20 role=student, got tenant=%d user=%d role=%q", repo.updatedRoleTenantID, repo.updatedRoleUserID, repo.updatedRole)
+	}
+}
+
+func TestImportUsersRejectsInvalidRole(t *testing.T) {
+	svc := NewService(ServiceOptions{Repo: &fakeRepository{}, Now: fixedNow})
+
+	_, err := svc.ImportUsers(context.Background(), ImportUsersInput{
+		TenantID: 10,
+		ActorID:  99,
+		Rows: []ImportUserRow{
+			{Username: "new.user", RealName: "新用户", Password: "plain-password", Role: "space_admin"},
+		},
+	})
+	if !errors.Is(err, ErrInvalidRole) {
+		t.Fatalf("expected ErrInvalidRole, got %v", err)
+	}
+}
+
+func TestImportUsersHashesPasswordsAndUsesRepositoryBatch(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(ServiceOptions{Repo: repo, Now: fixedNow})
+
+	result, err := svc.ImportUsers(context.Background(), ImportUsersInput{
+		TenantID: 10,
+		ActorID:  99,
+		Rows: []ImportUserRow{
+			{Username: "new.teacher", RealName: "新老师", Password: "teacher-secure-123", Role: RoleTeacher},
+			{Username: "new.student", RealName: "新学生", Password: "student-secure-123", Role: RoleStudent},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportUsers returned error: %v", err)
+	}
+	if result.SuccessCount != 2 {
+		t.Fatalf("expected success count 2, got %d", result.SuccessCount)
+	}
+	if repo.importTenantID != 10 || repo.importActorID != 99 || len(repo.importRows) != 2 {
+		t.Fatalf("expected import tenant=10 actor=99 rows=2, got tenant=%d actor=%d rows=%d", repo.importTenantID, repo.importActorID, len(repo.importRows))
+	}
+	if repo.importRows[0].PasswordHash == "teacher-secure-123" || repo.importRows[0].PasswordHash == "" {
+		t.Fatalf("expected imported password to be hashed, got %q", repo.importRows[0].PasswordHash)
+	}
+}
+
 const fixedUnixMilli int64 = 1767225600123
 
 func fixedNow() int64 {
@@ -346,6 +471,17 @@ type fakeRepository struct {
 	updatedStatusTenantID uint64
 	updatedStatusUserID   uint64
 	updatedStatus         string
+
+	deletedTenantID uint64
+	deletedUserID   uint64
+
+	updatedRoleTenantID uint64
+	updatedRoleUserID   uint64
+	updatedRole         string
+
+	importTenantID uint64
+	importActorID  uint64
+	importRows     []ImportUsersRepositoryRow
 
 	profileInput UpdateProfileInput
 }
@@ -427,6 +563,26 @@ func (r *fakeRepository) UpdateStatus(ctx context.Context, tenantID uint64, user
 	r.updatedStatusUserID = userID
 	r.updatedStatus = status
 	return nil
+}
+
+func (r *fakeRepository) DeleteUser(ctx context.Context, tenantID uint64, userID uint64) error {
+	r.deletedTenantID = tenantID
+	r.deletedUserID = userID
+	return nil
+}
+
+func (r *fakeRepository) UpdateRole(ctx context.Context, tenantID uint64, userID uint64, role string) error {
+	r.updatedRoleTenantID = tenantID
+	r.updatedRoleUserID = userID
+	r.updatedRole = role
+	return nil
+}
+
+func (r *fakeRepository) ImportUsers(ctx context.Context, input ImportUsersRepositoryInput) (ImportUsersResult, error) {
+	r.importTenantID = input.TenantID
+	r.importActorID = input.ActorID
+	r.importRows = append([]ImportUsersRepositoryRow(nil), input.Rows...)
+	return ImportUsersResult{SuccessCount: len(input.Rows)}, nil
 }
 
 func (r *fakeRepository) UpdateProfile(ctx context.Context, input UpdateProfileInput) (User, error) {

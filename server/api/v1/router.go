@@ -36,8 +36,8 @@ func AuthMiddlewares(options RouterOptions) []gin.HandlerFunc {
 // RegisterRoutes 只负责注册 /api/v1 下的版本路由和对应 handler。
 func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	examHandler := examHandler{service: deps.Exams, taking: deps.Taking, review: deps.Review, export: deps.Export, result: deps.Results, papers: deps.PaperRepository, members: deps.SpaceRepository, now: deps.Now}
-	tenantHandler := tenantHandler{service: deps.Tenants}
-	spaceHandler := spaceHandler{service: deps.Spaces, members: deps.SpaceRepository}
+	tenantHandler := tenantHandler{service: deps.Tenants, spaces: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
+	spaceHandler := spaceHandler{service: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
 	userHandler := userHandler{service: deps.TenantUsers, passwordMinLength: deps.PasswordMinLength}
 	questionHandler := questionHandler{service: deps.Questions, members: deps.SpaceRepository}
 	paperHandler := paperHandler{service: deps.Papers, papers: deps.PaperRepository, members: deps.SpaceRepository}
@@ -50,6 +50,8 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	api.GET("/profile", requireAuthPrincipalMiddleware(), authHandler.getProfile)
 	api.POST("/profile", requireAuthPrincipalMiddleware(), authHandler.updateProfile)
 	api.GET("/profile/spaces", requireAuthPrincipalMiddleware(), authHandler.listProfileSpaces)
+	tenant := api.Group("/tenant")
+	tenant.GET("/profile/spaces", requireAuthPrincipalMiddleware(), authHandler.listProfileSpaces)
 	api.GET("/exams", requireExamBusinessPrincipalMiddleware(), examHandler.list)
 	api.POST("/exams", requireExamBusinessPrincipalMiddleware(), examHandler.publish)
 	api.POST("/exams/invite/resolve", examHandler.resolveInvite)
@@ -73,20 +75,43 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	api.POST("/tenants/:id/profile", requirePlatformPrincipalMiddleware(), tenantHandler.updateProfile)
 	api.POST("/tenants/:id/reset-code", requirePlatformPrincipalMiddleware(), tenantHandler.resetCode)
 	api.POST("/tenants/:id/register-setting", requirePlatformPrincipalMiddleware(), tenantHandler.updateRegisterSetting)
+	api.GET("/tenants/:id/spaces", requirePlatformPrincipalMiddleware(), tenantHandler.listTenantSpaces)
+	api.GET("/tenants/:id/users", requirePlatformPrincipalMiddleware(), tenantHandler.listTenantUsers)
 	api.POST("/uploads", requireTenantAdminOrPlatformPrincipalMiddleware(), uploadHandler.create)
-	api.GET("/spaces", requireTenantAdminOrPlatformPrincipalMiddleware(), spaceHandler.list)
-	api.POST("/spaces", requireTenantAdminOrPlatformPrincipalMiddleware(), spaceHandler.create)
+	api.GET("/spaces", requireAuthPrincipalMiddleware(), spaceHandler.list)
+	api.POST("/spaces", requireAuthPrincipalMiddleware(), spaceHandler.create)
+	api.PUT("/spaces/:id", requireAuthPrincipalMiddleware(), spaceHandler.updateProfile)
+	api.DELETE("/spaces/:id", requireAuthPrincipalMiddleware(), spaceHandler.delete)
 	api.GET("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.listMembers)
 	api.POST("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.addMember)
 	api.PUT("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.updateMember)
 	api.DELETE("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.removeMember)
-	api.GET("/users", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.list)
-	api.POST("/users", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.create)
-	api.POST("/users/:id/disable", requireTenantAdminOrPlatformPrincipalMiddleware(), userHandler.disable)
+	tenant.GET("/spaces", requireAuthPrincipalMiddleware(), spaceHandler.list)
+	tenant.POST("/spaces", requireAuthPrincipalMiddleware(), spaceHandler.create)
+	tenant.PUT("/spaces/:id", requireAuthPrincipalMiddleware(), spaceHandler.updateProfile)
+	tenant.DELETE("/spaces/:id", requireAuthPrincipalMiddleware(), spaceHandler.delete)
+	tenant.GET("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.listMembers)
+	tenant.POST("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.addMember)
+	tenant.PUT("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.updateMember)
+	tenant.DELETE("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.removeMember)
+	api.GET("/users", requireAuthPrincipalMiddleware(), userHandler.list)
+	api.POST("/users", requireAuthPrincipalMiddleware(), userHandler.create)
+	api.POST("/users/import", requireAuthPrincipalMiddleware(), userHandler.importUsers)
+	api.POST("/users/:id/disable", requireAuthPrincipalMiddleware(), userHandler.disable)
+	api.DELETE("/users/:id", requireAuthPrincipalMiddleware(), userHandler.delete)
+	api.PUT("/users/:id/role", requireAuthPrincipalMiddleware(), userHandler.updateRole)
+	tenant.GET("/users", requireAuthPrincipalMiddleware(), userHandler.list)
+	tenant.POST("/users", requireAuthPrincipalMiddleware(), userHandler.create)
+	tenant.POST("/users/import", requireAuthPrincipalMiddleware(), userHandler.importUsers)
+	tenant.POST("/users/:id/disable", requireAuthPrincipalMiddleware(), userHandler.disable)
+	tenant.DELETE("/users/:id", requireAuthPrincipalMiddleware(), userHandler.delete)
+	tenant.PUT("/users/:id/role", requireAuthPrincipalMiddleware(), userHandler.updateRole)
 	api.GET("/questions", requireExamBusinessPrincipalMiddleware(), questionHandler.list)
 	api.POST("/questions", requireExamBusinessPrincipalMiddleware(), questionHandler.create)
 	api.POST("/questions/import", requireExamBusinessPrincipalMiddleware(), questionHandler.importQuestions)
 	api.GET("/papers", requireExamBusinessPrincipalMiddleware(), paperHandler.list)
+	api.POST("/papers", requireExamBusinessPrincipalMiddleware(), paperHandler.create)
+	api.DELETE("/papers/:id", requireExamBusinessPrincipalMiddleware(), paperHandler.delete)
 	api.GET("/papers/:id/rules", requireExamBusinessPrincipalMiddleware(), paperHandler.listRules)
 	api.POST("/papers/:id/rule-fixed/generate", requireExamBusinessPrincipalMiddleware(), paperHandler.generateRuleFixed)
 	api.POST("/papers/:id/rule-live/precheck", requireExamBusinessPrincipalMiddleware(), paperHandler.precheckRuleLive)

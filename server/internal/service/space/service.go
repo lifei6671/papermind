@@ -25,6 +25,9 @@ var (
 	ErrSpaceAdminRequired       = errors.New("space admin is required")
 	ErrCannotLoseLastSpaceAdmin = errors.New("cannot lose last enabled space admin")
 	ErrMemberNotFound           = errors.New("space member not found")
+	ErrSpaceNotFound            = errors.New("space not found")
+	ErrInvalidMemberRole        = errors.New("invalid space member role")
+	ErrMemberUserUnavailable    = errors.New("space member user is unavailable")
 )
 
 type Space struct {
@@ -61,6 +64,20 @@ type ListInput struct {
 	PageSize int
 }
 
+type UpdateProfileInput struct {
+	TenantID    uint64 // 所属租户 ID。
+	SpaceID     uint64 // 空间 ID。
+	Name        string // 空间名称。
+	LogoURL     string // 空间 Logo 地址，可为空。
+	Description string // 空间描述，可为空。
+	Type        string // 空间类型。
+}
+
+type DeleteInput struct {
+	TenantID uint64 // 所属租户 ID。
+	SpaceID  uint64 // 空间 ID。
+}
+
 type JoinMemberInput struct {
 	TenantID uint64 // 所属租户 ID。
 	SpaceID  uint64 // 空间 ID。
@@ -84,6 +101,8 @@ type ChangeRoleInput struct {
 type Repository interface {
 	ListSpaces(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[Space], error)
 	CreateSpace(ctx context.Context, space Space, adminUserIDs []uint64) (Space, error)
+	UpdateSpaceProfile(ctx context.Context, input UpdateProfileInput) (Space, error)
+	DeleteSpace(ctx context.Context, tenantID uint64, spaceID uint64) error
 	AddMember(ctx context.Context, member Member) (Member, error)
 	ListEffectiveMembers(ctx context.Context, tenantID uint64, spaceID uint64) ([]Member, error)
 	ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]Member, error)
@@ -124,7 +143,18 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Space, error) 
 	}, input.AdminUserIDs)
 }
 
+func (s *Service) UpdateProfile(ctx context.Context, input UpdateProfileInput) (Space, error) {
+	return s.repo.UpdateSpaceProfile(ctx, input)
+}
+
+func (s *Service) Delete(ctx context.Context, input DeleteInput) error {
+	return s.repo.DeleteSpace(ctx, input.TenantID, input.SpaceID)
+}
+
 func (s *Service) JoinMember(ctx context.Context, input JoinMemberInput) (Member, error) {
+	if !validMemberRole(input.Role) {
+		return Member{}, ErrInvalidMemberRole
+	}
 	return s.repo.AddMember(ctx, Member{
 		TenantID: input.TenantID,
 		SpaceID:  input.SpaceID,
@@ -157,6 +187,9 @@ func (s *Service) RemoveMember(ctx context.Context, input MemberActionInput) err
 }
 
 func (s *Service) ChangeMemberRole(ctx context.Context, input ChangeRoleInput) error {
+	if !validMemberRole(input.Role) {
+		return ErrInvalidMemberRole
+	}
 	if input.Role != RoleSpaceAdmin {
 		if err := s.ValidateSpaceAdminInvariant(ctx, input.TenantID, input.SpaceID, input.UserID); err != nil {
 			return err
@@ -181,4 +214,8 @@ func (s *Service) ValidateSpaceAdminInvariant(ctx context.Context, tenantID uint
 		return ErrCannotLoseLastSpaceAdmin
 	}
 	return nil
+}
+
+func validMemberRole(role string) bool {
+	return role == RoleSpaceAdmin || role == RoleTeacher || role == RoleStudent
 }

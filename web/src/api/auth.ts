@@ -119,7 +119,7 @@ export function createAuthAPI(apiClient: ApiClient): AuthAPI {
       return mapTenantRegisterResponse(data);
     },
     async listProfileSpaces() {
-      const data = await apiClient.get<ProfileSpaceMembershipListAPIResponse>("/api/v1/profile/spaces");
+      const data = await apiClient.get<ProfileSpaceMembershipListAPIResponse>("/api/v1/tenant/profile/spaces");
       return mapProfileSpaceMembershipList(data);
     },
   };
