@@ -135,7 +135,7 @@ func (h paperHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeExamBusiness(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID, h.members) {
 		return
 	}
 	papers, err := h.service.ListPapers(c.Request.Context(), tenantID)
@@ -160,7 +160,7 @@ func (h paperHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeExamBusiness(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
 	if !h.authorizePaperCreate(c, request.TenantID, request.SpaceID) {
@@ -193,7 +193,7 @@ func (h paperHandler) delete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeExamBusiness(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID, h.members) {
 		return
 	}
 	if !h.authorizePaperWrite(c, tenantID, paperID) {
@@ -217,7 +217,7 @@ func (h paperHandler) listSections(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeExamBusiness(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID, h.members) {
 		return
 	}
 	sections, err := h.service.ListSections(c.Request.Context(), tenantID, paperID)
@@ -247,7 +247,7 @@ func (h paperHandler) createSection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeExamBusiness(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
 	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
@@ -294,7 +294,7 @@ func (h paperHandler) addManualQuestion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeExamBusiness(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
 	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
@@ -339,7 +339,7 @@ func (h paperHandler) listRules(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeExamBusiness(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID, h.members) {
 		return
 	}
 	rules, err := h.service.ListRules(c.Request.Context(), tenantID, paperID)
@@ -374,7 +374,7 @@ func (h paperHandler) createRule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeExamBusiness(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
 	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
@@ -414,7 +414,7 @@ func (h paperHandler) generateRuleFixed(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeExamBusiness(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
 	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
@@ -442,7 +442,7 @@ func (h paperHandler) precheckRuleLive(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeExamBusiness(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
 	if !h.authorizePaperWrite(c, request.TenantID, paperID) {

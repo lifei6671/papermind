@@ -13,6 +13,7 @@ import (
 	serviceexam "github.com/lifei6671/papermind/server/internal/service/exam"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
+	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/constant"
 	"github.com/lifei6671/papermind/server/library/response"
@@ -24,14 +25,16 @@ import (
 // handler 只负责请求解析、认证上下文转换和响应映射；考试状态流转、
 // token 校验、阅卷和成绩规则都继续下沉到 service 层。
 type examHandler struct {
-	service *serviceexam.Service
-	taking  *serviceexam.TakingService
-	review  *serviceexam.ReviewService
-	export  *serviceexam.ExportService
-	result  *serviceexam.ResultService
-	papers  paperScopeFinder
-	members spaceMemberFinder
-	now     func() int64
+	service     *serviceexam.Service
+	taking      *serviceexam.TakingService
+	review      *serviceexam.ReviewService
+	export      *serviceexam.ExportService
+	result      *serviceexam.ResultService
+	papers      paperScopeFinder
+	targets     examTargetFinder
+	members     spaceMemberFinder
+	tenantUsers *servicetenantuser.Service
+	now         func() int64
 }
 
 // spaceMemberFinder 抽象空间成员查询能力，供权限上下文动态反查空间角色。
@@ -41,6 +44,10 @@ type spaceMemberFinder interface {
 	FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (servicespace.Member, error)
 	ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]servicespace.Member, error)
 	SpaceExists(ctx context.Context, tenantID uint64, spaceID uint64) (bool, error)
+}
+
+type examTargetFinder interface {
+	ListTargets(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.Target, error)
 }
 
 type publishExamRequest struct {
@@ -264,7 +271,7 @@ func (h examHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeExamBusiness(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID, h.members) {
 		return
 	}
 	page, pageSize, err := readPaginationQuery(c)
@@ -300,7 +307,7 @@ func (h examHandler) publish(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeExamBusiness(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
 	if !h.authorizePublishScope(c, request.TenantID, request.PaperID, request.TargetType, request.TargetID) {
@@ -381,6 +388,15 @@ func (h examHandler) authorizePublishScope(c *gin.Context, tenantID uint64, pape
 }
 
 func (h examHandler) authorizePublishSpaceTarget(c *gin.Context, tenantID uint64, spaceID uint64) bool {
+	exists, err := h.members.SpaceExists(c.Request.Context(), tenantID, spaceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试发布目标失败"))
+		return false
+	}
+	if !exists {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, servicespace.ErrSpaceNotFound.Error()))
+		return false
+	}
 	permissionContext, err := permissionContextForResourceScope(c, tenantID, &spaceID, h.members)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建考试发布目标权限上下文失败")
@@ -400,6 +416,19 @@ func (h examHandler) authorizePublishSpaceTarget(c *gin.Context, tenantID uint64
 func (h examHandler) authorizePublishUserTarget(c *gin.Context, tenantID uint64, userID uint64) bool {
 	principal, ok := currentAuthPrincipal(c)
 	if !ok {
+		writePermissionOrInternalError(c, permission.ErrForbidden, "校验考试发布目标失败")
+		return false
+	}
+	user, err := h.tenantUsers.Get(c.Request.Context(), tenantID, userID)
+	if errors.Is(err, servicetenantuser.ErrUserNotFound) {
+		writePermissionOrInternalError(c, permission.ErrForbidden, "校验考试发布目标失败")
+		return false
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试发布目标失败"))
+		return false
+	}
+	if user.Status != servicetenantuser.StatusEnabled || user.Role != servicetenantuser.RoleStudent {
 		writePermissionOrInternalError(c, permission.ErrForbidden, "校验考试发布目标失败")
 		return false
 	}
@@ -817,12 +846,12 @@ func (h examHandler) saveResultPublishConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、exam_id 和 publish_mode 不能为空"))
 		return
 	}
-	permissionContext, err := h.permissionContextFromSession(c, request.TenantID, request.SpaceID)
+	permissionContext, err := h.permissionContextForResultPublishConfig(c, request.TenantID, request.ExamID)
 	if err != nil {
 		writePermissionContextError(c, err, "保存成绩发布配置失败")
 		return
 	}
-	if err := permission.NewFixedRoleChecker().CanViewExamResults(permissionContextWithExamScope(permissionContext, request.ExamID, request.SpaceID), request.ExamID); err != nil {
+	if err := permission.NewFixedRoleChecker().CanViewExamResults(permissionContext, request.ExamID); err != nil {
 		writePermissionOrInternalError(c, err, "保存成绩发布配置失败")
 		return
 	}
@@ -954,6 +983,78 @@ func writeVisibleResultError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取成绩失败"))
+}
+
+func (h examHandler) permissionContextForResultPublishConfig(c *gin.Context, tenantID uint64, examID uint64) (permission.PermissionContext, error) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		return permission.PermissionContext{}, errors.New("请先登录")
+	}
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
+		return permission.PermissionContext{}, permission.ErrForbidden
+	}
+	if principal.Role == permission.RoleTenantAdmin {
+		ctx, err := h.permissionContextFromSession(c, tenantID, 0)
+		if err != nil {
+			return permission.PermissionContext{}, err
+		}
+		return permissionContextWithExamScope(ctx, examID, 0), nil
+	}
+
+	spaceIDs, err := h.resultPublishTargetSpaceIDs(c.Request.Context(), tenantID, examID)
+	if err != nil {
+		return permission.PermissionContext{}, err
+	}
+	for _, spaceID := range spaceIDs {
+		ctx, err := h.permissionContextFromSession(c, tenantID, spaceID)
+		if err != nil {
+			if errors.Is(err, permission.ErrForbidden) {
+				continue
+			}
+			return permission.PermissionContext{}, err
+		}
+		ctx = permissionContextWithExamScope(ctx, examID, spaceID)
+		if err := permission.NewFixedRoleChecker().CanViewExamResults(ctx, examID); err == nil {
+			return ctx, nil
+		}
+	}
+	return permission.PermissionContext{}, permission.ErrForbidden
+}
+
+func (h examHandler) resultPublishTargetSpaceIDs(ctx context.Context, tenantID uint64, examID uint64) ([]uint64, error) {
+	targets, err := h.targets.ListTargets(ctx, tenantID, examID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[uint64]struct{}{}
+	spaceIDs := make([]uint64, 0, len(targets))
+	appendSpaceID := func(spaceID uint64) {
+		if spaceID == 0 {
+			return
+		}
+		if _, ok := seen[spaceID]; ok {
+			return
+		}
+		seen[spaceID] = struct{}{}
+		spaceIDs = append(spaceIDs, spaceID)
+	}
+	for _, target := range targets {
+		switch target.TargetType {
+		case serviceexam.TargetTypeSpace:
+			appendSpaceID(target.TargetID)
+		case serviceexam.TargetTypeUser:
+			memberships, err := h.members.ListEffectiveMembershipsForUser(ctx, tenantID, target.TargetID)
+			if err != nil {
+				return nil, err
+			}
+			for _, membership := range memberships {
+				if membership.Status == servicespace.StatusEnabled {
+					appendSpaceID(membership.SpaceID)
+				}
+			}
+		}
+	}
+	return spaceIDs, nil
 }
 
 func (h examHandler) readActorPermissionQuery(c *gin.Context, tenantID uint64) (permission.PermissionContext, error) {

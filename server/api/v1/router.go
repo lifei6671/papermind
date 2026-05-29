@@ -35,7 +35,7 @@ func AuthMiddlewares(options RouterOptions) []gin.HandlerFunc {
 
 // RegisterRoutes 只负责注册 /api/v1 下的版本路由和对应 handler。
 func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
-	examHandler := examHandler{service: deps.Exams, taking: deps.Taking, review: deps.Review, export: deps.Export, result: deps.Results, papers: deps.PaperRepository, members: deps.SpaceRepository, now: deps.Now}
+	examHandler := examHandler{service: deps.Exams, taking: deps.Taking, review: deps.Review, export: deps.Export, result: deps.Results, papers: deps.PaperRepository, targets: deps.ExamRepository, members: deps.SpaceRepository, tenantUsers: deps.TenantUsers, now: deps.Now}
 	tenantHandler := tenantHandler{service: deps.Tenants, spaces: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
 	spaceHandler := spaceHandler{service: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
 	userHandler := userHandler{service: deps.TenantUsers, passwordMinLength: deps.PasswordMinLength}

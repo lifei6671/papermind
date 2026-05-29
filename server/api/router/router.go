@@ -2,6 +2,8 @@ package router
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -43,6 +45,7 @@ type Options struct {
 	UploadStore            storage.ObjectStore
 	PasswordMinLength      int
 	ExamTokenBufferMinutes int
+	CORSOrigins            []string
 }
 
 // Dependencies 是版本路由注册时需要使用的后端服务和仓储能力。
@@ -61,6 +64,7 @@ type Dependencies struct {
 	Results                *serviceexam.ResultService
 	Questions              *servicequestion.QuestionService
 	Papers                 *servicepaper.Service
+	ExamRepository         *dbdao.ExamRepository
 	PaperRepository        *dbdao.PaperRepository
 	SpaceRepository        *dbdao.SpaceRepository
 	UploadStore            storage.ObjectStore
@@ -80,6 +84,9 @@ func New(options Options, register RegisterFunc, authMiddlewares ...gin.HandlerF
 
 	engine := gin.New()
 	engine.Use(middleware.RequestID(), middleware.RequestLogger(), middleware.Recovery())
+	if len(options.CORSOrigins) > 0 {
+		engine.Use(corsMiddleware(options.CORSOrigins))
+	}
 	if len(authMiddlewares) > 0 {
 		engine.Use(authMiddlewares...)
 	}
@@ -158,6 +165,7 @@ func buildDependencies(options Options) Dependencies {
 		Results:                resultService,
 		Questions:              questionService,
 		Papers:                 paperService,
+		ExamRepository:         examRepository,
 		PaperRepository:        paperRepository,
 		SpaceRepository:        spaceRepository,
 		UploadStore:            defaultUploadStore(options.UploadStore, uploadDir),
@@ -195,4 +203,35 @@ func defaultNow(now func() int64) func() int64 {
 		return now
 	}
 	return func() int64 { return time.Now().UnixMilli() }
+}
+
+func corsMiddleware(origins []string) gin.HandlerFunc {
+	allowed := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			allowed[origin] = struct{}{}
+		}
+	}
+
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if _, ok := allowed[origin]; ok {
+			header := c.Writer.Header()
+			header.Set("Access-Control-Allow-Origin", origin)
+			header.Set("Access-Control-Allow-Credentials", "true")
+			header.Add("Vary", "Origin")
+			if c.Request.Method == http.MethodOptions {
+				header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				if requestHeaders := c.GetHeader("Access-Control-Request-Headers"); requestHeaders != "" {
+					header.Set("Access-Control-Allow-Headers", requestHeaders)
+				} else {
+					header.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				}
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+		}
+		c.Next()
+	}
 }

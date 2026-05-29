@@ -352,6 +352,27 @@ func (r *ExamRepository) GetExam(ctx context.Context, tenantID uint64, examID ui
 	return examFromDO(row, paper.BuildMode), nil
 }
 
+// ListTargets 读取考试已配置的投放目标，用于从真实资源范围重建管理权限。
+func (r *ExamRepository) ListTargets(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.Target, error) {
+	var rows []ExamTargetDO
+	if err := r.db.WithContext(ctx).
+		Where(ExamTargetColumns.TenantID+" = ?", tenantID).
+		Where(ExamTargetColumns.ExamID+" = ?", examID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	targets := make([]serviceexam.Target, 0, len(rows))
+	for _, row := range rows {
+		targets = append(targets, serviceexam.Target{
+			TenantID:   row.TenantID,
+			ExamID:     row.ExamID,
+			TargetType: row.TargetType,
+			TargetID:   row.TargetID,
+		})
+	}
+	return targets, nil
+}
+
 // IsEligible 判断用户是否具备参加考试的资格。
 // 资格来源包括考试直投给用户，以及考试投放到用户所在的有效学生空间。
 func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (bool, error) {

@@ -643,8 +643,10 @@ tenant_user_memberships
 平台用户唯一约束：
 
 - `UNIQUE (username, deleted_at)`
-- `UNIQUE (phone, deleted_at)`
-- `UNIQUE (email, deleted_at)`
+- `phone <> ''` 时 `UNIQUE (phone, deleted_at)`
+- `email <> ''` 时 `UNIQUE (email, deleted_at)`
+
+手机号和邮箱是可选资料，空字符串不参与唯一性约束；否则多个未填写联系方式的账号会互相冲突。
 
 用户头像和登录审计规则：
 
@@ -668,10 +670,10 @@ tenant_user_memberships
 租户用户唯一约束：
 
 - `UNIQUE (username, deleted_at)`
-- `UNIQUE (phone, deleted_at)`
-- `UNIQUE (email, deleted_at)`
+- `phone <> ''` 时 `UNIQUE (phone, deleted_at)`
+- `email <> ''` 时 `UNIQUE (email, deleted_at)`
 
-`real_name` 用于阅卷、成绩单和导出场景，首版可以非必填。手机号和邮箱如果允许为空，Repository 创建用户时需要按数据库差异处理空值唯一性，不能让全局租户侧账号中出现两个相同手机号或邮箱。
+`real_name` 用于阅卷、成绩单和导出场景，首版可以非必填。手机号和邮箱是可选资料，空字符串不参与唯一性约束；非空手机号或邮箱必须保持全局唯一。
 
 认证上下文需要区分两类主体：
 
@@ -1374,7 +1376,7 @@ API 分组：
 - 管理端创建租户用户时必须显式提交初始密码并写入哈希；后端不得使用固定默认密码或固定临时密码。
 - `tenant_admin` 创建 `teacher` 用户时，只创建租户用户和租户级 `teacher` 角色，不自动写入 `space_members`。教师加入空间必须通过空间成员接口显式分配；没有任何启用空间成员关系时允许登录，但不能操作题库、试卷、考试或阅卷。
 
-阅卷和成绩 API 必须从登录态解析调用人身份。`tenant_admin` 可以管理本租户内成绩和阅卷；教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。成绩发布配置属于考试级管理操作，只允许本租户 `tenant_admin` 或具备对应空间权限的 `space_admin` / `teacher` 修改。成绩导出必须单独走 `CanExportExamResults`，首版只允许 `tenant_admin` 和当前空间 `space_admin`，默认不开放给教师和学生。
+阅卷和成绩 API 必须从登录态解析调用人身份。`tenant_admin` 可以管理本租户内成绩和阅卷；教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。成绩发布配置属于考试级管理操作，只允许本租户 `tenant_admin` 或具备对应考试发布目标空间权限的 `space_admin` / `teacher` 修改；后端必须从 `exam_targets` 推导真实目标空间，不能用请求体 `space_id` 直接构造 `ExamScope`。成绩导出必须单独走 `CanExportExamResults`，首版只允许 `tenant_admin` 和当前空间 `space_admin`，默认不开放给教师和学生。
 
 学生成绩查看不走 `/api/v1/tenant/results/:id`。`GET /api/v1/tenant/results/:id` 仅用于管理端成绩详情，允许 `tenant_admin` / 授权空间 `space_admin` / 授权空间 `teacher`，不允许 `student`。`GET /api/v1/exam-entry/results/:id` 用于学生查看自己的已发布成绩，只允许目标 `student`，并且必须满足成绩发布策略和可见时间。
 

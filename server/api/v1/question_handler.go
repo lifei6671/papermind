@@ -75,7 +75,7 @@ func (h questionHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeExamBusiness(c, tenantID) {
+	if !authorizeExamBusiness(c, tenantID, h.members) {
 		return
 	}
 	spaceID, err := readOptionalUintQuery(c, "space_id")
@@ -121,7 +121,7 @@ func (h questionHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeExamBusiness(c, request.TenantID) {
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
 	permissionContext, err := permissionContextForResourceScope(c, request.TenantID, request.SpaceID, h.members)

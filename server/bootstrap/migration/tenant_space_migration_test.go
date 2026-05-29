@@ -2,6 +2,7 @@ package migration
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -41,6 +42,27 @@ func TestSQLiteTenantSpaceMigrationCreatesTablesAndIndexes(t *testing.T) {
 	assertSQLiteUniqueIndexContains(t, gormDB, "space_configs", []string{"tenant_id", "space_id", "config_key"})
 	assertSQLiteUniqueIndexContains(t, gormDB, "users", []string{"username", "deleted_at"})
 	assertSQLiteUniqueIndexContains(t, gormDB, "tenant_user_memberships", []string{"tenant_id", "user_id"})
+}
+
+func TestSQLiteUsersAllowMultipleEmptyOptionalContacts(t *testing.T) {
+	gormDB, closeDB := openSQLiteForActualMigrationTest(t)
+	defer closeDB()
+
+	migrationDir := filepath.Join("..", "..", "data", "migrations", "sqlite")
+	if err := Run(gormDB, migrationDir); err != nil {
+		t.Fatalf("Run(sqlite migrations) error = %v", err)
+	}
+
+	for _, id := range []int{1, 2} {
+		if err := gormDB.Exec(`
+			INSERT INTO users (
+				id, username, real_name, phone, email, password_hash, status,
+				created_at, updated_at, ext_json
+			) VALUES (?, ?, ?, '', '', 'hash', 'enabled', 1000, 1000, '{}')
+		`, id, "user"+strconv.Itoa(id), "用户"+strconv.Itoa(id)).Error; err != nil {
+			t.Fatalf("insert user %d with empty contacts: %v", id, err)
+		}
+	}
 }
 
 func openSQLiteForActualMigrationTest(t *testing.T) (*gorm.DB, func()) {

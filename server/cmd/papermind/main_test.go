@@ -35,6 +35,7 @@ func TestRouterOptionsFromConfigPassesSecurityDefaults(t *testing.T) {
 		Security: config.SecurityConfig{
 			AllowRegisterDefault: true,
 			PasswordMinLength:    12,
+			CORSOrigins:          []string{"https://app.example.com"},
 		},
 		Auth: config.AuthConfig{Session: config.SessionConfig{
 			Provider: "memory",
@@ -50,5 +51,8 @@ func TestRouterOptionsFromConfigPassesSecurityDefaults(t *testing.T) {
 	}
 	if options.ExamTokenBufferMinutes != 30 {
 		t.Fatalf("ExamTokenBufferMinutes = %d, want 30", options.ExamTokenBufferMinutes)
+	}
+	if len(options.CORSOrigins) != 1 || options.CORSOrigins[0] != "https://app.example.com" {
+		t.Fatalf("CORSOrigins = %#v, want https://app.example.com", options.CORSOrigins)
 	}
 }

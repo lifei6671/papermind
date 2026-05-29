@@ -2,10 +2,10 @@
 
 GO_TAGS ?= json1
 BACKEND_BIN ?= bin/papermind.exe
-BACKEND_DEV_ENV = set "PAPERMIND_DATABASE_DSN=file:data/sqlite/papermind.db?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000" && \
-	set "PAPERMIND_STORAGE_TEMP_DIR=data/tmp" && \
-	set "PAPERMIND_STORAGE_IMPORT_DIR=data/imports" && \
-	set "PAPERMIND_STORAGE_EXPORT_DIR=data/exports"
+BACKEND_DEV_ENV = PAPERMIND_DATABASE_DSN="file:data/sqlite/papermind.db?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000" \
+	PAPERMIND_STORAGE_TEMP_DIR=data/tmp \
+	PAPERMIND_STORAGE_IMPORT_DIR=data/imports \
+	PAPERMIND_STORAGE_EXPORT_DIR=data/exports
 
 help:
 	@echo "PaperMind Make targets:"
@@ -27,10 +27,10 @@ frontend-dev:
 	cd web && npm run dev
 
 backend-build:
-	cd server && if not exist bin mkdir bin && go build -tags $(GO_TAGS) -o $(BACKEND_BIN) ./cmd/papermind
+	cd server && mkdir -p bin && go build -tags $(GO_TAGS) -o $(BACKEND_BIN) ./cmd/papermind
 
 backend-dev:
-	cd server && $(BACKEND_DEV_ENV) && go run -tags $(GO_TAGS) ./cmd/papermind
+	cd server && $(BACKEND_DEV_ENV) go run -tags $(GO_TAGS) ./cmd/papermind
 
 web-build: frontend-build
 

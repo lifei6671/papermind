@@ -63,20 +63,46 @@ func currentLiveTenantAdminPrincipal(c *gin.Context, users *servicetenantuser.Se
 // authorizeExamBusiness 校验当前主体是否能进入租户考试业务接口。
 //
 // 这里只做管理端粗粒度入口判断，具体空间范围和资源归属仍由后续
-// PermissionContext 或 service 反查。
-func authorizeExamBusiness(c *gin.Context, tenantID uint64) bool {
+// PermissionContext 或 service 反查。空间管理员身份不写入 session，
+// 需要从当前启用的空间成员关系反查后放行。
+func authorizeExamBusiness(c *gin.Context, tenantID uint64, members spaceMemberFinder) bool {
 	principal, ok := currentAuthPrincipal(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
 		return false
 	}
-	if principal.SubjectType == permission.SubjectTenantUser &&
-		principal.TenantID == tenantID &&
-		(principal.Role == permission.RoleTenantAdmin || principal.Role == permission.RoleTeacher) {
-		return true
+	if principal.SubjectType == permission.SubjectTenantUser && principal.TenantID == tenantID {
+		if principal.Role == permission.RoleTenantAdmin || principal.Role == permission.RoleTeacher {
+			return true
+		}
+		allowed, err := hasExamBusinessMembership(c, members, tenantID, principal.UserID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取当前用户空间授权失败"))
+			return false
+		}
+		if allowed {
+			return true
+		}
 	}
 	c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
 	return false
+}
+
+func hasExamBusinessMembership(c *gin.Context, members spaceMemberFinder, tenantID uint64, userID uint64) (bool, error) {
+	if members == nil {
+		return false, nil
+	}
+	memberships, err := members.ListEffectiveMembershipsForUser(c.Request.Context(), tenantID, userID)
+	if err != nil {
+		return false, err
+	}
+	for _, member := range memberships {
+		if member.Status == servicespace.StatusEnabled &&
+			(member.Role == servicespace.RoleSpaceAdmin || member.Role == servicespace.RoleTeacher) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // permissionContextForResourceScope 从登录态和真实资源空间重建权限上下文。

@@ -109,10 +109,10 @@ CREATE TABLE IF NOT EXISTS platform_users (
 );
 -- 平台管理员登录名在未删除账号内唯一。
 CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_username_deleted_at ON platform_users (username, deleted_at);
--- 平台管理员手机号在未删除账号内唯一，空字符串也按唯一值处理。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_phone_deleted_at ON platform_users (phone, deleted_at);
--- 平台管理员邮箱在未删除账号内唯一，空字符串也按唯一值处理。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_email_deleted_at ON platform_users (email, deleted_at);
+-- 平台管理员手机号在未删除账号内唯一，空字符串不参与唯一性约束。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_phone_deleted_at ON platform_users (phone, deleted_at) WHERE phone <> '';
+-- 平台管理员邮箱在未删除账号内唯一，空字符串不参与唯一性约束。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_email_deleted_at ON platform_users (email, deleted_at) WHERE email <> '';
 
 -- platform_configs：平台配置表，保存平台级开关、默认值和注册策略。
 CREATE TABLE IF NOT EXISTS platform_configs (
@@ -157,10 +157,10 @@ CREATE TABLE IF NOT EXISTS users (
 );
 -- 登录名是全局账号，未删除账号内唯一。
 CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (username, deleted_at);
--- 手机号在未删除账号内唯一，空字符串也按唯一值处理。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (phone, deleted_at);
--- 邮箱在未删除账号内唯一，空字符串也按唯一值处理。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (email, deleted_at);
+-- 手机号在未删除账号内唯一，空字符串不参与唯一性约束。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (phone, deleted_at) WHERE phone <> '';
+-- 邮箱在未删除账号内唯一，空字符串不参与唯一性约束。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (email, deleted_at) WHERE email <> '';
 
 -- tenant_user_memberships：租户用户关系表，保存全局用户在租户内的固定角色和启用状态。
 CREATE TABLE IF NOT EXISTS tenant_user_memberships (

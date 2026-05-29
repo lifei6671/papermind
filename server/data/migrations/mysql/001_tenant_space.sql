@@ -102,8 +102,8 @@ CREATE TABLE IF NOT EXISTS platform_users (
     deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
     PRIMARY KEY (id),
     UNIQUE KEY uk_platform_users_username_deleted_at (username, deleted_at),
-    UNIQUE KEY uk_platform_users_phone_deleted_at (phone, deleted_at),
-    UNIQUE KEY uk_platform_users_email_deleted_at (email, deleted_at)
+    UNIQUE KEY uk_platform_users_phone_deleted_at ((NULLIF(phone, '')), deleted_at),
+    UNIQUE KEY uk_platform_users_email_deleted_at ((NULLIF(email, '')), deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台管理员账号表，保存平台级管理员身份';
 
 CREATE TABLE IF NOT EXISTS platform_configs (
@@ -146,8 +146,8 @@ CREATE TABLE IF NOT EXISTS users (
     deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
     PRIMARY KEY (id),
     UNIQUE KEY uk_users_username_deleted_at (username, deleted_at),
-    UNIQUE KEY uk_users_phone_deleted_at (phone, deleted_at),
-    UNIQUE KEY uk_users_email_deleted_at (email, deleted_at)
+    UNIQUE KEY uk_users_phone_deleted_at ((NULLIF(phone, '')), deleted_at),
+    UNIQUE KEY uk_users_email_deleted_at ((NULLIF(email, '')), deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='全局用户账号表，保存登录账号和用户基础资料';
 
 CREATE TABLE IF NOT EXISTS tenant_user_memberships (

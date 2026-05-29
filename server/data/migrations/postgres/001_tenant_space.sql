@@ -183,8 +183,8 @@ COMMENT ON COLUMN platform_users.version IS '数据版本号，用于乐观锁';
 COMMENT ON COLUMN platform_users.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
 COMMENT ON COLUMN platform_users.deleted_at IS '软删除时间，0 表示未删除';
 CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_username_deleted_at ON platform_users (username, deleted_at);
-CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_phone_deleted_at ON platform_users (phone, deleted_at);
-CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_email_deleted_at ON platform_users (email, deleted_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_phone_deleted_at ON platform_users (phone, deleted_at) WHERE phone <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_users_email_deleted_at ON platform_users (email, deleted_at) WHERE email <> '';
 
 CREATE TABLE IF NOT EXISTS platform_configs (
     id BIGSERIAL PRIMARY KEY,
@@ -259,8 +259,8 @@ COMMENT ON COLUMN users.version IS '数据版本号，用于乐观锁';
 COMMENT ON COLUMN users.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
 COMMENT ON COLUMN users.deleted_at IS '软删除时间，0 表示未删除';
 CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (username, deleted_at);
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (phone, deleted_at);
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (email, deleted_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (phone, deleted_at) WHERE phone <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (email, deleted_at) WHERE email <> '';
 
 CREATE TABLE IF NOT EXISTS tenant_user_memberships (
     id BIGSERIAL PRIMARY KEY,

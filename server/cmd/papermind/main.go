@@ -83,6 +83,7 @@ func routerOptionsFromConfig(cfg *config.Config, gormDB *gorm.DB) apirouter.Opti
 	options.UploadDir = filepath.Join(cfg.Storage.ImportDir, "uploads")
 	options.AllowRegisterDefault = cfg.Security.AllowRegisterDefault
 	options.PasswordMinLength = cfg.Security.PasswordMinLength
+	options.CORSOrigins = cfg.Security.CORSOrigins
 	return options
 }
 
