@@ -85,7 +85,7 @@ func TestRunForDriverIsIdempotentAndRefreshesExamWindow(t *testing.T) {
 	}
 
 	assertCount(t, gormDB, "users", 3)
-	assertCount(t, gormDB, "user_roles", 3)
+	assertCount(t, gormDB, "tenant_user_memberships", 3)
 	assertCount(t, gormDB, "exam_targets", 1)
 
 	var exam struct {

@@ -213,15 +213,15 @@ func TestProfileSpacesAPIRouteExcludesInactiveSpaces(t *testing.T) {
 			gormDB := openExamAPITestDB(t)
 			seedSpaceAPITestData(t, gormDB)
 			seedProfileSpacesAPITestData(t, gormDB)
-			if err := gormDB.Exec("UPDATE spaces SET "+tc.update+" WHERE tenant_id = ? AND id = ?", 10, 100).Error; err != nil {
-				t.Fatalf("mark space inactive: %v", err)
-			}
 
 			router := NewRouter(RouterOptions{
 				DB:  gormDB,
 				Now: func() int64 { return fixedAPINow },
 			})
 			authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+			if err := gormDB.Exec("UPDATE spaces SET "+tc.update+" WHERE tenant_id = ? AND id = ?", 10, 100).Error; err != nil {
+				t.Fatalf("mark space inactive: %v", err)
+			}
 
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/tenant/profile/spaces", nil, authHeader))
@@ -247,8 +247,8 @@ func TestProfileSpacesAPIRouteExcludesDisabledTenantUser(t *testing.T) {
 		Now: func() int64 { return fixedAPINow },
 	})
 	authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
-	if err := gormDB.Table("users").
-		Where("tenant_id = ? AND id = ?", 10, 20).
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 20).
 		Update("status", "disabled").Error; err != nil {
 		t.Fatalf("disable tenant user after login: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestTeacherGainsProfileSpaceOnlyAfterSpaceMemberAssignment(t *testing.T) {
 		t.Fatalf("create teacher status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
 	}
 	createBody := decodeExamAPIResponse[userResponse](t, createRecorder.Body.Bytes())
-	teacherAuthHeader := tenantAuthHeader(t, router, 10, "new.teacher", "new-teacher-secure-123")
+	teacherAuthHeader := tenantLoginAuthHeader(t, router, "new.teacher", "new-teacher-secure-123")
 
 	beforeRecorder := httptest.NewRecorder()
 	router.ServeHTTP(beforeRecorder, authorizedRequest(http.MethodGet, "/api/v1/profile/spaces", nil, teacherAuthHeader))
@@ -310,6 +310,7 @@ func TestTeacherGainsProfileSpaceOnlyAfterSpaceMemberAssignment(t *testing.T) {
 	}
 
 	afterRecorder := httptest.NewRecorder()
+	teacherAuthHeader = tenantAuthHeader(t, router, 10, "new.teacher", "new-teacher-secure-123")
 	router.ServeHTTP(afterRecorder, authorizedRequest(http.MethodGet, "/api/v1/profile/spaces", nil, teacherAuthHeader))
 	if afterRecorder.Code != http.StatusOK {
 		t.Fatalf("profile spaces after assignment status = %d, body = %s", afterRecorder.Code, afterRecorder.Body.String())
@@ -361,9 +362,9 @@ func TestTenantRegisterAPIRouteCreatesStudentByTenantCode(t *testing.T) {
 		Role         string
 	}
 	if err := gormDB.Table("users").
-		Select("users.password_hash, user_roles.role").
-		Joins("JOIN user_roles ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id").
-		Where("users.tenant_id = ? AND users.username = ?", 10, "student01").
+		Select("users.password_hash, tum.role").
+		Joins("JOIN tenant_user_memberships AS tum ON tum.user_id = users.id").
+		Where("tum.tenant_id = ? AND users.username = ?", 10, "student01").
 		Scan(&row).Error; err != nil {
 		t.Fatalf("query registered user: %v", err)
 	}
@@ -506,15 +507,15 @@ func seedProfileSpacesAPITestData(t *testing.T, gormDB *gorm.DB) {
 	if err := gormDB.Exec(`
 		UPDATE users
 		SET password_hash = ?
-		WHERE tenant_id = 10 AND id = 20
+		WHERE id = 20
 	`, passwordHash).Error; err != nil {
 		t.Fatalf("update teacher password: %v", err)
 	}
 	if err := gormDB.Exec(`
-		INSERT INTO user_roles (
-			id, tenant_id, user_id, role, created_at, updated_at, ext_json
-		) VALUES (20, 10, 20, 'teacher', ?, ?, '{}')
-	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		UPDATE tenant_user_memberships
+		SET role = 'teacher', status = 'enabled'
+		WHERE tenant_id = 10 AND user_id = 20
+	`).Error; err != nil {
 		t.Fatalf("seed teacher role: %v", err)
 	}
 	if err := gormDB.Exec(`

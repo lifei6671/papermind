@@ -70,5 +70,5 @@ function normalizeSession(session: AuthSession | null): AuthSession | null {
 }
 
 function isSessionRole(role: string) {
-  return role === "platform_admin" || role === "tenant_admin" || role === "teacher" || role === "student";
+  return role === "platform_admin" || role === "tenant_user" || role === "tenant_admin" || role === "teacher" || role === "student";
 }

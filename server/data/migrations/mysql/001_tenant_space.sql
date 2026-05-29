@@ -125,9 +125,8 @@ CREATE TABLE IF NOT EXISTS platform_configs (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台配置表，保存平台级开关、默认值和注册策略';
 
 CREATE TABLE IF NOT EXISTS users (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '租户用户主键 ID',
-    tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
-    username VARCHAR(64) NOT NULL COMMENT '租户内登录名',
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '全局用户主键 ID',
+    username VARCHAR(64) NOT NULL COMMENT '全局登录名',
     real_name VARCHAR(128) NOT NULL DEFAULT '' COMMENT '真实姓名，用于阅卷、成绩单和导出',
     avatar_url VARCHAR(512) NOT NULL DEFAULT '' COMMENT '用户头像地址',
     phone VARCHAR(32) NOT NULL DEFAULT '' COMMENT '手机号，可用于登录或通知',
@@ -146,16 +145,17 @@ CREATE TABLE IF NOT EXISTS users (
     ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
     deleted_at BIGINT NOT NULL DEFAULT 0 COMMENT '软删除时间，0 表示未删除',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_users_username_deleted_at (tenant_id, username, deleted_at),
-    UNIQUE KEY uk_users_phone_deleted_at (tenant_id, phone, deleted_at),
-    UNIQUE KEY uk_users_email_deleted_at (tenant_id, email, deleted_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户用户表，保存租户内考生、教师和租户管理员';
+    UNIQUE KEY uk_users_username_deleted_at (username, deleted_at),
+    UNIQUE KEY uk_users_phone_deleted_at (phone, deleted_at),
+    UNIQUE KEY uk_users_email_deleted_at (email, deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='全局用户账号表，保存登录账号和用户基础资料';
 
-CREATE TABLE IF NOT EXISTS user_roles (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '用户角色关系主键 ID',
+CREATE TABLE IF NOT EXISTS tenant_user_memberships (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '租户用户关系主键 ID',
     tenant_id BIGINT UNSIGNED NOT NULL COMMENT '所属租户 ID',
-    user_id BIGINT UNSIGNED NOT NULL COMMENT '租户用户 ID',
-    role VARCHAR(32) NOT NULL COMMENT '用户角色：tenant_admin / teacher / student',
+    user_id BIGINT UNSIGNED NOT NULL COMMENT '全局用户 ID',
+    role VARCHAR(32) NOT NULL COMMENT '租户固定角色：tenant_admin / teacher / student',
+    status VARCHAR(32) NOT NULL DEFAULT 'enabled' COMMENT '租户成员状态：enabled / disabled',
     created_at BIGINT NOT NULL COMMENT '创建时间，Unix 毫秒时间戳',
     created_by BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人主体 ID',
     created_by_type VARCHAR(32) NOT NULL DEFAULT 'system' COMMENT '创建人主体类型：platform_user / tenant_user / system',
@@ -165,8 +165,8 @@ CREATE TABLE IF NOT EXISTS user_roles (
     version BIGINT NOT NULL DEFAULT 1 COMMENT '数据版本号，用于乐观锁',
     ext_json JSON NOT NULL COMMENT 'JSON 扩展字段，保存非主流程元数据',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_user_roles_user (tenant_id, user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户角色关系表，保存租户用户的固定角色';
+    UNIQUE KEY uk_tenant_user_memberships_user (tenant_id, user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户用户关系表，保存全局用户在租户内的固定角色和启用状态';
 
 CREATE TABLE IF NOT EXISTS questions (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '题目主键 ID',

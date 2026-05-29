@@ -92,11 +92,18 @@ func TestSpaceRepositoryRejectsMissingMemberChanges(t *testing.T) {
 			seedSpaceAdminInvariantData(t, gormDB, true)
 			if err := gormDB.Exec(`
 				INSERT INTO users (
-					id, tenant_id, username, real_name, phone, email, password_hash, status,
+					id, username, real_name, phone, email, password_hash, status,
 					created_at, updated_at, ext_json
-				) VALUES (23, 10, 'teacher.not.member', '非成员教师', '13800000023', 'teacher23@example.test', 'hash', 'enabled', 1000, 1000, '{}')
+				) VALUES (23, 'teacher.not.member', '非成员教师', '13800000023', 'teacher23@example.test', 'hash', 'enabled', 1000, 1000, '{}')
 			`).Error; err != nil {
 				t.Fatalf("seed non-member user: %v", err)
+			}
+			if err := gormDB.Exec(`
+				INSERT INTO tenant_user_memberships (
+					id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+				) VALUES (23, 10, 23, 'teacher', 'enabled', 1000, 1000, '{}')
+			`).Error; err != nil {
+				t.Fatalf("seed non-member user membership: %v", err)
 			}
 			repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
 
@@ -222,7 +229,7 @@ func TestSpaceRepositoryEffectiveMembershipQueriesIgnoreInactiveUsers(t *testing
 	gormDB := openExamRepositoryTestDB(t)
 	seedUserMembershipListData(t, gormDB)
 	if err := gormDB.Table("users").
-		Where("tenant_id = ? AND id = ?", 10, 21).
+		Where("id = ?", 21).
 		Update("status", "disabled").Error; err != nil {
 		t.Fatalf("disable user: %v", err)
 	}
@@ -245,7 +252,7 @@ func TestSpaceRepositoryCountsOnlyEnabledUsersAsSpaceAdmins(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	seedSpaceAdminInvariantData(t, gormDB, true)
 	if err := gormDB.Table("users").
-		Where("tenant_id = ? AND id = ?", 10, 22).
+		Where("id = ?", 22).
 		Update("status", "disabled").Error; err != nil {
 		t.Fatalf("disable second admin user: %v", err)
 	}
@@ -298,13 +305,22 @@ func seedSpaceAdminInvariantData(t *testing.T, gormDB interface {
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO users (
-			id, tenant_id, username, real_name, phone, email, password_hash, status,
+			id, username, real_name, phone, email, password_hash, status,
 			created_at, updated_at, ext_json
 		) VALUES
-			(20, 10, 'space.admin.one', '空间管理员一', '13800000020', 'admin20@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
-			(21, 10, 'teacher.one', '教师一', '13800000021', 'teacher21@example.test', 'hash', 'enabled', 1000, 1000, '{}')
+			(20, 'space.admin.one', '空间管理员一', '13800000020', 'admin20@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
+			(21, 'teacher.one', '教师一', '13800000021', 'teacher21@example.test', 'hash', 'enabled', 1000, 1000, '{}')
 	`).Error; err != nil {
 		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 20, 'teacher', 'enabled', 1000, 1000, '{}'),
+			(21, 10, 21, 'teacher', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant user memberships: %v", err)
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO space_members (
@@ -321,11 +337,18 @@ func seedSpaceAdminInvariantData(t *testing.T, gormDB interface {
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO users (
-			id, tenant_id, username, real_name, phone, email, password_hash, status,
+			id, username, real_name, phone, email, password_hash, status,
 			created_at, updated_at, ext_json
-		) VALUES (22, 10, 'space.admin.two', '空间管理员二', '13800000022', 'admin22@example.test', 'hash', 'enabled', 1000, 1000, '{}')
+		) VALUES (22, 'space.admin.two', '空间管理员二', '13800000022', 'admin22@example.test', 'hash', 'enabled', 1000, 1000, '{}')
 	`).Error; err != nil {
 		t.Fatalf("seed second space admin user: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES (22, 10, 22, 'teacher', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed second space admin membership: %v", err)
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO space_members (
@@ -366,13 +389,22 @@ func seedUserMembershipListData(t *testing.T, gormDB interface {
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO users (
-			id, tenant_id, username, real_name, phone, email, password_hash, status,
+			id, username, real_name, phone, email, password_hash, status,
 			created_at, updated_at, ext_json
 		) VALUES
-			(21, 10, 'teacher.one', '教师一', '13800000021', 'teacher21@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
-			(22, 11, 'teacher.other', '其他教师', '13800000022', 'teacher22@example.test', 'hash', 'enabled', 1000, 1000, '{}')
+			(21, 'teacher.one', '教师一', '13800000021', 'teacher21@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
+			(22, 'teacher.other', '其他教师', '13800000022', 'teacher22@example.test', 'hash', 'enabled', 1000, 1000, '{}')
 	`).Error; err != nil {
 		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES
+			(21, 10, 21, 'teacher', 'enabled', 1000, 1000, '{}'),
+			(22, 11, 22, 'teacher', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed user memberships: %v", err)
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO space_members (

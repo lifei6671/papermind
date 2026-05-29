@@ -19,7 +19,7 @@ tenant_admin / teacher / student 三选一。
 首版明确采用单租户级角色模型：
 
 ```text
-- user_roles 使用 UNIQUE (tenant_id, user_id)。
+- tenant_user_memberships 使用 UNIQUE (tenant_id, user_id)。
 - ActorContext.Role 只保存一个租户级角色。
 - PermissionContext.Role 只保存一个租户级角色。
 - space_admin 不属于租户级角色，不写入 ActorContext.Role。
@@ -90,7 +90,7 @@ student 参加考试、查看自己成绩。
 - 删除租户业务数据
 ```
 
-平台管理员不是租户成员，不写入 `users` 表，不写入 `user_roles` 表，不写入 `space_members` 表。
+平台管理员不是租户成员，不写入 `users` 表，不写入 `tenant_user_memberships` 表，不写入 `space_members` 表。
 
 ---
 
@@ -209,7 +209,7 @@ platform_users
 ```text
 platform_users 不带 tenant_id。
 platform_admin 不进入 users 表。
-platform_admin 不直接绑定 user_roles。
+platform_admin 不直接绑定 tenant_user_memberships。
 ```
 
 ---
@@ -259,7 +259,6 @@ actor_type:
 ```text
 users
 ├── id
-├── tenant_id
 ├── username
 ├── real_name
 ├── phone
@@ -277,18 +276,21 @@ users
 └── ext_json
 ```
 
-租户管理员本质上也是租户用户，只是拥有 `tenant_admin` 角色。
+`users` 是租户侧通用账号表，不再直接绑定某一个租户。同一个账号可以通过 `tenant_user_memberships` 成为多个租户的用户。
+
+租户管理员本质上也是租户用户，只是在某个租户的成员关系中拥有 `tenant_admin` 角色。
 
 ---
 
-### 3.4 租户角色表
+### 3.4 租户用户关系表
 
 ```text
-user_roles
+tenant_user_memberships
 ├── id
 ├── tenant_id
 ├── user_id
 ├── role
+├── status
 ├── created_at
 ├── created_by
 ├── created_by_type
@@ -313,7 +315,7 @@ student
 UNIQUE (tenant_id, user_id)
 ```
 
-首版只支持单角色，`user_roles` 中同一个 `tenant_id + user_id` 只能存在一条有效租户级角色记录。后续如果要支持多角色，再把唯一约束调整为 `UNIQUE (tenant_id, user_id, role)`，并同步改造认证 session、DAO、前端菜单和 `PermissionContext`。
+首版只支持单角色，`tenant_user_memberships` 中同一个 `tenant_id + user_id` 只能存在一条租户成员关系。`role` 保存该用户在当前租户内的唯一租户级角色，`status` 保存该成员关系是否启用；禁用某个租户成员关系不等于禁用全局用户账号。后续如果要支持多角色，再把唯一约束调整为 `UNIQUE (tenant_id, user_id, role)`，并同步改造认证 session、DAO、前端菜单和 `PermissionContext`。
 
 ---
 
@@ -384,8 +386,8 @@ POST /api/v1/platform/tenants
 1. 校验当前操作者必须是 platform_admin
 2. 创建 tenant
 3. 生成全局唯一 tenant_code
-4. 创建租户用户 users
-5. 给该用户写入 user_roles: tenant_admin
+4. 创建或复用全局租户用户 users
+5. 给该用户写入 tenant_user_memberships: tenant_admin
 6. 不自动创建默认空间
 7. 不把首个 tenant_admin 写入 space_members
 8. 提交事务
@@ -475,12 +477,12 @@ platform_users.id
   → tenants.created_by
   → tenants.created_by_type = platform_user
 
-tenants.id
-  → users.tenant_id
-
 users.id
-  → user_roles.user_id
+  → tenant_user_memberships.user_id
   → role = tenant_admin
+
+tenants.id
+  → tenant_user_memberships.tenant_id
 ```
 
 也就是：
@@ -488,7 +490,7 @@ users.id
 ```text
 平台管理员创建租户。
 租户拥有租户用户。
-租户用户通过 user_roles 成为 tenant_admin。
+租户用户通过 tenant_user_memberships 成为 tenant_admin。
 ```
 
 ---
@@ -529,7 +531,8 @@ func ValidateTenantAdminInvariant(ctx context.Context, tenantID uint64) error
 查询 tenant_id 下：
 - users.status = enabled
 - users.deleted_at = 0
-- user_roles.role = tenant_admin
+- tenant_user_memberships.role = tenant_admin
+- tenant_user_memberships.status = enabled
 
 如果数量 < 1，则返回错误。
 ```
@@ -829,7 +832,8 @@ POST   /api/v1/platform/tenant-admins/:id/reset-password
 | 当前代码路径 | 目标分组 | 允许主体 | 说明 |
 | --- | --- | --- | --- |
 | `POST /api/v1/auth/platform/login` | `/api/v1/auth/platform/login` | 匿名 | 平台管理员登录。 |
-| `POST /api/v1/auth/tenant/login` | `/api/v1/auth/tenant/login` | 匿名 | 租户用户登录，必须提交租户归属。 |
+| `POST /api/v1/auth/tenant/login` | `/api/v1/auth/tenant/login` | 匿名 | 租户用户使用通用账号登录，不提交租户 ID，登录后进入租户空间选择页。 |
+| `POST /api/v1/auth/tenant/select-space` | `/api/v1/auth/tenant/select-space` | 已登录 `tenant_user` | 从当前账号可进入的租户和空间中选择目标入口，成功后把 session 绑定到目标租户和角色。 |
 | `GET/POST /api/v1/profile` | `/api/v1/profile` | 已登录主体 | 只操作当前账号资料。 |
 | `GET /api/v1/tenants` | `/api/v1/platform/tenants` | `platform_admin` | 平台侧租户列表。 |
 | `POST /api/v1/tenants` | `/api/v1/platform/tenants` | `platform_admin` | 创建租户并初始化首个 `tenant_admin`。 |
@@ -921,6 +925,19 @@ type ActorContext struct {
     Role      string // 首版单角色
 }
 ```
+
+租户通用账号登录后先形成未绑定租户空间的 `tenant_user` session：
+
+```json
+{
+  "actor_type": "tenant_user",
+  "actor_id": 1001,
+  "tenant_id": 0,
+  "role": "tenant_user"
+}
+```
+
+该 session 只能访问个人资料、可进入租户空间列表和空间选择接口。用户在 `/tenant-entry` 选择目标租户空间后，后端重新写入带 `tenant_id` 和租户级角色的 session，再进入对应管理端或考试入口。
 
 平台管理员登录：
 
@@ -1048,14 +1065,14 @@ updated_by
 
 `created_by` / `updated_by` 继续保存操作者 ID，新增的两个类型字段负责解释 ID 来源。
 
-当前项目仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；审计主体类型和 `user_roles` 单角色唯一约束直接落在 `001_tenant_space.sql` 初始建库脚本中，本次需求不新增 `002_audit_actor_type.sql`，也不执行追加迁移动作。
+当前项目仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；审计主体类型、全局 `users` 表、`tenant_user_memberships` 租户成员关系表和单角色唯一约束直接落在 `001_tenant_space.sql` 初始建库脚本中。本次需求不新增 `002_audit_actor_type.sql`，也不新增其他 `002_*` 数据库迁移脚本，不执行追加迁移动作。
 
 至少覆盖：
 
 ```text
 tenants
 users
-user_roles
+tenant_user_memberships
 spaces
 space_members
 questions
@@ -1068,7 +1085,7 @@ exams
 ```text
 tenants
 users
-user_roles
+tenant_user_memberships
 space_members
 ```
 
@@ -1228,7 +1245,9 @@ tenant_user 访问 /api/v1/platform
 ```text
 - 登录态增加 actorType，保留单个 role。
 - 平台后台只允许 platform_admin 进入。
-- 租户后台只允许 tenant_user 进入。
+- 租户登录页不再要求输入租户 ID，登录成功后跳转 `/tenant-entry`。
+- `/tenant-entry` 读取当前账号可进入的租户和空间，调用 `/api/v1/auth/tenant/select-space` 后再进入目标空间。
+- 租户后台只允许已选择租户空间后的 tenant_user 进入。
 - tenant_admin 菜单必须包含租户用户、空间、题库、试卷、考试、阅卷、成绩。
 - 平台管理员不能通过 tenant_id 参数直接进入租户业务页。
 - 创建租户表单必须补充首个租户管理员账号信息。
@@ -1350,7 +1369,7 @@ student
 ```text
 平台管理员和租户管理员不通过角色继承关联。
 平台管理员通过创建 tenant 和初始化 tenant_admin 形成治理关系。
-租户管理员通过 users + user_roles 归属于租户。
+租户管理员通过全局 users + tenant_user_memberships 归属于租户。
 业务权限统一走 PermissionChecker。
 平台接口和租户接口必须物理分组隔离。
 ```

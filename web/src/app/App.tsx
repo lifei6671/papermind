@@ -4,6 +4,7 @@ import { AdminShell } from "../layouts/AdminShell/AdminShell";
 import { PlatformLoginPage } from "../pages/Login/PlatformLoginPage";
 import { ExamEntryPage } from "../pages/Exam/ExamEntryPage";
 import { StudentExamPage } from "../pages/StudentExam/StudentExamPage";
+import { TenantEntryPage } from "../pages/Tenant/TenantEntryPage";
 import { useSession } from "../auth/session-context";
 import { buildAdminRoutes, routeVisibleForRole } from "./routes";
 
@@ -14,6 +15,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<PlatformLoginPage />} />
+      <Route path="/tenant-entry" element={<RequireSession allowTenantUser><TenantEntryPage /></RequireSession>} />
       <Route path="/exam-entry" element={<ExamEntryPage />} />
       <Route path="/student/exam" element={<StudentExamPage />} />
       <Route element={<RequireSession><AdminShell routes={adminRoutes} /></RequireSession>}>
@@ -39,10 +41,13 @@ function routeRequiresRouteGuard(group: string) {
   return group === "platform" || group === "tenant" || group === "exam";
 }
 
-function RequireSession({ children }: { children: ReactNode }) {
+function RequireSession({ allowTenantUser = false, children }: { allowTenantUser?: boolean; children: ReactNode }) {
   const { session } = useSession();
   if (!session) {
     return <Navigate to="/login" replace />;
+  }
+  if (!allowTenantUser && session.user.role === "tenant_user") {
+    return <Navigate to="/tenant-entry" replace />;
   }
   return children;
 }

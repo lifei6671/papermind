@@ -42,7 +42,7 @@ func TestAuditActorTypeColumnsAreInInitialSchema(t *testing.T) {
 		"platform_users",
 		"platform_configs",
 		"users",
-		"user_roles",
+		"tenant_user_memberships",
 		"questions",
 		"question_options",
 		"tags",

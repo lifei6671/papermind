@@ -406,6 +406,14 @@ func (r *fakeRepository) ListEffectiveMembershipsForUser(ctx context.Context, te
 	return r.effectiveMembershipsForUser, nil
 }
 
+func (r *fakeRepository) ListEntryMembershipsForUser(ctx context.Context, userID uint64) ([]Member, error) {
+	return r.effectiveMembershipsForUser, nil
+}
+
+func (r *fakeRepository) SpaceExists(ctx context.Context, tenantID uint64, spaceID uint64) (bool, error) {
+	return true, nil
+}
+
 func (r *fakeRepository) FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (Member, error) {
 	member, ok := r.membersByKey[memberKey{tenantID: tenantID, spaceID: spaceID, userID: userID}]
 	if !ok {

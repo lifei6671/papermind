@@ -31,7 +31,7 @@ P0 现状审计与冲突冻结
 
 这些冲突来自执行清单编写时的代码扫描，实施前需要重新确认：
 
-- [x] P0 审计时确认 `server/data/migrations/*/001_tenant_space.sql` 和 `server/bootstrap/migration/user_role_schema_test.go` 曾存在旧三列唯一约束描述；2026-05-29 已确认本项目仍是新项目初始化建库阶段，本次权限需求不新增 `002_audit_actor_type.sql`，最终结构直接落在 001 初始建库脚本。
+- [x] P0 审计时确认 `server/data/migrations/*/001_tenant_space.sql` 和 `server/bootstrap/migration/user_role_schema_test.go` 曾存在旧三列唯一约束描述；2026-05-29 已确认本项目仍是新项目初始化建库阶段，本次权限需求不新增 `002_audit_actor_type.sql` 或其他 `002_*` 迁移脚本，最终结构直接落在 001 初始建库脚本。
 - [x] `server/internal/service/permission` 仍存在 `CanManageTenant`、`CanManageSpace`、`CanGradeExam`、`TenantRoles []string`、`SpaceRoles map[uint64]string` 等旧模型痕迹。
 - [x] `web/src/app/routes.tsx`、`AdminShell` 测试和部分页面仍把 `space_admin` 当作 session role 或菜单 role。
 - [x] `server/bootstrap/devseed/devseed.go` 仍把演示租户管理员写入默认空间 `space_members`。
@@ -96,24 +96,25 @@ git status --short
 **涉及文件**：
 
 - 保持：`server/data/migrations/*/001_tenant_space.sql` 作为新项目首版初始化建库脚本，直接包含当前最终字段和约束。
-- 不新增：`server/data/migrations/*/002_audit_actor_type.sql`；本项目当前无历史生产库升级诉求，本次需求不做数据库迁移动作。
+- 不新增：`server/data/migrations/*/002_audit_actor_type.sql` 或其他 `002_*` 脚本；本项目当前无历史生产库升级诉求，本次需求不做数据库迁移动作。
 - 修改：`server/bootstrap/migration/user_role_schema_test.go`
 - 修改：`server/internal/dao/db/base_do.go` 或当前基础字段定义文件
 - 修改：`server/internal/dao/db/*_do.go`
 - 修改：`server/internal/dao/db/*_model_test.go`
 
-### P1.1 `user_roles` 单角色唯一约束
+### P1.1 `tenant_user_memberships` 单角色唯一约束
 
-- [x] 在 PostgreSQL 001 初始化脚本中直接使用 `user_roles (tenant_id, user_id)` 唯一索引。
-- [x] 在 MySQL 001 初始化脚本中直接使用 `user_roles (tenant_id, user_id)` 唯一约束。
-- [x] 在 SQLite 001 初始化脚本中直接使用 `user_roles (tenant_id, user_id)` 唯一索引。
-- [x] 索引或约束命名改为表达单角色语义，例如 `uk_user_roles_user`。
+- [x] 在 PostgreSQL 001 初始化脚本中直接使用 `tenant_user_memberships (tenant_id, user_id)` 唯一索引。
+- [x] 在 MySQL 001 初始化脚本中直接使用 `tenant_user_memberships (tenant_id, user_id)` 唯一约束。
+- [x] 在 SQLite 001 初始化脚本中直接使用 `tenant_user_memberships (tenant_id, user_id)` 唯一索引。
+- [x] 索引或约束命名改为表达单角色语义，例如 `uk_tenant_user_memberships_user`。
 - [x] 更新 `server/bootstrap/migration/user_role_schema_test.go` 中三种数据库断言。
+- [x] `users` 改为租户侧通用账号表，不再包含 `tenant_id`；用户和租户的归属关系由 `tenant_user_memberships` 维护。
 
 **验收标准**：
 
 - [x] 同一租户同一用户不能同时写入 `tenant_admin` 和 `teacher`。
-- [x] `user_roles.role` 仍保留，用于保存当前唯一租户级角色。
+- [x] `tenant_user_memberships.role` 用于保存当前唯一租户级角色，`tenant_user_memberships.status` 用于保存该租户成员关系是否启用。
 - [x] 文档中提到的 `UNIQUE (tenant_id, user_id, role)` 只作为未来扩展说明存在，不出现在首版迁移实现里。
 
 **建议验证**：
@@ -320,7 +321,7 @@ go test -tags json1 ./internal/service/permission
 > 2026-05-29 进度：已新增 `PUT /api/v1/users/:id/role`，首版单角色模型下
 > “移除 `tenant_admin`” 表达为把目标用户改为 `teacher` 或 `student`。
 > 接口层从当前 `tenant_admin` session 派生租户和操作者，拒绝修改自己的角色；
-> `TenantUserRepository.UpdateRole` 在同一事务内先更新 `user_roles.role`，
+> `TenantUserRepository.UpdateRole` 在同一事务内先更新 `tenant_user_memberships.role`，
 > 再调用 `validateTenantAdminInvariant(ctx, tx, tenantID)` 基于角色变更后的状态校验，
 > 校验失败会回滚角色更新。
 >
@@ -329,7 +330,7 @@ go test -tags json1 ./internal/service/permission
 > `tenant_id` 和 `actor_id`，忽略请求体伪造的 `tenant_id`；service 负责校验
 > 每行用户名、真实姓名、密码和租户级角色，并统一写入密码哈希；
 > `TenantUserRepository.ImportUsers` 以租户内 `username` 作为覆盖键，在同一事务内
-> 先锁定启用 `tenant_admin` 行，再批量创建或覆盖用户资料、密码和 `user_roles.role`，
+> 先锁定启用 `tenant_admin` 关系行，再批量创建或覆盖用户资料、密码和 `tenant_user_memberships.role`，
 > 最后调用 `validateTenantAdminInvariant(ctx, tx, tenantID)`。若批量覆盖会移除最后一个
 > 启用 `tenant_admin`，整批导入回滚。
 >
@@ -375,7 +376,7 @@ go test -tags json1 ./internal/service/permission
 
 ### P4.4 教师创建和空间分配
 
-- [x] `tenant_admin` 创建 `teacher` 用户时只写 `users` 和 `user_roles`。
+- [x] `tenant_admin` 创建 `teacher` 用户时只写全局 `users` 和 `tenant_user_memberships`。
 - [x] 创建 `teacher` 不自动写入 `space_members`。
 - [x] 教师加入空间必须通过空间成员接口显式分配。
 - [x] 教师没有启用空间成员关系时允许登录。
@@ -467,6 +468,10 @@ go test -tags json1 ./internal/service/permission
     前端租户侧 user/space/profile spaces API client 已切到 `/api/v1/tenant/**`；
     平台管理员直接访问 `/spaces`、`/users` 等租户业务后台路由时回到概览页，
     不触发租户接口请求。
+  - 2026-05-29：租户通用账号登录不再提交 `tenant_id`，登录后生成未绑定租户空间的
+    `tenant_user` session；前端跳转 `/tenant-entry` 展示可进入的租户和空间，
+    用户选择后调用 `/api/v1/auth/tenant/select-space`，后端再把 session 绑定到目标
+    `tenant_id`、租户级角色和可用空间范围。
 - [x] 不信任请求体里的跨租户 `tenant_id`。
   - 2026-05-28：接口测试覆盖 `teacher` 使用本租户 session 构造其他租户 `tenant_id` 发布考试时返回 403。
   - 2026-05-29：接口测试补充覆盖 `tenant_admin` 在 users/spaces
@@ -606,6 +611,21 @@ go test -tags json1 ./internal/service/permission
 - [x] 前端不能把 `space_admin` 当作 session role。
 - [x] 空间管理员菜单可见性来自空间成员接口或授权空间列表。
   - 2026-05-28：租户登录已拉取授权空间并写入 `session.profileSpaces`，`AdminShell` 已覆盖由授权空间驱动菜单；本轮新增真实 `/space-members` 空间成员入口，菜单由启用的 `profileSpaces.role = space_admin` 授权驱动，并通过现有空间成员接口读取成员列表，不暴露空间创建或空间资料编辑能力。
+  - 2026-05-29：`/space-members` 已对接后端空间成员 API。页面按授权空间调用
+    `GET /api/v1/tenant/spaces/:id/members` 读取成员，并通过同组接口完成添加成员、
+    修改空间身份、启用/禁用和移除，不再维护前端 mock 成员数据。
+  - 2026-05-29：租户管理员不再展示独立“空间成员”菜单，避免和“空间管理”
+    下的成员管理入口重复；租户管理员继续从“空间管理 > 成员管理”维护空间成员。
+    独立 `/space-members` 菜单只由启用的 `profileSpaces.role = space_admin` 授权驱动，
+    供空间管理员管理自己授权空间内的成员。
+  - 2026-05-29：租户登录页已移除租户 ID 输入框，租户账号先进入 `/tenant-entry`
+    选择租户空间；`session.profileSpaces` 由登录后列表和选择空间后的最新 profile spaces
+    同步，学生选择空间后进入考试入口，其他租户角色进入后台。
+  - 2026-05-29：`/tenant-entry` 已按角色展示不同入口。`tenant_admin` 的多个空间授权会
+    折叠成单个租户后台入口，并且选择时不传 `space_id`；`space_admin`、`teacher`
+    和 `student` 继续按具体空间展示空间管理、教学业务或考试入口。
+  - 2026-05-29：租户后台侧边栏不再显示平台管理员文案；租户用户显示当前租户身份和
+    租户名称，主按钮从“回到概览”改为“切换租户”，点击后回到 `/tenant-entry`。
 - [x] `tenant_admin` 可以看到租户用户、空间、题库、试卷、考试、阅卷和成绩管理入口。
 - [x] `platform_admin` 不能渲染租户业务页面或触发租户业务 API。
 - [x] `student` 不能进入管理端菜单。
@@ -659,7 +679,7 @@ go test -tags json1 ./internal/service/permission
 - [x] 覆盖平台管理员不能调用题库、试卷、考试、阅卷、成绩写接口。
 - [x] 覆盖创建租户必须初始化首个 `tenant_admin`。
 - [x] 覆盖创建租户失败事务回滚。
-- [x] 覆盖 `user_roles` 单角色唯一约束。
+- [x] 覆盖 `tenant_user_memberships` 单角色唯一约束。
 - [x] 覆盖不能移除或禁用最后一个 `tenant_admin`。
 - [x] 覆盖不能移除、禁用或降级最后一个 `space_admin`。
 - [x] 覆盖 `tenant_admin` 不在 `space_members` 中也可以管理本租户空间资源。
@@ -691,7 +711,8 @@ go test -tags json1 ./...
 ### P8.2 前端测试
 
 - [x] 覆盖 session role 不包含 `space_admin` 时菜单仍可由授权空间列表驱动。
-- [x] 覆盖真实空间成员入口由授权空间列表驱动并读取授权空间成员。
+- [x] 覆盖真实空间成员入口只由授权空间列表中的 `space_admin` 驱动，并对接成员读取、添加、角色/状态更新和移除 API。
+- [x] 覆盖 `tenant_admin` 不展示独立“空间成员”菜单，空间成员维护从“空间管理”的成员管理入口进入。
 - [x] 覆盖 `tenant_admin` 可见租户业务管理入口。
 - [x] 覆盖 `platform_admin` 不渲染租户业务页面。
 - [x] 覆盖租户用户不展示平台治理菜单，直接访问平台治理路由不触发平台页 API。
@@ -768,13 +789,14 @@ npm run build
 ### Gate A：数据和上下文
 
 - [x] P1-P2 完成。
-- [x] `user_roles` 单角色约束在三种迁移中一致。
+- [x] `tenant_user_memberships` 单角色约束在三种初始化 SQL 中一致。
 - [x] session 和 `PermissionContext` 不保存 `space_admin`。
 - [x] 通过后端迁移和权限上下文测试。
   - 2026-05-29：已确认本项目仍按新项目初始化建库处理，本次权限需求不新增
-    `002_audit_actor_type.sql`；三种数据库的 `001_tenant_space.sql`
-    直接包含 `created_by_type`、`updated_by_type` 和
-    `uk_user_roles_user (tenant_id, user_id)`。验证命令：
+    `002_audit_actor_type.sql` 或其他 `002_*` 迁移脚本；三种数据库的
+    `001_tenant_space.sql` 直接包含 `created_by_type`、`updated_by_type`、
+    全局 `users`、`tenant_user_memberships` 和
+    `uk_tenant_user_memberships_user (tenant_id, user_id)`。验证命令：
     `go test -tags json1 ./...`，结果通过。
 
 ### Gate B：权限服务

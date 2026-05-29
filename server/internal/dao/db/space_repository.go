@@ -220,7 +220,8 @@ func (r *SpaceRepository) ListEffectiveMembers(ctx context.Context, tenantID uin
 	if err := r.db.WithContext(ctx).
 		Model(&SpaceMemberDO{}).
 		Joins("JOIN spaces ON spaces.tenant_id = space_members.tenant_id AND spaces.id = space_members.space_id").
-		Joins("JOIN users ON users.tenant_id = space_members.tenant_id AND users.id = space_members.user_id").
+		Joins("JOIN users ON users.id = space_members.user_id").
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = space_members.tenant_id AND tum.user_id = space_members.user_id").
 		Where("space_members."+SpaceMemberColumns.TenantID+" = ?", tenantID).
 		Where("space_members."+SpaceMemberColumns.SpaceID+" = ?", spaceID).
 		Where("space_members."+SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
@@ -229,6 +230,7 @@ func (r *SpaceRepository) ListEffectiveMembers(ctx context.Context, tenantID uin
 		Where("spaces."+SpaceColumns.DeletedAt+" = ?", 0).
 		Where("users."+UserColumns.Status+" = ?", servicetenantuser.StatusEnabled).
 		Where("users."+UserColumns.DeletedAt+" = ?", 0).
+		Where("tum."+UserRoleColumns.Status+" = ?", servicetenantuser.StatusEnabled).
 		Order("space_members." + SpaceMemberColumns.ID + " ASC").
 		Find(&rows).Error; err != nil {
 		return nil, err
@@ -245,7 +247,8 @@ func (r *SpaceRepository) ListEffectiveMembershipsForUser(ctx context.Context, t
 	if err := r.db.WithContext(ctx).
 		Model(&SpaceMemberDO{}).
 		Joins("JOIN spaces ON spaces.tenant_id = space_members.tenant_id AND spaces.id = space_members.space_id").
-		Joins("JOIN users ON users.tenant_id = space_members.tenant_id AND users.id = space_members.user_id").
+		Joins("JOIN users ON users.id = space_members.user_id").
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = space_members.tenant_id AND tum.user_id = space_members.user_id").
 		Where("space_members."+SpaceMemberColumns.TenantID+" = ?", tenantID).
 		Where("space_members."+SpaceMemberColumns.UserID+" = ?", userID).
 		Where("space_members."+SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
@@ -254,6 +257,7 @@ func (r *SpaceRepository) ListEffectiveMembershipsForUser(ctx context.Context, t
 		Where("spaces."+SpaceColumns.DeletedAt+" = ?", 0).
 		Where("users."+UserColumns.Status+" = ?", servicetenantuser.StatusEnabled).
 		Where("users."+UserColumns.DeletedAt+" = ?", 0).
+		Where("tum."+UserRoleColumns.Status+" = ?", servicetenantuser.StatusEnabled).
 		Order("space_members." + SpaceMemberColumns.SpaceID + " ASC").
 		Find(&rows).Error; err != nil {
 		return nil, err
@@ -265,12 +269,89 @@ func (r *SpaceRepository) ListEffectiveMembershipsForUser(ctx context.Context, t
 	return members, nil
 }
 
+func (r *SpaceRepository) ListEntryMembershipsForUser(ctx context.Context, userID uint64) ([]servicespace.Member, error) {
+	var rows []entryMembershipRow
+	// 登录后入口页需要按全局账号汇总所有可进入空间；租户管理员以租户身份进入任意启用空间，
+	// 教师和学生则只显示已启用的空间成员关系。
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			0 AS id,
+			tum.tenant_id AS tenant_id,
+			tenants.name AS tenant_name,
+			0 AS space_id,
+			'' AS space_name,
+			tum.user_id AS user_id,
+			tum.role AS role,
+			tum.status AS status
+		FROM tenant_user_memberships AS tum
+		JOIN users ON users.id = tum.user_id AND users.status = ? AND users.deleted_at = 0
+		JOIN tenants ON tenants.id = tum.tenant_id AND tenants.status = ? AND tenants.deleted_at = 0
+		WHERE tum.user_id = ? AND tum.role = ? AND tum.status = ?
+			AND NOT EXISTS (
+				SELECT 1 FROM spaces
+				WHERE spaces.tenant_id = tum.tenant_id AND spaces.status = ? AND spaces.deleted_at = 0
+			)
+		UNION ALL
+		SELECT
+			0 AS id,
+			tum.tenant_id AS tenant_id,
+			tenants.name AS tenant_name,
+			spaces.id AS space_id,
+			spaces.name AS space_name,
+			tum.user_id AS user_id,
+			tum.role AS role,
+			tum.status AS status
+		FROM tenant_user_memberships AS tum
+		JOIN users ON users.id = tum.user_id AND users.status = ? AND users.deleted_at = 0
+		JOIN tenants ON tenants.id = tum.tenant_id AND tenants.status = ? AND tenants.deleted_at = 0
+		JOIN spaces ON spaces.tenant_id = tum.tenant_id AND spaces.status = ? AND spaces.deleted_at = 0
+		WHERE tum.user_id = ? AND tum.role = ? AND tum.status = ?
+		UNION ALL
+		SELECT
+			space_members.id AS id,
+			space_members.tenant_id AS tenant_id,
+			tenants.name AS tenant_name,
+			spaces.id AS space_id,
+			spaces.name AS space_name,
+			space_members.user_id AS user_id,
+			space_members.role_in_space AS role,
+			space_members.status AS status
+		FROM space_members
+		JOIN tenant_user_memberships AS tum ON tum.tenant_id = space_members.tenant_id AND tum.user_id = space_members.user_id
+		JOIN users ON users.id = space_members.user_id AND users.status = ? AND users.deleted_at = 0
+		JOIN tenants ON tenants.id = space_members.tenant_id AND tenants.status = ? AND tenants.deleted_at = 0
+		JOIN spaces ON spaces.tenant_id = space_members.tenant_id AND spaces.id = space_members.space_id AND spaces.status = ? AND spaces.deleted_at = 0
+		WHERE space_members.user_id = ?
+			AND space_members.status = ?
+			AND space_members.deleted_at = 0
+			AND tum.status = ?
+			AND tum.role <> ?
+		ORDER BY tenant_id ASC, space_id ASC
+	`,
+		servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled,
+		userID, servicetenantuser.RoleTenantAdmin, servicetenantuser.StatusEnabled, servicespace.StatusEnabled,
+		servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled, servicespace.StatusEnabled,
+		userID, servicetenantuser.RoleTenantAdmin, servicetenantuser.StatusEnabled,
+		servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled, servicespace.StatusEnabled,
+		userID, servicespace.StatusEnabled, servicetenantuser.StatusEnabled, servicetenantuser.RoleTenantAdmin,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	members := make([]servicespace.Member, 0, len(rows))
+	for _, row := range rows {
+		members = append(members, entryMembershipFromRow(row))
+	}
+	return members, nil
+}
+
 func (r *SpaceRepository) FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (servicespace.Member, error) {
 	var row SpaceMemberDO
 	err := r.db.WithContext(ctx).
 		Model(&SpaceMemberDO{}).
 		Joins("JOIN spaces ON spaces.tenant_id = space_members.tenant_id AND spaces.id = space_members.space_id").
-		Joins("JOIN users ON users.tenant_id = space_members.tenant_id AND users.id = space_members.user_id").
+		Joins("JOIN users ON users.id = space_members.user_id").
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = space_members.tenant_id AND tum.user_id = space_members.user_id").
 		Where("space_members."+SpaceMemberColumns.TenantID+" = ?", tenantID).
 		Where("space_members."+SpaceMemberColumns.SpaceID+" = ?", spaceID).
 		Where("space_members."+SpaceMemberColumns.UserID+" = ?", userID).
@@ -279,6 +360,7 @@ func (r *SpaceRepository) FindMember(ctx context.Context, tenantID uint64, space
 		Where("spaces."+SpaceColumns.DeletedAt+" = ?", 0).
 		Where("users."+UserColumns.Status+" = ?", servicetenantuser.StatusEnabled).
 		Where("users."+UserColumns.DeletedAt+" = ?", 0).
+		Where("tum."+UserRoleColumns.Status+" = ?", servicetenantuser.StatusEnabled).
 		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return servicespace.Member{}, servicespace.ErrMemberNotFound
@@ -297,7 +379,8 @@ func (r *SpaceRepository) countEnabledSpaceAdmins(ctx context.Context, gormDB *g
 	var count int64
 	err := gormDB.WithContext(ctx).Model(&SpaceMemberDO{}).
 		Joins("JOIN spaces ON spaces.tenant_id = space_members.tenant_id AND spaces.id = space_members.space_id").
-		Joins("JOIN users ON users.tenant_id = space_members.tenant_id AND users.id = space_members.user_id").
+		Joins("JOIN users ON users.id = space_members.user_id").
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = space_members.tenant_id AND tum.user_id = space_members.user_id").
 		Where("space_members."+SpaceMemberColumns.TenantID+" = ?", tenantID).
 		Where("space_members."+SpaceMemberColumns.SpaceID+" = ?", spaceID).
 		Where("space_members."+SpaceMemberColumns.RoleInSpace+" = ?", servicespace.RoleSpaceAdmin).
@@ -307,6 +390,7 @@ func (r *SpaceRepository) countEnabledSpaceAdmins(ctx context.Context, gormDB *g
 		Where("spaces.deleted_at = ?", 0).
 		Where("users.status = ?", servicetenantuser.StatusEnabled).
 		Where("users.deleted_at = ?", 0).
+		Where("tum."+UserRoleColumns.Status+" = ?", servicetenantuser.StatusEnabled).
 		Count(&count).Error
 	return count, err
 }
@@ -453,11 +537,13 @@ func (r *SpaceRepository) SpaceExists(ctx context.Context, tenantID uint64, spac
 
 func (r *SpaceRepository) validateEnabledTenantUser(ctx context.Context, gormDB *gorm.DB, tenantID uint64, userID uint64) error {
 	var count int64
-	err := gormDB.WithContext(ctx).Model(&UserDO{}).
-		Where(UserColumns.TenantID+" = ?", tenantID).
-		Where(UserColumns.ID+" = ?", userID).
-		Where(UserColumns.Status+" = ?", servicetenantuser.StatusEnabled).
-		Where(UserColumns.DeletedAt+" = ?", 0).
+	err := gormDB.WithContext(ctx).Table("tenant_user_memberships AS tum").
+		Joins("JOIN users ON users.id = tum.user_id").
+		Where("tum."+UserRoleColumns.TenantID+" = ?", tenantID).
+		Where("tum."+UserRoleColumns.UserID+" = ?", userID).
+		Where("tum."+UserRoleColumns.Status+" = ?", servicetenantuser.StatusEnabled).
+		Where("users."+UserColumns.Status+" = ?", servicetenantuser.StatusEnabled).
+		Where("users."+UserColumns.DeletedAt+" = ?", 0).
 		Count(&count).Error
 	if err != nil {
 		return err
@@ -472,7 +558,7 @@ func (r *SpaceRepository) ListMemberNames(ctx context.Context, tenantID uint64, 
 	var rows []SpaceMemberName
 	err := r.db.WithContext(ctx).Table(SpaceMemberDO{}.TableName()+" AS sm").
 		Select("sm.id, sm.tenant_id, sm.space_id, sm.user_id, u.real_name AS name, sm.role_in_space AS role, sm.status").
-		Joins("LEFT JOIN users AS u ON u.tenant_id = sm.tenant_id AND u.id = sm.user_id AND u.deleted_at = 0").
+		Joins("LEFT JOIN users AS u ON u.id = sm.user_id AND u.deleted_at = 0").
 		Where("sm.tenant_id = ?", tenantID).
 		Where("sm.space_id = ?", spaceID).
 		Where("sm.deleted_at = ?", 0).
@@ -489,6 +575,17 @@ type SpaceMemberName struct {
 	Name     string `gorm:"column:name"`
 	Role     string `gorm:"column:role"`
 	Status   string `gorm:"column:status"`
+}
+
+type entryMembershipRow struct {
+	ID         uint64 `gorm:"column:id"`
+	TenantID   uint64 `gorm:"column:tenant_id"`
+	TenantName string `gorm:"column:tenant_name"`
+	SpaceID    uint64 `gorm:"column:space_id"`
+	SpaceName  string `gorm:"column:space_name"`
+	UserID     uint64 `gorm:"column:user_id"`
+	Role       string `gorm:"column:role"`
+	Status     string `gorm:"column:status"`
 }
 
 func spaceFromDO(row SpaceDO) servicespace.Space {
@@ -511,5 +608,18 @@ func memberFromDO(row SpaceMemberDO) servicespace.Member {
 		UserID:   row.UserID,
 		Role:     row.RoleInSpace,
 		Status:   row.Status,
+	}
+}
+
+func entryMembershipFromRow(row entryMembershipRow) servicespace.Member {
+	return servicespace.Member{
+		ID:         row.ID,
+		TenantID:   row.TenantID,
+		TenantName: row.TenantName,
+		SpaceID:    row.SpaceID,
+		SpaceName:  row.SpaceName,
+		UserID:     row.UserID,
+		Role:       row.Role,
+		Status:     row.Status,
 	}
 }

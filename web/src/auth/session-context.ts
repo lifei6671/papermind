@@ -2,13 +2,15 @@ import { createContext, useContext } from "react";
 
 export const SESSION_STORAGE_KEY = "papermind.session.v1";
 
-export type SessionRole = "platform_admin" | "tenant_admin" | "teacher" | "student";
+export type SessionRole = "platform_admin" | "tenant_user" | "tenant_admin" | "teacher" | "student";
 
 export type ProfileSpaceAuthorization = {
   id: number;
   tenantID: number;
+  tenantName?: string;
   spaceID: number;
-  role: "space_admin" | "teacher" | "student";
+  spaceName?: string;
+  role: "tenant_admin" | "space_admin" | "teacher" | "student";
   status: "enabled" | "disabled";
 };
 

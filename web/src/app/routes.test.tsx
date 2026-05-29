@@ -17,7 +17,7 @@ test("空间管理员菜单可见性来自授权空间列表而不是 session �
     group: "tenant",
     icon: School,
     label: "空间成员",
-    menuRoles: ["tenant_admin"],
+    menuRoles: [],
     path: "/space-members",
     spaceMemberRoles: ["space_admin"],
   };
@@ -51,9 +51,10 @@ test("真实空间成员入口由授权空间列表驱动", () => {
 
   expect(spaceMemberRoute).toMatchObject({
     group: "tenant",
-    menuRoles: ["tenant_admin"],
+    menuRoles: [],
     spaceMemberRoles: ["space_admin"],
   });
   expect(routeVisibleForRole(spaceMemberRoute!, "teacher", profileSpaces)).toBe(true);
   expect(routeVisibleForRole(spaceMemberRoute!, "teacher", [])).toBe(false);
+  expect(routeVisibleForRole(spaceMemberRoute!, "tenant_admin", [])).toBe(false);
 });

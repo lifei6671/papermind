@@ -358,14 +358,14 @@ func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID
 	var directCount int64
 	// 直投用户必须仍是启用状态，并且拥有 student 角色，避免被禁用或非学生用户进入考试。
 	if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
-		Joins("JOIN users ON users."+UserColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
-			" AND users."+UserColumns.ID+" = exam_targets."+ExamTargetColumns.TargetID+
+		Joins("JOIN users ON users."+UserColumns.ID+" = exam_targets."+ExamTargetColumns.TargetID+
 			" AND users."+UserColumns.ID+" = ?"+
 			" AND users."+UserColumns.Status+" = ?"+
 			" AND users."+UserColumns.DeletedAt+" = ?", userID, "enabled", 0).
-		Joins("JOIN user_roles ON user_roles."+UserRoleColumns.TenantID+" = users."+UserColumns.TenantID+
-			" AND user_roles."+UserRoleColumns.UserID+" = users."+UserColumns.ID+
-			" AND user_roles."+UserRoleColumns.Role+" = ?", "student").
+		Joins("JOIN tenant_user_memberships AS tum ON tum."+UserRoleColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
+			" AND tum."+UserRoleColumns.UserID+" = users."+UserColumns.ID+
+			" AND tum."+UserRoleColumns.Role+" = ?"+
+			" AND tum."+UserRoleColumns.Status+" = ?", "student", "enabled").
 		Where("exam_targets."+ExamTargetColumns.TenantID+" = ?", tenantID).
 		Where("exam_targets."+ExamTargetColumns.ExamID+" = ?", examID).
 		Where("exam_targets."+ExamTargetColumns.TargetType+" = ?", serviceexam.TargetTypeUser).
@@ -386,10 +386,12 @@ func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID
 			" AND space_members."+SpaceMemberColumns.RoleInSpace+" = ?"+
 			" AND space_members."+SpaceMemberColumns.Status+" = ?"+
 			" AND space_members."+SpaceMemberColumns.DeletedAt+" = ?", userID, "student", "enabled", 0).
-		Joins("JOIN users ON users."+UserColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
-			" AND users."+UserColumns.ID+" = space_members."+SpaceMemberColumns.UserID+
+		Joins("JOIN users ON users."+UserColumns.ID+" = space_members."+SpaceMemberColumns.UserID+
 			" AND users."+UserColumns.Status+" = ?"+
 			" AND users."+UserColumns.DeletedAt+" = ?", "enabled", 0).
+		Joins("JOIN tenant_user_memberships AS tum ON tum."+UserRoleColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
+			" AND tum."+UserRoleColumns.UserID+" = users."+UserColumns.ID+
+			" AND tum."+UserRoleColumns.Status+" = ?", "enabled").
 		Where("exam_targets."+ExamTargetColumns.TenantID+" = ?", tenantID).
 		Where("exam_targets."+ExamTargetColumns.ExamID+" = ?", examID).
 		Where("exam_targets."+ExamTargetColumns.TargetType+" = ?", serviceexam.TargetTypeSpace).
@@ -662,7 +664,7 @@ func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint6
 		Joins("JOIN exam_attempt_questions AS attempt_questions ON attempt_questions.tenant_id = answers.tenant_id AND attempt_questions.attempt_id = answers.attempt_id AND attempt_questions.id = answers.attempt_question_id").
 		Joins("JOIN exam_attempts AS attempts ON attempts.tenant_id = answers.tenant_id AND attempts.id = answers.attempt_id").
 		Joins("JOIN exams ON exams.tenant_id = attempts.tenant_id AND exams.id = attempts.exam_id AND exams.deleted_at = 0").
-		Joins("JOIN users ON users.tenant_id = attempts.tenant_id AND users.id = attempts.user_id AND users.deleted_at = 0").
+		Joins("JOIN users ON users.id = attempts.user_id AND users.deleted_at = 0").
 		Where("answers.tenant_id = ?", tenantID).
 		Where("attempts.exam_id = ?", examID).
 		Where("answers.grading_status = ?", constant.GradingStatusPending).
@@ -862,7 +864,7 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 			attempts.total_score AS total_score,
 			attempts.submitted_at AS submitted_at
 		`).
-		Joins("JOIN users ON users.tenant_id = attempts.tenant_id AND users.id = attempts.user_id AND users.deleted_at = 0").
+		Joins("JOIN users ON users.id = attempts.user_id AND users.deleted_at = 0").
 		Where("attempts.tenant_id = ?", tenantID).
 		Where("attempts.exam_id = ?", examID).
 		Where("attempts.submitted_at IS NOT NULL").

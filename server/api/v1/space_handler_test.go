@@ -459,8 +459,8 @@ func TestSpaceMemberRoutesRejectInvalidRoleAndUnavailableUsers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedSpaceAPITestData(t, gormDB)
-	if err := gormDB.Table("users").
-		Where("tenant_id = ? AND id IN ?", 10, []uint64{21, 22}).
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id IN ?", 10, []uint64{21, 22}).
 		Update("status", "disabled").Error; err != nil {
 		t.Fatalf("disable target user: %v", err)
 	}
@@ -601,22 +601,34 @@ func seedSpaceAPITestData(t *testing.T, gormDB *gorm.DB) {
 		t.Fatalf("hash tenant admin password: %v", err)
 	}
 	if err := gormDB.Exec(`
+		INSERT OR IGNORE INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, version, ext_json
+		) VALUES (10, '青藤一中', '', '空间接口测试租户', 'PM-QT01', true, 'enabled', ?, ?, 1, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed space API tenant: %v", err)
+	}
+	if err := gormDB.Exec(`
 		INSERT INTO users (
-			id, tenant_id, username, real_name, phone, email, password_hash, status,
+			id, username, real_name, phone, email, password_hash, status,
 			created_at, updated_at, ext_json
 		) VALUES
-			(20, 10, 'teacher_li', '李老师', '13800000020', 'li@example.test', 'hash', 'enabled', ?, ?, '{}'),
-			(21, 10, 'student_zhang', '张同学', '13800000021', 'zhang@example.test', 'hash', 'enabled', ?, ?, '{}'),
-			(22, 10, 'teacher_zhao', '赵老师', '13800000022', 'zhao@example.test', 'hash', 'enabled', ?, ?, '{}'),
-			(99, 10, 'tenant.admin', '租户管理员', '13800000099', 'admin@example.test', ?, 'enabled', ?, ?, '{}')
+			(20, 'teacher_li', '李老师', '13800000020', 'li@example.test', 'hash', 'enabled', ?, ?, '{}'),
+			(21, 'student_zhang', '张同学', '13800000021', 'zhang@example.test', 'hash', 'enabled', ?, ?, '{}'),
+			(22, 'teacher_zhao', '赵老师', '13800000022', 'zhao@example.test', 'hash', 'enabled', ?, ?, '{}'),
+			(99, 'tenant.admin', '租户管理员', '13800000099', 'admin@example.test', ?, 'enabled', ?, ?, '{}')
 	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow, passwordHash, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed users: %v", err)
 	}
 	if err := gormDB.Exec(`
-		INSERT INTO user_roles (
-			id, tenant_id, user_id, role, created_at, updated_at, ext_json
-		) VALUES (99, 10, 99, 'tenant_admin', ?, ?, '{}')
-	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 20, 'teacher', 'enabled', ?, ?, '{}'),
+			(21, 10, 21, 'student', 'enabled', ?, ?, '{}'),
+			(22, 10, 22, 'teacher', 'enabled', ?, ?, '{}'),
+			(99, 10, 99, 'tenant_admin', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed tenant admin role: %v", err)
 	}
 	if err := gormDB.Exec(`

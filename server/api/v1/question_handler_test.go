@@ -124,15 +124,15 @@ func TestTeacherCannotCreateQuestionInInactiveSpace(t *testing.T) {
 			gormDB := openExamAPITestDB(t)
 			seedSpaceAPITestData(t, gormDB)
 			seedProfileSpacesAPITestData(t, gormDB)
-			if err := gormDB.Exec("UPDATE spaces SET "+tc.update+" WHERE tenant_id = ? AND id = ?", 10, 100).Error; err != nil {
-				t.Fatalf("mark space inactive: %v", err)
-			}
 
 			router := NewRouter(RouterOptions{
 				DB:  gormDB,
 				Now: func() int64 { return fixedAPINow },
 			})
 			authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+			if err := gormDB.Exec("UPDATE spaces SET "+tc.update+" WHERE tenant_id = ? AND id = ?", 10, 100).Error; err != nil {
+				t.Fatalf("mark space inactive: %v", err)
+			}
 			payload := []byte(fmt.Sprintf(`{
 				"tenant_id": 10,
 				"space_id": 100,
@@ -168,8 +168,8 @@ func TestDisabledTeacherCannotCreateQuestionWithStaleSession(t *testing.T) {
 		Now: func() int64 { return fixedAPINow },
 	})
 	authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
-	if err := gormDB.Table("users").
-		Where("tenant_id = ? AND id = ?", 10, 20).
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 20).
 		Update("status", "disabled").Error; err != nil {
 		t.Fatalf("disable teacher after login: %v", err)
 	}

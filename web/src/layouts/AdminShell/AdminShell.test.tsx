@@ -102,6 +102,14 @@ test("租户管理员展示租户空间菜单", () => {
     JSON.stringify({
       accessToken: "access-token",
       refreshToken: "refresh-token",
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "明德学校",
+        spaceID: 0,
+        role: "tenant_admin",
+        status: "enabled",
+      }],
       user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
     }),
   );
@@ -121,6 +129,47 @@ test("租户管理员展示租户空间菜单", () => {
   expect(screen.getByText("租户空间")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /空间管理/ })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /用户管理/ })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /空间成员/ })).not.toBeInTheDocument();
+  expect(screen.getByText("租户管理员")).toBeInTheDocument();
+  expect(screen.getByText("明德学校 租户后台")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "切换租户" })).toBeInTheDocument();
+});
+
+test("租户用户点击切换租户进入租户空间选择页", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "明德学校",
+        spaceID: 0,
+        role: "tenant_admin",
+        status: "enabled",
+      }],
+      user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<AdminShell routes={adminRoutes} />}>
+            <Route path="/" element={<div>概览页面</div>} />
+            <Route path="/tenant-entry" element={<div>租户空间选择页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  await user.click(screen.getByRole("button", { name: "切换租户" }));
+
+  expect(screen.getByText("租户空间选择页")).toBeInTheDocument();
 });
 
 test("教师展示考试业务菜单", () => {
@@ -160,7 +209,7 @@ test("菜单可由授权空间驱动而不是把 space_admin 写入 session role
 		group: "tenant",
 		icon: School,
 		label: "空间成员",
-		menuRoles: ["tenant_admin"],
+		menuRoles: [],
 		path: "/space-members",
 		spaceMemberRoles: ["space_admin"],
 	}];

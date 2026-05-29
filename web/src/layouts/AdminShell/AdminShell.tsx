@@ -1,7 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Home, LogOut, Settings } from "lucide-react";
-import { useSession } from "../../auth/session-context";
+import { ArrowLeftRight, Home, LogOut, Settings } from "lucide-react";
+import { type AuthSession, useSession } from "../../auth/session-context";
 import { routeVisibleForRole, type AdminRoute, type AdminRouteGroup } from "../../app/routes";
 import "./AdminShell.css";
 
@@ -23,6 +23,7 @@ export function AdminShell({ routes }: AdminShellProps) {
   const menuRoutes = routes.filter((route) =>
     routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? []),
   );
+  const sidebarIdentity = buildSidebarIdentity(session);
 
   const renderRouteLink = (route: AdminRoute) => {
     const Icon = route.icon;
@@ -70,8 +71,8 @@ export function AdminShell({ routes }: AdminShellProps) {
 
           <div className="menu-panel__note">
             <div>
-              <span>平台管理员</span>
-              <p>本地管理端 UI 骨架预览</p>
+              <span>{sidebarIdentity.title}</span>
+              <p>{sidebarIdentity.description}</p>
             </div>
             <NavLink
               aria-label="个人设置"
@@ -84,9 +85,9 @@ export function AdminShell({ routes }: AdminShellProps) {
             </NavLink>
           </div>
 
-          <Button className="sidebar__home" onClick={() => navigate("/")} type="button">
-            <Home aria-hidden="true" size={15} />
-            回到概览
+          <Button className="sidebar__home" onClick={() => navigate(sidebarIdentity.actionPath)} type="button">
+            <sidebarIdentity.ActionIcon aria-hidden="true" size={15} />
+            {sidebarIdentity.actionLabel}
           </Button>
           <Button
             className="sidebar__logout"
@@ -117,4 +118,41 @@ function routeLinkTarget(route: AdminRoute, currentSearch: string) {
     return `${route.path}?tenant_id=${encodeURIComponent(tenantID)}`;
   }
   return route.path;
+}
+
+function buildSidebarIdentity(session: AuthSession | null) {
+  if (!session || session.user.role === "platform_admin") {
+    return {
+      ActionIcon: Home,
+      actionLabel: "回到概览",
+      actionPath: "/",
+      description: "本地管理端 UI 骨架预览",
+      title: "平台管理员",
+    };
+  }
+
+  const currentTenant = session.profileSpaces?.find((space) => space.tenantID === session.user.tenantID);
+
+  return {
+    ActionIcon: ArrowLeftRight,
+    actionLabel: "切换租户",
+    actionPath: "/tenant-entry",
+    description: currentTenant?.tenantName ? `${currentTenant.tenantName} 租户后台` : "租户管理后台",
+    title: roleLabel(session.user.role),
+  };
+}
+
+function roleLabel(role: AuthSession["user"]["role"]) {
+  switch (role) {
+    case "tenant_admin":
+      return "租户管理员";
+    case "teacher":
+      return "教师";
+    case "student":
+      return "学生";
+    case "tenant_user":
+      return "租户用户";
+    case "platform_admin":
+      return "平台管理员";
+  }
 }

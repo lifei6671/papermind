@@ -101,7 +101,6 @@ func (r *TenantRepository) CreateWithAdmin(ctx context.Context, tenant servicete
 				Version:       1,
 				ExtJSON:       datatypes.JSON([]byte("{}")),
 			},
-			TenantID:     row.ID,
 			Username:     admin.Username,
 			RealName:     admin.RealName,
 			Phone:        admin.Phone,
@@ -126,6 +125,7 @@ func (r *TenantRepository) CreateWithAdmin(ctx context.Context, tenant servicete
 			TenantID: row.ID,
 			UserID:   userRow.ID,
 			Role:     constant.RoleTenantAdmin,
+			Status:   servicetenant.StatusEnabled,
 		}
 		return tx.Create(&roleRow).Error
 	})

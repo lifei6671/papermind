@@ -41,12 +41,14 @@ type Space struct {
 }
 
 type Member struct {
-	ID       uint64 // 空间成员主键 ID。
-	TenantID uint64 // 所属租户 ID。
-	SpaceID  uint64 // 空间 ID。
-	UserID   uint64 // 租户用户 ID。
-	Role     string // 空间内角色：space_admin / teacher / student。
-	Status   string // 空间成员状态：enabled / disabled。
+	ID         uint64 // 空间成员主键 ID；租户管理员通过租户身份进入空间时为空。
+	TenantID   uint64 // 所属租户 ID。
+	TenantName string // 所属租户名称，用于登录后空间选择页展示。
+	SpaceID    uint64 // 空间 ID。
+	SpaceName  string // 空间名称，用于登录后空间选择页展示。
+	UserID     uint64 // 租户用户 ID。
+	Role       string // 空间内角色：tenant_admin / space_admin / teacher / student。
+	Status     string // 空间成员状态：enabled / disabled。
 }
 
 type CreateInput struct {
@@ -106,7 +108,9 @@ type Repository interface {
 	AddMember(ctx context.Context, member Member) (Member, error)
 	ListEffectiveMembers(ctx context.Context, tenantID uint64, spaceID uint64) ([]Member, error)
 	ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]Member, error)
+	ListEntryMembershipsForUser(ctx context.Context, userID uint64) ([]Member, error)
 	FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (Member, error)
+	SpaceExists(ctx context.Context, tenantID uint64, spaceID uint64) (bool, error)
 	CountEnabledSpaceAdmins(ctx context.Context, tenantID uint64, spaceID uint64) (int64, error)
 	DisableMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error
 	RemoveMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error
@@ -170,6 +174,14 @@ func (s *Service) ListEffectiveMembers(ctx context.Context, tenantID uint64, spa
 
 func (s *Service) ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]Member, error) {
 	return s.repo.ListEffectiveMembershipsForUser(ctx, tenantID, userID)
+}
+
+func (s *Service) ListEntryMembershipsForUser(ctx context.Context, userID uint64) ([]Member, error) {
+	return s.repo.ListEntryMembershipsForUser(ctx, userID)
+}
+
+func (s *Service) SpaceExists(ctx context.Context, tenantID uint64, spaceID uint64) (bool, error) {
+	return s.repo.SpaceExists(ctx, tenantID, spaceID)
 }
 
 func (s *Service) DisableMember(ctx context.Context, input MemberActionInput) error {

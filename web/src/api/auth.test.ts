@@ -100,7 +100,6 @@ describe("authApi", () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe("POST");
       expect(JSON.parse(init?.body as string)).toEqual({
-        tenant_id: 10,
         username: "student20",
         password: "papermind123",
       });
@@ -114,15 +113,14 @@ describe("authApi", () => {
           user: {
             user_id: 20,
             display_name: "目标考生",
-            role: "student",
-            tenant_id: 10,
+            role: "tenant_user",
           },
         },
       }));
     });
     const api = createAuthAPI(createApiClient({ baseUrl: "", fetcher }));
 
-    const session = await api.tenantLogin({ tenantID: 10, username: "student20", password: "papermind123" });
+    const session = await api.tenantLogin({ username: "student20", password: "papermind123" });
 
     expect(fetcher).toHaveBeenCalledWith(
       "/api/v1/auth/tenant/login",
@@ -134,9 +132,47 @@ describe("authApi", () => {
       user: {
         userID: 20,
         displayName: "目标考生",
-        role: "student",
-        tenantID: 10,
+        role: "tenant_user",
       },
+    });
+  });
+
+  test("选择租户空间会提交空间上下文并映射绑定后的会话", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        space_id: 100,
+      });
+
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          access_token: "selected-access-token",
+          refresh_token: "selected-refresh-token",
+          user: {
+            user_id: 20,
+            display_name: "目标考生",
+            role: "student",
+            tenant_id: 10,
+          },
+        },
+      }));
+    });
+    const api = createAuthAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const session = await api.selectTenantSpace({ tenantID: 10, spaceID: 100 });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/auth/tenant/select-space",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(session.user).toEqual({
+      userID: 20,
+      displayName: "目标考生",
+      role: "student",
+      tenantID: 10,
     });
   });
 
@@ -151,7 +187,9 @@ describe("authApi", () => {
           items: [{
             id: 1,
             tenant_id: 10,
+            tenant_name: "青藤一中",
             space_id: 100,
+            space_name: "高一 1 班",
             role: "space_admin",
             status: "enabled",
           }],
@@ -169,7 +207,9 @@ describe("authApi", () => {
     expect(result.items).toEqual([{
       id: 1,
       tenantID: 10,
+      tenantName: "青藤一中",
       spaceID: 100,
+      spaceName: "高一 1 班",
       role: "space_admin",
       status: "enabled",
     }]);

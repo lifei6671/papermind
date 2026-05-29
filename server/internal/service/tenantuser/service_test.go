@@ -91,10 +91,9 @@ func TestRegisterRejectsDisabledRegistration(t *testing.T) {
 
 func TestLoginUpdatesLastLoginAuditOnSuccess(t *testing.T) {
 	repo := &fakeRepository{
-		usersByTenantAndUsername: map[userLookupKey]User{
-			{tenantID: 10, username: "student01"}: {
+		usersByUsername: map[string]User{
+			"student01": {
 				ID:           20,
-				TenantID:     10,
 				Username:     "student01",
 				PasswordHash: "hashed-password",
 				Status:       StatusEnabled,
@@ -111,7 +110,6 @@ func TestLoginUpdatesLastLoginAuditOnSuccess(t *testing.T) {
 	})
 
 	user, err := svc.Login(context.Background(), LoginInput{
-		TenantID: 10,
 		Username: "student01",
 		Password: "plain-password",
 		IP:       "127.0.0.1",
@@ -138,10 +136,9 @@ func TestLoginUpdatesLastLoginAuditOnSuccess(t *testing.T) {
 
 func TestLoginFailureWritesSecurityLogAndSkipsAuditUpdate(t *testing.T) {
 	repo := &fakeRepository{
-		usersByTenantAndUsername: map[userLookupKey]User{
-			{tenantID: 10, username: "student01"}: {
+		usersByUsername: map[string]User{
+			"student01": {
 				ID:           20,
-				TenantID:     10,
 				Username:     "student01",
 				PasswordHash: "hashed-password",
 				Status:       StatusEnabled,
@@ -158,7 +155,6 @@ func TestLoginFailureWritesSecurityLogAndSkipsAuditUpdate(t *testing.T) {
 	})
 
 	_, err := svc.Login(context.Background(), LoginInput{
-		TenantID: 10,
 		Username: "student01",
 		Password: "wrong-password",
 		IP:       "127.0.0.1",
@@ -455,7 +451,7 @@ type fakeRepository struct {
 
 	addedSpaceMembership bool
 
-	usersByTenantAndUsername map[userLookupKey]User
+	usersByUsername map[string]User
 
 	auditTenantID uint64
 	auditUserID   uint64
@@ -500,6 +496,15 @@ func (r *fakeRepository) FindUserByID(ctx context.Context, tenantID uint64, user
 	return User{}, ErrUserNotFound
 }
 
+func (r *fakeRepository) FindGlobalUserByID(ctx context.Context, userID uint64) (User, error) {
+	for _, user := range r.usersByUsername {
+		if user.ID == userID {
+			return user, nil
+		}
+	}
+	return User{}, ErrUserNotFound
+}
+
 func (r *fakeRepository) FindTenantByCode(ctx context.Context, tenantCode string) (Tenant, error) {
 	tenant, ok := r.tenantsByCode[tenantCode]
 	if !ok {
@@ -532,7 +537,16 @@ func (r *fakeRepository) CreateUserWithRole(ctx context.Context, user User, role
 }
 
 func (r *fakeRepository) FindUserByUsername(ctx context.Context, tenantID uint64, username string) (User, error) {
-	user, ok := r.usersByTenantAndUsername[userLookupKey{tenantID: tenantID, username: username}]
+	user, ok := r.usersByUsername[username]
+	if !ok {
+		return User{}, ErrUserNotFound
+	}
+	user.TenantID = tenantID
+	return user, nil
+}
+
+func (r *fakeRepository) FindGlobalUserByUsername(ctx context.Context, username string) (User, error) {
+	user, ok := r.usersByUsername[username]
 	if !ok {
 		return User{}, ErrUserNotFound
 	}
@@ -596,11 +610,6 @@ func (r *fakeRepository) UpdateProfile(ctx context.Context, input UpdateProfileI
 		Email:     input.Email,
 		Status:    StatusEnabled,
 	}, nil
-}
-
-type userLookupKey struct {
-	tenantID uint64
-	username string
 }
 
 type fakePasswordVerifier struct {

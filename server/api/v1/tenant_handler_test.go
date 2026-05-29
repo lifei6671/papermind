@@ -81,9 +81,9 @@ func TestTenantAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 		Status   string
 	}
 	if err := gormDB.Table("users").
-		Select("users.id, users.username, users.real_name, users.status, user_roles.role").
-		Joins("JOIN user_roles ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id").
-		Where("users.tenant_id = ? AND users.username = ?", createBody.Data.ID, "xinghai.admin").
+		Select("users.id, users.username, users.real_name, users.status, tum.role").
+		Joins("JOIN tenant_user_memberships AS tum ON tum.user_id = users.id").
+		Where("tum.tenant_id = ? AND users.username = ?", createBody.Data.ID, "xinghai.admin").
 		First(&adminRow).Error; err != nil {
 		t.Fatalf("query first tenant admin: %v", err)
 	}

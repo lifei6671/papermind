@@ -219,7 +219,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_configs_config_key ON platform_con
 
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
-    tenant_id BIGINT NOT NULL,
     username VARCHAR(64) NOT NULL,
     real_name VARCHAR(128) NOT NULL DEFAULT '',
     avatar_url VARCHAR(512) NOT NULL DEFAULT '',
@@ -239,10 +238,9 @@ CREATE TABLE IF NOT EXISTS users (
     ext_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     deleted_at BIGINT NOT NULL DEFAULT 0
 );
-COMMENT ON TABLE users IS '租户用户表，保存租户内考生、教师和租户管理员';
-COMMENT ON COLUMN users.id IS '租户用户主键 ID';
-COMMENT ON COLUMN users.tenant_id IS '所属租户 ID';
-COMMENT ON COLUMN users.username IS '租户内登录名';
+COMMENT ON TABLE users IS '全局用户账号表，保存登录账号和用户基础资料';
+COMMENT ON COLUMN users.id IS '全局用户主键 ID';
+COMMENT ON COLUMN users.username IS '全局登录名';
 COMMENT ON COLUMN users.real_name IS '真实姓名，用于阅卷、成绩单和导出';
 COMMENT ON COLUMN users.avatar_url IS '用户头像地址';
 COMMENT ON COLUMN users.phone IS '手机号，可用于登录或通知';
@@ -260,15 +258,16 @@ COMMENT ON COLUMN users.updated_by_type IS '更新人主体类型：platform_use
 COMMENT ON COLUMN users.version IS '数据版本号，用于乐观锁';
 COMMENT ON COLUMN users.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
 COMMENT ON COLUMN users.deleted_at IS '软删除时间，0 表示未删除';
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (tenant_id, username, deleted_at);
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (tenant_id, phone, deleted_at);
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (tenant_id, email, deleted_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (username, deleted_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (phone, deleted_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (email, deleted_at);
 
-CREATE TABLE IF NOT EXISTS user_roles (
+CREATE TABLE IF NOT EXISTS tenant_user_memberships (
     id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
     role VARCHAR(32) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'enabled',
     created_at BIGINT NOT NULL,
     created_by BIGINT NOT NULL DEFAULT 0,
     created_by_type VARCHAR(32) NOT NULL DEFAULT 'system',
@@ -278,21 +277,22 @@ CREATE TABLE IF NOT EXISTS user_roles (
     version BIGINT NOT NULL DEFAULT 1,
     ext_json JSONB NOT NULL DEFAULT '{}'::jsonb
 );
-COMMENT ON TABLE user_roles IS '用户角色关系表，保存租户用户的固定角色';
-COMMENT ON COLUMN user_roles.id IS '用户角色关系主键 ID';
-COMMENT ON COLUMN user_roles.tenant_id IS '所属租户 ID';
-COMMENT ON COLUMN user_roles.user_id IS '租户用户 ID';
-COMMENT ON COLUMN user_roles.role IS '用户角色：tenant_admin / teacher / student';
-COMMENT ON COLUMN user_roles.created_at IS '创建时间，Unix 毫秒时间戳';
-COMMENT ON COLUMN user_roles.created_by IS '创建人主体 ID';
-COMMENT ON COLUMN user_roles.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN user_roles.updated_at IS '更新时间，Unix 毫秒时间戳';
-COMMENT ON COLUMN user_roles.updated_by IS '更新人主体 ID';
-COMMENT ON COLUMN user_roles.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN user_roles.version IS '数据版本号，用于乐观锁';
-COMMENT ON COLUMN user_roles.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
-CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id);
-COMMENT ON INDEX uk_user_roles_user IS '同一租户用户只能拥有一个固定角色';
+COMMENT ON TABLE tenant_user_memberships IS '租户用户关系表，保存全局用户在租户内的固定角色和启用状态';
+COMMENT ON COLUMN tenant_user_memberships.id IS '租户用户关系主键 ID';
+COMMENT ON COLUMN tenant_user_memberships.tenant_id IS '所属租户 ID';
+COMMENT ON COLUMN tenant_user_memberships.user_id IS '全局用户 ID';
+COMMENT ON COLUMN tenant_user_memberships.role IS '租户固定角色：tenant_admin / teacher / student';
+COMMENT ON COLUMN tenant_user_memberships.status IS '租户成员状态：enabled / disabled';
+COMMENT ON COLUMN tenant_user_memberships.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN tenant_user_memberships.created_by IS '创建人主体 ID';
+COMMENT ON COLUMN tenant_user_memberships.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
+COMMENT ON COLUMN tenant_user_memberships.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN tenant_user_memberships.updated_by IS '更新人主体 ID';
+COMMENT ON COLUMN tenant_user_memberships.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
+COMMENT ON COLUMN tenant_user_memberships.version IS '数据版本号，用于乐观锁';
+COMMENT ON COLUMN tenant_user_memberships.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_user_memberships_user ON tenant_user_memberships (tenant_id, user_id);
+COMMENT ON INDEX uk_tenant_user_memberships_user IS '同一用户在同一租户只能拥有一条固定角色关系';
 
 CREATE TABLE IF NOT EXISTS questions (
     id BIGSERIAL PRIMARY KEY,

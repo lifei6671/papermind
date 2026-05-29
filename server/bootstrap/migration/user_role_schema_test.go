@@ -24,11 +24,11 @@ func TestUserRoleSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.
 				"CREATE TABLE IF NOT EXISTS platform_configs",
 				"CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_configs_config_key ON platform_configs (config_key)",
 				"CREATE TABLE IF NOT EXISTS users",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (tenant_id, username, deleted_at)",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (tenant_id, phone, deleted_at)",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (tenant_id, email, deleted_at)",
-				"CREATE TABLE IF NOT EXISTS user_roles",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (username, deleted_at)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (phone, deleted_at)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (email, deleted_at)",
+				"CREATE TABLE IF NOT EXISTS tenant_user_memberships",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_user_memberships_user ON tenant_user_memberships (tenant_id, user_id)",
 			},
 		},
 		{
@@ -42,11 +42,11 @@ func TestUserRoleSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.
 				"CREATE TABLE IF NOT EXISTS platform_configs",
 				"UNIQUE KEY uk_platform_configs_config_key (config_key)",
 				"CREATE TABLE IF NOT EXISTS users",
-				"UNIQUE KEY uk_users_username_deleted_at (tenant_id, username, deleted_at)",
-				"UNIQUE KEY uk_users_phone_deleted_at (tenant_id, phone, deleted_at)",
-				"UNIQUE KEY uk_users_email_deleted_at (tenant_id, email, deleted_at)",
-				"CREATE TABLE IF NOT EXISTS user_roles",
-				"UNIQUE KEY uk_user_roles_user (tenant_id, user_id)",
+				"UNIQUE KEY uk_users_username_deleted_at (username, deleted_at)",
+				"UNIQUE KEY uk_users_phone_deleted_at (phone, deleted_at)",
+				"UNIQUE KEY uk_users_email_deleted_at (email, deleted_at)",
+				"CREATE TABLE IF NOT EXISTS tenant_user_memberships",
+				"UNIQUE KEY uk_tenant_user_memberships_user (tenant_id, user_id)",
 			},
 		},
 		{
@@ -60,11 +60,11 @@ func TestUserRoleSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.
 				"CREATE TABLE IF NOT EXISTS platform_configs",
 				"CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_configs_config_key ON platform_configs (config_key)",
 				"CREATE TABLE IF NOT EXISTS users",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (tenant_id, username, deleted_at)",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (tenant_id, phone, deleted_at)",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (tenant_id, email, deleted_at)",
-				"CREATE TABLE IF NOT EXISTS user_roles",
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (username, deleted_at)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (phone, deleted_at)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (email, deleted_at)",
+				"CREATE TABLE IF NOT EXISTS tenant_user_memberships",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_user_memberships_user ON tenant_user_memberships (tenant_id, user_id)",
 			},
 		},
 	}
@@ -86,7 +86,7 @@ func TestUserRoleSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.
 	}
 }
 
-func TestUserRoleSingleRoleConstraintDoesNotRequireAppendMigration(t *testing.T) {
+func TestTenantUserMembershipSingleRoleConstraintDoesNotRequireAppendMigration(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
@@ -96,21 +96,21 @@ func TestUserRoleSingleRoleConstraintDoesNotRequireAppendMigration(t *testing.T)
 			name: "postgres",
 			path: filepath.Join("..", "..", "data", "migrations", "postgres", "001_tenant_space.sql"),
 			want: []string{
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_user_memberships_user ON tenant_user_memberships (tenant_id, user_id)",
 			},
 		},
 		{
 			name: "mysql",
 			path: filepath.Join("..", "..", "data", "migrations", "mysql", "001_tenant_space.sql"),
 			want: []string{
-				"UNIQUE KEY uk_user_roles_user (tenant_id, user_id)",
+				"UNIQUE KEY uk_tenant_user_memberships_user (tenant_id, user_id)",
 			},
 		},
 		{
 			name: "sqlite",
 			path: filepath.Join("..", "..", "data", "migrations", "sqlite", "001_tenant_space.sql"),
 			want: []string{
-				"CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id)",
+				"CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_user_memberships_user ON tenant_user_memberships (tenant_id, user_id)",
 			},
 		},
 	}

@@ -99,7 +99,6 @@ func seedIdentityAndSpace(tx *gorm.DB, now int64) error {
 	if err := insertIgnore(tx, []dbmodel.UserDO{
 		{
 			BaseFields:   baseFields(demoTenantAdminID, now),
-			TenantID:     demoTenantID,
 			Username:     "tenant.admin",
 			RealName:     "租户管理员",
 			Phone:        "13800000010",
@@ -109,7 +108,6 @@ func seedIdentityAndSpace(tx *gorm.DB, now int64) error {
 		},
 		{
 			BaseFields:   baseFields(demoStudentID, now),
-			TenantID:     demoTenantID,
 			Username:     "student01",
 			RealName:     "张同学",
 			Phone:        "13800000020",
@@ -119,7 +117,6 @@ func seedIdentityAndSpace(tx *gorm.DB, now int64) error {
 		},
 		{
 			BaseFields:   baseFields(demoTeacherID, now),
-			TenantID:     demoTenantID,
 			Username:     "teacher01",
 			RealName:     "李老师",
 			Phone:        "13800000021",
@@ -132,11 +129,11 @@ func seedIdentityAndSpace(tx *gorm.DB, now int64) error {
 	}
 
 	if err := insertIgnore(tx, []dbmodel.UserRoleDO{
-		{BaseFields: baseFields(1, now), TenantID: demoTenantID, UserID: demoTenantAdminID, Role: "tenant_admin"},
-		{BaseFields: baseFields(2, now), TenantID: demoTenantID, UserID: demoStudentID, Role: "student"},
-		{BaseFields: baseFields(3, now), TenantID: demoTenantID, UserID: demoTeacherID, Role: "teacher"},
+		{BaseFields: baseFields(1, now), TenantID: demoTenantID, UserID: demoTenantAdminID, Role: "tenant_admin", Status: "enabled"},
+		{BaseFields: baseFields(2, now), TenantID: demoTenantID, UserID: demoStudentID, Role: "student", Status: "enabled"},
+		{BaseFields: baseFields(3, now), TenantID: demoTenantID, UserID: demoTeacherID, Role: "teacher", Status: "enabled"},
 	}); err != nil {
-		return fmt.Errorf("seed user roles: %w", err)
+		return fmt.Errorf("seed tenant user memberships: %w", err)
 	}
 
 	if err := insertIgnore(tx, []dbmodel.SpaceDO{

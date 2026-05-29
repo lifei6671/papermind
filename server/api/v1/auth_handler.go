@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,9 +33,13 @@ type platformLoginRequest struct {
 }
 
 type tenantLoginRequest struct {
-	TenantID uint64 `json:"tenant_id"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+type tenantSpaceSelectRequest struct {
+	TenantID uint64 `json:"tenant_id"`
+	SpaceID  uint64 `json:"space_id"`
 }
 
 type tenantRegisterRequest struct {
@@ -78,11 +83,13 @@ type profileResponse struct {
 }
 
 type profileSpaceResponse struct {
-	ID       uint64 `json:"id"`        // 空间成员记录 ID，用于前端定位成员关系本身。
-	TenantID uint64 `json:"tenant_id"` // 成员关系所属租户，前端只能把它作为当前 session 租户范围使用。
-	SpaceID  uint64 `json:"space_id"`  // 当前用户已加入且启用的空间 ID，用于后续业务页面携带 space_id。
-	Role     string `json:"role"`      // 当前用户在该空间内的角色，space_admin 只在这里出现，不写入 session role。
-	Status   string `json:"status"`    // 成员关系状态；本接口只返回 enabled，保留字段便于前端统一展示。
+	ID         uint64 `json:"id"`          // 空间成员记录 ID；租户管理员入口没有成员记录时为 0。
+	TenantID   uint64 `json:"tenant_id"`   // 成员关系所属租户，前端只能把它作为当前 session 租户范围使用。
+	TenantName string `json:"tenant_name"` // 租户名称，用于登录后空间选择页展示。
+	SpaceID    uint64 `json:"space_id"`    // 当前用户可进入且启用的空间 ID，用于后续业务页面携带 space_id。
+	SpaceName  string `json:"space_name"`  // 空间名称，用于登录后空间选择页展示。
+	Role       string `json:"role"`        // 当前用户进入该空间时的身份来源：tenant_admin / space_admin / teacher / student。
+	Status     string `json:"status"`      // 成员关系状态；本接口只返回 enabled，保留字段便于前端统一展示。
 }
 
 type profileSpaceListResponse struct {
@@ -104,7 +111,13 @@ func (h authHandler) getProfile(c *gin.Context) {
 		c.JSON(http.StatusOK, response.OK(platformProfileToResponse(user)))
 		return
 	}
-	user, err := h.tenantUsers.Get(c.Request.Context(), principal.TenantID, principal.UserID)
+	var user servicetenantuser.User
+	var err error
+	if principal.TenantID == 0 {
+		user, err = h.tenantUsers.GetGlobal(c.Request.Context(), principal.UserID)
+	} else {
+		user, err = h.tenantUsers.Get(c.Request.Context(), principal.TenantID, principal.UserID)
+	}
 	if err != nil {
 		writeProfileError(c, err)
 		return
@@ -124,15 +137,18 @@ func (h authHandler) listProfileSpaces(c *gin.Context) {
 		return
 	}
 
-	// 当前授权空间列表只来自 space_members 的启用成员关系，用于前端菜单和零空间教师提示。
-	// 这里不会把 space_admin 写回 session，避免空间身份被误当成租户级角色。
-	members, err := h.spaces.ListEffectiveMembershipsForUser(c.Request.Context(), principal.TenantID, principal.UserID)
+	// 通用租户账号登录后没有 tenant_id，入口页需要先列出所有可进入空间；
+	// 已绑定租户的 session 仍复用同一查询，再按当前租户收窄前端菜单范围。
+	members, err := h.spaces.ListEntryMembershipsForUser(c.Request.Context(), principal.UserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取当前用户空间授权失败"))
 		return
 	}
 	items := make([]profileSpaceResponse, 0, len(members))
 	for _, member := range members {
+		if principal.TenantID != 0 && member.TenantID != principal.TenantID {
+			continue
+		}
 		items = append(items, profileSpaceToResponse(member))
 	}
 	c.JSON(http.StatusOK, response.OK(profileSpaceListResponse{Items: items}))
@@ -236,13 +252,12 @@ func (h authHandler) tenantLogin(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
 		return
 	}
-	if request.TenantID == 0 || request.Username == "" || request.Password == "" {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "租户 ID、账号和密码不能为空"))
+	if request.Username == "" || request.Password == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "账号和密码不能为空"))
 		return
 	}
 
 	user, err := h.tenantUsers.Login(c.Request.Context(), servicetenantuser.LoginInput{
-		TenantID: request.TenantID,
 		Username: request.Username,
 		Password: request.Password,
 		IP:       c.ClientIP(),
@@ -254,8 +269,7 @@ func (h authHandler) tenantLogin(c *gin.Context) {
 	principal := AuthPrincipal{
 		SubjectType: permission.SubjectTenantUser,
 		UserID:      user.ID,
-		TenantID:    user.TenantID,
-		Role:        user.Role,
+		Role:        servicetenantuser.RoleTenantUser,
 	}
 	accessToken, err := saveAuthPrincipalSession(c, principal, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds))
 	if err != nil {
@@ -268,8 +282,73 @@ func (h authHandler) tenantLogin(c *gin.Context) {
 		User: authUserResponse{
 			UserID:      user.ID,
 			DisplayName: user.RealName,
+			Role:        servicetenantuser.RoleTenantUser,
+		},
+	}))
+}
+
+func (h authHandler) selectTenantSpace(c *gin.Context) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok || principal.SubjectType != permission.SubjectTenantUser {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录租户用户账号"))
+		return
+	}
+	var request tenantSpaceSelectRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+
+	// 进入空间前先校验全局账号在目标租户的启用成员关系，之后才把 tenant_id 写入 session。
+	user, err := h.tenantUsers.Get(c.Request.Context(), request.TenantID, principal.UserID)
+	if err != nil {
+		writeTenantSpaceSelectError(c, err)
+		return
+	}
+	if user.Status != servicetenantuser.StatusEnabled {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "当前租户账号已禁用"))
+		return
+	}
+	if user.Role == servicetenantuser.RoleTenantAdmin {
+		if request.SpaceID != 0 {
+			exists, err := h.spaces.SpaceExists(c.Request.Context(), request.TenantID, request.SpaceID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "校验目标空间失败"))
+				return
+			}
+			if !exists {
+				c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权进入该空间"))
+				return
+			}
+		}
+	} else if request.SpaceID == 0 || !hasSelectedSpace(c.Request.Context(), h.spaces, request.TenantID, request.SpaceID, principal.UserID) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权进入该空间"))
+		return
+	}
+
+	nextPrincipal := AuthPrincipal{
+		SubjectType: permission.SubjectTenantUser,
+		UserID:      user.ID,
+		TenantID:    request.TenantID,
+		Role:        user.Role,
+	}
+	accessToken, err := saveAuthPrincipalSession(c, nextPrincipal, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存租户空间会话失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(authSessionResponse{
+		AccessToken:  accessToken,
+		RefreshToken: accessToken,
+		User: authUserResponse{
+			UserID:      user.ID,
+			DisplayName: user.RealName,
 			Role:        user.Role,
-			TenantID:    user.TenantID,
+			TenantID:    request.TenantID,
 		},
 	}))
 }
@@ -312,12 +391,27 @@ func (h authHandler) tenantRegister(c *gin.Context) {
 
 func profileSpaceToResponse(member servicespace.Member) profileSpaceResponse {
 	return profileSpaceResponse{
-		ID:       member.ID,
-		TenantID: member.TenantID,
-		SpaceID:  member.SpaceID,
-		Role:     member.Role,
-		Status:   member.Status,
+		ID:         member.ID,
+		TenantID:   member.TenantID,
+		TenantName: member.TenantName,
+		SpaceID:    member.SpaceID,
+		SpaceName:  member.SpaceName,
+		Role:       member.Role,
+		Status:     member.Status,
 	}
+}
+
+func hasSelectedSpace(ctx context.Context, spaces *servicespace.Service, tenantID uint64, spaceID uint64, userID uint64) bool {
+	members, err := spaces.ListEffectiveMembershipsForUser(ctx, tenantID, userID)
+	if err != nil {
+		return false
+	}
+	for _, member := range members {
+		if member.SpaceID == spaceID {
+			return true
+		}
+	}
+	return false
 }
 
 func platformProfileToResponse(user serviceplatformuser.PlatformUser) profileResponse {
@@ -398,6 +492,14 @@ func writeTenantLoginError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "租户用户登录失败"))
+}
+
+func writeTenantSpaceSelectError(c *gin.Context, err error) {
+	if errors.Is(err, servicetenantuser.ErrUserNotFound) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权进入该空间"))
+		return
+	}
+	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "选择租户空间失败"))
 }
 
 func writeTenantRegisterError(c *gin.Context, err error) {

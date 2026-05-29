@@ -111,7 +111,8 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
       />
     ),
     group: "tenant",
-    menuRoles: tenantAdminRoles,
+    // 租户管理员通过“空间管理 > 成员管理”维护空间成员；独立入口只给空间管理员。
+    menuRoles: [],
     spaceMemberRoles: ["space_admin"],
   },
   {

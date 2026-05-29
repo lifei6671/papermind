@@ -72,8 +72,7 @@ var PlatformConfigColumns = struct {
 type UserDO struct {
 	BaseFields              // 普通业务表公共字段。
 	SoftDeleteFields        // 软删除字段。
-	TenantID         uint64 `gorm:"column:tenant_id"`     // 所属租户 ID。
-	Username         string `gorm:"column:username"`      // 租户内登录名。
+	Username         string `gorm:"column:username"`      // 全局登录名。
 	RealName         string `gorm:"column:real_name"`     // 真实姓名，用于阅卷、成绩单和导出。
 	AvatarURL        string `gorm:"column:avatar_url"`    // 用户头像地址。
 	Phone            string `gorm:"column:phone"`         // 手机号，可用于登录或通知。
@@ -88,10 +87,9 @@ func (UserDO) TableName() string {
 	return "users"
 }
 
-// UserColumns 与 UserDO 同文件维护，租户用户查询必须带 tenant_id，避免跨租户数据泄漏。
+// UserColumns 与 UserDO 同文件维护，用户表只保存全局账号，租户归属从 tenant_user_memberships 派生。
 var UserColumns = struct {
 	ID           string
-	TenantID     string
 	Username     string
 	RealName     string
 	AvatarURL    string
@@ -104,7 +102,6 @@ var UserColumns = struct {
 	DeletedAt    string
 }{
 	ID:           BaseColumns.ID,
-	TenantID:     "tenant_id",
 	Username:     "username",
 	RealName:     "real_name",
 	AvatarURL:    "avatar_url",
@@ -120,23 +117,26 @@ var UserColumns = struct {
 type UserRoleDO struct {
 	BaseFields        // 普通业务表公共字段。
 	TenantID   uint64 `gorm:"column:tenant_id"` // 所属租户 ID。
-	UserID     uint64 `gorm:"column:user_id"`   // 租户用户 ID。
-	Role       string `gorm:"column:role"`      // 用户角色：tenant_admin / teacher / student。
+	UserID     uint64 `gorm:"column:user_id"`   // 全局用户 ID。
+	Role       string `gorm:"column:role"`      // 租户固定角色：tenant_admin / teacher / student。
+	Status     string `gorm:"column:status"`    // 租户成员状态：enabled / disabled。
 }
 
 func (UserRoleDO) TableName() string {
-	return "user_roles"
+	return "tenant_user_memberships"
 }
 
-// UserRoleColumns 与 UserRoleDO 同文件维护，固定角色权限判断统一引用 role 字段。
+// UserRoleColumns 与 UserRoleDO 同文件维护，固定角色和租户成员状态统一从关系表读取。
 var UserRoleColumns = struct {
 	ID       string
 	TenantID string
 	UserID   string
 	Role     string
+	Status   string
 }{
 	ID:       BaseColumns.ID,
 	TenantID: "tenant_id",
 	UserID:   "user_id",
 	Role:     "role",
+	Status:   "status",
 }

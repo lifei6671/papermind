@@ -38,6 +38,21 @@ export type SpaceMemberListInput = {
   spaceID: number;
 };
 
+export type SpaceMemberCreateInput = SpaceMemberListInput & {
+  userID: number;
+  role: MemberRole;
+};
+
+export type SpaceMemberUpdateInput = SpaceMemberListInput & {
+  userID: number;
+  role?: MemberRole;
+  status?: SpaceMember["status"];
+};
+
+export type SpaceMemberRemoveInput = SpaceMemberListInput & {
+  userID: number;
+};
+
 export type SpaceMemberListResult = {
   items: SpaceMember[];
 };
@@ -49,6 +64,9 @@ export type SpaceManagementAPI = {
 
 export type SpaceMemberAPI = {
   listSpaceMembers(input: SpaceMemberListInput): Promise<SpaceMemberListResult>;
+  createSpaceMember(input: SpaceMemberCreateInput): Promise<SpaceMember>;
+  updateSpaceMember(input: SpaceMemberUpdateInput): Promise<SpaceMember>;
+  removeSpaceMember(input: SpaceMemberRemoveInput): Promise<void>;
 };
 
 type SpaceMemberAPIResponse = {
@@ -58,6 +76,8 @@ type SpaceMemberAPIResponse = {
   role: MemberRole;
   status: "enabled" | "disabled";
 };
+
+type SpaceMemberListAPIResponse = PageData<SpaceMemberAPIResponse> | SpaceMemberAPIResponse[];
 
 type SpaceAPIResponse = {
   id: number;
@@ -93,10 +113,37 @@ export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI & Space
       return mapSpaceResponse(data);
     },
     async listSpaceMembers(input) {
-      const data = await apiClient.get<PageData<SpaceMemberAPIResponse>>(
+      const data = await apiClient.get<SpaceMemberListAPIResponse>(
         `/api/v1/tenant/spaces/${input.spaceID}/members?tenant_id=${input.tenantID}`,
       );
-      return { items: data.items.map((member) => mapSpaceMemberResponse(member)) };
+      return { items: mapSpaceMemberListResponse(data) };
+    },
+    async createSpaceMember(input) {
+      const data = await apiClient.post<SpaceMemberAPIResponse>(`/api/v1/tenant/spaces/${input.spaceID}/members`, {
+        tenant_id: input.tenantID,
+        user_id: input.userID,
+        role: input.role,
+      });
+      return mapSpaceMemberResponse(data);
+    },
+    async updateSpaceMember(input) {
+      const data = await apiClient.request<SpaceMemberAPIResponse>(
+        `/api/v1/tenant/spaces/${input.spaceID}/members/${input.userID}`,
+        {
+          method: "PUT",
+          body: {
+            tenant_id: input.tenantID,
+            role: input.role,
+            status: input.status,
+          },
+        },
+      );
+      return mapSpaceMemberResponse(data);
+    },
+    async removeSpaceMember(input) {
+      await apiClient.request(`/api/v1/tenant/spaces/${input.spaceID}/members/${input.userID}?tenant_id=${input.tenantID}`, {
+        method: "DELETE",
+      });
     },
   };
 }
@@ -110,6 +157,11 @@ function mapSpaceResponse(row: SpaceAPIResponse): SpaceRow {
     logoFileName: row.logo_url || "未上传",
     members: row.members.map((member) => mapSpaceMemberResponse(member)),
   };
+}
+
+function mapSpaceMemberListResponse(data: SpaceMemberListAPIResponse) {
+  const items = Array.isArray(data) ? data : data.items;
+  return items.map((member) => mapSpaceMemberResponse(member));
 }
 
 function mapSpaceMemberResponse(member: SpaceMemberAPIResponse): SpaceMember {

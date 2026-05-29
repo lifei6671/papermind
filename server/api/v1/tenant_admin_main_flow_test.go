@@ -47,9 +47,9 @@ func TestTenantAdminMainFlowCreatesSpaceAndAssignsTeacherWithSQLite(t *testing.T
 		Status string `gorm:"column:status"`
 	}
 	if err := gormDB.Table("users").
-		Select("users.id, users.status, user_roles.role").
-		Joins("JOIN user_roles ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id").
-		Where("users.tenant_id = ? AND users.username = ?", tenantID, "main.admin").
+		Select("users.id, users.status, tum.role").
+		Joins("JOIN tenant_user_memberships AS tum ON tum.user_id = users.id").
+		Where("tum.tenant_id = ? AND users.username = ?", tenantID, "main.admin").
 		First(&adminRow).Error; err != nil {
 		t.Fatalf("query first tenant admin: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestTenantAdminMainFlowCreatesSpaceAndAssignsTeacherWithSQLite(t *testing.T
 		t.Fatalf("unexpected created teacher: %#v", createTeacherBody.Data)
 	}
 
-	teacherHeader := tenantAuthHeader(t, router, tenantID, "main.teacher", "main-teacher-secure-123")
+	teacherHeader := tenantLoginAuthHeader(t, router, "main.teacher", "main-teacher-secure-123")
 	beforeRecorder := httptest.NewRecorder()
 	router.ServeHTTP(beforeRecorder, authorizedRequest(http.MethodGet, "/api/v1/profile/spaces", nil, teacherHeader))
 	if beforeRecorder.Code != http.StatusOK {
@@ -113,6 +113,7 @@ func TestTenantAdminMainFlowCreatesSpaceAndAssignsTeacherWithSQLite(t *testing.T
 	}
 
 	afterRecorder := httptest.NewRecorder()
+	teacherHeader = tenantAuthHeader(t, router, tenantID, "main.teacher", "main-teacher-secure-123")
 	router.ServeHTTP(afterRecorder, authorizedRequest(http.MethodGet, "/api/v1/profile/spaces", nil, teacherHeader))
 	if afterRecorder.Code != http.StatusOK {
 		t.Fatalf("profile spaces after assignment status = %d, body = %s", afterRecorder.Code, afterRecorder.Body.String())

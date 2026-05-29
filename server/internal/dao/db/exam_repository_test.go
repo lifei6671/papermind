@@ -193,11 +193,18 @@ func seedMultiSpaceAttemptData(t *testing.T, gormDB *gorm.DB) {
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO users (
-			id, tenant_id, username, real_name, phone, email, password_hash, status,
+			id, username, real_name, phone, email, password_hash, status,
 			created_at, updated_at, ext_json
-		) VALUES (21, 10, 'student21', '多空间考生', '13800000021', 'student21@example.test', 'hash', 'enabled', 1000, 1000, '{}')
+		) VALUES (21, 'student21', '多空间考生', '13800000021', 'student21@example.test', 'hash', 'enabled', 1000, 1000, '{}')
 	`).Error; err != nil {
 		t.Fatalf("seed user: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES (21, 10, 21, 'student', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant user membership: %v", err)
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO space_members (

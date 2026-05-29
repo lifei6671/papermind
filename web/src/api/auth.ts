@@ -17,9 +17,13 @@ export type TenantRegisterInput = {
 };
 
 export type TenantLoginInput = {
-  tenantID: number;
   username: string;
   password: string;
+};
+
+export type TenantSpaceSelectInput = {
+  tenantID: number;
+  spaceID?: number;
 };
 
 export type TenantRegisterResult = {
@@ -35,8 +39,10 @@ export type TenantRegisterResult = {
 export type ProfileSpaceMembership = {
   id: number;
   tenantID: number;
+  tenantName?: string;
   spaceID: number;
-  role: "space_admin" | "teacher" | "student";
+  spaceName?: string;
+  role: "tenant_admin" | "space_admin" | "teacher" | "student";
   status: "enabled" | "disabled";
 };
 
@@ -47,6 +53,7 @@ export type ProfileSpaceMembershipList = {
 export type AuthAPI = {
   platformLogin(input: PlatformLoginInput): Promise<AuthSession>;
   tenantLogin(input: TenantLoginInput): Promise<AuthSession>;
+  selectTenantSpace(input: TenantSpaceSelectInput): Promise<AuthSession>;
   tenantRegister(input: TenantRegisterInput): Promise<TenantRegisterResult>;
   listProfileSpaces(): Promise<ProfileSpaceMembershipList>;
 };
@@ -75,7 +82,9 @@ type TenantRegisterAPIResponse = {
 type ProfileSpaceMembershipAPIResponse = {
   id: number;
   tenant_id: number;
+  tenant_name?: string;
   space_id: number;
+  space_name?: string;
   role: ProfileSpaceMembership["role"];
   status: ProfileSpaceMembership["status"];
 };
@@ -101,9 +110,15 @@ export function createAuthAPI(apiClient: ApiClient): AuthAPI {
     },
     async tenantLogin(input) {
       const data = await apiClient.post<AuthSessionAPIResponse>("/api/v1/auth/tenant/login", {
-        tenant_id: input.tenantID,
         username: input.username,
         password: input.password,
+      });
+      return mapAuthSessionResponse(data);
+    },
+    async selectTenantSpace(input) {
+      const data = await apiClient.post<AuthSessionAPIResponse>("/api/v1/auth/tenant/select-space", {
+        tenant_id: input.tenantID,
+        space_id: input.spaceID,
       });
       return mapAuthSessionResponse(data);
     },
@@ -141,6 +156,7 @@ function mapAuthSessionResponse(response: AuthSessionAPIResponse): AuthSession {
 function toSessionRole(role: string): SessionRole {
   switch (role) {
     case "platform_admin":
+    case "tenant_user":
     case "tenant_admin":
     case "teacher":
     case "student":
@@ -168,7 +184,9 @@ function mapProfileSpaceMembershipList(response: ProfileSpaceMembershipListAPIRe
     items: response.items.map((item) => ({
       id: item.id,
       tenantID: item.tenant_id,
+      tenantName: item.tenant_name,
       spaceID: item.space_id,
+      spaceName: item.space_name,
       role: item.role,
       status: item.status,
     })),

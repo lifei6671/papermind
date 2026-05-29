@@ -281,7 +281,7 @@ server/data/migrations
 - 服务启动时根据 `database.driver` 自动选择迁移目录，并按版本号从小到大执行。
 - 已执行版本记录到 `schema_migrations`，重复执行时自动跳过。
 - 已发布或已执行的迁移版本不得改写；项目进入生产或存在历史库后，新增字段、索引调整和约束收口必须通过更高版本追加迁移落地，避免旧库因版本已记录而跳过结构变更。
-- 当前权限模型调整仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；本次需求不新增 `002_audit_actor_type.sql`，审计主体类型字段和 `user_roles` 单角色唯一约束直接写入 `001_tenant_space.sql`。
+- 当前权限模型调整仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；本次需求不新增 `002_audit_actor_type.sql` 或其他 `002_*` 迁移脚本，审计主体类型字段、全局 `users` 表、`tenant_user_memberships` 租户成员关系表和单角色唯一约束直接写入 `001_tenant_space.sql`。
 - 任意迁移失败必须立即停止启动流程，禁止服务运行在半迁移状态。
 - 首版不提供单独数据库迁移脚本，避免部署流程和应用启动流程产生两套迁移入口。
 - 迁移期间 HTTP 层必须返回“系统升级中”的中间页或稳定 JSON 响应，并带 `Retry-After`，避免迁移耗时较长时前端白屏或接口表现为未知错误。
@@ -366,7 +366,6 @@ import "gorm.io/datatypes"
 
 type UserDO struct {
     ID        uint64 `gorm:"column:id;primaryKey"`
-    TenantID  uint64 `gorm:"column:tenant_id"`
     Username  string `gorm:"column:username"`
     CreatedAt int64  `gorm:"column:created_at"`
     CreatedBy uint64 `gorm:"column:created_by"`
@@ -382,7 +381,6 @@ func (UserDO) TableName() string {
 
 var UserColumns = struct {
     ID        string
-    TenantID  string
     Username  string
     CreatedAt string
     CreatedBy string
@@ -392,7 +390,6 @@ var UserColumns = struct {
     ExtJSON   string
 }{
     ID:        "id",
-    TenantID:  "tenant_id",
     Username:  "username",
     CreatedAt: "created_at",
     CreatedBy: "created_by",
@@ -414,8 +411,8 @@ db.Where("tenant_id = ?", tenantID).Order("created_at desc")
 允许：
 
 ```go
-db.Where(UserColumns.TenantID+" = ?", tenantID).
-    Order(UserColumns.CreatedAt + " desc")
+db.Where(ResourceColumns.TenantID+" = ?", tenantID).
+    Order(ResourceColumns.CreatedAt + " desc")
 ```
 
 复杂场景优先使用 GORM `clause.Column`，减少裸字符串字段名。
@@ -584,8 +581,7 @@ platform_configs
 
 users
 ├── id                 # 租户用户主键 ID
-├── tenant_id          # 所属租户 ID
-├── username           # 租户内登录名
+├── username           # 租户侧通用登录名
 ├── real_name          # 真实姓名，用于阅卷、成绩单和导出
 ├── avatar_url         # 用户头像地址
 ├── phone              # 手机号，可用于登录或通知
@@ -602,11 +598,12 @@ users
 ├── version            # 数据版本号，用于乐观锁
 └── ext_json           # JSON 扩展字段，保存非主流程元数据
 
-user_roles
-├── id                 # 用户角色关系主键 ID
+tenant_user_memberships
+├── id                 # 租户用户关系主键 ID
 ├── tenant_id          # 所属租户 ID
-├── user_id            # 租户用户 ID
+├── user_id            # 全局租户侧用户 ID
 ├── role               # 用户角色：tenant_admin / teacher / student
+├── status             # 成员关系状态：enabled / disabled
 ├── created_at         # 创建时间
 ├── created_by         # 创建人用户 ID
 ├── updated_at         # 更新时间
@@ -617,9 +614,9 @@ user_roles
 
 首版不做复杂 RBAC。角色权限由 service 层通过 `PermissionChecker` 抽象统一判断，首版实现基于固定角色和空间成员关系。
 
-首版只支持单角色，不支持同一租户用户同时拥有多个租户级角色。`user_roles` 必须建立 `UNIQUE (tenant_id, user_id)`，强制 `tenant_admin / teacher / student` 三选一。
+租户侧 `users` 是通用账号表，不直接绑定租户；同一个账号可以通过 `tenant_user_memberships` 加入多个租户。首版只支持单角色，不支持同一用户在同一租户内同时拥有多个租户级角色。`tenant_user_memberships` 必须建立 `UNIQUE (tenant_id, user_id)`，强制同一租户内 `tenant_admin / teacher / student` 三选一。
 
-本技术方案中涉及权限模型、用户角色、API 分组和认证上下文的细节，以 `docs/2025-05-28-papermind-tenant-admin-permission-model.md` 为准。首版 `user_roles` 使用 `UNIQUE (tenant_id, user_id)`；`UNIQUE (tenant_id, user_id, role)` 只作为后续多角色扩展方案，不在首版实现。
+本技术方案中涉及权限模型、用户角色、API 分组和认证上下文的细节，以 `docs/2025-05-28-papermind-tenant-admin-permission-model.md` 为准。首版 `tenant_user_memberships` 使用 `UNIQUE (tenant_id, user_id)`；`UNIQUE (tenant_id, user_id, role)` 只作为后续多角色扩展方案，不在首版实现。
 
 账号禁用规则：
 
@@ -628,8 +625,8 @@ user_roles
 - 如果禁用平台管理员会导致平台没有启用状态的 `platform_admin`，系统必须拒绝操作。
 - 租户必须至少保留一个启用状态的 `tenant_admin`。
 - 禁用、删除或改角色必须在同一数据库事务内先执行目标变更，再基于即将提交后的状态校验剩余有效管理员数量；数量不足则回滚。
-- 租户管理员数量约束的写事务必须在目标变更前锁定本租户启用的 `tenant_admin` 用户行；禁用或删除租户用户时还需要锁定其涉及空间内的 `space_admin` 成员行，避免两个并发请求同时通过最后管理员计数。首版单角色模型下，移除 `tenant_admin` 表达为把目标用户改为 `teacher` 或 `student`，角色更新必须先写入 `user_roles.role`，再基于更新后的状态校验剩余启用租户管理员数量。
-- 租户用户批量导入以租户内 `username` 作为覆盖键，已有用户覆盖资料、密码哈希和租户级角色，新用户创建后写入对应单角色；整批导入必须在同一事务内完成，角色覆盖前锁定启用 `tenant_admin` 用户行，并在所有行处理完成后校验租户管理员不变式，失败时回滚整批变更。
+- 租户管理员数量约束的写事务必须在目标变更前锁定本租户启用的 `tenant_admin` 成员关系行；禁用或删除租户成员关系时还需要锁定其涉及空间内的 `space_admin` 成员行，避免两个并发请求同时通过最后管理员计数。首版单角色模型下，移除 `tenant_admin` 表达为把目标用户改为 `teacher` 或 `student`，角色更新必须先写入 `tenant_user_memberships.role`，再基于更新后的状态校验剩余启用租户管理员数量。
+- 租户用户批量导入以全局 `username` 作为账号覆盖键，以 `tenant_user_memberships` 表达当前租户归属和角色；已有用户覆盖资料、密码哈希和当前租户成员关系，新用户创建后写入对应单角色。整批导入必须在同一事务内完成，角色覆盖前锁定启用 `tenant_admin` 成员关系行，并在所有行处理完成后校验租户管理员不变式，失败时回滚整批变更。
 - 禁用租户用户时，系统需要提醒操作者该用户会失去登录、考试、阅卷或空间管理能力。
 - 禁用租户用户时，需要同步判断其空间成员身份；如果会导致某个空间失去最后一个启用状态的 `space_admin`，系统必须拒绝操作。
 - 禁用或删除租户用户、修改空间角色、禁用或移除空间成员，都必须复用统一空间管理员不变式校验。
@@ -670,16 +667,16 @@ user_roles
 
 租户用户唯一约束：
 
-- `UNIQUE (tenant_id, username, deleted_at)`
-- `UNIQUE (tenant_id, phone, deleted_at)`
-- `UNIQUE (tenant_id, email, deleted_at)`
+- `UNIQUE (username, deleted_at)`
+- `UNIQUE (phone, deleted_at)`
+- `UNIQUE (email, deleted_at)`
 
-`real_name` 用于阅卷、成绩单和导出场景，首版可以非必填。手机号和邮箱如果允许为空，Repository 创建用户时需要按数据库差异处理空值唯一性，不能让同一租户内出现两个相同手机号或邮箱。
+`real_name` 用于阅卷、成绩单和导出场景，首版可以非必填。手机号和邮箱如果允许为空，Repository 创建用户时需要按数据库差异处理空值唯一性，不能让全局租户侧账号中出现两个相同手机号或邮箱。
 
 认证上下文需要区分两类主体：
 
 - `platform_user`：只能访问 `/api/v1/platform` 等平台级接口。
-- `tenant_user`：只能访问租户内业务接口，并且必须携带 `tenant_id`。
+- `tenant_user`：租户通用账号登录后先不携带 `tenant_id`，只能访问个人资料、可进入租户空间列表和空间选择接口；选择目标租户空间后，session 必须携带 `tenant_id` 才能访问租户内业务接口。
 
 ### 6.3 题库与题目
 
@@ -1352,15 +1349,16 @@ API 分组：
 
 认证上下文规则：
 
-- session 中只保存当前主体类型、用户 ID、租户 ID 和租户级角色，不保存密码、密码哈希、空间管理员身份或业务表快照。
+- session 中只保存当前主体类型、用户 ID、租户 ID 和租户级角色，不保存密码、密码哈希、空间管理员身份或业务表快照。租户通用账号刚登录时 `tenant_id = 0`、`role = tenant_user`，只能用于选择可进入的租户空间；选择后才写入具体 `tenant_id` 和租户级角色。
 - 首版最低要求是租户、用户、空间、题库、试卷、考试、阅卷、成绩发布、成绩导出和上传等关键写接口实时从数据库重建权限上下文；用户被禁用后，关键写接口必须立即失效。
 - session 主动 revoke 作为增强项；如果当前 session provider 暂时不支持按用户主动 revoke，不阻塞首版权限主线。增强实现可以让 memory provider 维护 `actor_type + tenant_id + user_id -> session_key` 反向索引，让 redis provider 维护 `actor_type + tenant_id + user_id -> session_key set` 后批量删除。
 - HTTP Router 必须接收启动配置中的 `security.allow_register_default` 和 `security.password_min_length`，避免配置只被加载但不影响运行行为。
-- 登录页同时提供平台管理员和租户用户模式；租户学生登录成功后进入考试入口，再通过邀请码进入考试端。
+- 登录页同时提供平台管理员和租户用户模式；租户用户登录不输入租户 ID，登录成功后进入 `/tenant-entry`，从当前账号可进入的租户和空间中选择目标入口。学生选择空间后进入考试入口，再通过邀请码进入考试端；`tenant_admin`、`space_admin` 和 `teacher` 选择空间后进入租户后台。
 - 个人设置页通过当前 session 主体调用 `/api/v1/profile` 查询和更新当前账号基础资料；平台管理员登录账号只读，可更新头像、手机号和邮箱，租户用户可更新真实姓名、头像、手机号和邮箱，前端保存成功后同步本地 session 的 `displayName`。
 - 平台侧租户管理查询和写操作必须携带有效平台管理员 Bearer token 或 session cookie。
 - 平台侧接口按平台管理边界校验登录态；租户用户只能操作 session 所属 `tenant_id`，禁止信任请求体跨租户切换。
 - 租户侧用户管理、空间资料管理和空间成员管理接口统一放在 `/api/v1/tenant/**` 下，必须从当前租户用户 session 派生 `tenant_id`；query/body 中保留的 `tenant_id` 只能作为兼容旧调用方的冗余字段，不能参与授权判断或 service 入参。用户删除、角色修改和批量导入接口还必须从 session 派生操作者 ID，并拒绝自删、自改角色或在批量覆盖中改变自己的租户级角色；删除不存在或已删除用户必须返回明确错误，不能把空更新当成成功。空间成员写入口必须校验目标空间启用且未删除、目标用户属于当前租户且启用未删除，并且空间内角色只能是 `space_admin`、`teacher` 或 `student`。平台管理员不能直接进入这些租户业务接口，需要查看租户概览时必须走平台侧只读治理接口。
+- 租户后台“空间成员”页面必须直接调用 `/api/v1/tenant/spaces/:id/members` 这一组接口完成成员列表、添加成员、修改空间身份、启用/禁用和移除；目标空间来自当前 session 的授权空间列表，不允许使用前端固定租户或空间默认值。租户管理员不展示独立“空间成员”菜单，避免和“空间管理”里的成员管理入口重复；租户管理员从“空间管理 > 成员管理”维护空间成员，独立 `/space-members` 入口只给当前账号具备启用 `space_admin` 空间授权的用户。
 - 后台考试业务接口，包括题库、题目导入、试卷、组卷规则、考试发布、阅卷和成绩，允许本租户 `tenant_admin` 访问；`space_admin` 和 `teacher` 只能访问自己已加入且启用的空间范围。`space_admin` 必须从 `space_members.role_in_space` 动态判断，不能来自 session role。平台管理员不进入租户业务菜单，也不能通过直接请求操作考试资源。
 - 平台侧写操作统一从当前主体上下文获取平台管理员用户 ID，禁止再从请求体信任 `actor_id` 写审计字段。
 - 邀请码解析必须从租户用户 session 派生 `user_id` 和 `tenant_id`，禁止信任请求体里的考生 ID。
@@ -1384,12 +1382,20 @@ API 分组：
 POST /api/v1/auth/tenant/register
      body: tenant_code, username, real_name, password, phone?, email?
 
+POST /api/v1/auth/tenant/login
+     body: username, password
+     response: role = tenant_user, tenant_id = 0
+
+POST /api/v1/auth/tenant/select-space
+     body: tenant_id, space_id?
+     选择当前账号可进入的租户空间，成功后刷新 session，response 同登录态。
+
 GET  /api/v1/profile
      response: user_id, tenant_id?, display_name, avatar_url, phone, email, role, subject_type
 POST /api/v1/profile
      body: display_name, avatar_url?, phone?, email?
 GET  /api/v1/tenant/profile/spaces
-     当前登录租户用户的启用空间成员关系，response: items[{id, tenant_id, space_id, role, status}]；平台管理员无租户空间授权，返回 403。
+     当前登录租户用户可进入的租户空间，response: items[{id, tenant_id, tenant_name, space_id, space_name, role, status}]；平台管理员无租户空间授权，返回 403。
 
 GET  /api/v1/tenants
      query: keyword?
@@ -1469,7 +1475,7 @@ page_size  默认 20，最大 100
 - 默认考试每次开发环境启动都会滚动到当前可作答时间窗口内，避免长期复用 SQLite 数据库后考试过期。
 - 该种子数据只用于本地开发和演示，不进入 PostgreSQL、MySQL 或生产环境。
 
-前端管理页不能内置核心业务 mock 数据。个人设置页必须通过 `/api/v1/profile` 读取当前账号资料并提交保存，不能只修改本地登录态；平台管理员登录账号在个人设置页只读，避免误改登录标识；租户用户保存成功后同步本地 session 的显示名称，让导航和页面标题立即刷新。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。空间管理、用户管理等租户级页面必须从租户用户 session 获取目标租户，并调用 `/api/v1/tenant/**` 租户前缀接口；缺失有效租户 ID 时只展示选择提示，不得使用 `10` 等前端默认值请求后端。后台左侧“租户空间”和“用户管理”菜单对 `tenant_admin` 显示；对空间管理员的可见性必须来自 `/api/v1/tenant/profile/spaces` 返回的当前用户启用空间成员关系和 `role = space_admin`，不能来自 session role，其中 `tenant_admin` 管理本租户全量空间和用户，`space_admin` 只能管理授权空间范围。后台左侧“考试业务”菜单对 `tenant_admin`、拥有授权空间的 `space_admin` 和 `teacher` 显示，其中 `tenant_admin` 管理本租户全量考试业务，`space_admin` / `teacher` 只能操作已加入且启用的空间范围。平台管理员直接访问租户业务后台路由时回到平台概览页，不渲染租户业务页面或触发租户业务 API 请求。平台管理员在租户管理列表中查看某个租户的空间或用户时，只在当前页面从右侧滑入抽屉并调用平台侧只读概览 API `/api/v1/tenants/:id/spaces` 或 `/api/v1/tenants/:id/users`，不跳转到租户侧空间管理或用户管理页面；遮罩层固定铺满视口并随抽屉打开淡入、关闭淡出，抽屉使用右侧绝对定位叠在遮罩层上滑入滑出，不在遮罩层内预留白色占位；抽屉默认占用 50% 视口宽度，全屏按钮在 50% 与 100% 视口宽度之间切换，宽度变化保持过渡动画；返回和关闭按钮只触发滑出和遮罩淡出动画，待动画结束后再卸载抽屉，遮罩层不触发关闭；抽屉列表必须保持租户侧空间管理、用户管理列表的列结构，只改变承载方式。教师没有加入任何空间时，用户详情和业务页必须提示“该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷”。
+前端管理页不能内置核心业务 mock 数据。个人设置页必须通过 `/api/v1/profile` 读取当前账号资料并提交保存，不能只修改本地登录态；平台管理员登录账号在个人设置页只读，避免误改登录标识；租户用户保存成功后同步本地 session 的显示名称，让导航和页面标题立即刷新。租户登录页不再展示租户 ID 输入框，租户账号登录后进入 `/tenant-entry`，通过 `/api/v1/tenant/profile/spaces` 展示可进入的租户和空间，再调用 `/api/v1/auth/tenant/select-space` 绑定当前 session。`/tenant-entry` 必须按角色展示入口：`tenant_admin` 只展示租户后台入口，多个空间授权折叠为同一个租户入口，选择时不传 `space_id`；`space_admin`、`teacher` 和 `student` 才按具体空间展示空间管理、教学业务或考试入口。租户后台侧边栏必须展示当前租户身份和租户名称，主按钮固定为“切换租户”，点击后回到 `/tenant-entry`；平台管理员侧边栏继续展示平台身份和“回到概览”。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。空间管理、用户管理等租户级页面必须从租户用户 session 获取目标租户，并调用 `/api/v1/tenant/**` 租户前缀接口；缺失有效租户 ID 时只展示选择提示，不得使用 `10` 等前端默认值请求后端。后台左侧“租户空间”和“用户管理”菜单对 `tenant_admin` 显示；`tenant_admin` 不显示独立“空间成员”菜单，空间成员维护统一从“空间管理”的成员管理入口进入。独立“空间成员”菜单只对拥有启用 `space_admin` 空间授权的账号显示，其可见性必须来自 `/api/v1/tenant/profile/spaces` 返回的当前用户启用空间成员关系和 `role = space_admin`，不能来自 session role，其中 `tenant_admin` 管理本租户全量空间和用户，`space_admin` 只能管理授权空间范围。后台左侧“考试业务”菜单对 `tenant_admin`、拥有授权空间的 `space_admin` 和 `teacher` 显示，其中 `tenant_admin` 管理本租户全量考试业务，`space_admin` / `teacher` 只能操作已加入且启用的空间范围。平台管理员直接访问租户业务后台路由时回到平台概览页，不渲染租户业务页面或触发租户业务 API 请求。平台管理员在租户管理列表中查看某个租户的空间或用户时，只在当前页面从右侧滑入抽屉并调用平台侧只读概览 API `/api/v1/tenants/:id/spaces` 或 `/api/v1/tenants/:id/users`，不跳转到租户侧空间管理或用户管理页面；遮罩层固定铺满视口并随抽屉打开淡入、关闭淡出，抽屉使用右侧绝对定位叠在遮罩层上滑入滑出，不在遮罩层内预留白色占位；抽屉默认占用 50% 视口宽度，全屏按钮在 50% 与 100% 视口宽度之间切换，宽度变化保持过渡动画；返回和关闭按钮只触发滑出和遮罩淡出动画，待动画结束后再卸载抽屉，遮罩层不触发关闭；抽屉列表必须保持租户侧空间管理、用户管理列表的列结构，只改变承载方式。教师没有加入任何空间时，用户详情和业务页必须提示“该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷”。
 
 公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 只能由本租户 `tenant_admin` 创建或导入；`teacher` 和空间管理员只能写自己启用空间内的题库。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
 
@@ -1571,7 +1577,7 @@ service 单元测试：
 - 禁止禁用最后一个平台管理员
 - 禁止禁用或移除空间最后一个空间管理员
 - 禁止修改角色导致空间失去最后一个空间管理员
-- `user_roles` 单角色唯一约束为 `(tenant_id, user_id)`
+- `tenant_user_memberships` 单角色唯一约束为 `(tenant_id, user_id)`
 - `tenant_admin` 不在 `space_members` 中也可以管理本租户空间资源
 - `space_admin` 不能修改空间基础资料或删除空间
 - `tenant_admin` 创建 `teacher` 时不自动写入 `space_members`
@@ -1723,7 +1729,7 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - `PermissionChecker` 使用 `CanManageSpaceProfile` 和 `CanManageSpaceMembers` 区分空间基础资料管理与空间成员管理。
 - 平台管理员使用独立 `platform_users` 表，不进入租户用户表。
 - 平台配置使用 `platform_configs` 表保存，`config_key` 全平台唯一。
-- 租户用户表增加 `real_name`，并声明同租户内用户名、手机号、邮箱唯一。
+- 租户侧通用账号表增加 `real_name`，并声明全局用户名、手机号、邮箱唯一；账号和租户归属通过 `tenant_user_memberships` 维护。
 - 平台用户和租户用户都支持头像上传，并记录最后登录 IP 和最后登录时间。
 - 空间成员支持禁用，空间内角色包含 `space_admin`、`teacher`、`student`。
 - 禁止禁用自己的账号，且不能禁用最后一个启用状态的平台管理员。
@@ -1734,7 +1740,7 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - 支持用户自注册，但注册后默认不属于任何空间。
 - 租户码由平台管理员创建租户时系统生成。
 - 创建租户时必须初始化首个启用状态 `tenant_admin`；首版不自动创建默认空间，也不自动把 `tenant_admin` 写入 `space_members`。
-- `user_roles` 使用 `UNIQUE (tenant_id, user_id)` 强制租户用户首版只能拥有一个租户级角色。
+- `tenant_user_memberships` 使用 `UNIQUE (tenant_id, user_id)` 强制租户用户在同一租户内首版只能拥有一个租户级角色。
 - `space_admin` 不是租户级角色，不写入 `ActorContext.Role` 或 `PermissionContext.Role`，只能通过 `space_members.role_in_space` 动态判断。
 - `space_members` 使用 `UNIQUE (tenant_id, space_id, user_id, deleted_at)` 防止重复有效成员。
 - 支持 `manual`、`rule_fixed`、`rule_live` 三种组卷模式，并统一使用 `paper_sections` 大题结构。

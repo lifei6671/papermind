@@ -133,10 +133,9 @@ CREATE TABLE IF NOT EXISTS platform_configs (
 -- 平台配置项按配置键全平台唯一。
 CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_configs_config_key ON platform_configs (config_key);
 
--- users：租户用户表，保存租户内考生、教师和租户管理员。
+-- users：全局用户账号表，保存登录账号和用户基础资料。
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tenant_id INTEGER NOT NULL,
     username TEXT NOT NULL,
     real_name TEXT NOT NULL DEFAULT '',
     avatar_url TEXT NOT NULL DEFAULT '',
@@ -156,19 +155,20 @@ CREATE TABLE IF NOT EXISTS users (
     ext_json TEXT NOT NULL DEFAULT '{}',
     deleted_at INTEGER NOT NULL DEFAULT 0
 );
--- 租户内登录名在未删除用户内唯一。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (tenant_id, username, deleted_at);
--- 租户内手机号在未删除用户内唯一，空字符串也按唯一值处理。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (tenant_id, phone, deleted_at);
--- 租户内邮箱在未删除用户内唯一，空字符串也按唯一值处理。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (tenant_id, email, deleted_at);
+-- 登录名是全局账号，未删除账号内唯一。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username_deleted_at ON users (username, deleted_at);
+-- 手机号在未删除账号内唯一，空字符串也按唯一值处理。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_phone_deleted_at ON users (phone, deleted_at);
+-- 邮箱在未删除账号内唯一，空字符串也按唯一值处理。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_email_deleted_at ON users (email, deleted_at);
 
--- user_roles：用户角色关系表，保存租户用户的固定角色。
-CREATE TABLE IF NOT EXISTS user_roles (
+-- tenant_user_memberships：租户用户关系表，保存全局用户在租户内的固定角色和启用状态。
+CREATE TABLE IF NOT EXISTS tenant_user_memberships (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
     role TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'enabled',
     created_at INTEGER NOT NULL,
     created_by INTEGER NOT NULL DEFAULT 0,
     created_by_type TEXT NOT NULL DEFAULT 'system',
@@ -178,8 +178,8 @@ CREATE TABLE IF NOT EXISTS user_roles (
     version INTEGER NOT NULL DEFAULT 1,
     ext_json TEXT NOT NULL DEFAULT '{}'
 );
--- 同一租户用户只能拥有一个固定角色。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_user_roles_user ON user_roles (tenant_id, user_id);
+-- 同一用户在同一租户只能拥有一条固定角色关系。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_user_memberships_user ON tenant_user_memberships (tenant_id, user_id);
 
 -- questions：题目表，保存租户公共题库和空间题库中的题目。
 CREATE TABLE IF NOT EXISTS questions (

@@ -17,6 +17,8 @@ const (
 
 	// RoleTenantAdmin 表示租户管理员。
 	RoleTenantAdmin = "tenant_admin"
+	// RoleTenantUser 表示已登录但尚未进入具体租户上下文的全局租户账号。
+	RoleTenantUser = "tenant_user"
 	// RoleTeacher 表示教师。
 	RoleTeacher = "teacher"
 	// RoleStudent 表示学生。
@@ -94,7 +96,6 @@ type ListInput struct {
 }
 
 type LoginInput struct {
-	TenantID uint64 // 所属租户 ID。
 	Username string // 租户内登录名。
 	Password string // 登录明文密码。
 	IP       string // 登录来源 IP。
@@ -191,11 +192,13 @@ type DisableImpact struct {
 type Repository interface {
 	ListUsers(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[User], error)
 	FindUserByID(ctx context.Context, tenantID uint64, userID uint64) (User, error)
+	FindGlobalUserByID(ctx context.Context, userID uint64) (User, error)
 	FindTenantByCode(ctx context.Context, tenantCode string) (Tenant, error)
 	CreateUser(ctx context.Context, user User) (User, error)
 	CreateUserRole(ctx context.Context, tenantID uint64, userID uint64, role string) error
 	CreateUserWithRole(ctx context.Context, user User, role string) (User, error)
 	FindUserByUsername(ctx context.Context, tenantID uint64, username string) (User, error)
+	FindGlobalUserByUsername(ctx context.Context, username string) (User, error)
 	UpdateLoginAudit(ctx context.Context, tenantID uint64, userID uint64, ip string, at int64) error
 	UpdateProfile(ctx context.Context, input UpdateProfileInput) (User, error)
 	UpdateAvatarURL(ctx context.Context, tenantID uint64, userID uint64, url string) error
@@ -277,6 +280,10 @@ func (s *Service) Get(ctx context.Context, tenantID uint64, userID uint64) (User
 	return s.repo.FindUserByID(ctx, tenantID, userID)
 }
 
+func (s *Service) GetGlobal(ctx context.Context, userID uint64) (User, error) {
+	return s.repo.FindGlobalUserByID(ctx, userID)
+}
+
 func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 	role := input.Role
 	if role == "" {
@@ -309,31 +316,32 @@ func (s *Service) RegisterWithTenantLink(ctx context.Context, input RegisterInpu
 }
 
 func (s *Service) Login(ctx context.Context, input LoginInput) (User, error) {
-	user, err := s.repo.FindUserByUsername(ctx, input.TenantID, input.Username)
+	user, err := s.repo.FindGlobalUserByUsername(ctx, input.Username)
 	if err != nil {
-		if logErr := s.securityLogger.LoginFailed(ctx, input.TenantID, input.Username, input.IP, LoginFailureInvalidCredential); logErr != nil {
+		if logErr := s.securityLogger.LoginFailed(ctx, 0, input.Username, input.IP, LoginFailureInvalidCredential); logErr != nil {
 			return User{}, logErr
 		}
 		return User{}, ErrInvalidCredential
 	}
 	if user.Status != StatusEnabled {
-		if logErr := s.securityLogger.LoginFailed(ctx, input.TenantID, input.Username, input.IP, LoginFailureDisabled); logErr != nil {
+		if logErr := s.securityLogger.LoginFailed(ctx, 0, input.Username, input.IP, LoginFailureDisabled); logErr != nil {
 			return User{}, logErr
 		}
 		return User{}, ErrUserDisabled
 	}
 	if !s.passwordVerifier.Verify(user.PasswordHash, input.Password) {
-		if logErr := s.securityLogger.LoginFailed(ctx, input.TenantID, input.Username, input.IP, LoginFailureInvalidCredential); logErr != nil {
+		if logErr := s.securityLogger.LoginFailed(ctx, 0, input.Username, input.IP, LoginFailureInvalidCredential); logErr != nil {
 			return User{}, logErr
 		}
 		return User{}, ErrInvalidCredential
 	}
 	now := s.now()
-	if err := s.repo.UpdateLoginAudit(ctx, input.TenantID, user.ID, input.IP, now); err != nil {
+	if err := s.repo.UpdateLoginAudit(ctx, 0, user.ID, input.IP, now); err != nil {
 		return User{}, err
 	}
 	user.LastLoginIP = input.IP
 	user.LastLoginAt = now
+	user.Role = RoleTenantUser
 	return user, nil
 }
 

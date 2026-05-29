@@ -659,18 +659,13 @@ test("真实空间成员入口由授权空间列表渲染并读取成员", async
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
-        data: {
-          items: [{
-            id: 1,
-            user_id: 55,
-            name: "空间管理员",
-            role: "space_admin",
-            status: "enabled",
-          }],
-          page: 1,
-          page_size: 20,
-          total: 1,
-        },
+        data: [{
+          id: 1,
+          user_id: 55,
+          name: "空间管理员",
+          role: "space_admin",
+          status: "enabled",
+        }],
       }));
     }
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
@@ -681,10 +676,24 @@ test("真实空间成员入口由授权空间列表渲染并读取成员", async
   expect(await screen.findByRole("heading", { name: "空间成员" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /空间成员/ })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /空间管理/ })).not.toBeInTheDocument();
-  expect(await screen.findByRole("row", { name: /空间管理员 55 空间管理员 启用/ })).toBeInTheDocument();
+  const memberRow = await screen.findByRole("row", { name: /空间管理员.*55.*启用/ });
+  expect(within(memberRow).getByRole("combobox", { name: "修改 空间管理员 的空间身份" })).toHaveValue("space_admin");
   expect(screen.getByText("空间 301")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "创建空间" })).not.toBeInTheDocument();
   expect(requestedURLs).toEqual(["/api/v1/tenant/spaces/301/members?tenant_id=77"]);
+});
+
+test("租户管理员不展示独立空间成员入口", () => {
+  storeTenantAdminSession();
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+
+  renderApp(["/space-members"]);
+
+  expect(screen.getByRole("link", { name: /空间管理/ })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /用户管理/ })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /空间成员/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "空间成员" })).not.toBeInTheDocument();
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 test("真实路由渲染用户管理时从 session 派生租户并请求后端 API", async () => {

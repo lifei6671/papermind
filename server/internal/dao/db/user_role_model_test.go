@@ -15,7 +15,7 @@ func TestUserRoleTablesUseExpectedNames(t *testing.T) {
 		{name: "platform user", do: PlatformUserDO{}, want: "platform_users"},
 		{name: "platform config", do: PlatformConfigDO{}, want: "platform_configs"},
 		{name: "tenant user", do: UserDO{}, want: "users"},
-		{name: "user role", do: UserRoleDO{}, want: "user_roles"},
+		{name: "tenant user membership", do: UserRoleDO{}, want: "tenant_user_memberships"},
 	}
 
 	for _, tt := range tests {
@@ -34,8 +34,8 @@ func TestUserRoleBusinessFieldsUseColumnMappings(t *testing.T) {
 	}{
 		{model: PlatformUserDO{}, names: []string{"Username", "AvatarURL", "Phone", "Email", "PasswordHash", "LastLoginIP", "LastLoginAt", "Status"}},
 		{model: PlatformConfigDO{}, names: []string{"ConfigKey", "ConfigValue", "ValueType", "Description"}},
-		{model: UserDO{}, names: []string{"TenantID", "Username", "RealName", "AvatarURL", "Phone", "Email", "PasswordHash", "LastLoginIP", "LastLoginAt", "Status"}},
-		{model: UserRoleDO{}, names: []string{"TenantID", "UserID", "Role"}},
+		{model: UserDO{}, names: []string{"Username", "RealName", "AvatarURL", "Phone", "Email", "PasswordHash", "LastLoginIP", "LastLoginAt", "Status"}},
+		{model: UserRoleDO{}, names: []string{"TenantID", "UserID", "Role", "Status"}},
 	}
 
 	for _, tt := range tests {
@@ -74,6 +74,9 @@ func TestUserRoleColumnMappings(t *testing.T) {
 	if UserRoleColumns.Role != "role" {
 		t.Fatalf("UserRoleColumns.Role = %q", UserRoleColumns.Role)
 	}
+	if UserRoleColumns.Status != "status" {
+		t.Fatalf("UserRoleColumns.Status = %q", UserRoleColumns.Status)
+	}
 }
 
 func TestUserRoleSoftDeleteBoundaries(t *testing.T) {
@@ -82,7 +85,7 @@ func TestUserRoleSoftDeleteBoundaries(t *testing.T) {
 	assertMissingField(t, reflect.TypeOf(PlatformConfigDO{}), "DeletedAt")
 	assertMissingField(t, reflect.TypeOf(UserRoleDO{}), "DeletedAt")
 
-	// user_roles 需要乐观锁字段，后续角色变更可以按版本号避免覆盖。
+	// 租户用户关系需要乐观锁字段，后续角色或成员状态变更可以按版本号避免覆盖。
 	assertHasEmbeddedField(t, reflect.TypeOf(UserRoleDO{}), "BaseFields")
 }
 

@@ -19,7 +19,7 @@ func TestSQLiteTenantSpaceMigrationCreatesTablesAndIndexes(t *testing.T) {
 		t.Fatalf("Run(sqlite migrations) error = %v", err)
 	}
 
-	for _, table := range []string{"tenants", "spaces", "space_members", "space_configs"} {
+	for _, table := range []string{"tenants", "spaces", "space_members", "space_configs", "users", "tenant_user_memberships"} {
 		if !gormDB.Migrator().HasTable(table) {
 			t.Fatalf("table %s missing", table)
 		}
@@ -30,14 +30,17 @@ func TestSQLiteTenantSpaceMigrationCreatesTablesAndIndexes(t *testing.T) {
 	assertSQLiteColumnExists(t, gormDB, "tenants", "updated_by_type")
 	assertSQLiteColumnExists(t, gormDB, "spaces", "logo_url")
 	assertSQLiteColumnExists(t, gormDB, "spaces", "description")
-	assertSQLiteColumnExists(t, gormDB, "user_roles", "created_by_type")
-	assertSQLiteColumnExists(t, gormDB, "user_roles", "updated_by_type")
+	assertSQLiteColumnMissing(t, gormDB, "users", "tenant_id")
+	assertSQLiteColumnExists(t, gormDB, "tenant_user_memberships", "status")
+	assertSQLiteColumnExists(t, gormDB, "tenant_user_memberships", "created_by_type")
+	assertSQLiteColumnExists(t, gormDB, "tenant_user_memberships", "updated_by_type")
 	assertSQLiteColumnExists(t, gormDB, "question_tags", "created_by_type")
 	assertSQLiteColumnExists(t, gormDB, "exam_events", "created_by_type")
 	assertSQLiteUniqueIndexContains(t, gormDB, "tenants", []string{"tenant_code", "deleted_at"})
 	assertSQLiteUniqueIndexContains(t, gormDB, "space_members", []string{"tenant_id", "space_id", "user_id", "deleted_at"})
 	assertSQLiteUniqueIndexContains(t, gormDB, "space_configs", []string{"tenant_id", "space_id", "config_key"})
-	assertSQLiteUniqueIndexContains(t, gormDB, "user_roles", []string{"tenant_id", "user_id"})
+	assertSQLiteUniqueIndexContains(t, gormDB, "users", []string{"username", "deleted_at"})
+	assertSQLiteUniqueIndexContains(t, gormDB, "tenant_user_memberships", []string{"tenant_id", "user_id"})
 }
 
 func openSQLiteForActualMigrationTest(t *testing.T) (*gorm.DB, func()) {
@@ -62,7 +65,22 @@ func openSQLiteForActualMigrationTest(t *testing.T) (*gorm.DB, func()) {
 func assertSQLiteColumnExists(t *testing.T, gormDB *gorm.DB, table string, column string) {
 	t.Helper()
 
-	var found bool
+	if !sqliteColumnExists(t, gormDB, table, column) {
+		t.Fatalf("column %s.%s missing", table, column)
+	}
+}
+
+func assertSQLiteColumnMissing(t *testing.T, gormDB *gorm.DB, table string, column string) {
+	t.Helper()
+
+	if sqliteColumnExists(t, gormDB, table, column) {
+		t.Fatalf("column %s.%s should not exist", table, column)
+	}
+}
+
+func sqliteColumnExists(t *testing.T, gormDB *gorm.DB, table string, column string) bool {
+	t.Helper()
+
 	rows, err := gormDB.Raw("PRAGMA table_info(" + table + ")").Rows()
 	if err != nil {
 		t.Fatalf("PRAGMA table_info(%s) error = %v", table, err)
@@ -78,13 +96,10 @@ func assertSQLiteColumnExists(t *testing.T, gormDB *gorm.DB, table string, colum
 			t.Fatalf("scan table_info(%s) error = %v", table, err)
 		}
 		if name == column {
-			found = true
-			break
+			return true
 		}
 	}
-	if !found {
-		t.Fatalf("column %s.%s missing", table, column)
-	}
+	return false
 }
 
 func assertSQLiteUniqueIndexContains(t *testing.T, gormDB *gorm.DB, table string, columns []string) {

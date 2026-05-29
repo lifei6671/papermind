@@ -12,6 +12,8 @@ const (
 	RolePlatformAdmin = "platform_admin"
 	// RoleTenantAdmin 表示租户管理员。
 	RoleTenantAdmin = "tenant_admin"
+	// RoleTenantUser 表示已登录但尚未选择租户上下文的租户侧全局账号。
+	RoleTenantUser = "tenant_user"
 	// RoleTeacher 表示教师。
 	RoleTeacher = "teacher"
 	// RoleStudent 表示学生。
