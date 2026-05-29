@@ -1,5 +1,6 @@
 import { createApiClient } from "./client";
 import type { ApiClient } from "./client";
+import { readStoredAccessToken } from "./session-token";
 
 export type Profile = {
   userID: number;
@@ -37,6 +38,7 @@ type ProfileAPIResponse = {
 
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
+  getAccessToken: readStoredAccessToken,
 });
 
 export const profileApi = createProfileAPI(defaultApiClient);

@@ -711,7 +711,7 @@ func (h examHandler) listPendingReviews(c *gin.Context) {
 	}
 	permissionContext, err := h.readActorPermissionQuery(c, tenantID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		writePermissionContextError(c, err, "读取待阅卷列表失败")
 		return
 	}
 	items, err := h.review.ListPendingAttempts(c.Request.Context(), serviceexam.ListPendingAttemptsInput{
@@ -752,7 +752,7 @@ func (h examHandler) gradeShortText(c *gin.Context) {
 	}
 	permissionContext, err := h.permissionContextFromSession(c, request.TenantID, request.SpaceID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		writePermissionContextError(c, err, "保存阅卷结果失败")
 		return
 	}
 	err = h.review.GradeShortText(c.Request.Context(), serviceexam.GradeShortTextInput{
@@ -788,7 +788,7 @@ func (h examHandler) listResults(c *gin.Context) {
 	}
 	permissionContext, err := h.readActorPermissionQuery(c, tenantID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		writePermissionContextError(c, err, "读取成绩列表失败")
 		return
 	}
 	rows, err := h.export.ListExamScores(c.Request.Context(), serviceexam.ListExamScoresInput{
@@ -819,7 +819,7 @@ func (h examHandler) saveResultPublishConfig(c *gin.Context) {
 	}
 	permissionContext, err := h.permissionContextFromSession(c, request.TenantID, request.SpaceID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		writePermissionContextError(c, err, "保存成绩发布配置失败")
 		return
 	}
 	if err := permission.NewFixedRoleChecker().CanViewExamResults(permissionContextWithExamScope(permissionContext, request.ExamID, request.SpaceID), request.ExamID); err != nil {
@@ -852,7 +852,7 @@ func (h examHandler) exportResults(c *gin.Context) {
 	}
 	permissionContext, err := h.permissionContextFromSession(c, request.TenantID, request.SpaceID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		writePermissionContextError(c, err, "导出成绩失败")
 		return
 	}
 	result, err := h.export.ExportExamScores(c.Request.Context(), serviceexam.ExportExamScoresInput{
@@ -936,6 +936,14 @@ func writeTakingServiceError(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "作答操作失败"))
 }
 
+func writePermissionContextError(c *gin.Context, err error, fallback string) {
+	if errors.Is(err, permission.ErrForbidden) {
+		writePermissionOrInternalError(c, err, fallback)
+		return
+	}
+	c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+}
+
 func writeVisibleResultError(c *gin.Context, err error) {
 	if errors.Is(err, serviceexam.ErrResultNotVisible) {
 		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "成绩暂未公布或无权查看"))
@@ -1007,23 +1015,29 @@ func (h examHandler) permissionContextFromSession(c *gin.Context, tenantID uint6
 	case permission.RoleTenantAdmin:
 		return ctx, nil
 	case permission.RoleTeacher:
-		if spaceID == 0 {
-			return permission.PermissionContext{}, errors.New("space_id 必须是正整数")
-		}
-		member, err := h.members.FindMember(c.Request.Context(), tenantID, spaceID, principal.UserID)
-		if errors.Is(err, servicespace.ErrMemberNotFound) {
-			return permission.PermissionContext{}, permission.ErrForbidden
-		}
-		if err != nil {
-			return permission.PermissionContext{}, err
-		}
-		if member.Status != servicespace.StatusEnabled {
-			return permission.PermissionContext{}, permission.ErrForbidden
-		}
-		ctx.SpaceMemberships[spaceID] = member.Role
+		return h.permissionContextFromSpaceMembership(c, ctx, tenantID, spaceID, principal.UserID)
+	case permission.RoleStudent:
+		return h.permissionContextFromSpaceMembership(c, ctx, tenantID, spaceID, principal.UserID)
 	default:
 		return permission.PermissionContext{}, permission.ErrForbidden
 	}
+}
+
+func (h examHandler) permissionContextFromSpaceMembership(c *gin.Context, ctx permission.PermissionContext, tenantID uint64, spaceID uint64, userID uint64) (permission.PermissionContext, error) {
+	if spaceID == 0 {
+		return permission.PermissionContext{}, errors.New("space_id 必须是正整数")
+	}
+	member, err := h.members.FindMember(c.Request.Context(), tenantID, spaceID, userID)
+	if errors.Is(err, servicespace.ErrMemberNotFound) {
+		return permission.PermissionContext{}, permission.ErrForbidden
+	}
+	if err != nil {
+		return permission.PermissionContext{}, err
+	}
+	if member.Status != servicespace.StatusEnabled {
+		return permission.PermissionContext{}, permission.ErrForbidden
+	}
+	ctx.SpaceMemberships[spaceID] = member.Role
 	return ctx, nil
 }
 

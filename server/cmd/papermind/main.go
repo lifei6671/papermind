@@ -78,6 +78,7 @@ func routerOptionsFromConfig(cfg *config.Config, gormDB *gorm.DB) apirouter.Opti
 	options.AuthSessionRedisUser = cfg.Auth.Session.Redis.Username
 	options.AuthSessionRedisPass = cfg.Auth.Session.Redis.Password
 	options.AuthSessionRedisDB = cfg.Auth.Session.Redis.DB
+	options.ExamTokenBufferMinutes = cfg.Auth.ExamTokenBufferMinutes
 	options.ExportDir = cfg.Storage.ExportDir
 	options.UploadDir = filepath.Join(cfg.Storage.ImportDir, "uploads")
 	options.AllowRegisterDefault = cfg.Security.AllowRegisterDefault

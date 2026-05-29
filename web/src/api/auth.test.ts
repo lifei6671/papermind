@@ -1,6 +1,12 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createApiClient } from "./client";
-import { createAuthAPI } from "./auth";
+import { authApi, createAuthAPI } from "./auth";
+import { SESSION_STORAGE_KEY } from "../auth/session-context";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.localStorage.clear();
+});
 
 describe("authApi", () => {
   test("平台管理员登录会映射服务端会话字段", async () => {
@@ -213,5 +219,30 @@ describe("authApi", () => {
       role: "space_admin",
       status: "enabled",
     }]);
+  });
+
+  test("默认 authApi 会为受保护接口带上本地会话 token", async () => {
+    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+      accessToken: "stored-access-token",
+      refreshToken: "stored-refresh-token",
+      user: { userID: 20, displayName: "目标考生", role: "tenant_user" },
+    }));
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      expect(init?.headers).toMatchObject({
+        Authorization: "Bearer stored-access-token",
+      });
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { items: [] },
+      }));
+    });
+
+    await authApi.listProfileSpaces();
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/tenant/profile/spaces",
+      expect.objectContaining({ method: "GET" }),
+    );
   });
 });

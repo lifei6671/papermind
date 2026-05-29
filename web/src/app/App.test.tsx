@@ -505,7 +505,7 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
     );
   });
   expect(await screen.findByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "交 卷" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "交 卷" })).toBeInTheDocument();
 });
 
 test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async () => {

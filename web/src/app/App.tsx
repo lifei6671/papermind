@@ -10,7 +10,7 @@ import { buildAdminRoutes, routeVisibleForRole } from "./routes";
 
 export function App() {
   const { session } = useSession();
-  const adminRoutes = buildAdminRoutes(session?.user);
+  const adminRoutes = buildAdminRoutes(session?.user, session?.selectedSpaceID);
 
   return (
     <Routes>

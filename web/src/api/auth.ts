@@ -1,6 +1,7 @@
 import { createApiClient } from "./client";
 import type { ApiClient } from "./client";
 import type { AuthSession, SessionRole } from "../auth/session-context";
+import { readStoredAccessToken } from "./session-token";
 
 export type PlatformLoginInput = {
   username: string;
@@ -95,6 +96,7 @@ type ProfileSpaceMembershipListAPIResponse = {
 
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
+  getAccessToken: readStoredAccessToken,
 });
 
 export const authApi = createAuthAPI(defaultApiClient);

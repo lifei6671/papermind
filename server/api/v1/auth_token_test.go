@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
+	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 )
 
 func TestGinSessionPrincipalCanBeReadFromBearerToken(t *testing.T) {
@@ -96,6 +98,35 @@ func TestPermissionContextFromSessionRequiresAuthenticatedPrincipal(t *testing.T
 	}
 }
 
+func TestPermissionContextFromSessionUsesSpaceMembershipForSpaceAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	c.Set(authPrincipalGinKey, AuthPrincipal{
+		SubjectType: permission.SubjectTenantUser,
+		UserID:      20,
+		TenantID:    10,
+		Role:        permission.RoleStudent,
+	})
+
+	permissionContext, err := (examHandler{
+		members: staticSpaceMemberFinder{member: servicespace.Member{
+			TenantID: 10,
+			SpaceID:  301,
+			UserID:   20,
+			Role:     servicespace.RoleSpaceAdmin,
+			Status:   servicespace.StatusEnabled,
+		}},
+	}).permissionContextFromSession(c, 10, 301)
+
+	if err != nil {
+		t.Fatalf("permissionContextFromSession() error = %v", err)
+	}
+	if permissionContext.SpaceMemberships[301] != permission.RoleSpaceAdmin {
+		t.Fatalf("SpaceMemberships[301] = %q, want %q", permissionContext.SpaceMemberships[301], permission.RoleSpaceAdmin)
+	}
+}
+
 func TestExamBusinessMiddlewareRejectsSpaceAdminSessionRole(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -114,7 +145,7 @@ func TestExamBusinessMiddlewareRejectsSpaceAdminSessionRole(t *testing.T) {
 }
 
 func TestExamBusinessMiddlewareAllowsTenantLevelExamRoles(t *testing.T) {
-	for _, role := range []string{permission.RoleTenantAdmin, permission.RoleTeacher} {
+	for _, role := range []string{permission.RoleTenantAdmin, permission.RoleTeacher, permission.RoleStudent} {
 		t.Run(role, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
@@ -132,4 +163,26 @@ func TestExamBusinessMiddlewareAllowsTenantLevelExamRoles(t *testing.T) {
 			}
 		})
 	}
+}
+
+type staticSpaceMemberFinder struct {
+	member servicespace.Member
+}
+
+func (f staticSpaceMemberFinder) FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (servicespace.Member, error) {
+	if f.member.TenantID == tenantID && f.member.SpaceID == spaceID && f.member.UserID == userID {
+		return f.member, nil
+	}
+	return servicespace.Member{}, servicespace.ErrMemberNotFound
+}
+
+func (f staticSpaceMemberFinder) ListEffectiveMembershipsForUser(ctx context.Context, tenantID uint64, userID uint64) ([]servicespace.Member, error) {
+	if f.member.TenantID == tenantID && f.member.UserID == userID && f.member.Status == servicespace.StatusEnabled {
+		return []servicespace.Member{f.member}, nil
+	}
+	return nil, nil
+}
+
+func (f staticSpaceMemberFinder) SpaceExists(ctx context.Context, tenantID uint64, spaceID uint64) (bool, error) {
+	return f.member.TenantID == tenantID && f.member.SpaceID == spaceID, nil
 }

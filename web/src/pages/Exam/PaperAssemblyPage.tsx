@@ -15,9 +15,10 @@ type PaperAssemblyPageProps = {
   api?: PaperAssemblyAPI;
   questionApi?: QuestionBankAPI;
   tenantID?: number;
+  spaceID?: number;
 };
 
-export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestionApi, tenantID = 10 }: PaperAssemblyPageProps) {
+export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestionApi, tenantID = 10, spaceID }: PaperAssemblyPageProps) {
   const [papers, setPapers] = useState<PaperRow[]>([]);
   const [activeTab, setActiveTab] = useState<PaperSubMenu>("papers");
   const [sections, setSections] = useState<PaperSectionRow[]>([]);
@@ -44,7 +45,7 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
   useEffect(() => {
     let ignore = false;
 
-    api.listPapers({ tenantID })
+    api.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) })
       .then(async (data) => {
         if (ignore) {
           return;
@@ -70,12 +71,12 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
     return () => {
       ignore = true;
     };
-  }, [api, tenantID]);
+  }, [api, tenantID, spaceID]);
 
   useEffect(() => {
     let ignore = false;
 
-    questionApi.listQuestions({ tenantID })
+    questionApi.listQuestions({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) })
       .then((data) => {
         if (!ignore) {
           setCandidateQuestions(data.items);
@@ -90,7 +91,7 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
     return () => {
       ignore = true;
     };
-  }, [questionApi, tenantID]);
+  }, [questionApi, tenantID, spaceID]);
 
   const filteredPapers = papers.filter((paper) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();

@@ -325,12 +325,17 @@ func requireExamBusinessPrincipalMiddleware() gin.HandlerFunc {
 			return
 		}
 		if principal.SubjectType == permission.SubjectTenantUser &&
-			(principal.Role == permission.RoleTenantAdmin || principal.Role == permission.RoleTeacher) {
+			principal.TenantID != 0 &&
+			validTenantExamSessionRole(principal.Role) {
 			c.Next()
 			return
 		}
 		c.AbortWithStatusJSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
 	}
+}
+
+func validTenantExamSessionRole(role string) bool {
+	return role == permission.RoleTenantAdmin || role == permission.RoleTeacher || role == permission.RoleStudent
 }
 
 func currentAuthPrincipal(c *gin.Context) (AuthPrincipal, bool) {

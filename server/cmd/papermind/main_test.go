@@ -39,7 +39,7 @@ func TestRouterOptionsFromConfigPassesSecurityDefaults(t *testing.T) {
 		Auth: config.AuthConfig{Session: config.SessionConfig{
 			Provider: "memory",
 			Secret:   "test-secret",
-		}},
+		}, ExamTokenBufferMinutes: 30},
 	}, &gorm.DB{})
 
 	if !options.AllowRegisterDefault {
@@ -47,5 +47,8 @@ func TestRouterOptionsFromConfigPassesSecurityDefaults(t *testing.T) {
 	}
 	if options.PasswordMinLength != 12 {
 		t.Fatalf("PasswordMinLength = %d, want 12", options.PasswordMinLength)
+	}
+	if options.ExamTokenBufferMinutes != 30 {
+		t.Fatalf("ExamTokenBufferMinutes = %d, want 30", options.ExamTokenBufferMinutes)
 	}
 }

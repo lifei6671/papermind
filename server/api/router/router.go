@@ -25,23 +25,24 @@ import (
 // router 包只负责装配基础设施依赖和 Gin 路由骨架，具体版本 API 的
 // handler 注册由调用方通过 RegisterFunc 注入，避免核心路由包反向依赖 v1。
 type Options struct {
-	DB                   *gorm.DB
-	Now                  func() int64
-	CodeGenerator        serviceexam.CodeGenerator
-	AllowRegisterDefault bool
-	AuthSessionStore     sessions.Store
-	AuthSessionProvider  string
-	AuthSessionSecret    string
-	AuthSessionKeyPrefix string
-	AuthSessionRedisAddr string
-	AuthSessionRedisUser string
-	AuthSessionRedisPass string
-	AuthSessionRedisDB   int
-	AuthSessionTTL       int
-	ExportDir            string
-	UploadDir            string
-	UploadStore          storage.ObjectStore
-	PasswordMinLength    int
+	DB                     *gorm.DB
+	Now                    func() int64
+	CodeGenerator          serviceexam.CodeGenerator
+	AllowRegisterDefault   bool
+	AuthSessionStore       sessions.Store
+	AuthSessionProvider    string
+	AuthSessionSecret      string
+	AuthSessionKeyPrefix   string
+	AuthSessionRedisAddr   string
+	AuthSessionRedisUser   string
+	AuthSessionRedisPass   string
+	AuthSessionRedisDB     int
+	AuthSessionTTL         int
+	ExportDir              string
+	UploadDir              string
+	UploadStore            storage.ObjectStore
+	PasswordMinLength      int
+	ExamTokenBufferMinutes int
 }
 
 // Dependencies 是版本路由注册时需要使用的后端服务和仓储能力。
@@ -49,24 +50,25 @@ type Options struct {
 // 这里保留仓储字段，是因为部分 HTTP 权限边界需要反查资源真实空间；
 // 数据库读写仍由 dao/db 层承载，handler 只依赖这些显式接口。
 type Dependencies struct {
-	PlatformUsers     *serviceplatformuser.Service
-	TenantUsers       *servicetenantuser.Service
-	Spaces            *servicespace.Service
-	Tenants           *servicetenant.Service
-	Exams             *serviceexam.Service
-	Taking            *serviceexam.TakingService
-	Review            *serviceexam.ReviewService
-	Export            *serviceexam.ExportService
-	Results           *serviceexam.ResultService
-	Questions         *servicequestion.QuestionService
-	Papers            *servicepaper.Service
-	PaperRepository   *dbdao.PaperRepository
-	SpaceRepository   *dbdao.SpaceRepository
-	UploadStore       storage.ObjectStore
-	UploadDir         string
-	Now               func() int64
-	PasswordMinLength int
-	AuthSessionTTL    int
+	PlatformUsers          *serviceplatformuser.Service
+	TenantUsers            *servicetenantuser.Service
+	Spaces                 *servicespace.Service
+	Tenants                *servicetenant.Service
+	Exams                  *serviceexam.Service
+	Taking                 *serviceexam.TakingService
+	Review                 *serviceexam.ReviewService
+	Export                 *serviceexam.ExportService
+	Results                *serviceexam.ResultService
+	Questions              *servicequestion.QuestionService
+	Papers                 *servicepaper.Service
+	PaperRepository        *dbdao.PaperRepository
+	SpaceRepository        *dbdao.SpaceRepository
+	UploadStore            storage.ObjectStore
+	UploadDir              string
+	Now                    func() int64
+	PasswordMinLength      int
+	AuthSessionTTL         int
+	ExamTokenBufferMinutes int
 }
 
 // RegisterFunc 将具体 API 版本的路由注册到指定分组。
@@ -97,9 +99,10 @@ func buildDependencies(options Options) Dependencies {
 
 	examRepository := dbdao.NewExamRepository(options.DB, dbdao.ExamRepositoryOptions{Now: options.Now})
 	examService := serviceexam.NewService(serviceexam.ServiceOptions{
-		Repo:          examRepository,
-		Now:           options.Now,
-		CodeGenerator: options.CodeGenerator,
+		Repo:                   examRepository,
+		Now:                    options.Now,
+		CodeGenerator:          options.CodeGenerator,
+		ExamTokenBufferMinutes: options.ExamTokenBufferMinutes,
 	})
 	takingService := serviceexam.NewTakingService(serviceexam.TakingServiceOptions{
 		Repo: examRepository,
@@ -144,24 +147,25 @@ func buildDependencies(options Options) Dependencies {
 
 	uploadDir := defaultUploadDir(options.UploadDir)
 	return Dependencies{
-		PlatformUsers:     platformUserService,
-		TenantUsers:       userService,
-		Spaces:            spaceService,
-		Tenants:           tenantService,
-		Exams:             examService,
-		Taking:            takingService,
-		Review:            reviewService,
-		Export:            exportService,
-		Results:           resultService,
-		Questions:         questionService,
-		Papers:            paperService,
-		PaperRepository:   paperRepository,
-		SpaceRepository:   spaceRepository,
-		UploadStore:       defaultUploadStore(options.UploadStore, uploadDir),
-		UploadDir:         uploadDir,
-		Now:               defaultNow(options.Now),
-		PasswordMinLength: options.PasswordMinLength,
-		AuthSessionTTL:    options.AuthSessionTTL,
+		PlatformUsers:          platformUserService,
+		TenantUsers:            userService,
+		Spaces:                 spaceService,
+		Tenants:                tenantService,
+		Exams:                  examService,
+		Taking:                 takingService,
+		Review:                 reviewService,
+		Export:                 exportService,
+		Results:                resultService,
+		Questions:              questionService,
+		Papers:                 paperService,
+		PaperRepository:        paperRepository,
+		SpaceRepository:        spaceRepository,
+		UploadStore:            defaultUploadStore(options.UploadStore, uploadDir),
+		UploadDir:              uploadDir,
+		Now:                    defaultNow(options.Now),
+		PasswordMinLength:      options.PasswordMinLength,
+		AuthSessionTTL:         options.AuthSessionTTL,
+		ExamTokenBufferMinutes: options.ExamTokenBufferMinutes,
 	}
 }
 

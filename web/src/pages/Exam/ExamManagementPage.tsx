@@ -18,6 +18,7 @@ type ExamManagementPageProps = {
   spaceApi?: Pick<SpaceManagementAPI, "listSpaces">;
   userApi?: Pick<UserManagementAPI, "listUsers">;
   tenantID?: number;
+  spaceID?: number;
 };
 
 type TargetOption = {
@@ -33,6 +34,7 @@ export function ExamManagementPage({
   spaceApi = defaultSpaceApi,
   userApi = defaultUserApi,
   tenantID = 10,
+  spaceID,
 }: ExamManagementPageProps) {
   const [exams, setExams] = useState<ExamRow[]>([]);
   const [papers, setPapers] = useState<PaperRow[]>([]);
@@ -77,7 +79,7 @@ export function ExamManagementPage({
     let ignore = false;
 
     Promise.all([
-      paperApi.listPapers({ tenantID }),
+      paperApi.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }),
       spaceApi.listSpaces(tenantID),
       userApi.listUsers(tenantID),
     ])
@@ -100,7 +102,7 @@ export function ExamManagementPage({
     return () => {
       ignore = true;
     };
-  }, [paperApi, spaceApi, tenantID, userApi]);
+  }, [paperApi, spaceApi, tenantID, userApi, spaceID]);
 
   async function handlePublishExam(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

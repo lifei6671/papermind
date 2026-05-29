@@ -49,9 +49,10 @@ export type AdminRoute = {
 
 export const tenantAdminRoles = ["tenant_admin"];
 export const examBusinessRoles = ["tenant_admin", "teacher"];
+export const examSpaceMemberRoles: ProfileSpaceAuthorization["role"][] = ["space_admin", "teacher"];
 export const platformAdminRoles = ["platform_admin"];
 
-export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
+export function buildAdminRoutes(user?: SessionUser | null, selectedSpaceID?: number): AdminRoute[] {
   const sessionTenantID = user?.tenantID;
   const actorID = user?.userID ?? 0;
   const actorRole = routeActorRole(user?.role);
@@ -135,55 +136,61 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     label: "题库",
     description: "维护题目、选项、解析、标签和导入任务",
     icon: LibraryBig,
-    element: <QuestionBankPage tenantID={sessionTenantID ?? 0} />,
+    element: <QuestionBankPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
   },
   {
     path: "/imports",
     label: "题目导入",
     description: "上传 CSV/Excel 模板并查看导入错误行",
     icon: Upload,
-    element: <QuestionImportPage tenantID={sessionTenantID ?? 0} />,
+    element: <QuestionImportPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
   },
   {
     path: "/papers",
     label: "试卷",
     description: "维护大题、手动组卷和规则组卷",
     icon: FileStack,
-    element: <PaperAssemblyPage tenantID={sessionTenantID ?? 0} />,
+    element: <PaperAssemblyPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
   },
   {
     path: "/exams",
     label: "考试",
     description: "发布考试、配置范围、邀请码和结果策略",
     icon: ClipboardList,
-    element: <ExamManagementPage tenantID={sessionTenantID ?? 0} />,
+    element: <ExamManagementPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
   },
   {
     path: "/grading",
     label: "阅卷中心",
     description: "处理简答题待阅卷、评语和成绩重算",
     icon: PenLine,
-    element: <GradingPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} />,
+    element: <GradingPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     badge: "P8 已就绪",
     menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
   },
   {
     path: "/results",
     label: "成绩",
     description: "查看成绩、配置发布、导出 CSV",
     icon: Trophy,
-    element: <ResultsPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} />,
+    element: <ResultsPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
   },
   {
     path: "/exam-entry",
@@ -193,6 +200,7 @@ export function buildAdminRoutes(user?: SessionUser | null): AdminRoute[] {
     element: <ExamEntryPage />,
     group: "exam",
     menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
   },
   {
     path: "/settings/profile",

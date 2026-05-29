@@ -53,10 +53,11 @@ test("租户管理员按租户展示后台入口且不要求选择空间", async
   await user.click(screen.getByRole("button", { name: /明德学校/ }));
 
   expect(selectTenantSpace).toHaveBeenCalledTimes(1);
-  expect(screen.getByText("租户后台首页")).toBeInTheDocument();
+  expect(await screen.findByText("租户后台首页")).toBeInTheDocument();
 });
 
-test("教师和学生按空间展示不同入口", async () => {
+test("教师和学生按空间展示不同入口并保留已选空间", async () => {
+  const user = userEvent.setup();
   const memberships: ProfileSpaceMembership[] = [{
     id: 3,
     tenantID: 10,
@@ -87,6 +88,11 @@ test("教师和学生按空间展示不同入口", async () => {
 
   expect(await screen.findByRole("button", { name: /高一空间/ })).toHaveTextContent("教学业务入口");
   expect(screen.getByRole("button", { name: /高二考试空间/ })).toHaveTextContent("考试入口");
+
+  await user.click(screen.getByRole("button", { name: /高一空间/ }));
+
+  const storedSession = JSON.parse(window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
+  expect(storedSession.selectedSpaceID).toBe(301);
 });
 
 function renderTenantEntry(api: AuthAPI) {

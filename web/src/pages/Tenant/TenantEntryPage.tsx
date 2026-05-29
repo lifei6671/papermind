@@ -32,12 +32,11 @@ export function TenantEntryPage({ api = authApi }: TenantEntryPageProps) {
 
   useEffect(() => {
     let alive = true;
-    setIsLoading(true);
-    setError("");
     api.listProfileSpaces()
       .then((result) => {
         if (alive) {
           setSpaces(result.items);
+          setError("");
         }
       })
       .catch((err) => {
@@ -67,7 +66,8 @@ export function TenantEntryPage({ api = authApi }: TenantEntryPageProps) {
         ? { tenantID: entry.membership.tenantID }
         : { tenantID: entry.membership.tenantID, spaceID: entry.membership.spaceID });
       const profileSpaces = await api.listProfileSpaces();
-      signIn({ ...nextSession, profileSpaces: profileSpaces.items });
+      const selectedSpaceID = entry.kind === "tenant" ? undefined : entry.membership.spaceID;
+      signIn({ ...nextSession, selectedSpaceID, profileSpaces: profileSpaces.items });
       navigate(nextSession.user.role === "student" ? "/exam-entry" : "/", { replace: true });
     } catch (err) {
       setError(formatApiErrorMessage(err, "进入空间失败"));

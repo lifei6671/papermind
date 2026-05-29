@@ -70,8 +70,8 @@ var (
 )
 
 const (
-	millisPerMinute   int64 = 60 * 1000
-	tokenBufferMillis       = 5 * millisPerMinute
+	millisPerMinute           int64 = 60 * 1000
+	defaultTokenBufferMinutes       = 5
 )
 
 type Exam struct {
@@ -251,17 +251,19 @@ type TokenIssuer interface {
 }
 
 type ServiceOptions struct {
-	Repo          Repository
-	CodeGenerator CodeGenerator
-	TokenIssuer   TokenIssuer
-	Now           func() int64
+	Repo                   Repository
+	CodeGenerator          CodeGenerator
+	TokenIssuer            TokenIssuer
+	Now                    func() int64
+	ExamTokenBufferMinutes int
 }
 
 type Service struct {
-	repo          Repository
-	codeGenerator CodeGenerator
-	tokenIssuer   TokenIssuer
-	now           func() int64
+	repo              Repository
+	codeGenerator     CodeGenerator
+	tokenIssuer       TokenIssuer
+	now               func() int64
+	tokenBufferMillis int64
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -273,11 +275,16 @@ func NewService(options ServiceOptions) *Service {
 	if tokenIssuer == nil {
 		tokenIssuer = randomTokenIssuer{}
 	}
+	tokenBufferMinutes := options.ExamTokenBufferMinutes
+	if tokenBufferMinutes <= 0 {
+		tokenBufferMinutes = defaultTokenBufferMinutes
+	}
 	return &Service{
-		repo:          options.Repo,
-		codeGenerator: options.CodeGenerator,
-		tokenIssuer:   tokenIssuer,
-		now:           now,
+		repo:              options.Repo,
+		codeGenerator:     options.CodeGenerator,
+		tokenIssuer:       tokenIssuer,
+		now:               now,
+		tokenBufferMillis: int64(tokenBufferMinutes) * millisPerMinute,
 	}
 }
 
@@ -409,7 +416,7 @@ func (s *Service) StartExam(ctx context.Context, input StartInput) (StartResult,
 		Status:             AttemptStatusInProgress,
 		StartedAt:          now,
 		ExamTokenHash:      s.HashExamToken(token),
-		ExamTokenExpiresAt: answerDeadline(now, exam) + tokenBufferMillis,
+		ExamTokenExpiresAt: answerDeadline(now, exam) + s.tokenBufferMillis,
 	}
 	attempt, err = s.repo.CreateAttempt(ctx, attempt)
 	if errors.Is(err, ErrAttemptUniqueConflict) {

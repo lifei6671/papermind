@@ -233,6 +233,31 @@ func TestStartExamIsIdempotentAndIssuesOpaqueAttemptToken(t *testing.T) {
 	}
 }
 
+func TestStartExamUsesConfiguredTokenBuffer(t *testing.T) {
+	repo := &fakeRepository{
+		exams: map[uint64]Exam{
+			1: {ID: 1, TenantID: 10, PaperID: 100, StartTime: fixedUnixMilli - minuteMillis, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30, MaxAttempts: 1, Status: StatusPublished},
+		},
+		eligible: true,
+	}
+	svc := NewService(ServiceOptions{
+		Repo:                   repo,
+		TokenIssuer:            fakeTokenIssuer{token: "exam-token"},
+		Now:                    fixedNow,
+		ExamTokenBufferMinutes: 30,
+	})
+
+	_, err := svc.StartExam(context.Background(), StartInput{TenantID: 10, ExamID: 1, UserID: 20})
+	if err != nil {
+		t.Fatalf("StartExam returned error: %v", err)
+	}
+
+	wantExpiresAt := fixedUnixMilli + 30*minuteMillis + 30*minuteMillis
+	if repo.createdAttempt.ExamTokenExpiresAt != wantExpiresAt {
+		t.Fatalf("ExamTokenExpiresAt = %d, want %d", repo.createdAttempt.ExamTokenExpiresAt, wantExpiresAt)
+	}
+}
+
 func TestStartExamValidatesQualificationAndTime(t *testing.T) {
 	repo := &fakeRepository{
 		exams: map[uint64]Exam{

@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import type { ReactElement } from "react";
 import { buildAdminRoutes, routeVisibleForRole } from "./routes";
 import type { AdminRoute } from "./routes";
 import type { ProfileSpaceAuthorization, SessionUser } from "../auth/session-context";
@@ -58,3 +59,43 @@ test("真实空间成员入口由授权空间列表驱动", () => {
   expect(routeVisibleForRole(spaceMemberRoute!, "teacher", [])).toBe(false);
   expect(routeVisibleForRole(spaceMemberRoute!, "tenant_admin", [])).toBe(false);
 });
+
+test("空间管理员授权可看到空间考试业务入口", () => {
+  const routes = buildAdminRoutes({
+    displayName: "空间管理员",
+    role: "student",
+    tenantID: 10,
+    userID: 3,
+  }, 301);
+  const profileSpaces: ProfileSpaceAuthorization[] = [{
+    id: 1,
+    tenantID: 10,
+    spaceID: 301,
+    role: "space_admin",
+    status: "enabled",
+  }];
+
+  for (const path of ["/questions", "/imports", "/papers", "/exams", "/grading", "/results"]) {
+    const route = routes.find((item) => item.path === path);
+    expect(routeVisibleForRole(route!, "student", profileSpaces)).toBe(true);
+    expect(routeSpaceID(routes, path)).toBe(301);
+  }
+});
+
+test("考试业务路由会收到当前选择的空间范围", () => {
+  const routes = buildAdminRoutes({
+    displayName: "教师",
+    role: "teacher",
+    tenantID: 10,
+    userID: 3,
+  }, 301);
+
+  expect(routeSpaceID(routes, "/questions")).toBe(301);
+  expect(routeSpaceID(routes, "/grading")).toBe(301);
+  expect(routeSpaceID(routes, "/results")).toBe(301);
+});
+
+function routeSpaceID(routes: AdminRoute[], path: string) {
+  const element = routes.find((route) => route.path === path)?.element as ReactElement<{ spaceID?: number }> | undefined;
+  return element?.props.spaceID;
+}
