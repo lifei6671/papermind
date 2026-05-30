@@ -146,7 +146,7 @@ func replaceRequestCookie(request *http.Request, name string, value string) {
 			request.AddCookie(cookie)
 		}
 	}
-	// 前端仍以 Bearer 传递登录态，后端在进入 Gin session middleware 前统一映射成 cookie。
+	// 兼容已持有签名 session 值的调用方，进入 Gin session middleware 前统一映射成 cookie。
 	request.AddCookie(&http.Cookie{Name: name, Value: value})
 }
 

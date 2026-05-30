@@ -143,6 +143,26 @@ describe("examApi", () => {
       analysisVisible: true,
     });
   });
+  test("交卷请求支持自动交卷事件类型", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        exam_token: "exam-token",
+        event_type: "auto_submit",
+      });
+      return jsonResponse({ submitted: true });
+    });
+    const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await api.submitAttempt({ tenantID: 10, attemptID: 99, examToken: "exam-token", eventType: "auto_submit" });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/exam-entry/attempts/99/submit",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
 });
 
 function jsonResponse(data: unknown) {

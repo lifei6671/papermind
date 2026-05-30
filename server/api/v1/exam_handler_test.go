@@ -598,7 +598,7 @@ func TestStudentTakingAPIRoutesStartSaveAndSubmitWithSQLite(t *testing.T) {
 		"question_type": "%s",
 		"option_ids": [101]
 	}`, startBody.Data.ExamToken, constant.QuestionTypeSingle)
-	router.ServeHTTP(saveRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-attempts/"+
+	router.ServeHTTP(saveRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-entry/attempts/"+
 		strconv.FormatUint(startBody.Data.Attempt.ID, 10)+"/answers/"+strconv.FormatUint(question.ID, 10), bytes.NewReader([]byte(savePayload))))
 	if saveRecorder.Code != http.StatusOK {
 		t.Fatalf("save status = %d, body = %s", saveRecorder.Code, saveRecorder.Body.String())
@@ -617,7 +617,7 @@ func TestStudentTakingAPIRoutesStartSaveAndSubmitWithSQLite(t *testing.T) {
 	}
 
 	submitRecorder := httptest.NewRecorder()
-	router.ServeHTTP(submitRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-attempts/"+
+	router.ServeHTTP(submitRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-entry/attempts/"+
 		strconv.FormatUint(startBody.Data.Attempt.ID, 10)+"/submit", bytes.NewReader([]byte(`{
 		"tenant_id": 10,
 		"exam_token": "`+startBody.Data.ExamToken+`"
@@ -637,6 +637,64 @@ func TestStudentTakingAPIRoutesStartSaveAndSubmitWithSQLite(t *testing.T) {
 	}
 	if attemptRow.Status != constant.AttemptStatusSubmitted || attemptRow.ObjectiveScore != "2" {
 		t.Fatalf("unexpected submitted attempt: %#v", attemptRow)
+	}
+}
+
+func TestLegacyExamAttemptWriteRoutesAreNotRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	legacyRoutes := []struct {
+		name string
+		path string
+	}{
+		{name: "save answer", path: "/api/v1/exam-attempts/1/answers/1"},
+		{name: "submit", path: "/api/v1/exam-attempts/1/submit"},
+		{name: "event", path: "/api/v1/exam-attempts/1/events"},
+	}
+	for _, route := range legacyRoutes {
+		t.Run(route.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, route.path, bytes.NewReader([]byte(`{"tenant_id":10,"exam_token":"token","question_type":"single","event_type":"blur"}`))))
+			if recorder.Code != http.StatusNotFound {
+				t.Fatalf("expected legacy route %s to be removed, got status = %d, body = %s", route.path, recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestExamEntryResolveKeepsConfiguredAuthSessionTTL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:             gormDB,
+		Now:            func() int64 { return fixedAPINow },
+		AuthSessionTTL: 7200,
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+
+	resolveRecorder := httptest.NewRecorder()
+	router.ServeHTTP(resolveRecorder, authorizedRequest(http.MethodPost, "/api/v1/exam-entry/invite/resolve", []byte(`{
+		"invite_code": "PM2026"
+	}`), authHeader))
+	if resolveRecorder.Code != http.StatusOK {
+		t.Fatalf("resolve invite status = %d, body = %s", resolveRecorder.Code, resolveRecorder.Body.String())
+	}
+	cookies := resolveRecorder.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatalf("expected resolving invite to persist exam entry session")
+	}
+	if cookies[0].MaxAge != 7200 {
+		t.Fatalf("expected auth session TTL to stay 7200 seconds, got %d", cookies[0].MaxAge)
 	}
 }
 
@@ -1000,6 +1058,103 @@ func TestExamEntryMiddlewareValidatesTokenBeforeHandlerPayload(t *testing.T) {
 	}
 }
 
+func TestExamEntryMiddlewareRejectsOversizedBodyBeforeTokenValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	body := []byte(`{"tenant_id":10,"exam_token":"invalid-token","padding":"` + strings.Repeat("x", 70*1024) + `"}`)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/exam-entry/attempts/1/submit",
+		bytes.NewReader(body),
+	))
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected oversized body rejected before token validation, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestExamEntrySubmitRejectsNonSubmitEventType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+	started := startExamEntryAttemptForTest(t, router, authHeader)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/exam-entry/attempts/"+strconv.FormatUint(started.Attempt.ID, 10)+"/submit",
+		bytes.NewReader([]byte(fmt.Sprintf(`{
+			"tenant_id": 10,
+			"exam_token": %q,
+			"event_type": "blur"
+		}`, started.ExamToken))),
+	))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid submit event type rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var status string
+	if err := gormDB.Table("exam_attempts").
+		Select("status").
+		Where("tenant_id = ? AND id = ?", 10, started.Attempt.ID).
+		Scan(&status).Error; err != nil {
+		t.Fatalf("query attempt status: %v", err)
+	}
+	if status != constant.AttemptStatusInProgress {
+		t.Fatalf("invalid submit event should not submit attempt, got status %q", status)
+	}
+}
+
+func TestExamEntryRecordEventRejectsSubmitEventType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+	started := startExamEntryAttemptForTest(t, router, authHeader)
+
+	recorder := httptest.NewRecorder()
+	body := fmt.Sprintf(`{"tenant_id":10,"exam_token":%q,"event_type":"submit","payload":"{}"}`, started.ExamToken)
+	router.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/exam-entry/attempts/"+strconv.FormatUint(started.Attempt.ID, 10)+"/events",
+		bytes.NewReader([]byte(body)),
+	))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected submit event type rejected from events endpoint, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var submitEventCount int64
+	if err := gormDB.Table("exam_events").
+		Where("tenant_id = ? AND attempt_id = ? AND event_type = ?", 10, started.Attempt.ID, constant.ExamEventTypeSubmit).
+		Count(&submitEventCount).Error; err != nil {
+		t.Fatalf("count submit event: %v", err)
+	}
+	if submitEventCount != 0 {
+		t.Fatalf("expected no submit event from events endpoint, got %d", submitEventCount)
+	}
+}
+
 func TestExamEntryMiddlewareRejectsTenantAndAttemptMismatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -1159,7 +1314,7 @@ func TestStudentTakingAPIRoutesPersistNonCriticalEvents(t *testing.T) {
 	startBody := decodeExamAPIResponse[startAttemptResponse](t, startRecorder.Body.Bytes())
 
 	eventRecorder := httptest.NewRecorder()
-	router.ServeHTTP(eventRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-attempts/"+
+	router.ServeHTTP(eventRecorder, httptest.NewRequest(http.MethodPost, "/api/v1/exam-entry/attempts/"+
 		strconv.FormatUint(startBody.Data.Attempt.ID, 10)+"/events", bytes.NewReader([]byte(`{
 		"tenant_id": 10,
 		"exam_token": "`+startBody.Data.ExamToken+`",
@@ -2006,8 +2161,7 @@ func tenantAuthHeader(t *testing.T, router *gin.Engine, tenantID uint64, usernam
 		if selectRecorder.Code != http.StatusOK {
 			t.Fatalf("select tenant space status = %d, body = %s", selectRecorder.Code, selectRecorder.Body.String())
 		}
-		selectedBody := decodeExamAPIResponse[authSessionResponse](t, selectRecorder.Body.Bytes())
-		return "Bearer " + selectedBody.Data.AccessToken
+		return authHeaderFromCookies(t, selectRecorder)
 	}
 	selectRecorder := httptest.NewRecorder()
 	selectBody := fmt.Sprintf(`{"tenant_id":%d}`, tenantID)
@@ -2020,8 +2174,7 @@ func tenantAuthHeader(t *testing.T, router *gin.Engine, tenantID uint64, usernam
 	if selectRecorder.Code != http.StatusOK {
 		t.Fatalf("tenant %d has no selectable space for %s and tenant-only select failed: status = %d, body = %s", tenantID, username, selectRecorder.Code, selectRecorder.Body.String())
 	}
-	selectedBody := decodeExamAPIResponse[authSessionResponse](t, selectRecorder.Body.Bytes())
-	return "Bearer " + selectedBody.Data.AccessToken
+	return authHeaderFromCookies(t, selectRecorder)
 }
 
 func tenantLoginAuthHeader(t *testing.T, router *gin.Engine, username string, password string) string {
@@ -2037,6 +2190,5 @@ func tenantLoginAuthHeader(t *testing.T, router *gin.Engine, username string, pa
 	if loginRecorder.Code != http.StatusOK {
 		t.Fatalf("tenant login status = %d, body = %s", loginRecorder.Code, loginRecorder.Body.String())
 	}
-	responseBody := decodeExamAPIResponse[authSessionResponse](t, loginRecorder.Body.Bytes())
-	return "Bearer " + responseBody.Data.AccessToken
+	return authHeaderFromCookies(t, loginRecorder)
 }

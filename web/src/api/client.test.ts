@@ -14,12 +14,13 @@ describe("api client", () => {
 
     await expect(client.get<{ id: number }>("/api/v1/tenants/7")).resolves.toEqual({ id: 7 });
     expect(fetcher).toHaveBeenCalledWith("http://api.test/api/v1/tenants/7", {
+      credentials: "include",
       headers: { Accept: "application/json" },
       method: "GET",
     });
   });
 
-  test("登录态存在时自动注入 Bearer token", async () => {
+  test("请求默认携带 cookie credentials 且不注入 Bearer token", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ code: 0, message: "ok", data: null }), {
         headers: { "Content-Type": "application/json" },
@@ -30,16 +31,15 @@ describe("api client", () => {
     const client = createApiClient({
       baseUrl: "http://api.test",
       fetcher,
-      getAccessToken: () => "access-token",
     });
 
     await client.post("/api/v1/platform/tenants", { name: "一中" });
 
     expect(fetcher).toHaveBeenCalledWith("http://api.test/api/v1/platform/tenants", {
       body: JSON.stringify({ name: "一中" }),
+      credentials: "include",
       headers: {
         Accept: "application/json",
-        Authorization: "Bearer access-token",
         "Content-Type": "application/json",
       },
       method: "POST",

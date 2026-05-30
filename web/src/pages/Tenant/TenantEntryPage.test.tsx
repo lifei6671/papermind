@@ -33,8 +33,6 @@ test("租户管理员按租户展示后台入口且不要求选择空间", async
   const selectTenantSpace = vi.fn(async (input) => {
     expect(input).toEqual({ tenantID: 10 });
     return {
-      accessToken: "tenant-access-token",
-      refreshToken: "tenant-refresh-token",
       user: { displayName: "租户管理员", role: "tenant_admin" as const, tenantID: 10, userID: 2 },
     };
   });
@@ -78,8 +76,6 @@ test("教师和学生按空间展示不同入口并保留已选空间", async ()
   const api = createTenantEntryAPI({
     listProfileSpaces: vi.fn(async () => ({ items: memberships })),
     selectTenantSpace: vi.fn(async () => ({
-      accessToken: "tenant-access-token",
-      refreshToken: "tenant-refresh-token",
       user: { displayName: "教师", role: "teacher" as const, tenantID: 10, userID: 3 },
     })),
   });
@@ -109,8 +105,6 @@ test("学生空间入口按入口类型跳转考试入口", async () => {
   const api = createTenantEntryAPI({
     listProfileSpaces: vi.fn(async () => ({ items: memberships })),
     selectTenantSpace: vi.fn(async () => ({
-      accessToken: "tenant-access-token",
-      refreshToken: "tenant-refresh-token",
       user: { displayName: "多身份用户", role: "teacher" as const, tenantID: 10, userID: 5 },
     })),
   });
@@ -126,8 +120,6 @@ function renderTenantEntry(api: AuthAPI) {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "tenant-access-token",
-      refreshToken: "tenant-refresh-token",
       user: { displayName: "租户用户", role: "tenant_user", userID: 2 },
     }),
   );

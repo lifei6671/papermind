@@ -17,8 +17,6 @@ test("平台管理员登录成功后保存登录态并进入概览", async () =>
     platformLogin: async (input) => {
       expect(input).toEqual({ username: "admin", password: "papermind123" });
       return {
-        accessToken: "platform-access-token",
-        refreshToken: "platform-refresh-token",
         user: {
           displayName: "admin",
           role: "platform_admin",
@@ -48,7 +46,7 @@ test("平台管理员登录成功后保存登录态并进入概览", async () =>
   await user.click(screen.getByRole("button", { name: "登录平台" }));
 
   expect(screen.getByText("考试平台概览")).toBeInTheDocument();
-  expect(window.localStorage.getItem(SESSION_STORAGE_KEY)).toContain("platform-access-token");
+  expect(window.localStorage.getItem(SESSION_STORAGE_KEY)).toContain("admin");
 });
 
 test("平台管理员登录失败时展示服务端错误且不保存登录态", async () => {
@@ -86,8 +84,6 @@ test("租户用户登录成功后保存通用登录态并进入空间选择页",
     tenantLogin: async (input) => {
       expect(input).toEqual({ username: "student01", password: "papermind123" });
       return {
-        accessToken: "tenant-access-token",
-        refreshToken: "tenant-refresh-token",
         user: {
           displayName: "张同学",
           role: "tenant_user",
@@ -117,7 +113,7 @@ test("租户用户登录成功后保存通用登录态并进入空间选择页",
   await user.click(screen.getByRole("button", { name: "登录租户" }));
 
 	expect(screen.getByText("空间选择页")).toBeInTheDocument();
-	expect(window.localStorage.getItem(SESSION_STORAGE_KEY)).toContain("tenant-access-token");
+	expect(window.localStorage.getItem(SESSION_STORAGE_KEY)).toContain("张同学");
 });
 
 test("租户登录成功后不再提前拉取授权空间", async () => {
@@ -134,8 +130,6 @@ test("租户登录成功后不再提前拉取授权空间", async () => {
 	const api: AuthAPI = {
 		platformLogin: vi.fn(),
 		tenantLogin: async () => ({
-			accessToken: "tenant-access-token",
-			refreshToken: "tenant-refresh-token",
 			user: {
 				displayName: "李老师",
 				role: "tenant_user",

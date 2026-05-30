@@ -17,8 +17,6 @@ function SessionProbe() {
       <button
         onClick={() =>
           signIn({
-            accessToken: "access-token",
-            refreshToken: "refresh-token",
             user: { displayName: "李老师", role: "teacher", userID: 9 },
           })
         }
@@ -41,7 +39,7 @@ test("登录态写入本地存储并在 Provider 重建后恢复", async () => {
   await user.click(screen.getByRole("button", { name: "登录" }));
 
   expect(screen.getByText("李老师")).toBeInTheDocument();
-  expect(window.localStorage.getItem("papermind.session.v1")).toContain("access-token");
+  expect(window.localStorage.getItem("papermind.session.v1")).toContain("李老师");
 
   unmount();
 

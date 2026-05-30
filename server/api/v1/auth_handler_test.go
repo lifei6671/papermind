@@ -37,24 +37,19 @@ func TestPlatformLoginAPIRouteSavesSessionAndAuditWithSQLite(t *testing.T) {
 	}
 
 	body := decodeExamAPIResponse[authSessionResponse](t, recorder.Body.Bytes())
-	if body.Data.AccessToken == "" || body.Data.RefreshToken != body.Data.AccessToken {
-		t.Fatalf("unexpected token response: %#v", body.Data)
+	if bytes.Contains(recorder.Body.Bytes(), []byte("access_token")) || bytes.Contains(recorder.Body.Bytes(), []byte("refresh_token")) {
+		t.Fatalf("login response must not include token fields, body = %s", recorder.Body.String())
 	}
 	if body.Data.User.UserID != 1 || body.Data.User.DisplayName != "admin" || body.Data.User.Role != "platform_admin" {
 		t.Fatalf("unexpected user response: %#v", body.Data.User)
 	}
-	if len(recorder.Result().Cookies()) == 0 {
-		t.Fatalf("expected login to set session cookie")
-	}
-	if recorder.Result().Cookies()[0].Value != body.Data.AccessToken {
-		t.Fatalf("access token should match session cookie value")
-	}
+	authHeader := authHeaderFromCookies(t, recorder)
 	updateRecorder := httptest.NewRecorder()
 	router.ServeHTTP(updateRecorder, authorizedRequest(
 		http.MethodPost,
 		"/api/v1/tenants/1/profile",
 		[]byte(`{"name":"青藤实验中学","description":"登录 session 审计","logo_url":"qingteng.webp"}`),
-		"Bearer "+body.Data.AccessToken,
+		authHeader,
 	))
 	if updateRecorder.Code != http.StatusOK {
 		t.Fatalf("profile status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())

@@ -45,32 +45,24 @@ function renderApp(initialEntries: string[]) {
 
 function storePlatformSession() {
   window.localStorage.setItem("papermind.session.v1", JSON.stringify({
-    accessToken: "session-token",
-    refreshToken: "session-token",
     user: { userID: 1, displayName: "admin", role: "platform_admin" },
   }));
 }
 
 function storeTenantStudentSession() {
   window.localStorage.setItem("papermind.session.v1", JSON.stringify({
-    accessToken: "tenant-session-token",
-    refreshToken: "tenant-session-token",
     user: { userID: 20, displayName: "目标考生", role: "student", tenantID: 77 },
   }));
 }
 
 function storeTenantTeacherSession() {
   window.localStorage.setItem("papermind.session.v1", JSON.stringify({
-    accessToken: "teacher-session-token",
-    refreshToken: "teacher-session-token",
     user: { userID: 55, displayName: "阅卷教师", role: "teacher", tenantID: 77 },
   }));
 }
 
 function storeSpaceTeacherSession() {
   window.localStorage.setItem("papermind.session.v1", JSON.stringify({
-    accessToken: "teacher-session-token",
-    refreshToken: "teacher-session-token",
     profileSpaces: [{
       id: 1,
       tenantID: 77,
@@ -84,8 +76,6 @@ function storeSpaceTeacherSession() {
 
 function storeSpaceAdminTeacherSession() {
   window.localStorage.setItem("papermind.session.v1", JSON.stringify({
-    accessToken: "teacher-session-token",
-    refreshToken: "teacher-session-token",
     profileSpaces: [{
       id: 1,
       tenantID: 77,
@@ -99,8 +89,6 @@ function storeSpaceAdminTeacherSession() {
 
 function storeTenantAdminSession() {
   window.localStorage.setItem("papermind.session.v1", JSON.stringify({
-    accessToken: "tenant-admin-session-token",
-    refreshToken: "tenant-admin-session-token",
     user: { userID: 88, displayName: "租户管理员", role: "tenant_admin", tenantID: 77 },
   }));
 }
@@ -147,7 +135,7 @@ function mockStartAttemptPayload() {
   return {
     attempt: {
       id: 99,
-      answer_deadline: 1779795600000,
+      answer_deadline: Date.now() + 60 * 60 * 1000,
     },
     exam_token: "exam-token",
     questions: [

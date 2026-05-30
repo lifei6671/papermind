@@ -663,7 +663,7 @@ tenant_user_memberships
 - 服务端通过 `ObjectStore` 抽象写入对象存储；本地开发使用本地文件系统实现，后续 S3、OSS、MinIO 等远端协议只新增实现，不修改业务 handler。
 - 上传接口负责生成对象 key，不信任客户端原始文件名作为存储路径。
 - 服务端必须基于文件内容识别真实 MIME，不信任 multipart `Content-Type` 或扩展名；保存后缀由识别结果派生。
-- 服务端保存文件名统一使用 `{yyyyMMddHHmmss}_{文件内容 MD5 前 16 位}{安全后缀}`，同一天上传的文件按日期目录归档。
+- 服务端保存文件名统一使用 `{yyyyMMddHHmmss}_{文件内容 MD5 前 16 位}_{随机 16 位十六进制}{安全后缀}`，同一天上传的文件按日期目录归档，避免同秒重复上传同内容文件发生对象 key 冲突。
 - 本地存储返回 `/uploads/{category}/{date}/{object}` 形式地址，并由 HTTP server 挂载静态读取路由。
 - 浏览器端上传图片前优先转为 WebP；转换失败、浏览器能力不足或非图片文件时上传原始文件。
 
@@ -1238,7 +1238,7 @@ submit
 auto_submit
 ```
 
-切屏和页面焦点事件可能高频触发，前端需要做节流或合并上报，首版建议 1 秒内同类事件只上报一次。后端事件写入失败不能阻塞自动保存和提交主流程，但必须记录错误日志。
+切屏和页面焦点事件可能高频触发，前端需要做节流或合并上报，首版建议 1 秒内同类事件只上报一次。事件上报 API 只接收 `blur` / `focus` 这类非关键事件；`submit` / `auto_submit` 必须跟随提交接口写入，不能绕过提交状态流转单独上报。后端事件写入失败不能阻塞自动保存和提交主流程，但必须记录错误日志。
 
 `exam_events` 写入策略：
 
@@ -1347,7 +1347,7 @@ API 分组：
 └── 通用文件上传
 ```
 
-平台管理员和租户用户登录成功后都使用 `github.com/gin-contrib/sessions` 写入服务端 session。当前 provider 支持进程内 `memstore` 和组件自带 Redis store，可通过 `auth.session.provider` 切换。登录响应返回的 `access_token` 是同一次 `Set-Cookie` 中已签名的 session cookie 值，前端仍可用 `Authorization: Bearer <token>` 调用 API；HTTP 中间件会把 Bearer 值回填为 session cookie，再由 Gin session middleware 解析当前主体。
+平台管理员和租户用户登录成功后都使用 `github.com/gin-contrib/sessions` 写入服务端 session。当前 provider 支持进程内 `memstore` 和组件自带 Redis store，可通过 `auth.session.provider` 切换。登录响应只返回当前用户身份信息，不返回 `access_token` 或 `refresh_token`；浏览器端认证以 HttpOnly session cookie 为准，前端 API client 统一使用 `credentials: include` 携带 cookie，本地登录态只保存页面渲染所需的用户身份和空间选择信息。
 
 认证上下文规则：
 
@@ -1357,14 +1357,14 @@ API 分组：
 - HTTP Router 必须接收启动配置中的 `security.allow_register_default` 和 `security.password_min_length`，避免配置只被加载但不影响运行行为。
 - 登录页同时提供平台管理员和租户用户模式；租户用户登录不输入租户 ID，登录成功后进入 `/tenant-entry`，从当前账号可进入的租户和空间中选择目标入口。学生选择空间后进入考试入口，再通过邀请码进入考试端；`tenant_admin`、`space_admin` 和 `teacher` 选择空间后进入租户后台。
 - 个人设置页通过当前 session 主体调用 `/api/v1/profile` 查询和更新当前账号基础资料；平台管理员登录账号只读，可更新头像、手机号和邮箱，租户用户可更新真实姓名、头像、手机号和邮箱，前端保存成功后同步本地 session 的 `displayName`。
-- 平台侧租户管理查询和写操作必须携带有效平台管理员 Bearer token 或 session cookie。
+- 平台侧租户管理查询和写操作必须携带有效平台管理员 session cookie。
 - 平台侧接口按平台管理边界校验登录态；租户用户只能操作 session 所属 `tenant_id`，禁止信任请求体跨租户切换。
 - 租户侧用户管理、空间资料管理和空间成员管理接口统一放在 `/api/v1/tenant/**` 下，必须从当前租户用户 session 派生 `tenant_id`；query/body 中保留的 `tenant_id` 只能作为兼容旧调用方的冗余字段，不能参与授权判断或 service 入参。用户删除、角色修改和批量导入接口还必须从 session 派生操作者 ID，并拒绝自删、自改角色或在批量覆盖中改变自己的租户级角色；删除不存在或已删除用户必须返回明确错误，不能把空更新当成成功。空间成员写入口必须校验目标空间启用且未删除、目标用户属于当前租户且启用未删除，并且空间内角色只能是 `space_admin`、`teacher` 或 `student`。平台管理员不能直接进入这些租户业务接口，需要查看租户概览时必须走平台侧只读治理接口。
 - 租户后台“空间成员”页面必须直接调用 `/api/v1/tenant/spaces/:id/members` 这一组接口完成成员列表、添加成员、修改空间身份、启用/禁用和移除；目标空间来自当前 session 的授权空间列表，不允许使用前端固定租户或空间默认值。租户管理员不展示独立“空间成员”菜单，避免和“空间管理”里的成员管理入口重复；租户管理员从“空间管理 > 成员管理”维护空间成员，独立 `/space-members` 入口只给当前账号具备启用 `space_admin` 空间授权的用户。
 - 后台考试业务接口，包括题库、题目导入、试卷、组卷规则、考试发布、阅卷和成绩，允许本租户 `tenant_admin` 访问；`space_admin` 和 `teacher` 只能访问自己已加入且启用的空间范围。题库、试卷和考试列表接口收到 `space_id` 时必须用当前 session 反查启用空间成员关系；非 `tenant_admin` 不能省略空间范围后读取全租户数据。`space_admin` 必须从 `space_members.role_in_space` 动态判断，不能来自 session role。平台管理员不进入租户业务菜单，也不能通过直接请求操作考试资源。
 - 平台侧写操作统一从当前主体上下文获取平台管理员用户 ID，禁止再从请求体信任 `actor_id` 写审计字段。
 - 邀请码解析必须从租户用户 session 派生 `user_id` 和 `tenant_id`，禁止信任请求体里的考生 ID。
-- 未携带有效平台管理员 Bearer token 或 session cookie 时，平台侧接口返回 HTTP 401 未登录错误；前端 API client 收到 401 后必须清空本地登录态，并由后台路由守卫跳转登录页。
+- 未携带有效平台管理员 session cookie 时，平台侧接口返回 HTTP 401 未登录错误；前端 API client 收到 401 后必须清空本地登录态，并由后台路由守卫跳转登录页。
 - `auth.session.secret` 留空时启动进程随机生成签名密钥；生产环境应通过环境变量注入稳定密钥。
 
 租户管理操作的鉴权和审计规则：

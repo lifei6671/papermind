@@ -21,8 +21,6 @@ describe("authApi", () => {
         code: 0,
         message: "ok",
         data: {
-          access_token: "platform-access-token",
-          refresh_token: "platform-refresh-token",
           user: {
             user_id: 1,
             display_name: "admin",
@@ -40,8 +38,6 @@ describe("authApi", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(session).toEqual({
-      accessToken: "platform-access-token",
-      refreshToken: "platform-refresh-token",
       user: {
         userID: 1,
         displayName: "admin",
@@ -114,8 +110,6 @@ describe("authApi", () => {
         code: 0,
         message: "ok",
         data: {
-          access_token: "tenant-access-token",
-          refresh_token: "tenant-refresh-token",
           user: {
             user_id: 20,
             display_name: "目标考生",
@@ -133,8 +127,6 @@ describe("authApi", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(session).toEqual({
-      accessToken: "tenant-access-token",
-      refreshToken: "tenant-refresh-token",
       user: {
         userID: 20,
         displayName: "目标考生",
@@ -155,8 +147,6 @@ describe("authApi", () => {
         code: 0,
         message: "ok",
         data: {
-          access_token: "selected-access-token",
-          refresh_token: "selected-refresh-token",
           user: {
             user_id: 20,
             display_name: "目标考生",
@@ -221,16 +211,13 @@ describe("authApi", () => {
     }]);
   });
 
-  test("默认 authApi 会为受保护接口带上本地会话 token", async () => {
+  test("默认 authApi 通过 cookie 发送受保护接口请求", async () => {
     window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
-      accessToken: "stored-access-token",
-      refreshToken: "stored-refresh-token",
       user: { userID: 20, displayName: "目标考生", role: "tenant_user" },
     }));
     const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      expect(init?.headers).toMatchObject({
-        Authorization: "Bearer stored-access-token",
-      });
+      expect(init?.credentials).toBe("include");
+      expect(init?.headers).not.toHaveProperty("Authorization");
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",

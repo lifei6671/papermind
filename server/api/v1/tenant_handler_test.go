@@ -346,8 +346,19 @@ func platformAuthHeader(t *testing.T, router *gin.Engine) string {
 	if loginRecorder.Code != http.StatusOK {
 		t.Fatalf("platform login status = %d, body = %s", loginRecorder.Code, loginRecorder.Body.String())
 	}
-	body := decodeExamAPIResponse[authSessionResponse](t, loginRecorder.Body.Bytes())
-	return "Bearer " + body.Data.AccessToken
+	return authHeaderFromCookies(t, loginRecorder)
+}
+
+func authHeaderFromCookies(t *testing.T, recorder *httptest.ResponseRecorder) string {
+	t.Helper()
+
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == authSessionName && cookie.Value != "" {
+			return "Bearer " + cookie.Value
+		}
+	}
+	t.Fatalf("expected %s cookie in response", authSessionName)
+	return ""
 }
 
 func authorizedRequest(method string, target string, body []byte, authHeader string) *http.Request {

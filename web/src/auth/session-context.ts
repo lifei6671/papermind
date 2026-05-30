@@ -22,8 +22,6 @@ export type SessionUser = {
 };
 
 export type AuthSession = {
-  accessToken: string;
-  refreshToken: string;
   selectedSpaceID?: number;
   // 空间授权来自 profile 接口，只用于菜单和空间内操作判断，不能覆盖租户级 session role。
   profileSpaces?: ProfileSpaceAuthorization[];

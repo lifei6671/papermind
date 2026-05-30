@@ -76,7 +76,7 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 	if err := os.MkdirAll(s.exportDir, 0o755); err != nil {
 		return ExportResult{}, err
 	}
-	filePath := filepath.Join(s.exportDir, fmt.Sprintf("exam-%d-scores-%s-%d.csv", input.ExamID, exportFileScope(input.Permission), s.now()))
+	filePath := filepath.Join(s.exportDir, fmt.Sprintf("tenant-%d-exam-%d-scores-%s-%d.csv", input.TenantID, input.ExamID, exportFileScope(input.Permission), s.now()))
 	file, err := os.Create(filePath)
 	if err != nil {
 		return ExportResult{}, err
@@ -115,7 +115,7 @@ func (s *ExportService) ResolveExportFile(fileName string, examID uint64, ctx pe
 }
 
 func exportFileMatchesScope(fileName string, examID uint64, ctx permission.PermissionContext) bool {
-	return strings.HasPrefix(fileName, fmt.Sprintf("exam-%d-scores-%s-", examID, exportFileScope(ctx)))
+	return strings.HasPrefix(fileName, fmt.Sprintf("tenant-%d-exam-%d-scores-%s-", ctx.TenantID, examID, exportFileScope(ctx)))
 }
 
 func exportFileScope(ctx permission.PermissionContext) string {

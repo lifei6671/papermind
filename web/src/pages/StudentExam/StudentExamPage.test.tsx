@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ReactElement } from "react";
@@ -14,6 +14,7 @@ describe("StudentExamPage", () => {
       value: originalMatchMedia,
       writable: true,
     });
+    vi.useRealTimers();
   });
 
   test("桌面答题页通过真实 API 开考、保存答案并交卷", async () => {
@@ -51,6 +52,32 @@ describe("StudentExamPage", () => {
     });
     expect(await screen.findByText("总分 8 分")).toBeInTheDocument();
   });
+  test("到达服务端截止时间时自动交卷", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-30T09:00:00Z"));
+    const api = createStudentExamApiDouble({ answerDeadline: Date.now() + 1000 });
+
+    renderStudentExam(<StudentExamPage api={api} tenantID={10} examID={1} userID={20} />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("服务端题干")).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+
+    expect(api.submitAttempt).toHaveBeenCalledWith({
+      tenantID: 10,
+      attemptID: 99,
+      examToken: "exam-token",
+      eventType: "auto_submit",
+    });
+  });
+
 
   test("答题页不展示固定考试信息，按服务端题目派生统计", async () => {
     const user = userEvent.setup();
@@ -64,6 +91,7 @@ describe("StudentExamPage", () => {
     renderStudentExam(<StudentExamPage api={api} tenantID={10} examID={1} userID={20} />);
 
     expect(await screen.findByRole("heading", { name: "在线考试" })).toBeInTheDocument();
+    expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
     expect(screen.queryByText("期中考试（高一语文）")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "考试信息与答题卡" }));
@@ -193,6 +221,7 @@ function renderStudentExam(element: ReactElement) {
 }
 
 function createStudentExamApiDouble(options: {
+  answerDeadline?: number;
   options?: Array<{ id: number; key: string; content: string }>;
   questions?: StudentExamQuestion[];
 } = {}): StudentExamAPI {
@@ -200,7 +229,7 @@ function createStudentExamApiDouble(options: {
     startAttempt: vi.fn(async () => ({
       attemptID: 99,
       examToken: "exam-token",
-      answerDeadline: 1779795600000,
+      answerDeadline: options.answerDeadline ?? Date.now() + 60 * 60 * 1000,
       questions: options.questions ?? [createStudentExamQuestion(options.options ? { options: options.options } : undefined)],
     })),
     saveAnswer: vi.fn(async () => undefined),

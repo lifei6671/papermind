@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -27,16 +26,17 @@ import (
 // handler 只负责请求解析、认证上下文转换和响应映射；考试状态流转、
 // token 校验、阅卷和成绩规则都继续下沉到 service 层。
 type examHandler struct {
-	service     *serviceexam.Service
-	taking      *serviceexam.TakingService
-	review      *serviceexam.ReviewService
-	export      *serviceexam.ExportService
-	result      *serviceexam.ResultService
-	papers      paperScopeFinder
-	targets     examTargetFinder
-	members     spaceMemberFinder
-	tenantUsers *servicetenantuser.Service
-	now         func() int64
+	service              *serviceexam.Service
+	taking               *serviceexam.TakingService
+	review               *serviceexam.ReviewService
+	export               *serviceexam.ExportService
+	result               *serviceexam.ResultService
+	papers               paperScopeFinder
+	targets              examTargetFinder
+	members              spaceMemberFinder
+	tenantUsers          *servicetenantuser.Service
+	sessionMaxAgeSeconds int
+	now                  func() int64
 }
 
 // spaceMemberFinder 抽象空间成员查询能力，供权限上下文动态反查空间角色。
@@ -489,21 +489,21 @@ func (h examHandler) resolveInvite(c *gin.Context) {
 		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "当前登录用户不属于该考试租户"))
 		return
 	}
-	if err := saveExamEntrySession(c, exam, principal.UserID); err != nil {
+	if err := saveExamEntrySession(c, exam, principal.UserID, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds)); err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存考试入口会话失败"))
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(examToResponse(exam)))
 }
 
-func saveExamEntrySession(c *gin.Context, exam serviceexam.Exam, userID uint64) error {
+func saveExamEntrySession(c *gin.Context, exam serviceexam.Exam, userID uint64, maxAgeSeconds int) error {
 	session := sessions.Default(c)
 	session.Set(examEntrySessionTenantIDKey, exam.TenantID)
 	session.Set(examEntrySessionExamIDKey, exam.ID)
 	session.Set(examEntrySessionUserIDKey, userID)
 	session.Options(sessions.Options{
 		Path:     "/",
-		MaxAge:   int(24 * time.Hour / time.Second),
+		MaxAge:   maxAgeSeconds,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -647,6 +647,10 @@ func (h examHandler) submitAttempt(c *gin.Context) {
 	if eventType == "" {
 		eventType = serviceexam.EventTypeSubmit
 	}
+	if eventType != serviceexam.EventTypeSubmit && eventType != serviceexam.EventTypeAutoSubmit {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "event_type 只能是 submit 或 auto_submit"))
+		return
+	}
 	if err := h.taking.Submit(c.Request.Context(), serviceexam.SubmitInput{
 		TenantID:  request.TenantID,
 		AttemptID: attemptID,
@@ -674,6 +678,10 @@ func (h examHandler) recordEvent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、exam_token 和 event_type 不能为空"))
 		return
 	}
+	if !isRecordableExamEvent(request.EventType) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "event_type 只能是 blur 或 focus"))
+		return
+	}
 	if request.Payload == "" {
 		request.Payload = "{}"
 	}
@@ -688,6 +696,10 @@ func (h examHandler) recordEvent(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(examEventResponse{Recorded: true}))
+}
+
+func isRecordableExamEvent(eventType string) bool {
+	return eventType == serviceexam.EventTypeBlur || eventType == serviceexam.EventTypeFocus
 }
 
 func (h examHandler) getExamEntryResult(c *gin.Context) {

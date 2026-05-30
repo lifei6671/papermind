@@ -41,7 +41,7 @@ func TestUploadAPIRouteStoresMultipartFile(t *testing.T) {
 	}
 
 	body := decodeExamAPIResponse[uploadResponse](t, recorder.Body.Bytes())
-	expectedKey := regexp.MustCompile(`^tenant-logos/\d{8}/\d{14}_[a-f0-9]{16}\.png$`)
+	expectedKey := regexp.MustCompile(`^tenant-logos/\d{8}/\d{14}_[a-f0-9]{16}_[a-f0-9]{16}\.png$`)
 	if !expectedKey.MatchString(body.Data.Key) || body.Data.URL != "/uploads/"+body.Data.Key {
 		t.Fatalf("unexpected upload response: %#v", body.Data)
 	}
@@ -81,14 +81,34 @@ func TestPlatformAdminCanUploadTenantLogo(t *testing.T) {
 func TestBuildUploadObjectKeyUsesTimestampMD5AndExtension(t *testing.T) {
 	now := time.Date(2026, 5, 27, 16, 8, 9, 0, time.Local)
 	hash := md5.Sum([]byte("logo"))
-	expected := "tenant-logos/20260527/20260527160809_" + hex.EncodeToString(hash[:])[:16] + ".webp"
+	expectedPrefix := "tenant-logos/20260527/20260527160809_" + hex.EncodeToString(hash[:])[:16] + "_"
+	expectedSuffix := ".webp"
 
 	key, err := buildUploadObjectKey("tenant-logos", "logo.PNG", "image/webp", []byte("logo"), now)
 	if err != nil {
 		t.Fatalf("build object key: %v", err)
 	}
-	if key != expected {
-		t.Fatalf("key = %q, want %q", key, expected)
+	if !strings.HasPrefix(key, expectedPrefix) || !strings.HasSuffix(key, expectedSuffix) {
+		t.Fatalf("key = %q, want prefix %q and suffix %q", key, expectedPrefix, expectedSuffix)
+	}
+	randomPart := strings.TrimSuffix(strings.TrimPrefix(key, expectedPrefix), expectedSuffix)
+	if !regexp.MustCompile(`^[a-f0-9]{16}$`).MatchString(randomPart) {
+		t.Fatalf("random suffix = %q, want 16 lowercase hex chars", randomPart)
+	}
+}
+
+func TestBuildUploadObjectKeyAvoidsSameSecondContentCollision(t *testing.T) {
+	now := time.Date(2026, 5, 27, 16, 8, 9, 0, time.Local)
+	firstKey, err := buildUploadObjectKey("tenant-logos", "logo.png", "image/png", []byte("logo"), now)
+	if err != nil {
+		t.Fatalf("build first object key: %v", err)
+	}
+	secondKey, err := buildUploadObjectKey("tenant-logos", "logo.png", "image/png", []byte("logo"), now)
+	if err != nil {
+		t.Fatalf("build second object key: %v", err)
+	}
+	if firstKey == secondKey {
+		t.Fatalf("expected repeated upload keys to differ, both = %q", firstKey)
 	}
 }
 

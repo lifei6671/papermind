@@ -3,6 +3,7 @@ package v1
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/response"
 )
+
+const maxExamEntryBodyBytes = 64 * 1024
 
 type examEntryTokenPayload struct {
 	TenantID  uint64 `json:"tenant_id"`
@@ -29,9 +32,15 @@ func examEntryTokenMiddleware(taking *serviceexam.TakingService) gin.HandlerFunc
 			c.Abort()
 			return
 		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxExamEntryBodyBytes)
 		rawBody, err := c.GetRawData()
 		if err != nil {
-			c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "读取请求体失败"))
+			var maxBytesError *http.MaxBytesError
+			if errors.As(err, &maxBytesError) {
+				c.JSON(http.StatusRequestEntityTooLarge, response.Fail(code.InvalidParam, "答题请求体不能超过 64KB"))
+			} else {
+				c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "读取请求体失败"))
+			}
 			c.Abort()
 			return
 		}

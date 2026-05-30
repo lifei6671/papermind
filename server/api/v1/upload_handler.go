@@ -3,6 +3,7 @@ package v1
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -124,7 +125,19 @@ func buildUploadObjectKey(category string, fileName string, contentType string, 
 	fileTime := now.Format("20060102150405")
 	fileHash := md5.Sum(fileContent)
 	extension := detectUploadExtension(fileName, contentType)
-	return category + "/" + now.Format("20060102") + "/" + fileTime + "_" + hex.EncodeToString(fileHash[:])[:16] + extension, nil
+	uniqueSuffix, err := randomUploadSuffix()
+	if err != nil {
+		return "", err
+	}
+	return category + "/" + now.Format("20060102") + "/" + fileTime + "_" + hex.EncodeToString(fileHash[:])[:16] + "_" + uniqueSuffix + extension, nil
+}
+
+func randomUploadSuffix() (string, error) {
+	buffer := make([]byte, 8)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buffer), nil
 }
 
 func detectUploadContentType(fileContent []byte) string {

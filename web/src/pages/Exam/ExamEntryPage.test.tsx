@@ -28,8 +28,6 @@ test("考试入口提交邀请码前先调用真实 API 校验", async () => {
     <MemoryRouter>
       <SessionContext.Provider value={{
         session: {
-          accessToken: "tenant-token",
-          refreshToken: "tenant-token",
           user: { userID: 20, displayName: "目标考生", role: "student", tenantID: 10 },
         },
         signIn: vi.fn(),
@@ -63,8 +61,6 @@ test("考试入口邀请码校验失败时停留在入口页", async () => {
     <MemoryRouter>
       <SessionContext.Provider value={{
         session: {
-          accessToken: "tenant-token",
-          refreshToken: "tenant-token",
           user: { userID: 20, displayName: "目标考生", role: "student", tenantID: 10 },
         },
         signIn: vi.fn(),
@@ -103,8 +99,6 @@ test("考试入口允许当前选中空间内的学生身份进入", async () =>
     <MemoryRouter>
       <SessionContext.Provider value={{
         session: {
-          accessToken: "tenant-token",
-          refreshToken: "tenant-token",
           selectedSpaceID: 302,
           profileSpaces: [{
             id: 4,

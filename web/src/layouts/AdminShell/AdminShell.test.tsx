@@ -18,8 +18,6 @@ test("退出登录时清理已保存登录态", async () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
       user: { displayName: "平台管理员", role: "platform_admin", userID: 1 },
     }),
   );
@@ -46,8 +44,6 @@ test("租户业务导航保留当前目标租户 ID", () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
       user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
     }),
   );
@@ -71,8 +67,6 @@ test("阅卷和成绩导航保留当前考试 ID", () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
       profileSpaces: [{
         id: 1,
         tenantID: 10,
@@ -121,8 +115,6 @@ test("平台管理员不展示租户空间菜单", () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
       user: { displayName: "平台管理员", role: "platform_admin", userID: 1 },
     }),
   );
@@ -150,8 +142,6 @@ test("租户管理员展示租户空间菜单", () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
       profileSpaces: [{
         id: 1,
         tenantID: 10,
@@ -190,8 +180,6 @@ test("租户用户点击切换租户进入租户空间选择页", async () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
       profileSpaces: [{
         id: 1,
         tenantID: 10,
@@ -226,8 +214,6 @@ test("教师展示考试业务菜单", () => {
 	window.localStorage.setItem(
 		SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
       user: { displayName: "阅卷教师", role: "teacher", tenantID: 10, userID: 3 },
     }),
   );
@@ -266,8 +252,6 @@ test("菜单可由授权空间驱动而不是把 space_admin 写入 session role
 	window.localStorage.setItem(
 		SESSION_STORAGE_KEY,
 		JSON.stringify({
-			accessToken: "access-token",
-			refreshToken: "refresh-token",
 			profileSpaces: [{
 				id: 1,
 				tenantID: 10,
@@ -298,8 +282,6 @@ test("真实空间成员菜单可由授权空间列表驱动", () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
       profileSpaces: [{
         id: 1,
         tenantID: 10,

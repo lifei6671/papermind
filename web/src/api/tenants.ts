@@ -1,6 +1,5 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
-import { readStoredAccessToken } from "./session-token";
 import type { MemberRole, SpaceListResult } from "./spaces";
 import type { TenantUserListResult, UserRole } from "./users";
 
@@ -91,7 +90,6 @@ type PlatformTenantUserAPIResponse = {
 
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
-  getAccessToken: readStoredAccessToken,
 });
 
 export const tenantApi = createTenantAPI(defaultApiClient);

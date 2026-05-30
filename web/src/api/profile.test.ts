@@ -67,16 +67,13 @@ test("profile API 读取并更新当前登录用户资料", async () => {
   });
 });
 
-test("默认 profileApi 会为受保护接口带上本地会话 token", async () => {
+test("默认 profileApi 通过 cookie 发送受保护接口请求", async () => {
   window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
-    accessToken: "stored-access-token",
-    refreshToken: "stored-refresh-token",
     user: { userID: 1, displayName: "admin", role: "platform_admin" },
   }));
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-    expect(init?.headers).toMatchObject({
-      Authorization: "Bearer stored-access-token",
-    });
+    expect(init?.credentials).toBe("include");
+    expect(init?.headers).not.toHaveProperty("Authorization");
     return new Response(JSON.stringify({
       code: 0,
       message: "ok",

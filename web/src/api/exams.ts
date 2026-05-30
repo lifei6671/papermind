@@ -1,6 +1,5 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
-import { readStoredAccessToken } from "./session-token";
 
 export type ExamStatus = "draft" | "published";
 
@@ -95,10 +94,13 @@ export type SaveStudentAnswerInput = {
   text?: string;
 };
 
+export type SubmitAttemptEventType = "submit" | "auto_submit";
+
 export type SubmitAttemptInput = {
   tenantID: number;
   attemptID: number;
   examToken: string;
+  eventType?: SubmitAttemptEventType;
 };
 
 export type StudentVisibleResult = {
@@ -181,7 +183,6 @@ type AttemptQuestionAPIResponse = {
 
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
-  getAccessToken: readStoredAccessToken,
 });
 
 export const examApi = createExamAPI(defaultApiClient);
@@ -244,7 +245,7 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
       await apiClient.post(`/api/v1/exam-entry/attempts/${input.attemptID}/submit`, {
         tenant_id: input.tenantID,
         exam_token: input.examToken,
-        event_type: "submit",
+        event_type: input.eventType ?? "submit",
       });
     },
     async getVisibleResult(attemptID) {

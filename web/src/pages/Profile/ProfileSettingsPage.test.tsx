@@ -13,8 +13,6 @@ afterEach(() => {
 test("租户用户个人设置读取资料并保存后同步本地登录态名称", async () => {
   const user = userEvent.setup();
   window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
-    accessToken: "access-token",
-    refreshToken: "refresh-token",
     user: { userID: 20, tenantID: 10, displayName: "张三", role: "teacher" },
   }));
   const api: ProfileAPI = {
@@ -70,8 +68,6 @@ test("租户用户个人设置读取资料并保存后同步本地登录态名�
 test("平台管理员个人设置保持登录账号只读", async () => {
   const user = userEvent.setup();
   window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
-    accessToken: "access-token",
-    refreshToken: "refresh-token",
     user: { userID: 1, displayName: "admin", role: "platform_admin" },
   }));
   const api: ProfileAPI = {

@@ -1,5 +1,5 @@
 import { Button } from "../../components/ui/Button";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { examApi } from "../../api/exams";
 import type { StudentExamAPI, StudentExamOption, StudentExamQuestion as APIStudentExamQuestion, StudentVisibleResult } from "../../api/exams";
@@ -321,6 +321,7 @@ function DesktopStudentExamPage({
   const [answerDeadline, setAnswerDeadline] = useState<number | null>(null);
   const [remainingMillis, setRemainingMillis] = useState<number | null>(null);
   const [loadError, setLoadError] = useState("");
+  const autoSubmitStarted = useRef(false);
 
   const questionGroups = buildQuestionGroups(apiQuestions);
   const currentQuestion = apiQuestions.find((question) => question.number === currentQuestionNumber);
@@ -458,10 +459,11 @@ function DesktopStudentExamPage({
     }
   };
 
-  const submitExam = async () => {
+  const submitExam = useCallback(async (eventType: "submit" | "auto_submit" = "submit") => {
     try {
       if (examSession) {
         await api.submitAttempt({
+          ...(eventType === "auto_submit" ? { eventType } : {}),
           tenantID,
           attemptID: examSession.attemptID,
           examToken: examSession.examToken,
@@ -480,7 +482,15 @@ function DesktopStudentExamPage({
     } catch {
       setSaveMessage("交卷失败，请稍后重试");
     }
-  };
+  }, [api, examSession, tenantID]);
+  useEffect(() => {
+    if (remainingMillis !== 0 || !examSession || isSubmitted || autoSubmitStarted.current) {
+      return;
+    }
+    autoSubmitStarted.current = true;
+    void submitExam("auto_submit");
+  }, [remainingMillis, examSession, isSubmitted, submitExam]);
+
 
   if (isSubmitted) {
     return <DesktopResultView message={resultMessage} result={visibleResult} />;

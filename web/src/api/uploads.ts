@@ -1,6 +1,5 @@
 import { createApiClient } from "./client";
 import type { ApiClient } from "./client";
-import { readStoredAccessToken } from "./session-token";
 
 export type UploadFileInput = {
   category: string;
@@ -29,7 +28,6 @@ type UploadAPIResponse = {
 
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
-  getAccessToken: readStoredAccessToken,
 });
 
 export const uploadApi = createUploadAPI(defaultApiClient);

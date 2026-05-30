@@ -35,7 +35,7 @@ func AuthMiddlewares(options RouterOptions) []gin.HandlerFunc {
 
 // RegisterRoutes 只负责注册 /api/v1 下的版本路由和对应 handler。
 func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
-	examHandler := examHandler{service: deps.Exams, taking: deps.Taking, review: deps.Review, export: deps.Export, result: deps.Results, papers: deps.PaperRepository, targets: deps.ExamRepository, members: deps.SpaceRepository, tenantUsers: deps.TenantUsers, now: deps.Now}
+	examHandler := examHandler{service: deps.Exams, taking: deps.Taking, review: deps.Review, export: deps.Export, result: deps.Results, papers: deps.PaperRepository, targets: deps.ExamRepository, members: deps.SpaceRepository, tenantUsers: deps.TenantUsers, sessionMaxAgeSeconds: deps.AuthSessionTTL, now: deps.Now}
 	tenantHandler := tenantHandler{service: deps.Tenants, spaces: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
 	spaceHandler := spaceHandler{service: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
 	userHandler := userHandler{service: deps.TenantUsers, passwordMinLength: deps.PasswordMinLength}
@@ -57,9 +57,6 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	api.POST("/exams", requireExamBusinessPrincipalMiddleware(), examHandler.publish)
 	api.POST("/exams/invite/resolve", examHandler.resolveInvite)
 	api.POST("/exams/:id/attempts/start", examHandler.startAttempt)
-	api.POST("/exam-attempts/:attempt_id/answers/:attempt_question_id", examHandler.saveAnswer)
-	api.POST("/exam-attempts/:attempt_id/submit", examHandler.submitAttempt)
-	api.POST("/exam-attempts/:attempt_id/events", examHandler.recordEvent)
 	api.POST("/exam-entry/invite/resolve", examHandler.resolveInvite)
 	api.POST("/exam-entry/exams/:id/attempts/start", examHandler.startAttempt)
 	api.POST("/exam-entry/attempts/:attempt_id/answers/:attempt_question_id", examEntryTokenMiddleware(deps.Taking), examHandler.saveAnswer)

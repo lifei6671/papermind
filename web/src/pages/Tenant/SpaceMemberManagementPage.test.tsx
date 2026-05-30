@@ -92,8 +92,6 @@ function renderSpaceMembers(api: SpaceMemberAPI) {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
     JSON.stringify({
-      accessToken: "tenant-access-token",
-      refreshToken: "tenant-refresh-token",
       profileSpaces: [{
         id: 1,
         tenantID: 10,

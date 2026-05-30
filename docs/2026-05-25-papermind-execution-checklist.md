@@ -876,14 +876,14 @@ P0 文档与项目骨架
 - [x] 认证 API 接入前端登录态。
 - [x] 认证 API 使用 `github.com/gin-contrib/sessions` 写入服务端 session。
 - [x] 当前 session provider 支持进程内 memory 和 `github.com/gin-contrib/sessions/redis`。
-- [x] Bearer 登录态兼容已签名 session cookie 值，后端从 session 注入平台管理员主体上下文。
+- [x] 登录态以 HttpOnly session cookie 为准，登录响应不暴露 `access_token` / `refresh_token`，前端 API client 通过 `credentials: include` 携带 cookie。
 - [x] 个人设置页接入 `/api/v1/profile`，平台管理员登录账号只读，租户用户保存后同步本地 session 显示名称。
 - [x] 租户管理页面接入真实 API。
 - [x] 租户管理搜索和刷新接入后台列表接口。
 - [x] 租户管理搜索输入支持回车触发后台检索。
 - [x] 租户管理操作区按钮接入后台接口。
 - [x] 通用文件上传 API 接入对象存储抽象。
-- [x] 上传文件按年月日时分秒、内容 MD5 和后缀生成服务端文件名。
+- [x] 上传文件按年月日时分秒、内容 MD5、随机后缀和安全后缀生成服务端文件名。
 - [x] 租户 Logo 创建流程上传真实文件并提交返回 URL。
 - [x] 浏览器端图片上传前优先转换为 WebP，失败时回退上传原图。
 - [x] 空间管理页面接入真实 API。
@@ -914,7 +914,7 @@ P0 文档与项目骨架
 - [x] 考试发布 API handler 使用 SQLite 覆盖列表和发布链路。
 - [x] 租户管理 API handler 使用 SQLite 覆盖列表、创建、资料更新、租户码重置和注册开关链路。
 - [x] 租户管理列表和写接口要求平台管理员登录态。
-- [x] 租户管理写接口从 Bearer 登录态解析平台管理员 ID，并写入 `created_by` / `updated_by`。
+- [x] 租户管理写接口从 session 登录态解析平台管理员 ID，并写入 `created_by` / `updated_by`。
 - [x] 后台考试、空间、用户、题库、试卷和组卷规则读取接口拒绝匿名访问。
 - [x] 考试业务 API 允许本租户 `tenant_admin` 或授权空间内 `space_admin` / `teacher` 访问，平台管理员和学生不拥有考试业务操作入口。
 - [x] 租户、空间、用户等后台管理写接口要求平台管理员或本租户 `tenant_admin`，并拒绝学生越权访问。

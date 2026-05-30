@@ -14,7 +14,6 @@ export type PageData<T> = {
 type ApiClientOptions = {
   baseUrl: string;
   fetcher?: typeof fetch;
-  getAccessToken?: () => string | null | undefined;
   onUnauthorized?: () => void;
 };
 
@@ -56,11 +55,12 @@ export type ApiClient = {
 
 export function createApiClient(options: ApiClientOptions): ApiClient {
   async function request<T>(path: string, requestOptions: RequestOptions = {}): Promise<T> {
-    const headers = buildHeaders(options.getAccessToken?.(), requestOptions);
+    const headers = buildHeaders(requestOptions);
     const fetcher = options.fetcher ?? fetch;
     const response = await fetcher(buildUrl(options.baseUrl, path), {
       method: requestOptions.method ?? "GET",
       ...(requestOptions.body === undefined ? {} : { body: serializeBody(requestOptions.body, headers) }),
+      credentials: "include",
       headers,
     });
 
@@ -120,17 +120,11 @@ function buildUrl(baseUrl: string, path: string) {
   return `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }
 
-function buildHeaders(accessToken: string | null | undefined, options: RequestOptions) {
-  const headers: Record<string, string> = {
+function buildHeaders(options: RequestOptions) {
+  return {
     Accept: "application/json",
     ...options.headers,
   };
-
-  if (accessToken) {
-    headers.Authorization = `Bearer ${accessToken}`;
-  }
-
-  return headers;
 }
 
 function serializeBody(body: unknown, headers: Record<string, string>) {

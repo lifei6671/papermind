@@ -52,9 +52,7 @@ type tenantRegisterRequest struct {
 }
 
 type authSessionResponse struct {
-	AccessToken  string           `json:"access_token"`
-	RefreshToken string           `json:"refresh_token"`
-	User         authUserResponse `json:"user"`
+	User authUserResponse `json:"user"`
 }
 
 type authUserResponse struct {
@@ -228,16 +226,13 @@ func (h authHandler) platformLogin(c *gin.Context) {
 		UserID:      user.ID,
 		Role:        platformAdminRole,
 	}
-	accessToken, err := saveAuthPrincipalSession(c, principal, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds))
-	if err != nil {
+	if _, err := saveAuthPrincipalSession(c, principal, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds)); err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存登录会话失败"))
 		return
 	}
 
 	// 平台管理员登录成功后只返回前端会话所需身份，不把密码哈希、审计字段暴露给浏览器。
 	c.JSON(http.StatusOK, response.OK(authSessionResponse{
-		AccessToken:  accessToken,
-		RefreshToken: accessToken,
 		User: authUserResponse{
 			UserID:      user.ID,
 			DisplayName: user.Username,
@@ -271,14 +266,11 @@ func (h authHandler) tenantLogin(c *gin.Context) {
 		UserID:      user.ID,
 		Role:        servicetenantuser.RoleTenantUser,
 	}
-	accessToken, err := saveAuthPrincipalSession(c, principal, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds))
-	if err != nil {
+	if _, err := saveAuthPrincipalSession(c, principal, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds)); err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存登录会话失败"))
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(authSessionResponse{
-		AccessToken:  accessToken,
-		RefreshToken: accessToken,
 		User: authUserResponse{
 			UserID:      user.ID,
 			DisplayName: user.RealName,
@@ -336,14 +328,11 @@ func (h authHandler) selectTenantSpace(c *gin.Context) {
 		TenantID:    request.TenantID,
 		Role:        user.Role,
 	}
-	accessToken, err := saveAuthPrincipalSession(c, nextPrincipal, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds))
-	if err != nil {
+	if _, err := saveAuthPrincipalSession(c, nextPrincipal, defaultSessionMaxAgeSeconds(h.sessionMaxAgeSeconds)); err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存租户空间会话失败"))
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(authSessionResponse{
-		AccessToken:  accessToken,
-		RefreshToken: accessToken,
 		User: authUserResponse{
 			UserID:      user.ID,
 			DisplayName: user.RealName,
