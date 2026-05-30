@@ -30,11 +30,15 @@ func NewPaperRepository(gormDB *gorm.DB, options PaperRepositoryOptions) *PaperR
 	return &PaperRepository{db: gormDB, now: now}
 }
 
-func (r *PaperRepository) ListPapers(ctx context.Context, tenantID uint64) ([]servicepaper.Paper, error) {
+func (r *PaperRepository) ListPapers(ctx context.Context, input servicepaper.ListPapersInput) ([]servicepaper.Paper, error) {
 	var rows []PaperDO
-	if err := r.db.WithContext(ctx).
-		Where(PaperColumns.TenantID+" = ?", tenantID).
-		Where(PaperColumns.DeletedAt+" = ?", 0).
+	query := r.db.WithContext(ctx).
+		Where(PaperColumns.TenantID+" = ?", input.TenantID).
+		Where(PaperColumns.DeletedAt+" = ?", 0)
+	if input.SpaceID != nil {
+		query = query.Where(r.db.Where(PaperColumns.SpaceID+" IS NULL").Or(PaperColumns.SpaceID+" = ?", *input.SpaceID))
+	}
+	if err := query.
 		Order(PaperColumns.ID + " ASC").
 		Find(&rows).Error; err != nil {
 		return nil, err

@@ -40,8 +40,13 @@ export type ExamListResult = {
   items: ExamRow[];
 };
 
+export type ListExamsInput = {
+  tenantID: number;
+  spaceID?: number;
+};
+
 export type ExamManagementAPI = {
-  listExams(tenantID: number): Promise<ExamListResult>;
+  listExams(input: ListExamsInput): Promise<ExamListResult>;
   publishExam(input: PublishExamInput): Promise<ExamRow>;
 };
 
@@ -183,8 +188,12 @@ export const examApi = createExamAPI(defaultApiClient);
 
 export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEntryAPI & StudentExamAPI {
   return {
-    async listExams(tenantID) {
-      const data = await apiClient.get<PageData<ExamAPIResponse>>(`/api/v1/exams?tenant_id=${tenantID}`);
+    async listExams(input) {
+      const params = new URLSearchParams({ tenant_id: String(input.tenantID) });
+      if (input.spaceID !== undefined) {
+        params.set("space_id", String(input.spaceID));
+      }
+      const data = await apiClient.get<PageData<ExamAPIResponse>>(`/api/v1/exams?${params.toString()}`);
       return {
         items: data.items.map(mapExamResponse),
       };

@@ -25,7 +25,7 @@ func TestPaperAPIRoutesListSectionsAndAddManualQuestionWithSQLite(t *testing.T) 
 	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
 
 	listRecorder := httptest.NewRecorder()
-	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers?tenant_id=10", nil, authHeader))
+	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers?tenant_id=10&space_id=301", nil, authHeader))
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
@@ -159,6 +159,38 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 	precheckBody := decodeExamAPIResponse[paperRuleLivePrecheckResponse](t, precheckRecorder.Body.Bytes())
 	if precheckBody.Data.CandidateCount != 1 || len(precheckBody.Data.CandidateQuestionIDs) != 1 || precheckBody.Data.CandidateQuestionIDs[0] != 101 {
 		t.Fatalf("unexpected precheck response: %#v", precheckBody.Data)
+	}
+}
+
+func TestTeacherCannotReadOtherSpacePaperDetailsWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPaperAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+	seedOtherSpacePaperDetailsAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		target string
+	}{
+		{name: "sections", method: http.MethodGet, target: "/api/v1/papers/201/sections?tenant_id=10"},
+		{name: "rules", method: http.MethodGet, target: "/api/v1/papers/201/rules?tenant_id=10"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(tc.method, tc.target, nil, authHeader))
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("expected other-space paper detail read to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
@@ -507,5 +539,41 @@ func seedOtherSpaceQuestionAPITestData(t *testing.T, gormDB *gorm.DB) {
 		) VALUES (10, 102, 2, ?, '{}')
 	`, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed other-space question tag: %v", err)
+	}
+}
+
+func seedOtherSpacePaperDetailsAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, type, status, created_at, updated_at, ext_json
+		) VALUES (302, 10, '高一 2 班', 'class', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed other paper space: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO papers (
+			id, tenant_id, space_id, name, description, total_score, build_mode, status,
+			created_at, updated_at, ext_json
+		) VALUES (?, ?, ?, ?, '', 0, ?, 'draft', ?, ?, '{}')
+	`, 201, 10, 302, "其他空间试卷", constant.BuildModeManual, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed other-space paper: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_sections (
+			id, tenant_id, paper_id, sort_order, name, question_type, instructions,
+			total_score, question_count, created_at, updated_at, ext_json
+		) VALUES (?, ?, ?, 1, ?, ?, '', 0, 0, ?, ?, '{}')
+	`, 201, 10, 201, "其他空间大题", constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed other-space section: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_section_rules (
+			id, tenant_id, paper_id, section_id, sort_order, difficulty, tag_filter,
+			question_count, score_per_question, created_at, updated_at, ext_json
+		) VALUES (?, ?, ?, ?, 1, 'easy', '[]', 1, 4, ?, ?, '{}')
+	`, 201, 10, 201, 201, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed other-space paper rule: %v", err)
 	}
 }

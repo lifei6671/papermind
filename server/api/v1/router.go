@@ -71,6 +71,7 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	api.GET("/results", requireExamBusinessPrincipalMiddleware(), examHandler.listResults)
 	api.POST("/results/publish-config", requireExamBusinessPrincipalMiddleware(), examHandler.saveResultPublishConfig)
 	api.POST("/results/export", requireExamBusinessPrincipalMiddleware(), examHandler.exportResults)
+	api.GET("/results/export-files/:file_name", requireExamBusinessPrincipalMiddleware(), examHandler.downloadExport)
 	api.GET("/tenants", requirePlatformPrincipalMiddleware(), tenantHandler.list)
 	api.POST("/tenants", requirePlatformPrincipalMiddleware(), tenantHandler.create)
 	api.POST("/tenants/:id/profile", requirePlatformPrincipalMiddleware(), tenantHandler.updateProfile)

@@ -45,7 +45,7 @@ func main() {
 		slog.Error("run database migration failed", "error", err)
 		os.Exit(1)
 	}
-	if err := adminseed.Run(context.Background(), gormDB); err != nil {
+	if err := adminseed.RunForEnv(context.Background(), gormDB, cfg.App.Env); err != nil {
 		slog.Error("seed default platform admin failed", "error", err)
 		os.Exit(1)
 	}

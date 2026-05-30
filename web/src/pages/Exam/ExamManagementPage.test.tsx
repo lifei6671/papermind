@@ -81,7 +81,7 @@ test("考试页支持配置发布范围、邀请码和发布考试", async () =>
   expect(screen.queryByText("占位")).not.toBeInTheDocument();
   expect(await screen.findByText("高一语文期中考试")).toBeInTheDocument();
   expect(screen.getByText("PM2026")).toBeInTheDocument();
-  expect(api.listExams).toHaveBeenCalledWith(10);
+  expect(api.listExams).toHaveBeenCalledWith({ tenantID: 10 });
   expect(paperApi.listPapers).toHaveBeenCalledWith({ tenantID: 10 });
   expect(spaceApi.listSpaces).toHaveBeenCalledWith(10);
   expect(userApi.listUsers).toHaveBeenCalledWith(10);

@@ -170,8 +170,13 @@ type SectionAggregate struct {
 	QuestionCount int    // 题目数量。
 }
 
+type ListPapersInput struct {
+	TenantID uint64  // 所属租户 ID。
+	SpaceID  *uint64 // 可见空间范围；nil 表示租户管理员全租户范围。
+}
+
 type Repository interface {
-	ListPapers(ctx context.Context, tenantID uint64) ([]Paper, error)
+	ListPapers(ctx context.Context, input ListPapersInput) ([]Paper, error)
 	SectionSortOrderExists(ctx context.Context, tenantID uint64, paperID uint64, sortOrder int) (bool, error)
 	CreateSection(ctx context.Context, section Section) (Section, error)
 	UpdateSection(ctx context.Context, input UpdateSectionInput) error
@@ -208,8 +213,8 @@ func NewService(options ServiceOptions) *Service {
 	return &Service{repo: options.Repo}
 }
 
-func (s *Service) ListPapers(ctx context.Context, tenantID uint64) ([]Paper, error) {
-	return s.repo.ListPapers(ctx, tenantID)
+func (s *Service) ListPapers(ctx context.Context, input ListPapersInput) ([]Paper, error) {
+	return s.repo.ListPapers(ctx, input)
 }
 
 func (s *Service) CreateSection(ctx context.Context, input CreateSectionInput) (Section, error) {

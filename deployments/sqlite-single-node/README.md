@@ -43,7 +43,7 @@ file:<repo>\server\data\sqlite\papermind.db?_foreign_keys=on&_journal_mode=WAL&_
 
 ## 默认登录
 
-全新 SQLite 数据库完成迁移后，后端会在 `platform_users` 为空时初始化平台管理员：
+`start.ps1` 会设置 `PAPERMIND_APP_ENV=dev`。全新 SQLite 数据库完成迁移后，后端会在 `platform_users` 为空时初始化本地联调用平台管理员：
 
 - 账号：`admin`
 - 密码：`admin123`

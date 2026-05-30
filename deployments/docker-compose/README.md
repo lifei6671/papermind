@@ -30,9 +30,9 @@ docker compose --env-file deployments\docker-compose\.env -f deployments\docker-
 - Server: `http://localhost:9080`
 - PostgreSQL: 仅在 Compose 网络内暴露给 server
 
-默认登录：
+管理员初始化：
 
-- 全新数据库迁移完成后，后端会在 `platform_users` 为空时初始化平台管理员 `admin / admin123`，默认邮箱为 `admin@iminho.me`。
+- Compose 默认 `PAPERMIND_APP_ENV=docker`，不会初始化公开默认管理员密码。正式或演练环境需要通过受控运维流程创建平台管理员，避免空库启动后暴露固定高权限账号。
 
 ## 服务组成
 

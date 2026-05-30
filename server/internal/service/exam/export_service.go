@@ -3,10 +3,13 @@ package exam
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/permission"
@@ -31,6 +34,8 @@ type ExportExamScoresInput struct {
 }
 
 type ListExamScoresInput = ExportExamScoresInput
+
+var ErrInvalidExportFile = errors.New("invalid export file")
 
 type ExportResult struct {
 	FilePath string // 导出文件绝对或工作目录相对路径。
@@ -71,7 +76,7 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 	if err := os.MkdirAll(s.exportDir, 0o755); err != nil {
 		return ExportResult{}, err
 	}
-	filePath := filepath.Join(s.exportDir, fmt.Sprintf("exam-%d-scores-%d.csv", input.ExamID, s.now()))
+	filePath := filepath.Join(s.exportDir, fmt.Sprintf("exam-%d-scores-%s-%d.csv", input.ExamID, exportFileScope(input.Permission), s.now()))
 	file, err := os.Create(filePath)
 	if err != nil {
 		return ExportResult{}, err
@@ -86,6 +91,48 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 
 func (s *ExportService) ListExamScores(ctx context.Context, input ListExamScoresInput) ([]ScoreExportRow, error) {
 	return s.listExamScoresByPermission(ctx, input, s.canViewExamResultsInAnySpace)
+}
+
+func (s *ExportService) ResolveExportFile(fileName string, examID uint64, ctx permission.PermissionContext) (string, error) {
+	if fileName == "" || filepath.Base(fileName) != fileName || filepath.Ext(fileName) != ".csv" {
+		return "", ErrInvalidExportFile
+	}
+	if !exportFileMatchesScope(fileName, examID, ctx) {
+		return "", ErrInvalidExportFile
+	}
+	filePath := filepath.Join(s.exportDir, fileName)
+	info, err := os.Stat(filePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", ErrInvalidExportFile
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", ErrInvalidExportFile
+	}
+	return filePath, nil
+}
+
+func exportFileMatchesScope(fileName string, examID uint64, ctx permission.PermissionContext) bool {
+	return strings.HasPrefix(fileName, fmt.Sprintf("exam-%d-scores-%s-", examID, exportFileScope(ctx)))
+}
+
+func exportFileScope(ctx permission.PermissionContext) string {
+	if ctx.Role == permission.RoleTenantAdmin {
+		return "tenant"
+	}
+	spaceIDs := make([]uint64, 0, len(ctx.SpaceMemberships))
+	for spaceID, role := range ctx.SpaceMemberships {
+		if role == permission.RoleSpaceAdmin || role == permission.RoleTeacher {
+			spaceIDs = append(spaceIDs, spaceID)
+		}
+	}
+	if len(spaceIDs) == 0 {
+		return "space-0"
+	}
+	sort.Slice(spaceIDs, func(i int, j int) bool { return spaceIDs[i] < spaceIDs[j] })
+	return fmt.Sprintf("space-%d", spaceIDs[0])
 }
 
 func (s *ExportService) listExamScoresByPermission(ctx context.Context, input ListExamScoresInput, allow func(permission.PermissionContext, uint64, []uint64) bool) ([]ScoreExportRow, error) {

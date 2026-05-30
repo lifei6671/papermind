@@ -17,6 +17,8 @@ import (
 
 	serviceexam "github.com/lifei6671/papermind/server/internal/service/exam"
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
+	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
+	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/constant"
 )
 
@@ -46,11 +48,39 @@ func NewExamRepository(gormDB *gorm.DB, options ExamRepositoryOptions) *ExamRepo
 
 // ListExams 按租户分页列出未删除的考试。
 // 查询先统计总数再读取当前页，返回值保留分页参数，方便 API 层直接构造列表响应。
-func (r *ExamRepository) ListExams(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[serviceexam.Exam], error) {
-	page = pagination.Normalize(page)
+func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListInput) (pagination.Result[serviceexam.Exam], error) {
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
 	query := r.db.WithContext(ctx).Model(&ExamDO{}).
-		Where(ExamColumns.TenantID+" = ?", tenantID).
+		Where(ExamColumns.TenantID+" = ?", input.TenantID).
 		Where(ExamColumns.DeletedAt+" = ?", 0)
+	if input.SpaceID != nil {
+		query = query.Where(`
+			EXISTS (
+				SELECT 1 FROM exam_targets AS et
+				WHERE et.tenant_id = exams.tenant_id
+					and et.exam_id = exams.id
+					and (
+						(et.target_type = ? and et.target_id = ?)
+						or (et.target_type = ? and EXISTS (
+							SELECT 1 FROM space_members AS sm
+							JOIN tenant_user_memberships AS tum
+								ON tum.tenant_id = sm.tenant_id
+								and tum.user_id = sm.user_id
+								and tum.status = ?
+							JOIN users AS u
+								ON u.id = sm.user_id
+								and u.status = ?
+								and u.deleted_at = 0
+							WHERE sm.tenant_id = et.tenant_id
+								and sm.space_id = ?
+								and sm.user_id = et.target_id
+								and sm.status = ?
+								and sm.deleted_at = 0
+						))
+					)
+			)
+		`, serviceexam.TargetTypeSpace, *input.SpaceID, serviceexam.TargetTypeUser, servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled, *input.SpaceID, servicespace.StatusEnabled)
+	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return pagination.Result[serviceexam.Exam]{}, err
@@ -780,14 +810,26 @@ func (r *ExamRepository) cachedAttemptTargetSpaces(ctx context.Context, tenantID
 }
 
 // listAttemptTargetSpaces 查找作答实际命中的考试投放空间。
-// 空间必须同时是考试目标，并且考生仍是该空间的有效成员；普通的其他空间成员关系不参与阅卷授权。
+// 空间投放只命中目标空间；用户直投则映射到考生当前有效空间成员关系。
 func (r *ExamRepository) listAttemptTargetSpaces(ctx context.Context, tenantID uint64, attemptID uint64) ([]attemptTargetSpaceRow, error) {
 	var rows []attemptTargetSpaceRow
 	if err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
 		Select("DISTINCT spaces.id AS space_id, spaces.name AS space_name").
-		Joins("JOIN exam_targets AS targets ON targets.tenant_id = attempts.tenant_id AND targets.exam_id = attempts.exam_id AND targets.target_type = ?", serviceexam.TargetTypeSpace).
-		Joins("JOIN space_members AS members ON members.tenant_id = attempts.tenant_id AND members.space_id = targets.target_id AND members.user_id = attempts.user_id AND members.status = 'enabled' AND members.deleted_at = 0").
-		Joins("JOIN spaces ON spaces.tenant_id = targets.tenant_id AND spaces.id = targets.target_id AND spaces.deleted_at = 0").
+		Joins("JOIN exam_targets AS targets ON targets.tenant_id = attempts.tenant_id AND targets.exam_id = attempts.exam_id").
+		Joins(`
+			JOIN space_members AS members
+				ON members.tenant_id = attempts.tenant_id
+				AND members.user_id = attempts.user_id
+				AND members.status = ?
+				AND members.deleted_at = 0
+				AND (
+					(targets.target_type = ? AND members.space_id = targets.target_id)
+					OR (targets.target_type = ? AND targets.target_id = attempts.user_id)
+				)
+		`, servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser).
+		Joins("JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.status = ? AND spaces.deleted_at = 0", servicespace.StatusEnabled).
+		Joins("JOIN users ON users.id = members.user_id AND users.status = ? AND users.deleted_at = 0", servicetenantuser.StatusEnabled).
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id AND tum.user_id = members.user_id AND tum.status = ?", servicetenantuser.StatusEnabled).
 		Where("attempts.tenant_id = ?", tenantID).
 		Where("attempts.id = ?", attemptID).
 		Order("spaces.id ASC").

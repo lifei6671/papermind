@@ -410,14 +410,14 @@ type fakeRepository struct {
 	usedFrozenPool     bool
 }
 
-func (r *fakeRepository) ListExams(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[Exam], error) {
+func (r *fakeRepository) ListExams(ctx context.Context, input ListInput) (pagination.Result[Exam], error) {
 	exams := make([]Exam, 0, len(r.exams))
 	for _, exam := range r.exams {
-		if exam.TenantID == tenantID {
+		if exam.TenantID == input.TenantID {
 			exams = append(exams, exam)
 		}
 	}
-	page = pagination.Normalize(page)
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
 	return pagination.Result[Exam]{
 		Items:    exams,
 		Page:     page.Page,

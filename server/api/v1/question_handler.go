@@ -83,6 +83,10 @@ func (h questionHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
 		return
 	}
+	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members); err != nil {
+		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
 	page, pageSize, err := readPaginationQuery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))

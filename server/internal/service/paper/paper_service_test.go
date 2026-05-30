@@ -331,7 +331,7 @@ func (r *fakeRepository) SectionSortOrderExists(ctx context.Context, tenantID ui
 	return false, nil
 }
 
-func (r *fakeRepository) ListPapers(ctx context.Context, tenantID uint64) ([]Paper, error) {
+func (r *fakeRepository) ListPapers(ctx context.Context, input ListPapersInput) ([]Paper, error) {
 	return nil, nil
 }
 

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -245,6 +247,7 @@ type resultPublishConfigResponse struct {
 
 type resultExportResponse struct {
 	FilePath string `json:"file_path"`
+	FileURL  string `json:"file_url"`
 	RowCount int    `json:"row_count"`
 }
 
@@ -274,12 +277,21 @@ func (h examHandler) list(c *gin.Context) {
 	if !authorizeExamBusiness(c, tenantID, h.members) {
 		return
 	}
+	spaceID, err := readOptionalUintQuery(c, "space_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
+		return
+	}
+	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members); err != nil {
+		writePermissionOrInternalError(c, err, "构建考试权限上下文失败")
+		return
+	}
 	page, pageSize, err := readPaginationQuery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), serviceexam.ListInput{TenantID: tenantID, Page: page, PageSize: pageSize})
+	result, err := h.service.List(c.Request.Context(), serviceexam.ListInput{TenantID: tenantID, SpaceID: spaceID, Page: page, PageSize: pageSize})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试列表失败"))
 		return
@@ -893,7 +905,61 @@ func (h examHandler) exportResults(c *gin.Context) {
 		writePermissionOrInternalError(c, err, "导出成绩失败")
 		return
 	}
-	c.JSON(http.StatusOK, response.OK(resultExportResponse{FilePath: result.FilePath, RowCount: result.RowCount}))
+	fileName := filepath.Base(result.FilePath)
+	c.JSON(http.StatusOK, response.OK(resultExportResponse{
+		FilePath: fileName,
+		FileURL:  exportDownloadURL(fileName, request.TenantID, request.ExamID, request.SpaceID),
+		RowCount: result.RowCount,
+	}))
+}
+
+func (h examHandler) downloadExport(c *gin.Context) {
+	fileName := c.Param("file_name")
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	examID, err := readUintQuery(c, "exam_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "exam_id 必须是正整数"))
+		return
+	}
+	spaceID, err := readOptionalUintQueryValue(c, "space_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
+		return
+	}
+	permissionContext, err := h.permissionContextFromSession(c, tenantID, spaceID)
+	if err != nil {
+		writePermissionContextError(c, err, "下载成绩导出失败")
+		return
+	}
+	permissionContext = permissionContextWithExamScope(permissionContext, examID, spaceID)
+	if err := permission.NewFixedRoleChecker().CanExportExamResults(permissionContext, examID); err != nil {
+		writePermissionOrInternalError(c, err, "下载成绩导出失败")
+		return
+	}
+	filePath, err := h.export.ResolveExportFile(fileName, examID, permissionContext)
+	if errors.Is(err, serviceexam.ErrInvalidExportFile) {
+		c.JSON(http.StatusNotFound, response.Fail(code.InvalidParam, "导出文件不存在"))
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取导出文件失败"))
+		return
+	}
+	c.FileAttachment(filePath, fileName)
+}
+
+func exportDownloadURL(fileName string, tenantID uint64, examID uint64, spaceID uint64) string {
+	query := url.Values{}
+	query.Set("tenant_id", strconv.FormatUint(tenantID, 10))
+	query.Set("exam_id", strconv.FormatUint(examID, 10))
+	if spaceID != 0 {
+		query.Set("space_id", strconv.FormatUint(spaceID, 10))
+	}
+	return "/api/v1/results/export-files/" + url.PathEscape(fileName) + "?" + query.Encode()
 }
 
 func (r publishExamRequest) validate() error {

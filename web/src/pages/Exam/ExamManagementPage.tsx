@@ -52,7 +52,7 @@ export function ExamManagementPage({
   useEffect(() => {
     let ignore = false;
 
-    api.listExams(tenantID)
+    api.listExams({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) })
       .then((data) => {
         if (!ignore) {
           setExams(data.items);
@@ -73,7 +73,7 @@ export function ExamManagementPage({
     return () => {
       ignore = true;
     };
-  }, [api, tenantID]);
+  }, [api, tenantID, spaceID]);
 
   useEffect(() => {
     let ignore = false;

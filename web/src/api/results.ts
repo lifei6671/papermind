@@ -30,6 +30,7 @@ export type SavePublishConfigInput = ResultActorInput & {
 
 export type ExportResultsResult = {
   filePath: string;
+  fileURL: string;
   rowCount: number;
 };
 
@@ -53,6 +54,7 @@ type ResultAPIResponse = {
 
 type ExportResultsAPIResponse = {
   file_path: string;
+  file_url: string;
   row_count: number;
 };
 
@@ -90,6 +92,7 @@ export function createResultsAPI(apiClient: ApiClient): ResultsAPI {
       });
       return {
         filePath: data.file_path,
+        fileURL: data.file_url,
         rowCount: data.row_count,
       };
     },

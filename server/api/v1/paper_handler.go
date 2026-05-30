@@ -138,7 +138,16 @@ func (h paperHandler) list(c *gin.Context) {
 	if !authorizeExamBusiness(c, tenantID, h.members) {
 		return
 	}
-	papers, err := h.service.ListPapers(c.Request.Context(), tenantID)
+	spaceID, err := readOptionalUintQuery(c, "space_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
+		return
+	}
+	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members); err != nil {
+		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
+		return
+	}
+	papers, err := h.service.ListPapers(c.Request.Context(), servicepaper.ListPapersInput{TenantID: tenantID, SpaceID: spaceID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷列表失败"))
 		return
@@ -218,6 +227,9 @@ func (h paperHandler) listSections(c *gin.Context) {
 		return
 	}
 	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperRead(c, tenantID, paperID) {
 		return
 	}
 	sections, err := h.service.ListSections(c.Request.Context(), tenantID, paperID)
@@ -340,6 +352,9 @@ func (h paperHandler) listRules(c *gin.Context) {
 		return
 	}
 	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperRead(c, tenantID, paperID) {
 		return
 	}
 	rules, err := h.service.ListRules(c.Request.Context(), tenantID, paperID)
@@ -524,6 +539,40 @@ func (r paperRuleActionRequest) validate() error {
 		return errors.New("tenant_id 必须是正整数")
 	}
 	return nil
+}
+
+func (h paperHandler) authorizePaperRead(c *gin.Context, tenantID uint64, paperID uint64) bool {
+	spaceID, err := h.papers.GetPaperSpaceID(c.Request.Context(), tenantID, paperID)
+	if err != nil {
+		if errors.Is(err, servicepaper.ErrPaperNotFound) {
+			writePaperServiceError(c, err)
+			return false
+		}
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷权限范围失败"))
+		return false
+	}
+	principal, ok := currentAuthPrincipal(c)
+	if !ok || principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
+		writePermissionOrInternalError(c, permission.ErrForbidden, "校验试卷读权限失败")
+		return false
+	}
+	if principal.Role == permission.RoleTenantAdmin {
+		return true
+	}
+	if spaceID == nil {
+		return true
+	}
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
+		return false
+	}
+	permissionContext.PaperScope = map[uint64]uint64{paperID: *spaceID}
+	if err := permission.NewFixedRoleChecker().CanManagePaper(permissionContext, paperID); err != nil {
+		writePermissionOrInternalError(c, err, "校验试卷读权限失败")
+		return false
+	}
+	return true
 }
 
 func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paperID uint64) bool {

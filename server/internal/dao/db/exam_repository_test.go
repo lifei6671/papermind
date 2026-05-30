@@ -146,6 +146,49 @@ func TestExamRepositoryReviewAndScoreRowsDoNotDuplicateMultiSpaceStudent(t *test
 	}
 }
 
+func TestExamRepositoryReviewAndScoreRowsResolveUserTargetSpaces(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
+	seedMultiSpaceAttemptData(t, gormDB)
+	if err := gormDB.Exec(`
+		UPDATE exam_targets
+		SET target_type = 'user', target_id = 21
+		WHERE id = 1
+	`).Error; err != nil {
+		t.Fatalf("switch exam target to user: %v", err)
+	}
+
+	pending, err := repo.ListPendingAttempts(t.Context(), 10, 900)
+	if err != nil {
+		t.Fatalf("ListPendingAttempts returned error: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected one pending answer, got %#v", pending)
+	}
+	assertUint64s(t, pending[0].SpaceIDs, []uint64{301, 302})
+	if pending[0].SpaceID != 301 {
+		t.Fatalf("expected pending review display space 301, got %#v", pending[0])
+	}
+
+	rows, err := repo.ListScoreExportRows(t.Context(), 10, 900)
+	if err != nil {
+		t.Fatalf("ListScoreExportRows returned error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected one score export row, got %#v", rows)
+	}
+	assertUint64s(t, rows[0].SpaceIDs, []uint64{301, 302})
+	if rows[0].SpaceID != 301 {
+		t.Fatalf("expected score export display space 301, got %#v", rows[0])
+	}
+
+	spaces, err := repo.AttemptSpaceIDs(t.Context(), 10, 700)
+	if err != nil {
+		t.Fatalf("AttemptSpaceIDs returned error: %v", err)
+	}
+	assertUint64s(t, spaces, []uint64{301, 302})
+}
+
 func TestExamRepositoryCreateAttemptMapsUniqueConflict(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
@@ -177,6 +220,18 @@ func openExamRepositoryTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("run migration: %v", err)
 	}
 	return gormDB
+}
+
+func assertUint64s(t *testing.T, got []uint64, want []uint64) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("expected %#v, got %#v", want, got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("expected %#v, got %#v", want, got)
+		}
+	}
 }
 
 func seedMultiSpaceAttemptData(t *testing.T, gormDB *gorm.DB) {

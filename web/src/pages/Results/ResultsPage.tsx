@@ -99,7 +99,7 @@ export function ResultsPage({
   async function handleExportResults() {
     try {
       const result = await api.exportResults({ tenantID, examID, actorID, actorRole, spaceID: effectiveSpaceID });
-      setExportHref(result.filePath);
+      setExportHref(result.fileURL);
       setExportMessage(`成绩导出完成：已导出 ${result.rowCount} 行，文件 ${result.filePath}`);
     } catch (err) {
       setExportHref("");

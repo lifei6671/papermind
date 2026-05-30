@@ -772,7 +772,7 @@ test("成绩页支持发布配置和成绩导出", async () => {
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
-        data: { file_path: "server/data/exports/exam-1-scores.csv", row_count: 1 },
+        data: { file_path: "exam-1-scores.csv", file_url: "/api/v1/results/export-files/exam-1-scores.csv?tenant_id=10&exam_id=1", row_count: 1 },
       }));
     }
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });

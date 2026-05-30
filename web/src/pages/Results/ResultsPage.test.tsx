@@ -23,7 +23,8 @@ test("成绩页从真实 API 加载成绩、保存发布配置并导出", async 
     }),
     savePublishConfig: vi.fn().mockResolvedValue(undefined),
     exportResults: vi.fn().mockResolvedValue({
-      filePath: "server/data/exports/exam-1-scores.csv",
+      filePath: "exam-1-scores.csv",
+      fileURL: "/api/v1/results/export-files/exam-1-scores.csv?tenant_id=10&exam_id=1",
       rowCount: 1,
     }),
   };
@@ -62,7 +63,7 @@ test("成绩页从真实 API 加载成绩、保存发布配置并导出", async 
     spaceID: undefined,
   });
   expect(await screen.findByRole("status", { name: "result-export" })).toHaveTextContent("已导出 1 行");
-  expect(screen.getByRole("link", { name: "下载导出文件" })).toHaveAttribute("href", "server/data/exports/exam-1-scores.csv");
+  expect(screen.getByRole("link", { name: "下载导出文件" })).toHaveAttribute("href", "/api/v1/results/export-files/exam-1-scores.csv?tenant_id=10&exam_id=1");
 });
 
 test("教师成绩页不展示导出入口", async () => {

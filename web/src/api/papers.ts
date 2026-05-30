@@ -27,6 +27,7 @@ export type PaperSectionRow = {
 
 export type ListPapersInput = {
   tenantID: number;
+  spaceID?: number;
 };
 
 export type ListPaperSectionsInput = {
@@ -210,7 +211,11 @@ export const paperApi = createPaperAPI(defaultApiClient);
 export function createPaperAPI(apiClient: ApiClient): PaperAPI {
   return {
     async listPapers(input) {
-      const data = await apiClient.get<PageData<PaperAPIResponse>>(`/api/v1/papers?tenant_id=${input.tenantID}`);
+      const params = new URLSearchParams({ tenant_id: String(input.tenantID) });
+      if (input.spaceID !== undefined) {
+        params.set("space_id", String(input.spaceID));
+      }
+      const data = await apiClient.get<PageData<PaperAPIResponse>>(`/api/v1/papers?${params.toString()}`);
       return { items: data.items.map(mapPaperResponse) };
     },
     async createPaper(input) {

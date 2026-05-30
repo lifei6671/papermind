@@ -52,7 +52,7 @@ describe("results api", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({
         code: 0,
         message: "ok",
-        data: { file_path: "server/data/exports/exam-1-scores.csv", row_count: 1 },
+        data: { file_path: "exam-1-scores.csv", file_url: "/api/v1/results/export-files/exam-1-scores.csv?tenant_id=10&exam_id=1&space_id=301", row_count: 1 },
       })));
     const api = createResultsAPI(createApiClient({ baseUrl: "", fetcher }));
 
@@ -72,7 +72,8 @@ describe("results api", () => {
       actorRole: "teacher",
       spaceID: 301,
     })).resolves.toEqual({
-      filePath: "server/data/exports/exam-1-scores.csv",
+      filePath: "exam-1-scores.csv",
+      fileURL: "/api/v1/results/export-files/exam-1-scores.csv?tenant_id=10&exam_id=1&space_id=301",
       rowCount: 1,
     });
 

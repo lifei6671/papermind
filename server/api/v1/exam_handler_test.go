@@ -92,8 +92,8 @@ func TestExamPublishRejectsOtherSpacePaperOrTargetWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedExamBusinessLoginAPITestData(t, gormDB)
-	seedPaperAPITestData(t, gormDB)
 	seedPaperTeacherSpaceAPITestData(t, gormDB)
+	seedPaperAPITestData(t, gormDB)
 	seedOtherSpaceExamPublishAPITestData(t, gormDB)
 
 	router := NewRouter(RouterOptions{
@@ -384,6 +384,41 @@ func TestSpaceAdminMembershipCanEnterExamBusinessAPIs(t *testing.T) {
 	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/questions?tenant_id=10&space_id=301", nil, authHeader))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("space admin exam business status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestExamBusinessListAPIsRejectUnauthorizedSpaceScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+	seedPaperRuleAPITestData(t, gormDB)
+	seedOtherSpaceQuestionAPITestData(t, gormDB)
+	seedOtherSpaceOnlyExamForPublishConfigTest(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "questions", method: http.MethodGet, path: "/api/v1/questions?tenant_id=10&space_id=302"},
+		{name: "papers", method: http.MethodGet, path: "/api/v1/papers?tenant_id=10&space_id=302"},
+		{name: "exams", method: http.MethodGet, path: "/api/v1/exams?tenant_id=10&space_id=302"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(tc.method, tc.path, nil, authHeader))
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
@@ -1275,6 +1310,31 @@ func TestReviewAndResultAPIRoutesRejectForgedSpaceIDWithSQLite(t *testing.T) {
 	exportBody := decodeExamAPIResponse[resultExportResponse](t, exportRecorder.Body.Bytes())
 	if exportBody.Data.RowCount != 1 {
 		t.Fatalf("expected export to include only authorized-space row, got %d", exportBody.Data.RowCount)
+	}
+	var exportRaw map[string]any
+	if err := json.Unmarshal(exportRecorder.Body.Bytes(), &exportRaw); err != nil {
+		t.Fatalf("decode export raw response: %v", err)
+	}
+	exportData, ok := exportRaw["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected export data object, got %#v", exportRaw["data"])
+	}
+	fileURL, _ := exportData["file_url"].(string)
+	if !strings.HasPrefix(fileURL, "/api/v1/results/export-files/") {
+		t.Fatalf("expected export file_url to be an API download URL, got %q", fileURL)
+	}
+	filePath, _ := exportData["file_path"].(string)
+	if filepath.IsAbs(filePath) || strings.Contains(filePath, "server/data/exports") {
+		t.Fatalf("expected export file_path not to expose server filesystem path, got %q", filePath)
+	}
+
+	downloadRecorder := httptest.NewRecorder()
+	router.ServeHTTP(downloadRecorder, authorizedRequest(http.MethodGet, fileURL, nil, authHeader))
+	if downloadRecorder.Code != http.StatusOK {
+		t.Fatalf("download export status = %d, body = %s", downloadRecorder.Code, downloadRecorder.Body.String())
+	}
+	if disposition := downloadRecorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, filePath) {
+		t.Fatalf("expected download filename %q in content disposition, got %q", filePath, disposition)
 	}
 }
 

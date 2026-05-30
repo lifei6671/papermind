@@ -1361,7 +1361,7 @@ API 分组：
 - 平台侧接口按平台管理边界校验登录态；租户用户只能操作 session 所属 `tenant_id`，禁止信任请求体跨租户切换。
 - 租户侧用户管理、空间资料管理和空间成员管理接口统一放在 `/api/v1/tenant/**` 下，必须从当前租户用户 session 派生 `tenant_id`；query/body 中保留的 `tenant_id` 只能作为兼容旧调用方的冗余字段，不能参与授权判断或 service 入参。用户删除、角色修改和批量导入接口还必须从 session 派生操作者 ID，并拒绝自删、自改角色或在批量覆盖中改变自己的租户级角色；删除不存在或已删除用户必须返回明确错误，不能把空更新当成成功。空间成员写入口必须校验目标空间启用且未删除、目标用户属于当前租户且启用未删除，并且空间内角色只能是 `space_admin`、`teacher` 或 `student`。平台管理员不能直接进入这些租户业务接口，需要查看租户概览时必须走平台侧只读治理接口。
 - 租户后台“空间成员”页面必须直接调用 `/api/v1/tenant/spaces/:id/members` 这一组接口完成成员列表、添加成员、修改空间身份、启用/禁用和移除；目标空间来自当前 session 的授权空间列表，不允许使用前端固定租户或空间默认值。租户管理员不展示独立“空间成员”菜单，避免和“空间管理”里的成员管理入口重复；租户管理员从“空间管理 > 成员管理”维护空间成员，独立 `/space-members` 入口只给当前账号具备启用 `space_admin` 空间授权的用户。
-- 后台考试业务接口，包括题库、题目导入、试卷、组卷规则、考试发布、阅卷和成绩，允许本租户 `tenant_admin` 访问；`space_admin` 和 `teacher` 只能访问自己已加入且启用的空间范围。`space_admin` 必须从 `space_members.role_in_space` 动态判断，不能来自 session role。平台管理员不进入租户业务菜单，也不能通过直接请求操作考试资源。
+- 后台考试业务接口，包括题库、题目导入、试卷、组卷规则、考试发布、阅卷和成绩，允许本租户 `tenant_admin` 访问；`space_admin` 和 `teacher` 只能访问自己已加入且启用的空间范围。题库、试卷和考试列表接口收到 `space_id` 时必须用当前 session 反查启用空间成员关系；非 `tenant_admin` 不能省略空间范围后读取全租户数据。`space_admin` 必须从 `space_members.role_in_space` 动态判断，不能来自 session role。平台管理员不进入租户业务菜单，也不能通过直接请求操作考试资源。
 - 平台侧写操作统一从当前主体上下文获取平台管理员用户 ID，禁止再从请求体信任 `actor_id` 写审计字段。
 - 邀请码解析必须从租户用户 session 派生 `user_id` 和 `tenant_id`，禁止信任请求体里的考生 ID。
 - 未携带有效平台管理员 Bearer token 或 session cookie 时，平台侧接口返回 HTTP 401 未登录错误；前端 API client 收到 401 后必须清空本地登录态，并由后台路由守卫跳转登录页。
@@ -1376,7 +1376,7 @@ API 分组：
 - 管理端创建租户用户时必须显式提交初始密码并写入哈希；后端不得使用固定默认密码或固定临时密码。
 - `tenant_admin` 创建 `teacher` 用户时，只创建租户用户和租户级 `teacher` 角色，不自动写入 `space_members`。教师加入空间必须通过空间成员接口显式分配；没有任何启用空间成员关系时允许登录，但不能操作题库、试卷、考试或阅卷。
 
-阅卷和成绩 API 必须从登录态解析调用人身份。`tenant_admin` 可以管理本租户内成绩和阅卷；教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。成绩发布配置属于考试级管理操作，只允许本租户 `tenant_admin` 或具备对应考试发布目标空间权限的 `space_admin` / `teacher` 修改；后端必须从 `exam_targets` 推导真实目标空间，不能用请求体 `space_id` 直接构造 `ExamScope`。成绩导出必须单独走 `CanExportExamResults`，首版只允许 `tenant_admin` 和当前空间 `space_admin`，默认不开放给教师和学生。
+阅卷和成绩 API 必须从登录态解析调用人身份。`tenant_admin` 可以管理本租户内成绩和阅卷；教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。空间投放考试只命中目标空间；用户直投考试必须把目标学生当前启用空间成员关系展开为真实阅卷和成绩导出空间，避免直投学生完成考试后对应空间教师无法处理成绩。成绩发布配置属于考试级管理操作，只允许本租户 `tenant_admin` 或具备对应考试发布目标空间权限的 `space_admin` / `teacher` 修改；后端必须从 `exam_targets` 推导真实目标空间，不能用请求体 `space_id` 直接构造 `ExamScope`。成绩导出必须单独走 `CanExportExamResults`，首版只允许 `tenant_admin` 和当前空间 `space_admin`，默认不开放给教师和学生。
 
 学生成绩查看不走 `/api/v1/tenant/results/:id`。`GET /api/v1/tenant/results/:id` 仅用于管理端成绩详情，允许 `tenant_admin` / 授权空间 `space_admin` / 授权空间 `teacher`，不允许 `student`。`GET /api/v1/exam-entry/results/:id` 用于学生查看自己的已发布成绩，只允许目标 `student`，并且必须满足成绩发布策略和可见时间。
 
@@ -1418,6 +1418,13 @@ POST /api/v1/uploads
      form-data: file, category?
      response: key, url, file_name, content_type, size
 
+GET  /api/v1/questions
+     query: tenant_id, space_id?, page?, page_size?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
+GET  /api/v1/papers
+     query: tenant_id, space_id?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
+GET  /api/v1/exams
+     query: tenant_id, space_id?, page?, page_size?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
+
 GET  /api/v1/grading/pending
      query: tenant_id, exam_id, space_id?
 
@@ -1436,6 +1443,9 @@ POST /api/v1/results/publish-config
 
 POST /api/v1/results/export
      body: tenant_id, exam_id, space_id?
+     response: file_path 只返回导出文件名，file_url 返回受鉴权保护的 API 下载地址，row_count 返回导出行数。
+GET  /api/v1/results/export-files/:file_name
+     query: tenant_id, exam_id, space_id?；下载前重新校验当前 session 的成绩导出权限，不暴露服务器本地文件路径。
 ```
 
 列表接口统一分页参数：
@@ -1471,7 +1481,7 @@ page_size  默认 20，最大 100
 
 本地端到端联调约定：
 
-- 服务启动时先执行数据库迁移，再执行 `bootstrap/adminseed`。当 `platform_users` 为空时，系统会创建默认平台管理员 `admin / admin123`，默认邮箱为 `admin@iminho.me`，已有平台管理员时不覆盖现有账号。
+- 服务启动时先执行数据库迁移，再执行 `bootstrap/adminseed`。只有 `app.env` 为 `dev`、`development`、`local` 或 `test`，且 `platform_users` 为空时，系统才会创建本地联调用默认平台管理员 `admin / admin123`，默认邮箱为 `admin@iminho.me`；其他环境不会创建公开固定密码的高权限账号。
 - `app.env` 为 `dev`、`development` 或 `local` 且 `database.driver = sqlite` 时，`bootstrap/devseed` 在迁移完成后写入幂等演示数据。
 - 演示数据固定覆盖前端默认联调入口：租户 `10`、平台管理员 `1`、租户管理员 `1`、考生 `20`、教师 `21`、试卷 `100`、考试 `1`。
 - 默认考试每次开发环境启动都会滚动到当前可作答时间窗口内，避免长期复用 SQLite 数据库后考试过期。
@@ -1479,7 +1489,7 @@ page_size  默认 20，最大 100
 
 前端管理页不能内置核心业务 mock 数据。个人设置页必须通过 `/api/v1/profile` 读取当前账号资料并提交保存，不能只修改本地登录态；平台管理员登录账号在个人设置页只读，避免误改登录标识；租户用户保存成功后同步本地 session 的显示名称，让导航和页面标题立即刷新。租户登录页不再展示租户 ID 输入框，租户账号登录后进入 `/tenant-entry`，通过 `/api/v1/tenant/profile/spaces` 展示可进入的租户和空间，再调用 `/api/v1/auth/tenant/select-space` 绑定当前 session。`/tenant-entry` 必须按角色展示入口：`tenant_admin` 只展示租户后台入口，多个空间授权折叠为同一个租户入口，选择时不传 `space_id`；`space_admin`、`teacher` 和 `student` 才按具体空间展示空间管理、教学业务或考试入口。租户后台侧边栏必须展示当前租户身份和租户名称，主按钮固定为“切换租户”，点击后回到 `/tenant-entry`；平台管理员侧边栏继续展示平台身份和“回到概览”。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。空间管理、用户管理等租户级页面必须从租户用户 session 获取目标租户，并调用 `/api/v1/tenant/**` 租户前缀接口；缺失有效租户 ID 时只展示选择提示，不得使用 `10` 等前端默认值请求后端。后台左侧“租户空间”和“用户管理”菜单对 `tenant_admin` 显示；`tenant_admin` 不显示独立“空间成员”菜单，空间成员维护统一从“空间管理”的成员管理入口进入。独立“空间成员”菜单只对拥有启用 `space_admin` 空间授权的账号显示，其可见性必须来自 `/api/v1/tenant/profile/spaces` 返回的当前用户启用空间成员关系和 `role = space_admin`，不能来自 session role，其中 `tenant_admin` 管理本租户全量空间和用户，`space_admin` 只能管理授权空间范围。后台左侧“考试业务”菜单对 `tenant_admin`、拥有授权空间的 `space_admin` 和 `teacher` 显示，其中 `tenant_admin` 管理本租户全量考试业务，`space_admin` / `teacher` 只能操作已加入且启用的空间范围。平台管理员直接访问租户业务后台路由时回到平台概览页，不渲染租户业务页面或触发租户业务 API 请求。平台管理员在租户管理列表中查看某个租户的空间或用户时，只在当前页面从右侧滑入抽屉并调用平台侧只读概览 API `/api/v1/tenants/:id/spaces` 或 `/api/v1/tenants/:id/users`，不跳转到租户侧空间管理或用户管理页面；遮罩层固定铺满视口并随抽屉打开淡入、关闭淡出，抽屉使用右侧绝对定位叠在遮罩层上滑入滑出，不在遮罩层内预留白色占位；抽屉默认占用 50% 视口宽度，全屏按钮在 50% 与 100% 视口宽度之间切换，宽度变化保持过渡动画；返回和关闭按钮只触发滑出和遮罩淡出动画，待动画结束后再卸载抽屉，遮罩层不触发关闭；抽屉列表必须保持租户侧空间管理、用户管理列表的列结构，只改变承载方式。教师没有加入任何空间时，用户详情和业务页必须提示“该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷”。
 
-公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 只能由本租户 `tenant_admin` 创建或导入；`teacher` 和空间管理员只能写自己启用空间内的题库。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
+公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 只能由本租户 `tenant_admin` 创建或导入；`teacher` 和空间管理员只能写自己启用空间内的题库。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。读取试卷大题和组卷规则详情时，也必须从 `paper_id` 反查 `papers.space_id` 后校验当前账号的真实空间成员关系；非 `tenant_admin` 不能仅凭租户考试业务入口读取其他空间试卷结构。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
 
 成绩列表、发布配置和导出必须基于成绩行或考试范围反查真实空间。`teacher` 可以查看授权空间内成绩，但首版不能导出成绩；前端不展示教师导出入口，后端仍以 `CanExportExamResults` 作为最终拒绝边界。学生查分只走 `/api/v1/exam-entry/results/:id`，不能调用管理端成绩接口。
 

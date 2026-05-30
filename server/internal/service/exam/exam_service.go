@@ -214,13 +214,14 @@ type GenerateSnapshotInput struct {
 }
 
 type ListInput struct {
-	TenantID uint64 // 所属租户 ID。
-	Page     int    // 页码，从 1 开始。
-	PageSize int    // 每页数量。
+	TenantID uint64  // 所属租户 ID。
+	SpaceID  *uint64 // 可见空间范围；nil 表示租户管理员全租户范围。
+	Page     int     // 页码，从 1 开始。
+	PageSize int     // 每页数量。
 }
 
 type Repository interface {
-	ListExams(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[Exam], error)
+	ListExams(ctx context.Context, input ListInput) (pagination.Result[Exam], error)
 	CreateExam(ctx context.Context, exam Exam) (Exam, error)
 	GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (Paper, error)
 	InviteCodeExists(ctx context.Context, tenantID uint64, code string) (bool, error)
@@ -289,7 +290,7 @@ func NewService(options ServiceOptions) *Service {
 }
 
 func (s *Service) List(ctx context.Context, input ListInput) (pagination.Result[Exam], error) {
-	return s.repo.ListExams(ctx, input.TenantID, pagination.Input{Page: input.Page, PageSize: input.PageSize})
+	return s.repo.ListExams(ctx, input)
 }
 
 func (s *Service) GetExam(ctx context.Context, tenantID uint64, examID uint64) (Exam, error) {

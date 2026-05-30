@@ -12,15 +12,15 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestRunCreatesDefaultPlatformAdminAfterMigration(t *testing.T) {
+func TestRunForEnvCreatesDefaultPlatformAdminInDevelopment(t *testing.T) {
 	gormDB, closeDB := openSQLiteForAdminSeedTest(t)
 	defer closeDB()
 
 	if err := migration.Run(gormDB, filepath.Join("..", "..", "data", "migrations", "sqlite")); err != nil {
 		t.Fatalf("Run(sqlite migrations) error = %v", err)
 	}
-	if err := Run(context.Background(), gormDB); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := RunForEnv(context.Background(), gormDB, "dev"); err != nil {
+		t.Fatalf("RunForEnv() error = %v", err)
 	}
 
 	var admin dbmodel.PlatformUserDO
@@ -37,8 +37,8 @@ func TestRunCreatesDefaultPlatformAdminAfterMigration(t *testing.T) {
 		t.Fatalf("default admin password hash does not verify admin123")
 	}
 
-	if err := Run(context.Background(), gormDB); err != nil {
-		t.Fatalf("second Run() error = %v", err)
+	if err := RunForEnv(context.Background(), gormDB, "dev"); err != nil {
+		t.Fatalf("second RunForEnv() error = %v", err)
 	}
 	var count int64
 	if err := gormDB.Model(&dbmodel.PlatformUserDO{}).Where("username = ?", "admin").Count(&count).Error; err != nil {
@@ -46,6 +46,26 @@ func TestRunCreatesDefaultPlatformAdminAfterMigration(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("default admin count = %d, want 1", count)
+	}
+}
+
+func TestRunForEnvSkipsDefaultPlatformAdminOutsideDevelopment(t *testing.T) {
+	gormDB, closeDB := openSQLiteForAdminSeedTest(t)
+	defer closeDB()
+
+	if err := migration.Run(gormDB, filepath.Join("..", "..", "data", "migrations", "sqlite")); err != nil {
+		t.Fatalf("Run(sqlite migrations) error = %v", err)
+	}
+	if err := RunForEnv(context.Background(), gormDB, "docker"); err != nil {
+		t.Fatalf("RunForEnv() error = %v", err)
+	}
+
+	var count int64
+	if err := gormDB.Model(&dbmodel.PlatformUserDO{}).Where("username = ?", "admin").Count(&count).Error; err != nil {
+		t.Fatalf("count default admin error = %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("default admin count = %d, want 0", count)
 	}
 }
 
