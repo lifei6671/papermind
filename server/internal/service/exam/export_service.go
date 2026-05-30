@@ -69,7 +69,7 @@ func NewExportService(options ExportServiceOptions) *ExportService {
 }
 
 func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamScoresInput) (ExportResult, error) {
-	rows, err := s.listExamScoresByPermission(ctx, ListExamScoresInput(input), s.canExportExamInAnySpace)
+	rows, err := s.listExamScoresByPermission(ctx, ListExamScoresInput(input), s.canExportExamInAnySpace, s.canExportEmptyExam)
 	if err != nil {
 		return ExportResult{}, err
 	}
@@ -90,7 +90,7 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 }
 
 func (s *ExportService) ListExamScores(ctx context.Context, input ListExamScoresInput) ([]ScoreExportRow, error) {
-	return s.listExamScoresByPermission(ctx, input, s.canViewExamResultsInAnySpace)
+	return s.listExamScoresByPermission(ctx, input, s.canViewExamResultsInAnySpace, s.canViewEmptyExam)
 }
 
 func (s *ExportService) ResolveExportFile(fileName string, examID uint64, ctx permission.PermissionContext) (string, error) {
@@ -135,7 +135,7 @@ func exportFileScope(ctx permission.PermissionContext) string {
 	return fmt.Sprintf("space-%d", spaceIDs[0])
 }
 
-func (s *ExportService) listExamScoresByPermission(ctx context.Context, input ListExamScoresInput, allow func(permission.PermissionContext, uint64, []uint64) bool) ([]ScoreExportRow, error) {
+func (s *ExportService) listExamScoresByPermission(ctx context.Context, input ListExamScoresInput, allow func(permission.PermissionContext, uint64, []uint64) bool, allowEmpty func(permission.PermissionContext, uint64) bool) ([]ScoreExportRow, error) {
 	if !hasPossibleGradeRole(input.Permission) {
 		return nil, permission.ErrForbidden
 	}
@@ -143,7 +143,7 @@ func (s *ExportService) listExamScoresByPermission(ctx context.Context, input Li
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 && allow(input.Permission, input.ExamID, examScopeSpaceIDs(input.Permission, input.ExamID)) {
+	if len(rows) == 0 && allowEmpty(input.Permission, input.ExamID) {
 		return []ScoreExportRow{}, nil
 	}
 	allowed := make([]ScoreExportRow, 0, len(rows))
@@ -156,6 +156,25 @@ func (s *ExportService) listExamScoresByPermission(ctx context.Context, input Li
 		return nil, permission.ErrForbidden
 	}
 	return allowed, nil
+}
+
+func (s *ExportService) canViewEmptyExam(ctx permission.PermissionContext, examID uint64) bool {
+	return hasPossibleGradeRole(ctx)
+}
+
+func (s *ExportService) canExportEmptyExam(ctx permission.PermissionContext, examID uint64) bool {
+	if ctx.Role == permission.RoleTenantAdmin {
+		return true
+	}
+	for spaceID, role := range ctx.SpaceMemberships {
+		if role != permission.RoleSpaceAdmin {
+			continue
+		}
+		if err := s.permissionChecker.CanExportExamResults(permissionWithExamScope(ctx, examID, spaceID), examID); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func examScopeSpaceIDs(ctx permission.PermissionContext, examID uint64) []uint64 {

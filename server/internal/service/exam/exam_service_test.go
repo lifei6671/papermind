@@ -185,11 +185,11 @@ func TestStartExamIsIdempotentAndIssuesOpaqueAttemptToken(t *testing.T) {
 	if started.Attempt.ID != 99 || repo.createdAttempt.ID != 0 {
 		t.Fatalf("expected existing in_progress attempt, got started=%#v created=%#v", started.Attempt, repo.createdAttempt)
 	}
-	if started.ExamToken != "" {
-		t.Fatalf("expected existing attempt not to issue a new token, got %q", started.ExamToken)
+	if started.ExamToken != "exam-token" {
+		t.Fatalf("expected existing attempt to receive a fresh token, got %q", started.ExamToken)
 	}
-	if started.Attempt.ExamTokenHash != existingTokenHash || repo.updateAttemptTokenCount != 0 {
-		t.Fatalf("expected existing attempt token not to be refreshed, got started=%#v updates=%d", started, repo.updateAttemptTokenCount)
+	if started.Attempt.ExamTokenHash != HashExamToken("exam-token") || started.Attempt.ExamTokenHash == existingTokenHash || repo.updateAttemptTokenCount != 1 {
+		t.Fatalf("expected existing attempt token to be refreshed, got started=%#v updates=%d", started, repo.updateAttemptTokenCount)
 	}
 
 	repo.existingInProgress = nil
@@ -228,8 +228,8 @@ func TestStartExamIsIdempotentAndIssuesOpaqueAttemptToken(t *testing.T) {
 	if started.Attempt.ID != 100 || repo.retriedAfterConflict != 1 {
 		t.Fatalf("expected conflict to query existing in_progress only, got attempt=%#v retries=%d", started.Attempt, repo.retriedAfterConflict)
 	}
-	if started.ExamToken != "" || repo.updateAttemptTokenCount != 0 {
-		t.Fatalf("expected conflict path not to renew token, got token=%q updates=%d", started.ExamToken, repo.updateAttemptTokenCount)
+	if started.ExamToken != "exam-token" || repo.updateAttemptTokenCount != 2 {
+		t.Fatalf("expected conflict path to renew token, got token=%q updates=%d", started.ExamToken, repo.updateAttemptTokenCount)
 	}
 }
 

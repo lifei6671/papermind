@@ -699,8 +699,8 @@ func TestExamEntryStartReturnsOpaqueTokenAndStoresOnlyHash(t *testing.T) {
 	if restarted.Attempt.ID != started.Attempt.ID {
 		t.Fatalf("expected repeated start to reuse attempt %d, got %d", started.Attempt.ID, restarted.Attempt.ID)
 	}
-	if restarted.ExamToken != "" {
-		t.Fatalf("expected repeated start not to renew exam token, got %q", restarted.ExamToken)
+	if restarted.ExamToken == "" || restarted.ExamToken == started.ExamToken {
+		t.Fatalf("expected repeated start to renew exam token, got %q", restarted.ExamToken)
 	}
 	var restartedRow struct {
 		ExamTokenHash string
@@ -711,8 +711,8 @@ func TestExamEntryStartReturnsOpaqueTokenAndStoresOnlyHash(t *testing.T) {
 		Scan(&restartedRow).Error; err != nil {
 		t.Fatalf("query restarted attempt token hash: %v", err)
 	}
-	if restartedRow.ExamTokenHash != row.ExamTokenHash {
-		t.Fatalf("expected repeated start not to update token hash, before=%q after=%q", row.ExamTokenHash, restartedRow.ExamTokenHash)
+	if restartedRow.ExamTokenHash == row.ExamTokenHash || restartedRow.ExamTokenHash != serviceexam.HashExamToken(restarted.ExamToken) {
+		t.Fatalf("expected repeated start to update token hash, before=%q after=%q", row.ExamTokenHash, restartedRow.ExamTokenHash)
 	}
 }
 

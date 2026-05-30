@@ -499,7 +499,7 @@ go test -tags json1 ./internal/service/permission
     tenant mismatch、attempt mismatch 均被拒绝，客户端额外传入伪造
     `exam_id` / `user_id` 不能改变答案保存的真实 `updated_by`。
     若未来要求请求体逐字段比对 `exam_id` / `user_id`，需要先确认公共 API 变更。
-- [x] `exam_token` 不支持刷新和续签。
+- [x] `exam_token` 过期后不续期；重复开考会为同一个 in-progress attempt 续发新的明文 token 并替换 hash。
 - [x] 普通登录 session 不能调用自动保存、提交和事件接口。
 - [x] `exam_token` 不能调用 profile、tenant、questions、papers、grading、results 等后台接口。
 
@@ -688,7 +688,7 @@ go test -tags json1 ./internal/service/permission
 - [x] 覆盖公共题库和已暴露公共试卷写接口只允许 `tenant_admin` 写入。
 - [x] 覆盖学生不能访问 `/api/v1/tenant/results/:id`。
 - [x] 覆盖学生只能访问自己的 `/api/v1/exam-entry/results/:id`。
-- [x] 覆盖 `exam_token` 不能续签、不能访问后台接口。
+- [x] 覆盖 `exam_token` 过期后不续期、重复开考续发 token、不能访问后台接口。
 - [x] 覆盖普通登录 session 不能调用答题保存、提交和事件接口。
 - [x] 覆盖 `exam_token` 返回不透明 token，数据库只保存 hash。
 - [x] 覆盖过期 token、已提交 attempt、超过可保存窗口都会拒绝答题写入。

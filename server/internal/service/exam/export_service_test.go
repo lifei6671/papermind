@@ -88,6 +88,29 @@ func TestExportServiceFiltersRowsByActualSpaceScope(t *testing.T) {
 	}
 }
 
+func TestExportServiceReturnsEmptyRowsWithoutExamScope(t *testing.T) {
+	repo := &fakeExportRepository{}
+	svc := NewExportService(ExportServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), ExportDir: t.TempDir(), Now: fixedNow})
+
+	rows, err := svc.ListExamScores(context.Background(), ListExamScoresInput{
+		Permission: permission.PermissionContext{
+			SubjectType:      permission.SubjectTenantUser,
+			UserID:           601,
+			TenantID:         10,
+			Role:             permission.RoleTeacher,
+			SpaceMemberships: map[uint64]string{301: permission.RoleTeacher},
+		},
+		TenantID: 10,
+		ExamID:   20,
+	})
+	if err != nil {
+		t.Fatalf("ListExamScores returned error: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected empty score rows, got %#v", rows)
+	}
+}
+
 func TestExportServiceRejectsTeacherExportEvenWhenTeacherCanViewScores(t *testing.T) {
 	repo := &fakeExportRepository{
 		rows: []ScoreExportRow{{StudentName: "张三", SpaceID: 301, SpaceName: "一班", TotalScore: "10"}},

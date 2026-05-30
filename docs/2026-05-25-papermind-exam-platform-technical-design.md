@@ -1122,7 +1122,7 @@ INDEX (exam_token_hash, status)
 - middleware 校验 exam token 时，通过 hash 查询 `exam_attempts`。
 - middleware 同时校验 attempt 状态，已提交、已强制交卷、考试已终止时拒绝继续自动保存或提交。
 - `exam_token` 只能访问当前 attempt 的自动保存、提交答卷和事件上报接口，不能访问其他业务接口。
-- `exam_token` 不支持刷新和续签，过期后不能延长为新的考试 token；重复调用开考接口只能复用已有 attempt，不能返回或写入新的 exam_token。
+- `exam_token` 过期后不能延长为新的考试 token；重复调用开考接口复用已有 in-progress attempt，但必须续发新的明文 `exam_token` 并更新 `exam_attempts.exam_token_hash`，避免刷新页面或请求重试后前端拿到空 token 无法继续作答。
 - 普通登录 session 不能调用自动保存、提交答卷和事件上报接口。
 - `exam_token` 不能调用 profile、tenant、questions、papers、grading、results 等后台接口。
 - exam token 物理有效期和考试业务作答时间必须分开校验。
@@ -1146,7 +1146,7 @@ type ExamEntryContext struct {
 }
 ```
 
-`/api/v1/exam-entry/**` 中间件必须按 `exam_token` hash 找到 attempt，并校验 `tenant_id`、`exam_id`、`attempt_id`、`user_id`、attempt 状态、token 过期时间和业务作答截止时间。`exam_token` 只能构造 `ExamEntryContext`，不能升级成后台 `ActorContext`，不能刷新或续签，也不能访问 profile、tenant、questions、papers、grading、results 等后台接口。普通登录 session 不能调用答题、提交和事件接口。用户被禁用或不再属于考试目标时，新的开考请求必须拒绝；已签发 `exam_token` 的自动保存按 attempt 状态和作答截止时间收口。
+`/api/v1/exam-entry/**` 中间件必须按 `exam_token` hash 找到 attempt，并校验 `tenant_id`、`exam_id`、`attempt_id`、`user_id`、attempt 状态、token 过期时间和业务作答截止时间。`exam_token` 只能构造 `ExamEntryContext`，不能升级成后台 `ActorContext`，也不能访问 profile、tenant、questions、papers、grading、results 等后台接口。普通登录 session 不能调用答题、提交和事件接口。用户被禁用或不再属于考试目标时，新的开考请求必须拒绝；已签发 `exam_token` 的自动保存按 attempt 状态和作答截止时间收口。
 
 当前写入口请求体不要求传入 `exam_id` 或 `user_id`；这两个字段必须从
 `exam_token` 命中的 attempt 派生到 `ExamEntryContext`。保存答案时，
@@ -1376,7 +1376,7 @@ API 分组：
 - 管理端创建租户用户时必须显式提交初始密码并写入哈希；后端不得使用固定默认密码或固定临时密码。
 - `tenant_admin` 创建 `teacher` 用户时，只创建租户用户和租户级 `teacher` 角色，不自动写入 `space_members`。教师加入空间必须通过空间成员接口显式分配；没有任何启用空间成员关系时允许登录，但不能操作题库、试卷、考试或阅卷。
 
-阅卷和成绩 API 必须从登录态解析调用人身份。`tenant_admin` 可以管理本租户内成绩和阅卷；教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。空间投放考试只命中目标空间；用户直投考试必须把目标学生当前启用空间成员关系展开为真实阅卷和成绩导出空间，避免直投学生完成考试后对应空间教师无法处理成绩。成绩发布配置属于考试级管理操作，只允许本租户 `tenant_admin` 或具备对应考试发布目标空间权限的 `space_admin` / `teacher` 修改；后端必须从 `exam_targets` 推导真实目标空间，不能用请求体 `space_id` 直接构造 `ExamScope`。成绩导出必须单独走 `CanExportExamResults`，首版只允许 `tenant_admin` 和当前空间 `space_admin`，默认不开放给教师和学生。
+阅卷和成绩 API 必须从登录态解析调用人身份。`tenant_admin` 可以管理本租户内成绩和阅卷；教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。空间投放考试只命中目标空间；用户直投考试必须把目标学生当前启用空间成员关系展开为真实阅卷和成绩导出空间，避免直投学生完成考试后对应空间教师无法处理成绩。成绩列表在尚无提交成绩时应对具备阅卷/成绩查看角色的调用方返回空列表，不应误报无权限；成绩导出即使没有成绩行，也必须单独走 `CanExportExamResults`，首版只允许 `tenant_admin` 和当前空间 `space_admin`，默认不开放给教师和学生。成绩发布配置属于考试级管理操作，只允许本租户 `tenant_admin` 或具备对应考试发布目标空间权限的 `space_admin` / `teacher` 修改；后端必须从 `exam_targets` 推导真实目标空间，不能用请求体 `space_id` 直接构造 `ExamScope`。
 
 学生成绩查看不走 `/api/v1/tenant/results/:id`。`GET /api/v1/tenant/results/:id` 仅用于管理端成绩详情，允许 `tenant_admin` / 授权空间 `space_admin` / 授权空间 `teacher`，不允许 `student`。`GET /api/v1/exam-entry/results/:id` 用于学生查看自己的已发布成绩，只允许目标 `student`，并且必须满足成绩发布策略和可见时间。
 
@@ -1491,7 +1491,7 @@ page_size  默认 20，最大 100
 
 公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 只能由本租户 `tenant_admin` 创建或导入；`teacher` 和空间管理员只能写自己启用空间内的题库。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。读取试卷大题和组卷规则详情时，也必须从 `paper_id` 反查 `papers.space_id` 后校验当前账号的真实空间成员关系；非 `tenant_admin` 不能仅凭租户考试业务入口读取其他空间试卷结构。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
 
-成绩列表、发布配置和导出必须基于成绩行或考试范围反查真实空间。`teacher` 可以查看授权空间内成绩，但首版不能导出成绩；前端不展示教师导出入口，后端仍以 `CanExportExamResults` 作为最终拒绝边界。学生查分只走 `/api/v1/exam-entry/results/:id`，不能调用管理端成绩接口。
+成绩列表、发布配置和导出必须基于成绩行或考试范围反查真实空间。`teacher` 可以查看授权空间内成绩；当考试还没有任何提交成绩时，成绩列表返回空集合而不是权限错误。首版教师不能导出成绩；前端不展示教师导出入口，后端仍以 `CanExportExamResults` 作为最终拒绝边界。学生查分只走 `/api/v1/exam-entry/results/:id`，不能调用管理端成绩接口。
 
 ## 8. 配置设计
 
@@ -1605,7 +1605,7 @@ service 单元测试：
 - rule_live 发布时冻结候选题池，开考只从冻结题池抽题
 - exam token 校验必须同时校验业务作答截止时间
 - exam token 只能构造考试入口上下文，不能访问管理端接口
-- exam token 不支持刷新和续签
+- exam token 过期后不续期；重复开考会为同一个 in-progress attempt 续发新的明文 token 并替换 hash
 - 普通登录 session 不能调用自动保存、提交答卷和事件上报接口
 - 多选题判分必须反序列化后比较选项 ID 集合
 - 规则组卷数量校验
@@ -1787,7 +1787,7 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - 支持服务端自动保存答案。
 - 考试过程使用独立 `exam_token`，避免普通登录 token 过期影响自动保存和提交。
 - `exam_token` 使用有状态不透明 token，库里只保存 hash 和过期时间。
-- `exam_token` 不支持刷新和续签，普通登录 session 不能调用自动保存、提交答卷和事件上报接口。
+- `exam_token` 过期后不续期；重复开考会为同一个 in-progress attempt 续发新的明文 token 并替换 hash，普通登录 session 不能调用自动保存、提交答卷和事件上报接口。
 - `exam_attempts` 使用 `UNIQUE (tenant_id, exam_id, user_id, attempt_no)` 约束多次作答序号。
 - `exam_token_hash` 建立 `(exam_token_hash, status)` 索引。
 - `exam_targets` 使用 `UNIQUE (tenant_id, exam_id, target_type, target_id)` 防止发布范围重复。

@@ -394,7 +394,7 @@ func (s *Service) StartExam(ctx context.Context, input StartInput) (StartResult,
 		return StartResult{}, ErrExamEnded
 	}
 	if attempt, err := s.repo.FindInProgressAttempt(ctx, input.TenantID, input.ExamID, input.UserID); err == nil {
-		return StartResult{Attempt: attempt}, nil
+		return s.refreshAttemptToken(ctx, attempt, exam)
 	} else if !errors.Is(err, ErrAttemptNotFound) {
 		return StartResult{}, err
 	}
@@ -425,12 +425,26 @@ func (s *Service) StartExam(ctx context.Context, input StartInput) (StartResult,
 		if findErr != nil {
 			return StartResult{}, findErr
 		}
-		return StartResult{Attempt: existing}, nil
+		return s.refreshAttemptToken(ctx, existing, exam)
 	}
 	if err != nil {
 		return StartResult{}, err
 	}
 	return StartResult{Attempt: attempt, ExamToken: token}, nil
+}
+
+func (s *Service) refreshAttemptToken(ctx context.Context, attempt Attempt, exam Exam) (StartResult, error) {
+	token, err := s.tokenIssuer.IssueToken()
+	if err != nil {
+		return StartResult{}, err
+	}
+	attempt.ExamTokenHash = s.HashExamToken(token)
+	attempt.ExamTokenExpiresAt = answerDeadline(attempt.StartedAt, exam) + s.tokenBufferMillis
+	updated, err := s.repo.UpdateAttemptToken(ctx, attempt)
+	if err != nil {
+		return StartResult{}, err
+	}
+	return StartResult{Attempt: updated, ExamToken: token}, nil
 }
 
 func (s *Service) GenerateAttemptSnapshots(ctx context.Context, input GenerateSnapshotInput) ([]AttemptQuestion, error) {
