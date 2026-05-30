@@ -112,6 +112,7 @@ type Repository interface {
 	FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (Member, error)
 	SpaceExists(ctx context.Context, tenantID uint64, spaceID uint64) (bool, error)
 	CountEnabledSpaceAdmins(ctx context.Context, tenantID uint64, spaceID uint64) (int64, error)
+	EnableMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error
 	DisableMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error
 	RemoveMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error
 	UpdateMemberRole(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64, role string) error
@@ -182,6 +183,10 @@ func (s *Service) ListEntryMembershipsForUser(ctx context.Context, userID uint64
 
 func (s *Service) SpaceExists(ctx context.Context, tenantID uint64, spaceID uint64) (bool, error) {
 	return s.repo.SpaceExists(ctx, tenantID, spaceID)
+}
+
+func (s *Service) EnableMember(ctx context.Context, input MemberActionInput) error {
+	return s.repo.EnableMember(ctx, input.TenantID, input.SpaceID, input.UserID)
 }
 
 func (s *Service) DisableMember(ctx context.Context, input MemberActionInput) error {

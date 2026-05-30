@@ -95,6 +95,33 @@ test("教师和学生按空间展示不同入口并保留已选空间", async ()
   expect(storedSession.selectedSpaceID).toBe(301);
 });
 
+test("学生空间入口按入口类型跳转考试入口", async () => {
+  const user = userEvent.setup();
+  const memberships: ProfileSpaceMembership[] = [{
+    id: 5,
+    tenantID: 10,
+    tenantName: "明德学校",
+    spaceID: 303,
+    spaceName: "补考空间",
+    role: "student",
+    status: "enabled",
+  }];
+  const api = createTenantEntryAPI({
+    listProfileSpaces: vi.fn(async () => ({ items: memberships })),
+    selectTenantSpace: vi.fn(async () => ({
+      accessToken: "tenant-access-token",
+      refreshToken: "tenant-refresh-token",
+      user: { displayName: "多身份用户", role: "teacher" as const, tenantID: 10, userID: 5 },
+    })),
+  });
+
+  renderTenantEntry(api);
+
+  await user.click(await screen.findByRole("button", { name: /补考空间/ }));
+
+  expect(await screen.findByText("考试入口页")).toBeInTheDocument();
+});
+
 function renderTenantEntry(api: AuthAPI) {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,

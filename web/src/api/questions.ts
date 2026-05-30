@@ -23,8 +23,8 @@ export type ListQuestionsInput = {
 
 export type CreateQuestionInput = {
   tenantID: number;
+  spaceID?: number;
   title: string;
-  stem: string;
   options: string[];
   analysis: string;
   tag: string;
@@ -106,9 +106,10 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
     async createQuestion(input) {
       const data = await apiClient.post<QuestionAPIResponse>("/api/v1/questions", {
         tenant_id: input.tenantID,
+        ...(input.spaceID === undefined ? {} : { space_id: input.spaceID }),
         type: "single",
         difficulty: "medium",
-        title: input.stem,
+        title: input.title,
         analysis: input.analysis,
         score_default: "2",
         tags: [input.tag],
@@ -119,7 +120,7 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
           is_distractor: index !== 0,
         })),
       });
-      return { ...mapQuestionResponse(data), title: input.title, stem: input.stem };
+      return mapQuestionResponse(data);
     },
     async importQuestions(input) {
       const formData = new FormData();

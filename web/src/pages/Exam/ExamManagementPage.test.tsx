@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { ExamManagementPage } from "./ExamManagementPage";
@@ -117,4 +117,67 @@ test("考试页支持配置发布范围、邀请码和发布考试", async () =>
   const publishedRow = await screen.findByRole("row", { name: /高一 1 班/ });
   expect(publishedRow).toHaveTextContent("联调语文试卷");
   expect(publishedRow).toHaveTextContent("已发布");
+});
+test("空间教师发布考试时只使用当前空间作为发布范围", async () => {
+  const user = userEvent.setup();
+  const api = {
+    listExams: vi.fn().mockResolvedValue({ items: [] }),
+    publishExam: vi.fn().mockResolvedValue({
+      id: 3,
+      tenantID: 10,
+      paperID: 333,
+      name: "空间语文试卷",
+      paperName: "空间语文试卷",
+      inviteCode: "PM301",
+      target: "当前空间",
+      status: "published",
+      startAt: "2026-05-30 09:00",
+      endAt: "2026-05-30 11:00",
+      durationMinutes: 120,
+    }),
+  };
+  const paperApi = {
+    listPapers: vi.fn().mockResolvedValue({
+      items: [{
+        id: 333,
+        tenantID: 10,
+        name: "空间语文试卷",
+        description: "空间教师可发布",
+        buildMode: "manual",
+        status: "ready",
+        totalScore: "12",
+      }],
+    }),
+  };
+  const spaceApi = { listSpaces: vi.fn().mockResolvedValue({ items: [] }) };
+  const userApi = { listUsers: vi.fn().mockResolvedValue({ items: [] }) };
+
+  render(
+    <ExamManagementPage
+      api={api}
+      canManageTenantTargets={false}
+      paperApi={paperApi}
+      spaceApi={spaceApi}
+      userApi={userApi}
+      tenantID={10}
+      spaceID={301}
+    />,
+  );
+
+  await waitFor(() => expect(paperApi.listPapers).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301 }));
+  expect(spaceApi.listSpaces).not.toHaveBeenCalled();
+  expect(userApi.listUsers).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole("button", { name: "发布考试" }));
+
+  const dialog = screen.getByRole("dialog", { name: "发布考试弹窗" });
+  expect(within(dialog).getByLabelText("发布范围")).toHaveValue("space:301");
+  await user.type(within(dialog).getByLabelText("考试开始时间"), "2026-05-30T09:00");
+  await user.type(within(dialog).getByLabelText("考试结束时间"), "2026-05-30T11:00");
+  await user.click(within(dialog).getByRole("button", { name: "确认发布" }));
+
+  expect(api.publishExam).toHaveBeenCalledWith(expect.objectContaining({
+    targetID: 301,
+    targetType: "space",
+  }));
 });

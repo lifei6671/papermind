@@ -30,7 +30,7 @@ backend-build:
 	cd server && mkdir -p bin && go build -tags $(GO_TAGS) -o $(BACKEND_BIN) ./cmd/papermind
 
 backend-dev:
-	cd server && $(BACKEND_DEV_ENV) go run -tags $(GO_TAGS) ./cmd/papermind
+	cd server && mkdir -p data/sqlite data/tmp data/imports data/exports && $(BACKEND_DEV_ENV) go run -tags $(GO_TAGS) ./cmd/papermind
 
 web-build: frontend-build
 

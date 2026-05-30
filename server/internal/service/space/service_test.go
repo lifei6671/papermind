@@ -345,6 +345,7 @@ type fakeRepository struct {
 	membersByKey            map[memberKey]Member
 	enabledSpaceAdminCount  int64
 	invariantChecks         int
+	enabledUserID           uint64
 	disabledUserID          uint64
 	removedUserID           uint64
 	changedRole             string
@@ -425,6 +426,11 @@ func (r *fakeRepository) FindMember(ctx context.Context, tenantID uint64, spaceI
 func (r *fakeRepository) CountEnabledSpaceAdmins(ctx context.Context, tenantID uint64, spaceID uint64) (int64, error) {
 	r.invariantChecks++
 	return r.enabledSpaceAdminCount, nil
+}
+
+func (r *fakeRepository) EnableMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error {
+	r.enabledUserID = userID
+	return nil
 }
 
 func (r *fakeRepository) DisableMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error {

@@ -562,6 +562,47 @@ func TestSpaceMemberRoutesUseSessionTenant(t *testing.T) {
 	}
 }
 
+func TestSpaceMemberRoutesEnableDisabledMemberWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	if err := gormDB.Table("space_members").
+		Where("tenant_id = ? AND space_id = ? AND user_id = ?", 10, 100, 21).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable member fixture: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	adminAuthHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPut, "/api/v1/spaces/100/members/21", []byte(`{
+		"tenant_id": 10,
+		"status": "enabled"
+	}`), adminAuthHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("enable member status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[spaceMemberResponse](t, recorder.Body.Bytes())
+	if body.Data.UserID != 21 || body.Data.Status != "enabled" {
+		t.Fatalf("expected enabled member response, got %#v", body.Data)
+	}
+
+	var status string
+	if err := gormDB.Table("space_members").
+		Select("status").
+		Where("tenant_id = ? AND space_id = ? AND user_id = ?", 10, 100, 21).
+		Scan(&status).Error; err != nil {
+		t.Fatalf("query member status: %v", err)
+	}
+	if status != "enabled" {
+		t.Fatalf("expected member status enabled, got %q", status)
+	}
+}
+
 func TestTenantAdminCannotBreakLastSpaceAdminInvariantWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

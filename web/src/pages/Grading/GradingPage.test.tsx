@@ -58,3 +58,20 @@ test("阅卷页从真实 API 加载待阅卷列表并保存评分", async () => 
   expect(await screen.findByRole("status", { name: "grading-save-result" })).toHaveTextContent("已保存 4.5 分");
   expect(screen.getByRole("row", { name: /张三/ })).toHaveTextContent("已完成");
 });
+
+test("阅卷页缺少考试时不请求后端", () => {
+  const api: GradingAPI = {
+    listPendingAttempts: vi.fn(),
+    gradeShortText: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter>
+      <GradingPage api={api} tenantID={10} actorID={501} actorRole="teacher" spaceID={301} />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText("请先选择考试后再进入阅卷中心。")).toBeInTheDocument();
+  expect(api.listPendingAttempts).not.toHaveBeenCalled();
+  expect(api.gradeShortText).not.toHaveBeenCalled();
+});

@@ -450,6 +450,18 @@ func (r *fakeRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam 
 	return exam, nil
 }
 
+func (r *fakeRepository) CreatePublishedExamWithTarget(ctx context.Context, exam Exam, pool []LivePoolItem, target Target) (Exam, error) {
+	if exam.ID == 0 {
+		exam.ID = 1
+	}
+	target.ExamID = exam.ID
+	r.updatedExam = exam
+	r.frozeLivePool = len(pool) > 0
+	r.frozenPool = append([]LivePoolItem(nil), pool...)
+	r.addedTarget = target
+	return exam, nil
+}
+
 func (r *fakeRepository) TargetExists(ctx context.Context, tenantID uint64, examID uint64, targetType string, targetID uint64) (bool, error) {
 	return r.targets[targetKey{tenantID: tenantID, examID: examID, targetType: targetType, targetID: targetID}], nil
 }

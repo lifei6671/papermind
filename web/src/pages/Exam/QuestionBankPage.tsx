@@ -2,7 +2,6 @@ import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { questionApi } from "../../api/questions";
@@ -17,18 +16,14 @@ type QuestionBankPageProps = {
 export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: QuestionBankPageProps) {
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
   const [tags, setTags] = useState(["选择题", "语言文字"]);
-  const [title, setTitle] = useState("");
   const [stem, setStem] = useState("");
   const [optionA, setOptionA] = useState("选项 A");
   const [optionB, setOptionB] = useState("选项 B");
   const [analysis, setAnalysis] = useState("");
   const [questionTag, setQuestionTag] = useState("");
   const [newTag, setNewTag] = useState("");
-  const [importFileName, setImportFileName] = useState("");
-  const [importMessage, setImportMessage] = useState("");
   const [isQuestionDialogOpen, setIsQuestionDialogOpen] = useState(false);
   const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
-  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -73,15 +68,14 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
     // 在线出题同时保存选项、解析和标签，题目进入题库后可直接被组卷页选择。
     const nextQuestion = await api.createQuestion({
       tenantID,
-      title,
-      stem,
+      ...(spaceID === undefined ? {} : { spaceID }),
+      title: stem,
       options: [optionA, optionB],
       analysis,
       tag: questionTag,
     });
     setQuestions((items) => [...items, nextQuestion]);
     setTags((items) => mergeTags(items, [nextQuestion.tag]));
-    setTitle("");
     setStem("");
     setOptionA("选项 A");
     setOptionB("选项 B");
@@ -103,16 +97,6 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
     setIsTagDialogOpen(false);
   }
 
-  function handleImportQuestions() {
-    if (!importFileName) {
-      setImportMessage("请选择题目导入文件");
-      return;
-    }
-
-    // 导入先展示解析摘要，行级错误后续由导入任务接口返回。
-    setImportMessage(`${importFileName} 已解析 18 道题`);
-    setIsImportDialogOpen(false);
-  }
 
   function handleSearchQuestions() {
     setAppliedSearchQuery(searchQuery);
@@ -139,9 +123,6 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
             </Button>
             <Button variant="toolbarSecondary" onClick={() => setIsTagDialogOpen(true)} type="button">
               新增标签
-            </Button>
-            <Button variant="toolbarSecondary" onClick={() => setIsImportDialogOpen(true)} type="button">
-              导入题目
             </Button>
           </div>
           <div className="tenant-search-actions">
@@ -172,7 +153,6 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
           ))}
         </div>
         {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
-        {importMessage && <div className="tenant-admin-status" role="status">{importMessage}</div>}
         <div className="table-wrap">
           <table className="data-table tenant-admin-table">
             <thead>
@@ -212,10 +192,6 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
           <div className="platform-dialog__card">
             <h2>保存题目</h2>
             <form className="platform-form" onSubmit={handleSaveQuestion}>
-              <label className="field">
-                <span>题目标题</span>
-                <input onChange={(event) => setTitle(event.target.value)} required value={title} />
-              </label>
               <label className="field">
                 <span>题干</span>
                 <textarea onChange={(event) => setStem(event.target.value)} required value={stem} />
@@ -273,29 +249,6 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
         </div>
       )}
 
-      {isImportDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="导入题目弹窗">
-          <div className="platform-dialog__card">
-            <h2>导入题目</h2>
-            <div className="platform-form">
-              <FileUploadField
-                accept={["text/csv", "application/vnd.ms-excel"]}
-                label="题目导入文件"
-                maxSizeBytes={2 * 1024 * 1024}
-                onFileAccepted={(file) => setImportFileName(file.name)}
-              />
-              <div className="platform-dialog__actions">
-                <Button variant="secondary" onClick={() => setIsImportDialogOpen(false)} type="button">
-                  取消
-                </Button>
-                <Button variant="primary" onClick={handleImportQuestions} type="button">
-                  确认导入
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   );
 }

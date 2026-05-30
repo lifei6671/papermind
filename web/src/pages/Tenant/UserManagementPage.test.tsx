@@ -62,7 +62,7 @@ test("用户管理页展示用户列表和角色状态", async () => {
   expect(screen.getByRole("tab", { name: "用户管理" })).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByRole("heading", { name: "用户管理" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "创建用户" })).toHaveClass("tenant-create-button");
-  expect(screen.getByRole("button", { name: "导入用户" })).toHaveClass("tenant-create-button");
+  expect(screen.queryByRole("button", { name: "导入用户" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("搜索用户")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "刷新用户列表" })).toBeInTheDocument();
   expect(screen.queryByLabelText("姓名")).not.toBeInTheDocument();
@@ -208,22 +208,6 @@ test("用户列表查询不到数据时显示无记录", async () => {
   expect(screen.queryByText("张同学")).not.toBeInTheDocument();
 });
 
-test("租户管理员可以导入用户文件", async () => {
-  const user = userEvent.setup();
-  render(<UserManagementPage api={createUserAPI()} spaceApi={createSpaceAPI()} tenantID={10} />);
-
-  await screen.findByText("李老师");
-
-  await user.click(screen.getByRole("button", { name: "导入用户" }));
-
-  expect(screen.getByRole("dialog", { name: "导入用户弹窗" })).toBeInTheDocument();
-
-  await user.upload(screen.getByLabelText("用户导入文件"), new File(["name,role"], "users.csv", { type: "text/csv" }));
-  await user.click(screen.getByRole("button", { name: "确认导入" }));
-
-  expect(screen.getByRole("status")).toHaveTextContent("users.csv");
-  expect(screen.getByRole("status")).toHaveTextContent("已解析 24 个用户");
-});
 
 test("禁用用户前展示影响范围并确认禁用", async () => {
   const user = userEvent.setup();

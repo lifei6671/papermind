@@ -242,6 +242,48 @@ func TestTenantAdminPublishRejectsMissingTargetWithSQLite(t *testing.T) {
 	}
 }
 
+func TestExamPublishFailureDoesNotLeaveDraftWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:            gormDB,
+		Now:           func() int64 { return fixedAPINow },
+		CodeGenerator: fixedCodeGenerator{code: "PM3029"},
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/exams", []byte(`{
+		"tenant_id": 10,
+		"paper_id": 100,
+		"name": "失败发布不应留草稿",
+		"target_type": "space",
+		"target_id": 100,
+		"start_time": 1772269200000,
+		"end_time": 1772272800000,
+		"duration_minutes": 120,
+		"max_attempts": 1,
+		"result_strategy": "latest",
+		"publish_mode": "manual_publish"
+	}`), authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid publish to fail, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var createdCount int64
+	if err := gormDB.Table("exams").
+		Where("tenant_id = ? AND name = ?", 10, "失败发布不应留草稿").
+		Count(&createdCount).Error; err != nil {
+		t.Fatalf("count failed publish exams: %v", err)
+	}
+	if createdCount != 0 {
+		t.Fatalf("failed publish should not leave draft exams, got %d", createdCount)
+	}
+}
+
 func TestPlatformAdminCannotAccessExamBusinessAPIs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -451,6 +493,52 @@ func TestExamEntryResolveInviteWithSQLite(t *testing.T) {
 	body := decodeExamAPIResponse[examInviteResponse](t, recorder.Body.Bytes())
 	if body.Data.ID != 1 || body.Data.InviteCode != "PM2026" || body.Data.Name != "高一语文期中考试" {
 		t.Fatalf("unexpected invite response: %#v", body.Data)
+	}
+}
+
+func TestExamEntrySessionIsClearedWhenTenantUserLogsInAgain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	student20AuthHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+
+	resolveRecorder := httptest.NewRecorder()
+	router.ServeHTTP(resolveRecorder, authorizedRequest(http.MethodPost, "/api/v1/exam-entry/invite/resolve", []byte(`{
+		"invite_code": "PM2026"
+	}`), student20AuthHeader))
+	if resolveRecorder.Code != http.StatusOK {
+		t.Fatalf("resolve invite status = %d, body = %s", resolveRecorder.Code, resolveRecorder.Body.String())
+	}
+
+	loginRecorder := httptest.NewRecorder()
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/tenant/login", bytes.NewReader([]byte(`{
+		"username": "student21",
+		"password": "papermind123"
+	}`)))
+	for _, cookie := range resolveRecorder.Result().Cookies() {
+		loginRequest.AddCookie(cookie)
+	}
+	router.ServeHTTP(loginRecorder, loginRequest)
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("second login status = %d, body = %s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+
+	startRecorder := httptest.NewRecorder()
+	startRequest := httptest.NewRequest(http.MethodPost, "/api/v1/exam-entry/exams/1/attempts/start", bytes.NewReader([]byte(`{
+		"tenant_id": 10
+	}`)))
+	for _, cookie := range loginRecorder.Result().Cookies() {
+		startRequest.AddCookie(cookie)
+	}
+	router.ServeHTTP(startRecorder, startRequest)
+	if startRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected second login to clear stale exam entry session, got status = %d, body = %s", startRecorder.Code, startRecorder.Body.String())
 	}
 }
 

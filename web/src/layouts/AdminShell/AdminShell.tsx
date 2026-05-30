@@ -20,8 +20,12 @@ export function AdminShell({ routes }: AdminShellProps) {
   const navigate = useNavigate();
   const { session, signOut } = useSession();
   const visibleGroups = Object.keys(groupLabels) as Array<Exclude<AdminRouteGroup, "hidden">>;
+  const scopedSpaceID = session?.selectedSpaceID ?? positiveID(new URLSearchParams(location.search).get("space_id"));
   const menuRoutes = routes.filter((route) =>
-    routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? []),
+    routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? [], {
+      tenantID: session?.user.tenantID,
+      spaceID: scopedSpaceID,
+    }),
   );
   const sidebarIdentity = buildSidebarIdentity(session);
 
@@ -112,12 +116,32 @@ export function AdminShell({ routes }: AdminShellProps) {
   );
 }
 
+function positiveID(value: string | null) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function routeLinkTarget(route: AdminRoute, currentSearch: string) {
-  const tenantID = new URLSearchParams(currentSearch).get("tenant_id");
+  const currentParams = new URLSearchParams(currentSearch);
+  const nextParams = new URLSearchParams();
+  const tenantID = currentParams.get("tenant_id");
+  const spaceID = currentParams.get("space_id");
+  const examID = currentParams.get("exam_id");
   if ((route.group === "tenant" || route.group === "exam") && tenantID) {
-    return `${route.path}?tenant_id=${encodeURIComponent(tenantID)}`;
+    nextParams.set("tenant_id", tenantID);
   }
-  return route.path;
+  if (route.group === "exam" && spaceID) {
+    nextParams.set("space_id", spaceID);
+  }
+  if (routeNeedsExamContext(route.path) && examID) {
+    nextParams.set("exam_id", examID);
+  }
+  const query = nextParams.toString();
+  return query ? `${route.path}?${query}` : route.path;
+}
+
+function routeNeedsExamContext(path: string) {
+  return path === "/grading" || path === "/results";
 }
 
 function buildSidebarIdentity(session: AuthSession | null) {

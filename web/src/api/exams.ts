@@ -293,7 +293,7 @@ function mapExamResponse(row: ExamAPIResponse): ExamRow {
     tenantID: row.tenant_id,
     paperID: row.paper_id,
     name: row.name,
-    paperName: paperNameByID(row.paper_id),
+    paperName: "试卷 " + row.paper_id,
     inviteCode: row.invite_code,
     target: formatTarget(row.target_type, row.target_id),
     status: row.status,
@@ -303,24 +303,14 @@ function mapExamResponse(row: ExamAPIResponse): ExamRow {
   };
 }
 
-function paperNameByID(paperID: number) {
-  if (paperID === 100) {
-    return "高一语文月考试卷";
-  }
-  if (paperID === 101) {
-    return "高二数学阶段测评";
-  }
-  return `试卷 ${paperID}`;
-}
-
 function formatTarget(targetType: "space" | "user" | undefined, targetID: number | undefined) {
   if (!targetType || !targetID) {
     return "未配置";
   }
   if (targetType === "space") {
-    return targetID === 100 ? "高一全年级" : `空间 ${targetID}`;
+    return "空间 " + targetID;
   }
-  return `用户 ${targetID}`;
+  return "用户 " + targetID;
 }
 
 function formatDateTime(value: number) {

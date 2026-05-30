@@ -67,6 +67,56 @@ test("租户业务导航保留当前目标租户 ID", () => {
   expect(screen.getByRole("link", { name: /用户管理/ })).toHaveAttribute("href", "/users?tenant_id=10");
 });
 
+test("阅卷和成绩导航保留当前考试 ID", () => {
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        spaceID: 301,
+        role: "teacher",
+        status: "enabled",
+      }],
+      user: { displayName: "阅卷教师", role: "teacher", tenantID: 10, userID: 3 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/results?tenant_id=10&space_id=301&exam_id=42"]}>
+        <Routes>
+          <Route element={<AdminShell routes={buildAdminRoutes({
+            displayName: "阅卷教师",
+            role: "teacher",
+            tenantID: 10,
+            userID: 3,
+          }, 301, [{
+            id: 1,
+            tenantID: 10,
+            spaceID: 301,
+            role: "teacher",
+            status: "enabled",
+          }], 42)} />}>
+            <Route path="/results" element={<div>成绩页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  expect(screen.getByRole("link", { name: /阅卷中心/ })).toHaveAttribute(
+    "href",
+    "/grading?tenant_id=10&space_id=301&exam_id=42",
+  );
+  expect(screen.getByRole("link", { name: /成绩/ })).toHaveAttribute(
+    "href",
+    "/results?tenant_id=10&space_id=301&exam_id=42",
+  );
+});
+
 test("平台管理员不展示租户空间菜单", () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,

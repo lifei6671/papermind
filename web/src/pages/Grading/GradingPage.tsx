@@ -21,13 +21,14 @@ type GradingPageProps = {
 export function GradingPage({
   api = gradingApi,
   tenantID = 10,
-  examID = 1,
+  examID,
   actorID = 1,
   actorRole = "tenant_admin",
   spaceID,
 }: GradingPageProps) {
   const [searchParams] = useSearchParams();
   const effectiveSpaceID = spaceID ?? positiveID(searchParams.get("space_id"));
+  const effectiveExamID = examID ?? positiveID(searchParams.get("exam_id"));
   const [attempts, setAttempts] = useState<PendingReviewRow[]>([]);
   const [selectedAttempt, setSelectedAttempt] = useState<PendingReviewRow | null>(null);
   const [score, setScore] = useState("7");
@@ -38,6 +39,7 @@ export function GradingPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const teacherNeedsSpace = actorRole === "teacher" && !effectiveSpaceID;
+  const needsExam = !effectiveExamID;
 
   const pendingCount = attempts.filter((attempt) => attempt.status === "pending").length;
 
@@ -54,7 +56,10 @@ export function GradingPage({
 
   async function loadPendingAttempts() {
     try {
-      const result = await api.listPendingAttempts({ tenantID, examID, actorID, actorRole, spaceID: effectiveSpaceID });
+      if (!effectiveExamID) {
+        return;
+      }
+      const result = await api.listPendingAttempts({ tenantID, examID: effectiveExamID, actorID, actorRole, spaceID: effectiveSpaceID });
       setAttempts(result.items);
       setLoadError("");
     } catch (err) {
@@ -63,11 +68,11 @@ export function GradingPage({
   }
 
   useEffect(() => {
-    if (teacherNeedsSpace) {
+    if (teacherNeedsSpace || !effectiveExamID) {
       return undefined;
     }
     let ignore = false;
-    api.listPendingAttempts({ tenantID, examID, actorID, actorRole, spaceID: effectiveSpaceID })
+    api.listPendingAttempts({ tenantID, examID: effectiveExamID, actorID, actorRole, spaceID: effectiveSpaceID })
       .then((result) => {
         if (!ignore) {
           setAttempts(result.items);
@@ -82,7 +87,7 @@ export function GradingPage({
     return () => {
       ignore = true;
     };
-  }, [api, tenantID, examID, actorID, actorRole, effectiveSpaceID, teacherNeedsSpace]);
+  }, [api, tenantID, effectiveExamID, actorID, actorRole, effectiveSpaceID, teacherNeedsSpace]);
 
   function openGradingDialog(attempt: PendingReviewRow) {
     setSelectedAttempt(attempt);
@@ -100,9 +105,12 @@ export function GradingPage({
 
     try {
       // 阅卷保存必须携带答案 version，后端用乐观锁阻止并发覆盖评分。
+      if (!effectiveExamID) {
+        return;
+      }
       await api.gradeShortText({
         tenantID,
-        examID,
+        examID: effectiveExamID,
         actorID,
         actorRole,
         spaceID: effectiveSpaceID,
@@ -125,6 +133,23 @@ export function GradingPage({
     } catch (err) {
       setSaveMessage(formatApiErrorMessage(err, "保存阅卷结果失败"));
     }
+  }
+
+  if (needsExam) {
+    return (
+      <section className="page platform-page grading-page">
+        <nav aria-label="阅卷菜单" className="platform-tabbar" role="tablist">
+          <span className="platform-tab platform-tab--active" role="tab" aria-selected="true">
+            阅卷中心
+          </span>
+        </nav>
+        <Panel>
+          <div className="empty-state">
+            <strong>请先选择考试后再进入阅卷中心。</strong>
+          </div>
+        </Panel>
+      </section>
+    );
   }
 
   if (teacherNeedsSpace) {

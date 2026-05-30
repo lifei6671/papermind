@@ -319,6 +319,74 @@ func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam 
 	return r.GetExam(ctx, exam.TenantID, exam.ID)
 }
 
+// CreatePublishedExamWithTarget 创建已发布考试，并在同一个事务内写入动态题池和首个投放目标。
+// API 的“发布考试”入口使用该方法，避免校验或目标写入失败后留下草稿或无目标考试。
+func (r *ExamRepository) CreatePublishedExamWithTarget(ctx context.Context, exam serviceexam.Exam, pool []serviceexam.LivePoolItem, target serviceexam.Target) (serviceexam.Exam, error) {
+	var createdID uint64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := r.now()
+		row := ExamDO{
+			BaseFields: BaseFields{
+				CreatedAt:     now,
+				CreatedByType: AuditActorTenantUser,
+				UpdatedAt:     now,
+				UpdatedByType: AuditActorTenantUser,
+				Version:       1,
+				ExtJSON:       datatypes.JSON([]byte("{}")),
+			},
+			TenantID:         exam.TenantID,
+			PaperID:          exam.PaperID,
+			Name:             exam.Name,
+			StartTime:        exam.StartTime,
+			EndTime:          exam.EndTime,
+			DurationMinutes:  exam.DurationMinutes,
+			MaxAttempts:      exam.MaxAttempts,
+			ResultStrategy:   exam.ResultStrategy,
+			PublishMode:      exam.PublishMode,
+			ScorePublishTime: exam.ScorePublishTime,
+			InviteCode:       exam.InviteCode,
+			Status:           exam.Status,
+		}
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		createdID = row.ID
+		for _, item := range pool {
+			poolRow := ExamLiveQuestionPoolDO{
+				RelationFields: RelationFields{
+					CreatedAt:     now,
+					CreatedByType: AuditActorTenantUser,
+					ExtJSON:       datatypes.JSON([]byte("{}")),
+				},
+				TenantID:   exam.TenantID,
+				ExamID:     row.ID,
+				SectionID:  item.SectionID,
+				RuleID:     item.RuleID,
+				QuestionID: item.QuestionID,
+			}
+			if err := tx.Create(&poolRow).Error; err != nil {
+				return err
+			}
+		}
+		targetRow := ExamTargetDO{
+			RelationFields: RelationFields{
+				CreatedAt:     now,
+				CreatedByType: AuditActorTenantUser,
+				ExtJSON:       datatypes.JSON([]byte("{}")),
+			},
+			TenantID:   target.TenantID,
+			ExamID:     row.ID,
+			TargetType: target.TargetType,
+			TargetID:   target.TargetID,
+		}
+		return tx.Create(&targetRow).Error
+	})
+	if err != nil {
+		return serviceexam.Exam{}, err
+	}
+	return r.GetExam(ctx, exam.TenantID, createdID)
+}
+
 // TargetExists 判断考试目标是否已经存在。
 // 发布流程用它避免重复添加同一个用户或空间目标。
 func (r *ExamRepository) TargetExists(ctx context.Context, tenantID uint64, examID uint64, targetType string, targetID uint64) (bool, error) {

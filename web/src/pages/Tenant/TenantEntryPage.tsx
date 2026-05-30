@@ -68,7 +68,7 @@ export function TenantEntryPage({ api = authApi }: TenantEntryPageProps) {
       const profileSpaces = await api.listProfileSpaces();
       const selectedSpaceID = entry.kind === "tenant" ? undefined : entry.membership.spaceID;
       signIn({ ...nextSession, selectedSpaceID, profileSpaces: profileSpaces.items });
-      navigate(nextSession.user.role === "student" ? "/exam-entry" : "/", { replace: true });
+      navigate(entry.kind === "exam" ? "/exam-entry" : "/", { replace: true });
     } catch (err) {
       setError(formatApiErrorMessage(err, "进入空间失败"));
     } finally {

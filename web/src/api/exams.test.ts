@@ -41,7 +41,7 @@ describe("examApi", () => {
       tenantID: 10,
       paperID: 100,
       name: "高一语文期中考试",
-      paperName: "高一语文月考试卷",
+      paperName: "试卷 100",
       inviteCode: "PM2026",
       target: "未配置",
       status: "published",

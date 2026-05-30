@@ -274,13 +274,23 @@ func (h spaceHandler) updateMember(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if request.Status != "" && request.Status != servicespace.StatusEnabled && request.Status != servicespace.StatusDisabled {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "status 只能是 enabled 或 disabled"))
+		return
+	}
 	if request.Role != "" {
 		if err := h.service.ChangeMemberRole(c.Request.Context(), servicespace.ChangeRoleInput{TenantID: tenantID, SpaceID: spaceID, UserID: userID, Role: request.Role}); err != nil {
 			writeSpaceServiceError(c, err)
 			return
 		}
 	}
-	if request.Status == servicespace.StatusDisabled {
+	switch request.Status {
+	case servicespace.StatusEnabled:
+		if err := h.service.EnableMember(c.Request.Context(), servicespace.MemberActionInput{TenantID: tenantID, SpaceID: spaceID, UserID: userID}); err != nil {
+			writeSpaceServiceError(c, err)
+			return
+		}
+	case servicespace.StatusDisabled:
 		if err := h.service.DisableMember(c.Request.Context(), servicespace.MemberActionInput{TenantID: tenantID, SpaceID: spaceID, UserID: userID}); err != nil {
 			writeSpaceServiceError(c, err)
 			return

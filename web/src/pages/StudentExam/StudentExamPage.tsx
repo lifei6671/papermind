@@ -46,6 +46,7 @@ type ExamQuestion = {
 type ExamAnswer = string | string[];
 
 const narrowExamViewportQuery = "(max-width: 1100px)";
+const fallbackExamTitle = "在线考试";
 
 function shouldCollapseQuestionListByDefault() {
   return typeof window !== "undefined"
@@ -255,7 +256,7 @@ function DesktopResultView({
           <span className="student-brand__mark">P</span>
           <span>PaperMind</span>
         </div>
-        <h1>期中考试（高一语文）</h1>
+        <h1>{fallbackExamTitle}</h1>
       </header>
       <main className="exam-result-page">
         <section className="exam-card exam-result-card">
@@ -323,6 +324,10 @@ function DesktopStudentExamPage({
 
   const questionGroups = buildQuestionGroups(apiQuestions);
   const currentQuestion = apiQuestions.find((question) => question.number === currentQuestionNumber);
+  const currentQuestionIndex = apiQuestions.findIndex((question) => question.number === currentQuestionNumber);
+  const previousQuestion = currentQuestionIndex > 0 ? apiQuestions[currentQuestionIndex - 1] : undefined;
+  const nextQuestion = currentQuestionIndex >= 0 ? apiQuestions[currentQuestionIndex + 1] : undefined;
+  const totalScore = apiQuestions.reduce((sum, question) => sum + question.score, 0);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -426,6 +431,33 @@ function DesktopStudentExamPage({
     }
   };
 
+  const clearCurrentAnswer = async () => {
+    if (!currentQuestion) {
+      return;
+    }
+    setAnswers((currentAnswers) => {
+      const nextAnswers = { ...currentAnswers };
+      delete nextAnswers[currentQuestionNumber];
+      return nextAnswers;
+    });
+    try {
+      if (examSession && currentQuestion.id) {
+        await api.saveAnswer({
+          tenantID,
+          attemptID: examSession.attemptID,
+          attemptQuestionID: currentQuestion.id,
+          examToken: examSession.examToken,
+          questionType: currentQuestion.type,
+          optionIDs: [],
+          text: "",
+        });
+      }
+      setSaveMessage("第 " + currentQuestionNumber + " 题已清空");
+    } catch {
+      setSaveMessage("第 " + currentQuestionNumber + " 题清空失败");
+    }
+  };
+
   const submitExam = async () => {
     try {
       if (examSession) {
@@ -462,7 +494,7 @@ function DesktopStudentExamPage({
             <span className="student-brand__mark">P</span>
             <span>PaperMind</span>
           </div>
-          <h1>期中考试（高一语文）</h1>
+          <h1>{fallbackExamTitle}</h1>
         </header>
         <main className="exam-result-page">
           <section className="exam-card exam-result-card" aria-live="polite">
@@ -480,7 +512,7 @@ function DesktopStudentExamPage({
           <span className="student-brand__mark">P</span>
           <span>PaperMind</span>
         </div>
-        <h1>期中考试（高一语文）</h1>
+        <h1>{fallbackExamTitle}</h1>
         <div
           className="student-tools"
           aria-label="考生账户"
@@ -491,7 +523,7 @@ function DesktopStudentExamPage({
           }}
         >
           <Button
-            aria-label="张三"
+            aria-label="考生"
             aria-controls="student-profile-menu"
             aria-expanded={isProfileMenuOpen}
             aria-haspopup="menu"
@@ -499,13 +531,13 @@ function DesktopStudentExamPage({
             onClick={() => setIsProfileMenuOpen((isOpen) => !isOpen)}
             type="button"
           >
-            <span className="student-avatar" aria-hidden="true">张</span>
-            <strong>张三</strong>
+            <span className="student-avatar" aria-hidden="true">考</span>
+            <strong>考生</strong>
             <ChevronDown aria-hidden="true" size={14} />
           </Button>
           {isProfileMenuOpen ? (
             <div aria-label="考生信息" className="student-profile-menu" id="student-profile-menu" role="menu">
-              <span>考生编号：S1001001</span>
+              <span>身份已校验</span>
             </div>
           ) : null}
         </div>
@@ -588,15 +620,29 @@ function DesktopStudentExamPage({
             question={currentQuestion}
           />
 
-          <Button className="clear-button" type="button">清空选择</Button>
+          <Button className="clear-button" onClick={() => void clearCurrentAnswer()} type="button">清空选择</Button>
 
           {saveMessage ? <div aria-label="自动保存提示" className="save-status" role="status"><CheckCircle2 aria-hidden="true" size={16} />{saveMessage}</div> : null}
           {eventReportMessage ? <div aria-label="切屏事件上报" className="event-status" role="status"><TriangleAlert aria-hidden="true" size={16} />{eventReportMessage}</div> : null}
 
           <div className="question-actions">
-            <Button className="prev-button" type="button"><ChevronLeft aria-hidden="true" size={18} />上一题</Button>
+            <Button
+              className="prev-button"
+              disabled={!previousQuestion}
+              onClick={() => previousQuestion && setCurrentQuestionNumber(previousQuestion.number)}
+              type="button"
+            >
+              <ChevronLeft aria-hidden="true" size={18} />上一题
+            </Button>
             <label className="favorite-check"><input type="checkbox" />加入收藏</label>
-            <Button className="next-button" type="button">下一题<ChevronRight aria-hidden="true" size={18} /></Button>
+            <Button
+              className="next-button"
+              disabled={!nextQuestion}
+              onClick={() => nextQuestion && setCurrentQuestionNumber(nextQuestion.number)}
+              type="button"
+            >
+              下一题<ChevronRight aria-hidden="true" size={18} />
+            </Button>
           </div>
         </section>
 
@@ -620,10 +666,10 @@ function DesktopStudentExamPage({
           </div>
           <section className="exam-card info-panel">
             <h2>考试信息</h2>
-            <p>考试名称：期中考试（高一语文）</p>
-            <p>考试时长：120 分钟</p>
-            <p>总题目数：45 题</p>
-            <p>总分：100 分</p>
+            <p>考试名称：{fallbackExamTitle}</p>
+            <p>考试时长：以服务端截止时间为准</p>
+            <p>总题目数：{apiQuestions.length} 题</p>
+            <p>总分：{formatScore(totalScore)} 分</p>
           </section>
 
           <section className="exam-card timer-panel">
@@ -736,6 +782,10 @@ function readStudentExamRouteParams(searchParams: URLSearchParams): StudentExamR
   return { tenantID, examID };
 }
 
+function formatScore(score: number) {
+  return Number.isInteger(score) ? String(score) : String(Number(score.toFixed(2)));
+}
+
 function formatRemainingTime(remainingMillis: number | null) {
   const totalSeconds = Math.max(0, Math.floor((remainingMillis ?? 0) / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -752,7 +802,7 @@ function StudentExamLoadError({ message }: { message: string }) {
           <span className="student-brand__mark">P</span>
           <span>PaperMind</span>
         </div>
-        <h1>期中考试（高一语文）</h1>
+        <h1>{fallbackExamTitle}</h1>
       </header>
       <main className="exam-result-page">
         <section aria-live="polite" className="exam-card exam-result-card">

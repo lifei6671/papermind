@@ -19,6 +19,7 @@ type ExamManagementPageProps = {
   userApi?: Pick<UserManagementAPI, "listUsers">;
   tenantID?: number;
   spaceID?: number;
+  canManageTenantTargets?: boolean;
 };
 
 type TargetOption = {
@@ -35,6 +36,7 @@ export function ExamManagementPage({
   userApi = defaultUserApi,
   tenantID = 10,
   spaceID,
+  canManageTenantTargets = true,
 }: ExamManagementPageProps) {
   const [exams, setExams] = useState<ExamRow[]>([]);
   const [papers, setPapers] = useState<PaperRow[]>([]);
@@ -78,17 +80,18 @@ export function ExamManagementPage({
   useEffect(() => {
     let ignore = false;
 
-    Promise.all([
-      paperApi.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }),
-      spaceApi.listSpaces(tenantID),
-      userApi.listUsers(tenantID),
-    ])
-      .then(([paperData, spaceData, userData]) => {
+    const paperRequest = paperApi.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) });
+    const targetRequest = canManageTenantTargets
+      ? Promise.all([spaceApi.listSpaces(tenantID), userApi.listUsers(tenantID)])
+          .then(([spaceData, userData]) => buildTargetOptions(spaceData.items, userData.items))
+      : Promise.resolve(spaceID === undefined ? [] : [currentSpaceTargetOption(spaceID)]);
+
+    Promise.all([paperRequest, targetRequest])
+      .then(([paperData, nextTargets]) => {
         if (ignore) {
           return;
         }
         setPapers(paperData.items);
-        const nextTargets = buildTargetOptions(spaceData.items, userData.items);
         setTargetOptions(nextTargets);
         setPaperID((current) => current || String(paperData.items[0]?.id ?? ""));
         setTargetValue((current) => current || (nextTargets[0]?.value ?? ""));
@@ -102,7 +105,7 @@ export function ExamManagementPage({
     return () => {
       ignore = true;
     };
-  }, [paperApi, spaceApi, tenantID, userApi, spaceID]);
+  }, [paperApi, spaceApi, tenantID, userApi, spaceID, canManageTenantTargets]);
 
   async function handlePublishExam(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -256,6 +259,15 @@ export function ExamManagementPage({
       )}
     </section>
   );
+}
+
+function currentSpaceTargetOption(spaceID: number): TargetOption {
+  return {
+    id: spaceID,
+    label: `当前空间 ${spaceID}`,
+    type: "space",
+    value: `space:${spaceID}`,
+  };
 }
 
 function buildTargetOptions(spaces: SpaceRow[], users: TenantUserRow[]): TargetOption[] {

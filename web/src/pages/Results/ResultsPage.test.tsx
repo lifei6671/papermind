@@ -37,6 +37,8 @@ test("成绩页从真实 API 加载成绩、保存发布配置并导出", async 
 
   expect(await screen.findByText("张三")).toBeInTheDocument();
   expect(screen.getByText("6.5")).toBeInTheDocument();
+  expect(screen.getByText("成绩发布配置")).toBeInTheDocument();
+  expect(screen.queryByText("高一语文期中考试")).not.toBeInTheDocument();
 
   await user.selectOptions(screen.getByLabelText("成绩发布模式"), "manual_publish");
   await user.type(screen.getByLabelText("统一公布时间"), "2026-05-30T10:00");
@@ -64,6 +66,26 @@ test("成绩页从真实 API 加载成绩、保存发布配置并导出", async 
   });
   expect(await screen.findByRole("status", { name: "result-export" })).toHaveTextContent("已导出 1 行");
   expect(screen.getByRole("link", { name: "下载导出文件" })).toHaveAttribute("href", "/api/v1/results/export-files/exam-1-scores.csv?tenant_id=10&exam_id=1");
+});
+
+
+test("成绩页缺少考试时不请求后端", () => {
+  const api: ResultsAPI = {
+    listResults: vi.fn(),
+    savePublishConfig: vi.fn(),
+    exportResults: vi.fn(),
+  };
+
+  render(
+    <MemoryRouter>
+      <ResultsPage api={api} tenantID={10} actorID={501} actorRole="tenant_admin" />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText("请先选择考试后再查看成绩。")).toBeInTheDocument();
+  expect(api.listResults).not.toHaveBeenCalled();
+  expect(api.savePublishConfig).not.toHaveBeenCalled();
+  expect(api.exportResults).not.toHaveBeenCalled();
 });
 
 test("教师成绩页不展示导出入口", async () => {

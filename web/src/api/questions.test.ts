@@ -33,4 +33,61 @@ describe("questionApi", () => {
       errors: [{ rowNumber: 3, reason: "choice question needs correct answer" }],
     });
   });
+
+  test("创建题目时提交空间范围并使用响应字段", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        tenant_id: 10,
+        space_id: 301,
+        type: "single",
+        difficulty: "medium",
+        title: "下列函数在 R 上单调递增的是哪一项？",
+        analysis: "一次函数斜率为正时单调递增。",
+        score_default: "2",
+        tags: ["函数"],
+        options: [
+          { option_key: "A", content: "y = x", is_correct: true, is_distractor: false },
+          { option_key: "B", content: "y = -x", is_correct: false, is_distractor: true },
+        ],
+      });
+
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          id: 101,
+          tenant_id: 10,
+          space_id: 301,
+          title: "下列函数在 R 上单调递增的是哪一项？",
+          analysis: "一次函数斜率为正时单调递增。",
+          score_default: "2",
+          status: "enabled",
+          tag: "函数",
+          tags: ["函数"],
+          options: [
+            { option_key: "A", content: "y = x", is_correct: true, is_distractor: false },
+            { option_key: "B", content: "y = -x", is_correct: false, is_distractor: true },
+          ],
+        },
+      }));
+    });
+    const api = createQuestionAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.createQuestion({
+      tenantID: 10,
+      spaceID: 301,
+      title: "下列函数在 R 上单调递增的是哪一项？",
+      options: ["y = x", "y = -x"],
+      analysis: "一次函数斜率为正时单调递增。",
+      tag: "函数",
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/questions",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(result.title).toBe("下列函数在 R 上单调递增的是哪一项？");
+    expect(result.stem).toBe("下列函数在 R 上单调递增的是哪一项？");
+  });
 });

@@ -165,6 +165,7 @@ func authContextMiddleware() gin.HandlerFunc {
 
 func saveAuthPrincipalSession(c *gin.Context, principal AuthPrincipal, maxAgeSeconds int) (string, error) {
 	session := sessions.Default(c)
+	clearExamEntrySession(session)
 	// 平台登录 session 是平台侧审计主体来源，不能让后续写接口再信任请求体里的 actor_id。
 	session.Set(authSessionSubjectTypeKey, principal.SubjectType)
 	session.Set(authSessionUserIDKey, principal.UserID)
@@ -184,6 +185,12 @@ func saveAuthPrincipalSession(c *gin.Context, principal AuthPrincipal, maxAgeSec
 		return "", errAuthSessionCookieMissing
 	}
 	return token, nil
+}
+
+func clearExamEntrySession(session sessions.Session) {
+	session.Delete(examEntrySessionTenantIDKey)
+	session.Delete(examEntrySessionExamIDKey)
+	session.Delete(examEntrySessionUserIDKey)
 }
 
 func responseCookieValue(header http.Header, name string) (string, bool) {

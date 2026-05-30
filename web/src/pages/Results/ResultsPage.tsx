@@ -26,13 +26,14 @@ function formatPublishTime(value: string) {
 export function ResultsPage({
   api = resultsApi,
   tenantID = 10,
-  examID = 1,
+  examID,
   actorID = 1,
   actorRole = "tenant_admin",
   spaceID,
 }: ResultsPageProps) {
   const [searchParams] = useSearchParams();
   const effectiveSpaceID = spaceID ?? positiveID(searchParams.get("space_id"));
+  const effectiveExamID = examID ?? positiveID(searchParams.get("exam_id"));
   const [resultRows, setResultRows] = useState<ResultRow[]>([]);
   const [publishMode, setPublishMode] = useState("manual_publish");
   const [publishTime, setPublishTime] = useState("");
@@ -42,14 +43,15 @@ export function ResultsPage({
   const [exportHref, setExportHref] = useState("");
   const [loadError, setLoadError] = useState("");
   const teacherNeedsSpace = actorRole === "teacher" && !effectiveSpaceID;
+  const needsExam = !effectiveExamID;
   const canExportResults = actorRole !== "teacher";
 
   useEffect(() => {
-    if (teacherNeedsSpace) {
+    if (teacherNeedsSpace || !effectiveExamID) {
       return undefined;
     }
     let ignore = false;
-    api.listResults({ tenantID, examID, actorID, actorRole, spaceID: effectiveSpaceID })
+    api.listResults({ tenantID, examID: effectiveExamID, actorID, actorRole, spaceID: effectiveSpaceID })
       .then((result) => {
         if (!ignore) {
           setResultRows(result.items);
@@ -64,10 +66,14 @@ export function ResultsPage({
     return () => {
       ignore = true;
     };
-  }, [api, tenantID, examID, actorID, actorRole, effectiveSpaceID, teacherNeedsSpace]);
+  }, [api, tenantID, effectiveExamID, actorID, actorRole, effectiveSpaceID, teacherNeedsSpace]);
 
   async function handleSavePublishConfig(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!effectiveExamID) {
+      return;
+    }
 
     if (publishMode === "manual_publish" && !publishTime.trim()) {
       setPublishError("统一公布时间不能为空。");
@@ -80,7 +86,7 @@ export function ResultsPage({
       const scorePublishTime = publishTime ? new Date(publishTime).getTime() : undefined;
       await api.savePublishConfig({
         tenantID,
-        examID,
+        examID: effectiveExamID,
         actorID,
         actorRole,
         spaceID: effectiveSpaceID,
@@ -98,13 +104,33 @@ export function ResultsPage({
 
   async function handleExportResults() {
     try {
-      const result = await api.exportResults({ tenantID, examID, actorID, actorRole, spaceID: effectiveSpaceID });
+      if (!effectiveExamID) {
+        return;
+      }
+      const result = await api.exportResults({ tenantID, examID: effectiveExamID, actorID, actorRole, spaceID: effectiveSpaceID });
       setExportHref(result.fileURL);
       setExportMessage(`成绩导出完成：已导出 ${result.rowCount} 行，文件 ${result.filePath}`);
     } catch (err) {
       setExportHref("");
       setExportMessage(formatApiErrorMessage(err, "成绩导出失败"));
     }
+  }
+
+  if (needsExam) {
+    return (
+      <section className="page platform-page results-page">
+        <nav aria-label="成绩菜单" className="platform-tabbar" role="tablist">
+          <span className="platform-tab platform-tab--active" role="tab" aria-selected="true">
+            成绩
+          </span>
+        </nav>
+        <Panel>
+          <div className="empty-state">
+            <strong>请先选择考试后再查看成绩。</strong>
+          </div>
+        </Panel>
+      </section>
+    );
   }
 
   if (teacherNeedsSpace) {
@@ -145,7 +171,7 @@ export function ResultsPage({
         )}
       </div>
 
-      <Panel title="高一语文期中考试" subtitle="result_strategy: highest，解析展示：成绩可见后展示。">
+      <Panel title="成绩发布配置" subtitle="按所选考试配置成绩可见性和解析展示。">
         <form className="result-publish-form" onSubmit={handleSavePublishConfig}>
           <label className="field">
             <span>成绩发布模式</span>

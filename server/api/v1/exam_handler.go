@@ -325,19 +325,12 @@ func (h examHandler) publish(c *gin.Context) {
 	if !h.authorizePublishScope(c, request.TenantID, request.PaperID, request.TargetType, request.TargetID) {
 		return
 	}
-	draft, err := h.service.CreateDraft(c.Request.Context(), serviceexam.CreateDraftInput{
-		TenantID: request.TenantID,
-		PaperID:  request.PaperID,
-		Name:     request.Name,
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "创建考试草稿失败"))
-		return
-	}
-	published, err := h.service.Publish(c.Request.Context(), serviceexam.PublishInput{
+	published, err := h.service.PublishWithTarget(c.Request.Context(), serviceexam.PublishWithTargetInput{
 		TenantID:         request.TenantID,
-		ExamID:           draft.ID,
 		PaperID:          request.PaperID,
+		Name:             request.Name,
+		TargetType:       request.TargetType,
+		TargetID:         request.TargetID,
 		StartTime:        request.StartTime,
 		EndTime:          request.EndTime,
 		DurationMinutes:  request.DurationMinutes,
@@ -347,15 +340,6 @@ func (h examHandler) publish(c *gin.Context) {
 		ScorePublishTime: request.ScorePublishTime,
 	})
 	if err != nil {
-		writeExamServiceError(c, err)
-		return
-	}
-	if err := h.service.AddTarget(c.Request.Context(), serviceexam.AddTargetInput{
-		TenantID:   request.TenantID,
-		ExamID:     published.ID,
-		TargetType: request.TargetType,
-		TargetID:   request.TargetID,
-	}); err != nil {
 		writeExamServiceError(c, err)
 		return
 	}

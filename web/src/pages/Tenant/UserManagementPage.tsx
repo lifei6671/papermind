@@ -37,12 +37,9 @@ export function UserManagementPage({
   const [role, setRole] = useState<UserRole>("student");
   const [avatarFileName, setAvatarFileName] = useState("");
   const [avatarResetKey, setAvatarResetKey] = useState(0);
-  const [importFileName, setImportFileName] = useState("");
-  const [importMessage, setImportMessage] = useState("");
   const [detailTarget, setDetailTarget] = useState<TenantUserRow | null>(null);
   const [disableTarget, setDisableTarget] = useState<TenantUserRow | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -119,17 +116,6 @@ export function UserManagementPage({
     setIsCreateDialogOpen(false);
   }
 
-  function handleImportUsers() {
-    if (!importFileName) {
-      setImportMessage("请选择用户导入文件");
-      return;
-    }
-
-    // 导入结果先以摘要展示，真实行级错误会在接入导入 API 后由服务端返回。
-    setImportMessage(`${importFileName} 已解析 24 个用户`);
-    setIsImportDialogOpen(false);
-  }
-
   async function confirmDisableUser() {
     if (!disableTarget) {
       return;
@@ -204,13 +190,6 @@ export function UserManagementPage({
             >
               创建用户
             </Button>
-            <Button
-              variant="toolbarSecondary"
-              onClick={() => setIsImportDialogOpen(true)}
-              type="button"
-            >
-                导入用户
-              </Button>
             </div>
             <div className="tenant-search-actions">
               <label className="tenant-search-field">
@@ -235,7 +214,6 @@ export function UserManagementPage({
             </div>
           </div>
         {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
-        {importMessage && <div className="tenant-admin-status" role="status">{importMessage}</div>}
         <div className="table-wrap">
           <table className="data-table tenant-admin-table">
             <thead>
@@ -334,30 +312,6 @@ export function UserManagementPage({
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {isImportDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="导入用户弹窗">
-          <div className="platform-dialog__card">
-            <h2>导入用户</h2>
-            <div className="platform-form">
-              <FileUploadField
-                accept={["text/csv", "application/vnd.ms-excel"]}
-                label="用户导入文件"
-                maxSizeBytes={2 * 1024 * 1024}
-                onFileAccepted={(file) => setImportFileName(file.name)}
-              />
-              <div className="platform-dialog__actions">
-                <Button variant="secondary" onClick={() => setIsImportDialogOpen(false)} type="button">
-                  取消
-                </Button>
-                <Button variant="primary" onClick={handleImportUsers} type="button">
-                  确认导入
-                </Button>
-              </div>
-            </div>
           </div>
         </div>
       )}

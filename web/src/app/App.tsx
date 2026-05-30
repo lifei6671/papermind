@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { ReactNode } from "react";
 import { AdminShell } from "../layouts/AdminShell/AdminShell";
 import { PlatformLoginPage } from "../pages/Login/PlatformLoginPage";
@@ -10,7 +10,11 @@ import { buildAdminRoutes, routeVisibleForRole } from "./routes";
 
 export function App() {
   const { session } = useSession();
-  const adminRoutes = buildAdminRoutes(session?.user, session?.selectedSpaceID);
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const scopedSpaceID = session?.selectedSpaceID ?? positiveID(searchParams.get("space_id"));
+  const scopedExamID = positiveID(searchParams.get("exam_id"));
+  const adminRoutes = buildAdminRoutes(session?.user, scopedSpaceID, session?.profileSpaces ?? [], scopedExamID);
 
   return (
     <Routes>
@@ -23,7 +27,10 @@ export function App() {
           <Route
             element={
               routeRequiresRouteGuard(route.group) &&
-              !routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? [])
+              !routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? [], {
+                tenantID: session?.user.tenantID,
+                spaceID: scopedSpaceID,
+              })
                 ? <Navigate to="/" replace />
                 : route.element
             }
@@ -35,6 +42,11 @@ export function App() {
       </Route>
     </Routes>
   );
+}
+
+function positiveID(value: string | null) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function routeRequiresRouteGuard(group: string) {

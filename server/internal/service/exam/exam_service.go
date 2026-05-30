@@ -177,6 +177,22 @@ type PublishInput struct {
 	ScorePublishTime *int64 // 成绩公布时间。
 }
 
+// PublishWithTargetInput 用于一次性创建已发布考试并写入首个投放目标。
+type PublishWithTargetInput struct {
+	TenantID         uint64 // 所属租户 ID。
+	PaperID          uint64 // 关联试卷 ID。
+	Name             string // 考试名称。
+	TargetType       string // 发布目标类型。
+	TargetID         uint64 // 发布目标 ID。
+	StartTime        int64  // 开始时间。
+	EndTime          int64  // 结束时间。
+	DurationMinutes  int    // 单次作答时长。
+	MaxAttempts      int    // 最大作答次数。
+	ResultStrategy   string // 成绩策略。
+	PublishMode      string // 成绩发布模式。
+	ScorePublishTime *int64 // 成绩公布时间。
+}
+
 type UpdateScorePublishConfigInput struct {
 	TenantID         uint64 // 所属租户 ID。
 	ExamID           uint64 // 考试 ID。
@@ -227,6 +243,7 @@ type Repository interface {
 	InviteCodeExists(ctx context.Context, tenantID uint64, code string) (bool, error)
 	ListRuleLiveCandidates(ctx context.Context, tenantID uint64, paperID uint64) ([]LivePoolItem, error)
 	PublishExamAndFreezeLivePool(ctx context.Context, exam Exam, pool []LivePoolItem) (Exam, error)
+	CreatePublishedExamWithTarget(ctx context.Context, exam Exam, pool []LivePoolItem, target Target) (Exam, error)
 	TargetExists(ctx context.Context, tenantID uint64, examID uint64, targetType string, targetID uint64) (bool, error)
 	AddTarget(ctx context.Context, target Target) error
 	FindExamByInviteCode(ctx context.Context, inviteCode string) (Exam, error)
@@ -309,27 +326,84 @@ func (s *Service) CreateDraft(ctx context.Context, input CreateDraftInput) (Exam
 }
 
 func (s *Service) Publish(ctx context.Context, input PublishInput) (Exam, error) {
+	exam, pool, err := s.buildPublishedExam(ctx, publishSettingsInput{
+		ExamID:           input.ExamID,
+		TenantID:         input.TenantID,
+		PaperID:          input.PaperID,
+		StartTime:        input.StartTime,
+		EndTime:          input.EndTime,
+		DurationMinutes:  input.DurationMinutes,
+		MaxAttempts:      input.MaxAttempts,
+		ResultStrategy:   input.ResultStrategy,
+		PublishMode:      input.PublishMode,
+		ScorePublishTime: input.ScorePublishTime,
+	})
+	if err != nil {
+		return Exam{}, err
+	}
+	return s.repo.PublishExamAndFreezeLivePool(ctx, exam, pool)
+}
+
+func (s *Service) PublishWithTarget(ctx context.Context, input PublishWithTargetInput) (Exam, error) {
+	exam, pool, err := s.buildPublishedExam(ctx, publishSettingsInput{
+		TenantID:         input.TenantID,
+		PaperID:          input.PaperID,
+		Name:             input.Name,
+		StartTime:        input.StartTime,
+		EndTime:          input.EndTime,
+		DurationMinutes:  input.DurationMinutes,
+		MaxAttempts:      input.MaxAttempts,
+		ResultStrategy:   input.ResultStrategy,
+		PublishMode:      input.PublishMode,
+		ScorePublishTime: input.ScorePublishTime,
+	})
+	if err != nil {
+		return Exam{}, err
+	}
+	return s.repo.CreatePublishedExamWithTarget(ctx, exam, pool, Target{
+		TenantID:   input.TenantID,
+		TargetType: input.TargetType,
+		TargetID:   input.TargetID,
+	})
+}
+
+type publishSettingsInput struct {
+	ExamID           uint64
+	TenantID         uint64
+	PaperID          uint64
+	Name             string
+	StartTime        int64
+	EndTime          int64
+	DurationMinutes  int
+	MaxAttempts      int
+	ResultStrategy   string
+	PublishMode      string
+	ScorePublishTime *int64
+}
+
+func (s *Service) buildPublishedExam(ctx context.Context, input publishSettingsInput) (Exam, []LivePoolItem, error) {
 	if int64(input.DurationMinutes)*millisPerMinute > input.EndTime-input.StartTime {
-		return Exam{}, ErrDurationExceedsExamWindow
+		return Exam{}, nil, ErrDurationExceedsExamWindow
 	}
 	paper, err := s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
 	if err != nil {
-		return Exam{}, err
+		return Exam{}, nil, err
 	}
 	if paper.ContainsShortText && input.MaxAttempts > 1 {
-		return Exam{}, ErrShortTextCannotRepeatAttempt
+		return Exam{}, nil, ErrShortTextCannotRepeatAttempt
 	}
 	if paper.ContainsShortText && input.PublishMode == PublishModeImmediateScore {
-		return Exam{}, ErrShortTextCannotImmediateScore
+		return Exam{}, nil, ErrShortTextCannotImmediateScore
 	}
 	inviteCode, err := s.nextUniqueInviteCode(ctx, input.TenantID)
 	if err != nil {
-		return Exam{}, err
+		return Exam{}, nil, err
 	}
 	exam := Exam{
 		ID:               input.ExamID,
 		TenantID:         input.TenantID,
 		PaperID:          input.PaperID,
+		Name:             input.Name,
 		StartTime:        input.StartTime,
 		EndTime:          input.EndTime,
 		DurationMinutes:  input.DurationMinutes,
@@ -345,10 +419,10 @@ func (s *Service) Publish(ctx context.Context, input PublishInput) (Exam, error)
 	if paper.BuildMode == BuildModeRuleLive {
 		pool, err = s.repo.ListRuleLiveCandidates(ctx, input.TenantID, input.PaperID)
 		if err != nil {
-			return Exam{}, err
+			return Exam{}, nil, err
 		}
 	}
-	return s.repo.PublishExamAndFreezeLivePool(ctx, exam, pool)
+	return exam, pool, nil
 }
 
 func (s *Service) AddTarget(ctx context.Context, input AddTargetInput) error {

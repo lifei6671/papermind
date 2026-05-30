@@ -424,6 +424,12 @@ func (r *SpaceRepository) ValidateBeforeDisableTenantUser(ctx context.Context, t
 	return nil
 }
 
+func (r *SpaceRepository) EnableMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error {
+	return r.updateMember(ctx, tenantID, spaceID, userID, map[string]any{
+		SpaceMemberColumns.Status: servicespace.StatusEnabled,
+	})
+}
+
 func (r *SpaceRepository) DisableMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) error {
 	return r.updateMember(ctx, tenantID, spaceID, userID, map[string]any{
 		SpaceMemberColumns.Status: servicespace.StatusDisabled,
@@ -450,7 +456,14 @@ func (r *SpaceRepository) updateMember(ctx context.Context, tenantID uint64, spa
 		if err := r.lockSpaceAdminRows(ctx, tx, tenantID, spaceID); err != nil {
 			return err
 		}
+		requiresEnabledUser := false
 		if _, ok := updates[SpaceMemberColumns.RoleInSpace]; ok {
+			requiresEnabledUser = true
+		}
+		if status, ok := updates[SpaceMemberColumns.Status]; ok && status == servicespace.StatusEnabled {
+			requiresEnabledUser = true
+		}
+		if requiresEnabledUser {
 			if err := r.validateEnabledTenantUser(ctx, tx, tenantID, userID); err != nil {
 				return err
 			}

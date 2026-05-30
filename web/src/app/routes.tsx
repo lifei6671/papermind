@@ -30,6 +30,8 @@ import { SpaceMemberManagementPage } from "../pages/Tenant/SpaceMemberManagement
 import { UserManagementPage } from "../pages/Tenant/UserManagementPage";
 import type { ActorRole } from "../api/grading";
 import type { ProfileSpaceAuthorization, SessionUser } from "../auth/session-context";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Panel } from "../components/ui/Panel";
 import { TenantScopedRoute } from "./TenantScopedRoute";
 
 export type AdminRouteGroup = "platform" | "tenant" | "exam" | "hidden";
@@ -52,10 +54,21 @@ export const examBusinessRoles = ["tenant_admin", "teacher"];
 export const examSpaceMemberRoles: ProfileSpaceAuthorization["role"][] = ["space_admin", "teacher"];
 export const platformAdminRoles = ["platform_admin"];
 
-export function buildAdminRoutes(user?: SessionUser | null, selectedSpaceID?: number): AdminRoute[] {
+export type RouteVisibilityScope = {
+  tenantID?: number;
+  spaceID?: number;
+};
+
+export function buildAdminRoutes(
+  user?: SessionUser | null,
+  selectedSpaceID?: number,
+  profileSpaces: ProfileSpaceAuthorization[] = [],
+  selectedExamID?: number,
+): AdminRoute[] {
   const sessionTenantID = user?.tenantID;
   const actorID = user?.userID ?? 0;
-  const actorRole = routeActorRole(user?.role);
+  const actorRole = routeActorRole(user?.role, profileSpaces, { tenantID: sessionTenantID, spaceID: selectedSpaceID });
+  const examNeedsSpace = needsExamSpace(user, selectedSpaceID);
 
   return [
   {
@@ -136,7 +149,7 @@ export function buildAdminRoutes(user?: SessionUser | null, selectedSpaceID?: nu
     label: "题库",
     description: "维护题目、选项、解析、标签和导入任务",
     icon: LibraryBig,
-    element: <QuestionBankPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("题库") : <QuestionBankPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -146,7 +159,7 @@ export function buildAdminRoutes(user?: SessionUser | null, selectedSpaceID?: nu
     label: "题目导入",
     description: "上传 CSV/Excel 模板并查看导入错误行",
     icon: Upload,
-    element: <QuestionImportPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("题目导入") : <QuestionImportPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -156,7 +169,7 @@ export function buildAdminRoutes(user?: SessionUser | null, selectedSpaceID?: nu
     label: "试卷",
     description: "维护大题、手动组卷和规则组卷",
     icon: FileStack,
-    element: <PaperAssemblyPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("试卷") : <PaperAssemblyPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -166,7 +179,7 @@ export function buildAdminRoutes(user?: SessionUser | null, selectedSpaceID?: nu
     label: "考试",
     description: "发布考试、配置范围、邀请码和结果策略",
     icon: ClipboardList,
-    element: <ExamManagementPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("考试发布") : <ExamManagementPage canManageTenantTargets={user?.role === "tenant_admin"} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -176,7 +189,7 @@ export function buildAdminRoutes(user?: SessionUser | null, selectedSpaceID?: nu
     label: "阅卷中心",
     description: "处理简答题待阅卷、评语和成绩重算",
     icon: PenLine,
-    element: <GradingPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: <GradingPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} examID={selectedExamID} spaceID={selectedSpaceID} />,
     group: "exam",
     badge: "P8 已就绪",
     menuRoles: examBusinessRoles,
@@ -187,7 +200,7 @@ export function buildAdminRoutes(user?: SessionUser | null, selectedSpaceID?: nu
     label: "成绩",
     description: "查看成绩、配置发布、导出 CSV",
     icon: Trophy,
-    element: <ResultsPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: <ResultsPage actorID={actorID} actorRole={actorRole} tenantID={sessionTenantID ?? 0} examID={selectedExamID} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -217,28 +230,82 @@ export function routeVisibleForRole(
   route: AdminRoute,
   role?: string,
   profileSpaces: ProfileSpaceAuthorization[] = [],
+  scope: RouteVisibilityScope = {},
 ) {
   if (!route.menuRoles) {
     return true;
   }
-  if (role && route.menuRoles.includes(role)) {
+
+  const scopedRole = currentSpaceRole(profileSpaces, scope);
+  const roleForMenu = tenantScopedRole(role) ? role : scopedRole ?? (scope.spaceID ? undefined : role);
+  if (roleForMenu && route.menuRoles.includes(roleForMenu)) {
     return true;
   }
 
-  // 空间管理员入口必须从启用的空间成员授权推导，不能把 space_admin 写成 session 角色。
+  // 空间管理员入口必须从当前启用的空间成员授权推导，不能把 space_admin 写成 session 角色。
   return !!route.spaceMemberRoles?.some((memberRole) =>
-    profileSpaces.some((space) => space.status === "enabled" && space.role === memberRole),
+    matchingProfileSpaces(profileSpaces, scope).some((space) => space.role === memberRole),
   );
 }
 
-function routeActorRole(role?: string): ActorRole {
-  switch (role) {
+function routeActorRole(
+  role?: string,
+  profileSpaces: ProfileSpaceAuthorization[] = [],
+  scope: RouteVisibilityScope = {},
+): ActorRole {
+  const scopedRole = currentSpaceRole(profileSpaces, scope);
+  switch (scopedRole ?? role) {
+    case "space_admin":
     case "teacher":
     case "student":
-      return role;
+      return (scopedRole ?? role) as ActorRole;
     default:
       return "tenant_admin";
   }
+}
+
+function currentSpaceRole(profileSpaces: ProfileSpaceAuthorization[], scope: RouteVisibilityScope) {
+  if (!scope.spaceID) {
+    return undefined;
+  }
+  return matchingProfileSpaces(profileSpaces, scope)[0]?.role;
+}
+
+function matchingProfileSpaces(profileSpaces: ProfileSpaceAuthorization[], scope: RouteVisibilityScope) {
+  return profileSpaces.filter((space) =>
+    space.status === "enabled" &&
+    (scope.tenantID === undefined || space.tenantID === scope.tenantID) &&
+    (scope.spaceID === undefined || space.spaceID === scope.spaceID),
+  );
+}
+
+function tenantScopedRole(role?: string) {
+  return role === "platform_admin" || role === "tenant_admin";
+}
+
+const teacherSpaceRequiredMessage = "该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷";
+
+function renderExamSpaceRequiredPage(title: string) {
+  return (
+    <section className="page platform-page tenant-admin-page">
+      <nav aria-label={`${title}菜单`} className="platform-tabbar" role="tablist">
+        <span className="platform-tab platform-tab--active" role="tab" aria-selected="true">
+          {title}
+        </span>
+      </nav>
+
+      <Panel>
+        <EmptyState title="请选择授权空间" />
+        <div className="empty-state-actions">
+          <p>{teacherSpaceRequiredMessage}</p>
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function needsExamSpace(user?: SessionUser | null, selectedSpaceID?: number) {
+  return !!user && user.role !== "tenant_admin" && user.role !== "platform_admin" && selectedSpaceID === undefined;
 }
 
 export const adminRoutes: AdminRoute[] = buildAdminRoutes();

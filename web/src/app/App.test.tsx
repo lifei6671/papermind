@@ -67,6 +67,21 @@ function storeTenantTeacherSession() {
   }));
 }
 
+function storeSpaceTeacherSession() {
+  window.localStorage.setItem("papermind.session.v1", JSON.stringify({
+    accessToken: "teacher-session-token",
+    refreshToken: "teacher-session-token",
+    profileSpaces: [{
+      id: 1,
+      tenantID: 77,
+      spaceID: 301,
+      role: "teacher",
+      status: "enabled",
+    }],
+    user: { userID: 55, displayName: "阅卷教师", role: "teacher", tenantID: 77 },
+  }));
+}
+
 function storeSpaceAdminTeacherSession() {
   window.localStorage.setItem("papermind.session.v1", JSON.stringify({
     accessToken: "teacher-session-token",
@@ -238,7 +253,7 @@ test("平台管理员直接访问考试业务路由会回到概览", () => {
   storePlatformSession();
   const fetchMock = vi.spyOn(globalThis, "fetch");
 
-  renderApp(["/grading?space_id=301"]);
+  renderApp(["/grading?space_id=301&exam_id=1"]);
 
   expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "阅卷中心" })).not.toBeInTheDocument();
@@ -260,9 +275,9 @@ test("学生考试端与管理员后台路由隔离", async () => {
   mockStudentExamFetch();
   renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
-  expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "在线考试" })).toBeInTheDocument();
   expect(screen.getByText("PaperMind")).toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: "张三" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "考生" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "退出考试" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "答题卡" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "交 卷" })).toBeInTheDocument();
@@ -273,20 +288,20 @@ test("学生考试端与管理员后台路由隔离", async () => {
   expect(screen.queryByRole("link", { name: /租户管理/ })).not.toBeInTheDocument();
 });
 
-test("考生编号折叠在右侧用户菜单中", async () => {
+test("考生身份提示折叠在右侧用户菜单中", async () => {
   const user = userEvent.setup();
   mockStudentExamFetch();
 
   renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
-  const profileButton = await screen.findByRole("button", { name: "张三" });
+  const profileButton = await screen.findByRole("button", { name: "考生" });
   expect(profileButton).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("menu", { name: "考生信息" })).not.toBeInTheDocument();
 
   await user.click(profileButton);
 
   expect(profileButton).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByRole("menu", { name: "考生信息" })).toHaveTextContent("考生编号：S1001001");
+  expect(screen.getByRole("menu", { name: "考生信息" })).toHaveTextContent("身份已校验");
 
   await user.click(screen.getByRole("button", { name: "收起题目列表" }));
 
@@ -319,7 +334,7 @@ test("H5 窄屏考试端直接使用真实 API 作答页", async () => {
 
   renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
-  expect(screen.getByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "在线考试" })).toBeInTheDocument();
   expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
   expect(screen.queryByLabelText("开考前说明")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "考试信息与答题卡" })).toBeInTheDocument();
@@ -504,13 +519,13 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
       }),
     );
   });
-  expect(await screen.findByRole("heading", { name: "期中考试（高一语文）" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "在线考试" })).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "交 卷" })).toBeInTheDocument();
 });
 
 test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async () => {
   const user = userEvent.setup();
-  storeTenantTeacherSession();
+  storeSpaceTeacherSession();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.startsWith("/api/v1/grading/pending")) {
@@ -541,7 +556,7 @@ test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async ()
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
   });
 
-  renderApp(["/grading?space_id=301"]);
+  renderApp(["/grading?space_id=301&exam_id=1"]);
 
   expect(screen.getByRole("heading", { name: "阅卷中心" })).toBeInTheDocument();
   expect(await screen.findByText("张三")).toBeInTheDocument();
@@ -560,7 +575,7 @@ test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async ()
 });
 
 test("真实路由渲染阅卷中心时从 session 派生租户和阅卷人", async () => {
-  storeTenantTeacherSession();
+  storeSpaceTeacherSession();
   let pendingURL = "";
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
@@ -575,7 +590,7 @@ test("真实路由渲染阅卷中心时从 session 派生租户和阅卷人", as
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
   });
 
-  renderApp(["/grading?space_id=301"]);
+  renderApp(["/grading?space_id=301&exam_id=1"]);
 
   await waitFor(() => expect(pendingURL).toContain("tenant_id=77"));
   expect(pendingURL).toContain("actor_id=55");
@@ -587,11 +602,21 @@ test("教师未加入空间时阅卷中心展示受限提示且不请求列表",
   storeTenantTeacherSession();
   const fetchMock = vi.spyOn(globalThis, "fetch");
 
-  renderApp(["/grading"]);
+  renderApp(["/grading?exam_id=1"]);
 
   expect(screen.getByText("该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷")).toBeInTheDocument();
   expect(fetchMock).not.toHaveBeenCalled();
 });
+test("教师未加入空间时题库页展示受限提示且不请求列表", () => {
+  storeTenantTeacherSession();
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+
+  renderApp(["/questions"]);
+
+  expect(screen.getByText("该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷")).toBeInTheDocument();
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
 
 test("真实路由渲染空间管理时从 session 派生租户并请求后端 API", async () => {
   storeTenantAdminSession();
@@ -741,6 +766,42 @@ test("真实路由渲染用户管理时从 session 派生租户并请求后端 A
   await waitFor(() => expect(spacesURL).toBe("/api/v1/tenant/spaces?tenant_id=77"));
 });
 
+test("空间管理员直达成绩页时使用当前空间授权身份", async () => {
+  storeSpaceAdminTeacherSession();
+  let resultsURL = "";
+  let exportBody = "";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/results?")) {
+      resultsURL = url;
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { items: [] },
+      }));
+    }
+    if (url === "/api/v1/results/export" && init?.method === "POST") {
+      exportBody = String(init.body);
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { file_path: "space-301-scores.csv", file_url: "/api/v1/results/export-files/space-301-scores.csv", row_count: 0 },
+      }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
+
+  renderApp(["/results?space_id=301&exam_id=1"]);
+
+  expect(screen.getByRole("heading", { name: "成绩" })).toBeInTheDocument();
+  await waitFor(() => expect(resultsURL).toContain("actor_role=space_admin"));
+  expect(resultsURL).toContain("space_id=301");
+  await userEvent.click(screen.getByRole("button", { name: "导出成绩" }));
+
+  await waitFor(() => expect(exportBody).toContain('"actor_role":"space_admin"'));
+  expect(exportBody).toContain('"space_id":301');
+});
+
 test("成绩页支持发布配置和成绩导出", async () => {
   const user = userEvent.setup();
   storeTenantAdminSession();
@@ -778,10 +839,10 @@ test("成绩页支持发布配置和成绩导出", async () => {
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
   });
 
-  renderApp(["/results"]);
+  renderApp(["/results?exam_id=1"]);
 
   expect(screen.getByRole("heading", { name: "成绩" })).toBeInTheDocument();
-  expect(screen.getByText("高一语文期中考试")).toBeInTheDocument();
+  expect(screen.getByText("成绩发布配置")).toBeInTheDocument();
   expect(await screen.findByText("张三")).toBeInTheDocument();
   expect(screen.getByText("客观题分")).toBeInTheDocument();
   expect(screen.getByText("主观题分")).toBeInTheDocument();

@@ -88,14 +88,72 @@ test("考试业务路由会收到当前选择的空间范围", () => {
     role: "teacher",
     tenantID: 10,
     userID: 3,
-  }, 301);
+  }, 301, [], 42);
 
   expect(routeSpaceID(routes, "/questions")).toBe(301);
   expect(routeSpaceID(routes, "/grading")).toBe(301);
   expect(routeSpaceID(routes, "/results")).toBe(301);
+  expect(routeExamID(routes, "/grading")).toBe(42);
+  expect(routeExamID(routes, "/results")).toBe(42);
+});
+
+test("空间管理员页面 actorRole 来自当前选中空间授权", () => {
+  const routes = buildAdminRoutes({
+    displayName: "空间管理员",
+    role: "teacher",
+    tenantID: 10,
+    userID: 3,
+  }, 301, [{
+    id: 1,
+    tenantID: 10,
+    spaceID: 301,
+    role: "space_admin",
+    status: "enabled",
+  }]);
+
+  expect(routeActorRole(routes, "/grading")).toBe("space_admin");
+  expect(routeActorRole(routes, "/results")).toBe("space_admin");
+});
+
+test("空间授权菜单只对当前选中空间生效", () => {
+  const route = buildAdminRoutes({
+    displayName: "多空间用户",
+    role: "student",
+    tenantID: 10,
+    userID: 3,
+  }, 100).find((item) => item.path === "/questions")!;
+  const profileSpaces: ProfileSpaceAuthorization[] = [
+    {
+      id: 1,
+      tenantID: 10,
+      spaceID: 100,
+      role: "student",
+      status: "enabled",
+    },
+    {
+      id: 2,
+      tenantID: 10,
+      spaceID: 200,
+      role: "teacher",
+      status: "enabled",
+    },
+  ];
+
+  expect(routeVisibleForRole(route, "student", profileSpaces, { tenantID: 10, spaceID: 100 })).toBe(false);
+  expect(routeVisibleForRole(route, "student", profileSpaces, { tenantID: 10, spaceID: 200 })).toBe(true);
 });
 
 function routeSpaceID(routes: AdminRoute[], path: string) {
   const element = routes.find((route) => route.path === path)?.element as ReactElement<{ spaceID?: number }> | undefined;
   return element?.props.spaceID;
+}
+
+function routeActorRole(routes: AdminRoute[], path: string) {
+  const element = routes.find((route) => route.path === path)?.element as ReactElement<{ actorRole?: string }> | undefined;
+  return element?.props.actorRole;
+}
+
+function routeExamID(routes: AdminRoute[], path: string) {
+  const element = routes.find((route) => route.path === path)?.element as ReactElement<{ examID?: number }> | undefined;
+  return element?.props.examID;
 }

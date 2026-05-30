@@ -1,13 +1,13 @@
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { ClipboardCheck, DoorOpen, ShieldCheck } from "lucide-react";
+import { DoorOpen, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { examApi } from "../../api/exams";
 import type { ExamEntryAPI } from "../../api/exams";
 import { formatApiErrorMessage } from "../../api/client";
-import { useSession } from "../../auth/session-context";
+import { type AuthSession, useSession } from "../../auth/session-context";
 
 const examNotices = [
   "开考后系统自动开始计时，到达截止时间将自动交卷。",
@@ -20,6 +20,24 @@ type ExamEntryPageProps = {
   api?: ExamEntryAPI;
 };
 
+function canEnterExam(session: AuthSession | null) {
+  if (!session?.user.tenantID) {
+    return false;
+  }
+  if (session.user.role === "student") {
+    return true;
+  }
+  if (!session.selectedSpaceID) {
+    return false;
+  }
+  return session.profileSpaces?.some((space) =>
+    space.status === "enabled" &&
+    space.tenantID === session.user.tenantID &&
+    space.spaceID === session.selectedSpaceID &&
+    space.role === "student",
+  ) ?? false;
+}
+
 export function ExamEntryPage({ api = examApi }: ExamEntryPageProps) {
   const navigate = useNavigate();
   const { session } = useSession();
@@ -30,7 +48,7 @@ export function ExamEntryPage({ api = examApi }: ExamEntryPageProps) {
   async function handleEnterExam(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!session || session.user.role !== "student" || !session.user.tenantID) {
+    if (!canEnterExam(session)) {
       setResolveMessage("");
       setEntryError("请先使用租户学生账号登录后再进入考试");
       return;
@@ -103,34 +121,6 @@ export function ExamEntryPage({ api = examApi }: ExamEntryPageProps) {
           <div className="exam-entry-assurance">
             <ShieldCheck aria-hidden="true" size={22} />
             <span>服务端会以 exam token 和业务截止时间作为最终校验。</span>
-          </div>
-        </Panel>
-
-        <Panel title="当前可用考试" subtitle="用于管理员预览考生入口状态。">
-          <div className="table-wrap">
-            <table className="data-table tenant-admin-table">
-              <thead>
-                <tr>
-                  <th scope="col">考试</th>
-                  <th scope="col">时间</th>
-                  <th scope="col">状态</th>
-                  <th scope="col">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>高一语文期中考试</td>
-                  <td>2026-05-30 09:00 - 11:00</td>
-                  <td><StatusBadge tone="success">可进入</StatusBadge></td>
-                  <td>
-                    <Link className="tenant-action-button exam-entry-row-link" to="/exam-entry">
-                      <ClipboardCheck aria-hidden="true" size={14} />
-                      填写邀请码
-                    </Link>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
           </div>
         </Panel>
       </div>
