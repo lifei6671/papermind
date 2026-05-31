@@ -184,6 +184,33 @@ func TestChoiceQuestionValidation(t *testing.T) {
 	}
 }
 
+func TestCreateQuestionRejectsUnsupportedTypeAndDifficulty(t *testing.T) {
+	svc := NewQuestionService(QuestionServiceOptions{Repo: &fakeQuestionRepository{}})
+
+	var err error
+	_, err = svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Type:       "essay",
+		Difficulty: DifficultyMedium,
+		Title:      "未知题型",
+	})
+	if !errors.Is(err, ErrUnsupportedQuestionType) {
+		t.Fatalf("expected ErrUnsupportedQuestionType, got %v", err)
+	}
+
+	_, err = svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Type:       QuestionTypeShortText,
+		Difficulty: "impossible",
+		Title:      "未知难度",
+	})
+	if !errors.Is(err, ErrUnsupportedDifficulty) {
+		t.Fatalf("expected ErrUnsupportedDifficulty, got %v", err)
+	}
+}
+
 func TestChoiceOptionKeyIsNotUsedForGradingAndIDsAreNormalized(t *testing.T) {
 	svc := NewQuestionService(QuestionServiceOptions{Repo: &fakeQuestionRepository{}})
 	snapshot := ChoiceSnapshot{
@@ -270,6 +297,17 @@ func TestFillBlankAndShortTextRules(t *testing.T) {
 	if !errors.Is(err, ErrFillBlankOnlySupportsSingleBlank) {
 		t.Fatalf("expected ErrFillBlankOnlySupportsSingleBlank, got %v", err)
 	}
+	_, err = svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission:   tenantAdminQuestionPermission(),
+		TenantID:     10,
+		Type:         QuestionTypeFillBlank,
+		Title:        "缺少标准答案",
+		ScoreDefault: "3",
+	})
+	if !errors.Is(err, ErrFillBlankNeedsStandardAnswer) {
+		t.Fatalf("expected ErrFillBlankNeedsStandardAnswer, got %v", err)
+	}
+
 	if !svc.GradeFillBlankAnswer(" go.mod ", "go.mod") {
 		t.Fatalf("expected fill blank grading to trim answer before exact match")
 	}
@@ -310,20 +348,24 @@ func TestImportTemplateAndImportRows(t *testing.T) {
 		TenantID:   10,
 		Rows: []ImportRow{
 			{RowNumber: 2, Type: QuestionTypeSingle, Title: "合法题", Options: "A.对|B.错", CorrectAnswer: "A", Difficulty: DifficultyEasy, Tags: "数学,基础"},
-			{RowNumber: 3, Type: QuestionTypeSingle, Title: "错误题", Options: "A.错|B.也错", CorrectAnswer: "", Difficulty: DifficultyEasy},
+			{RowNumber: 3, Type: QuestionTypeFillBlank, Title: "Go 的包管理文件是 ____。", CorrectAnswer: "go.mod", Difficulty: DifficultyMedium, Tags: "Go"},
+			{RowNumber: 4, Type: QuestionTypeSingle, Title: "错误题", Options: "A.错|B.也错", CorrectAnswer: "", Difficulty: DifficultyEasy},
 		},
 	})
 	if err != nil {
 		t.Fatalf("ImportQuestions returned error: %v", err)
 	}
-	if result.SuccessCount != 1 {
-		t.Fatalf("expected one imported question, got %d", result.SuccessCount)
+	if result.SuccessCount != 2 {
+		t.Fatalf("expected two imported questions, got %d", result.SuccessCount)
 	}
-	if len(result.Errors) != 1 || result.Errors[0].RowNumber != 3 {
-		t.Fatalf("expected row 3 import error, got %#v", result.Errors)
+	if len(result.Errors) != 1 || result.Errors[0].RowNumber != 4 {
+		t.Fatalf("expected row 4 import error, got %#v", result.Errors)
 	}
-	if len(repo.importedQuestions) != 1 || repo.importedQuestions[0].Title != "合法题" {
+	if len(repo.importedQuestions) != 2 || repo.importedQuestions[0].Title != "合法题" {
 		t.Fatalf("expected valid question written, got %#v", repo.importedQuestions)
+	}
+	if repo.importedQuestions[1].Type != QuestionTypeFillBlank || repo.importedQuestions[1].StandardAnswer != "go.mod" {
+		t.Fatalf("expected fill blank import to keep standard answer, got %#v", repo.importedQuestions[1])
 	}
 	if len(repo.importedTags[0]) != 2 || repo.importedTags[0][0] != "数学" || repo.importedTags[0][1] != "基础" {
 		t.Fatalf("expected imported tags, got %#v", repo.importedTags)

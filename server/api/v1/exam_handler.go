@@ -770,10 +770,25 @@ func (h examHandler) getExamEntryResult(c *gin.Context) {
 		TenantID:    principal.TenantID,
 		Role:        principal.Role,
 	}
-	visible, err := h.result.GetVisibleResult(c.Request.Context(), serviceexam.ResultQueryInput{
+	currentVisible, err := h.result.GetVisibleResult(c.Request.Context(), serviceexam.ResultQueryInput{
 		Permission: permissionContext,
 		TenantID:   principal.TenantID,
 		AttemptID:  attemptID,
+	})
+	if err != nil {
+		writeVisibleResultError(c, err)
+		return
+	}
+	exam, err := h.service.GetExam(c.Request.Context(), principal.TenantID, currentVisible.ExamID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试信息失败"))
+		return
+	}
+	visible, err := h.result.SelectVisibleResult(c.Request.Context(), serviceexam.SelectResultInput{
+		Permission:     permissionContext,
+		TenantID:       principal.TenantID,
+		ExamID:         currentVisible.ExamID,
+		ResultStrategy: exam.ResultStrategy,
 	})
 	if err != nil {
 		writeVisibleResultError(c, err)
@@ -853,6 +868,10 @@ func (h examHandler) gradeShortText(c *gin.Context) {
 			c.JSON(http.StatusConflict, response.Fail(code.InvalidParam, "答案已被其他阅卷人更新，请刷新后重试"))
 			return
 		}
+		if errors.Is(err, serviceexam.ErrInvalidGradeScore) {
+			c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "score 必须是不超过题目满分的非负数字"))
+			return
+		}
 		writePermissionOrInternalError(c, err, "保存阅卷结果失败")
 		return
 	}
@@ -899,6 +918,10 @@ func (h examHandler) saveResultPublishConfig(c *gin.Context) {
 	}
 	if request.TenantID == 0 || request.ExamID == 0 || request.PublishMode == "" {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id、exam_id 和 publish_mode 不能为空"))
+		return
+	}
+	if !validPublishMode(request.PublishMode) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "publish_mode 只能是 immediate_score 或 manual_publish"))
 		return
 	}
 	permissionContext, err := h.permissionContextForResultPublishConfig(c, request.TenantID, request.ExamID)
@@ -1005,6 +1028,14 @@ func exportDownloadURL(fileName string, tenantID uint64, examID uint64, spaceID 
 	return "/api/v1/results/export-files/" + url.PathEscape(fileName) + "?" + query.Encode()
 }
 
+func validResultStrategy(strategy string) bool {
+	return strategy == serviceexam.ResultStrategyLatest || strategy == serviceexam.ResultStrategyHighest
+}
+
+func validPublishMode(mode string) bool {
+	return mode == serviceexam.PublishModeImmediateScore || mode == serviceexam.PublishModeManualPublish
+}
+
 func (r publishExamRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -1030,8 +1061,14 @@ func (r publishExamRequest) validate() error {
 	if r.ResultStrategy == "" {
 		return errors.New("result_strategy 不能为空")
 	}
+	if !validResultStrategy(r.ResultStrategy) {
+		return errors.New("result_strategy 只能是 latest 或 highest")
+	}
 	if r.PublishMode == "" {
 		return errors.New("publish_mode 不能为空")
+	}
+	if !validPublishMode(r.PublishMode) {
+		return errors.New("publish_mode 只能是 immediate_score 或 manual_publish")
 	}
 	if r.StartTime <= 0 || r.EndTime <= r.StartTime {
 		return errors.New("考试时间范围不合法")

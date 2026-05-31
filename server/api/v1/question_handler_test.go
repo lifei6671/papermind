@@ -157,6 +157,101 @@ func TestTeacherCannotCreateQuestionInInactiveSpace(t *testing.T) {
 	}
 }
 
+func TestTenantAdminCannotCreateQuestionForMissingSpace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	payload := []byte(fmt.Sprintf(`{
+		"tenant_id": 10,
+		"space_id": 404,
+		"type": "%s",
+		"difficulty": "medium",
+		"title": "无效空间题目",
+		"analysis": "空间不存在时拒绝题库写入。",
+		"score_default": "2",
+		"tags": ["权限"],
+		"options": [
+			{"option_key": "A", "content": "拒绝", "is_correct": true},
+			{"option_key": "B", "content": "允许", "is_distractor": true}
+		]
+	}`, constant.QuestionTypeSingle))
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/questions", payload, authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing space question create to be rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var createdCount int64
+	if err := gormDB.Table("questions").
+		Where("tenant_id = ? AND title = ?", 10, "无效空间题目").
+		Count(&createdCount).Error; err != nil {
+		t.Fatalf("count invalid-space question: %v", err)
+	}
+	if createdCount != 0 {
+		t.Fatalf("expected invalid-space question not to persist, got %d", createdCount)
+	}
+}
+
+func TestCreateQuestionRejectsUnsupportedTypeAndDifficultyWithBadRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		title      string
+		questionTy string
+		difficulty string
+	}{
+		{name: "unsupported type", title: "未知题型", questionTy: "essay", difficulty: "medium"},
+		{name: "unsupported difficulty", title: "未知难度", questionTy: constant.QuestionTypeSingle, difficulty: "impossible"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			gormDB := openExamAPITestDB(t)
+			seedSpaceAPITestData(t, gormDB)
+
+			router := NewRouter(RouterOptions{
+				DB:  gormDB,
+				Now: func() int64 { return fixedAPINow },
+			})
+			authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+			payload := []byte(fmt.Sprintf(`{
+				"tenant_id": 10,
+				"type": %q,
+				"difficulty": %q,
+				"title": %q,
+				"analysis": "非法题目输入应返回参数错误。",
+				"score_default": "2",
+				"tags": ["参数"],
+				"options": [
+					{"option_key": "A", "content": "选项 A", "is_correct": true},
+					{"option_key": "B", "content": "选项 B", "is_distractor": true}
+				]
+			}`, tc.questionTy, tc.difficulty, tc.title))
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/questions", payload, authHeader))
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected unsupported question input to be bad request, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+
+			var createdCount int64
+			if err := gormDB.Table("questions").
+				Where("tenant_id = ? AND title = ?", 10, tc.title).
+				Count(&createdCount).Error; err != nil {
+				t.Fatalf("count invalid question: %v", err)
+			}
+			if createdCount != 0 {
+				t.Fatalf("expected invalid question not to persist, got %d", createdCount)
+			}
+		})
+	}
+}
+
 func TestDisabledTeacherCannotCreateQuestionWithStaleSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

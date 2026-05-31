@@ -107,6 +107,63 @@ func TestExamRepositoryRuleLiveCandidatesRejectsCrossRuleDuplicatePool(t *testin
 	}
 }
 
+func TestExamRepositoryFixedSnapshotCarriesFillBlankStandardAnswer(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
+
+	if err := gormDB.Exec(`
+		INSERT INTO papers (
+			id, tenant_id, name, description, total_score, build_mode, status,
+			created_at, updated_at, ext_json
+		) VALUES (100, 10, '固定填空试卷', '', 3, 'manual', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed paper: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exams (
+			id, tenant_id, paper_id, name, start_time, end_time, duration_minutes,
+			max_attempts, result_strategy, publish_mode, invite_code, status,
+			created_at, updated_at, ext_json
+		) VALUES (900, 10, 100, '固定填空考试', 0, 0, 0, 1, 'latest', 'manual_publish', '', 'published', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed exam: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_sections (
+			id, tenant_id, paper_id, sort_order, name, question_type, instructions, total_score, question_count,
+			created_at, updated_at, ext_json
+		) VALUES (300, 10, 100, 1, '一、填空题', 'fill_blank', '填写准确答案', 3, 1, 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed section: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO questions (
+			id, tenant_id, type, difficulty, title, analysis, score_default, shuffle_options, standard_answer, status,
+			created_at, updated_at, ext_json
+		) VALUES (500, 10, 'fill_blank', 'easy', 'Go 的包管理文件是 ____。', '', 3, false, 'go.mod', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed fill blank question: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_section_questions (
+			id, tenant_id, section_id, paper_id, question_id, sort_order, score, created_at, updated_at, ext_json
+		) VALUES (600, 10, 300, 100, 500, 1, 3, 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed section question: %v", err)
+	}
+
+	snapshots, err := repo.ListFixedSnapshotQuestions(t.Context(), 10, 900)
+	if err != nil {
+		t.Fatalf("ListFixedSnapshotQuestions returned error: %v", err)
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("expected one snapshot source, got %#v", snapshots)
+	}
+	if snapshots[0].CorrectText != "go.mod" {
+		t.Fatalf("expected fill blank standard answer in snapshot source, got %#v", snapshots[0])
+	}
+}
+
 func TestExamRepositoryReviewAndScoreRowsDoNotDuplicateMultiSpaceStudent(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})

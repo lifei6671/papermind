@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -670,12 +671,13 @@ func (r *ExamRepository) ListFixedSnapshotQuestions(ctx context.Context, tenantI
 		QuestionID   uint64
 		QuestionType string
 		Title        string
+		CorrectText  string
 		Score        string
 		SortOrder    int
 	}
 	if err := r.db.WithContext(ctx).
 		Table("exams AS e").
-		Select("s.id AS section_id, s.name AS section_name, s.instructions AS instructions, q.id AS question_id, q.type AS question_type, q.title AS title, psq.score AS score, psq.sort_order AS sort_order").
+		Select("s.id AS section_id, s.name AS section_name, s.instructions AS instructions, q.id AS question_id, q.type AS question_type, q.title AS title, q.standard_answer AS correct_text, psq.score AS score, psq.sort_order AS sort_order").
 		Joins("JOIN paper_section_questions AS psq ON psq.tenant_id = e.tenant_id AND psq.paper_id = e.paper_id").
 		Joins("JOIN paper_sections AS s ON s.tenant_id = psq.tenant_id AND s.id = psq.section_id AND s.deleted_at = 0").
 		Joins("JOIN questions AS q ON q.tenant_id = psq.tenant_id AND q.id = psq.question_id AND q.deleted_at = 0").
@@ -700,6 +702,7 @@ func (r *ExamRepository) ListFixedSnapshotQuestions(ctx context.Context, tenantI
 			QuestionID:       row.QuestionID,
 			QuestionType:     row.QuestionType,
 			Title:            row.Title,
+			CorrectText:      row.CorrectText,
 			Score:            row.Score,
 			Options:          options.options,
 			OptionIDs:        options.optionIDs,
@@ -719,11 +722,12 @@ func (r *ExamRepository) ListFrozenLiveSnapshotQuestions(ctx context.Context, te
 		QuestionID   uint64
 		QuestionType string
 		Title        string
+		CorrectText  string
 		Score        string
 	}
 	if err := r.db.WithContext(ctx).
 		Table(ExamLiveQuestionPoolDO{}.TableName()+" AS pool").
-		Select("sections.id AS section_id, sections.name AS section_name, sections.instructions AS instructions, questions.id AS question_id, questions.type AS question_type, questions.title AS title, rules.score_per_question AS score").
+		Select("sections.id AS section_id, sections.name AS section_name, sections.instructions AS instructions, questions.id AS question_id, questions.type AS question_type, questions.title AS title, questions.standard_answer AS correct_text, rules.score_per_question AS score").
 		Joins("JOIN "+PaperSectionRuleDO{}.TableName()+" AS rules ON rules.tenant_id = pool.tenant_id AND rules.id = pool.rule_id").
 		Joins("JOIN "+PaperSectionDO{}.TableName()+" AS sections ON sections.tenant_id = pool.tenant_id AND sections.id = pool.section_id AND sections.deleted_at = 0").
 		Joins("JOIN "+QuestionDO{}.TableName()+" AS questions ON questions.tenant_id = pool.tenant_id AND questions.id = pool.question_id AND questions.deleted_at = 0").
@@ -747,6 +751,7 @@ func (r *ExamRepository) ListFrozenLiveSnapshotQuestions(ctx context.Context, te
 			QuestionID:       row.QuestionID,
 			QuestionType:     row.QuestionType,
 			Title:            row.Title,
+			CorrectText:      row.CorrectText,
 			Score:            row.Score,
 			Options:          options.options,
 			OptionIDs:        options.optionIDs,
@@ -971,6 +976,22 @@ func targetSpaceIDs(spaces []attemptTargetSpaceRow) []uint64 {
 func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade serviceexam.ShortTextGrade) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := grade.GradedAt
+		gradeScore, err := parseScoreString(grade.Score)
+		if err != nil || math.IsNaN(gradeScore) || math.IsInf(gradeScore, 0) || gradeScore < 0 {
+			return serviceexam.ErrInvalidGradeScore
+		}
+		var attemptQuestion ExamAttemptQuestionDO
+		if err := tx.Where(ExamAttemptQuestionColumns.TenantID+" = ?", grade.TenantID).
+			Where(ExamAttemptQuestionColumns.AttemptID+" = ?", grade.AttemptID).
+			Where(ExamAttemptQuestionColumns.ID+" = ?", grade.AttemptQuestionID).
+			First(&attemptQuestion).Error; err != nil {
+			return err
+		}
+		maxScore, err := parseScoreString(attemptQuestion.Score)
+		if err != nil || math.IsNaN(maxScore) || math.IsInf(maxScore, 0) || maxScore < 0 || gradeScore > maxScore {
+			return serviceexam.ErrInvalidGradeScore
+		}
+
 		// 简答题评分使用答案 version 乐观锁，避免两个教师同时覆盖同一题评分。
 		result := tx.Model(&ExamAnswerDO{}).
 			Where(ExamAnswerColumns.TenantID+" = ?", grade.TenantID).

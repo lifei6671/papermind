@@ -162,6 +162,56 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 	}
 }
 
+func TestPaperAPIRoutesRejectInvalidScoresWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPaperAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+
+	for _, tc := range []struct {
+		name   string
+		target string
+		body   []byte
+	}{
+		{
+			name:   "manual question score",
+			target: "/api/v1/papers/100/sections/1/questions",
+			body: []byte(`{
+				"tenant_id": 10,
+				"question_id": 101,
+				"score": "not-a-score"
+			}`),
+		},
+		{
+			name:   "rule score",
+			target: "/api/v1/papers/100/sections/1/rules",
+			body: []byte(`{
+				"tenant_id": 10,
+				"sort_order": 1,
+				"difficulty": "easy",
+				"tag_ids": [1],
+				"question_count": 1,
+				"score_per_question": "-1"
+			}`),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, tc.target, tc.body, authHeader))
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected invalid score to be rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestTeacherCannotReadOtherSpacePaperDetailsWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

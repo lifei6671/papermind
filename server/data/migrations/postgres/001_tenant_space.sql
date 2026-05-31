@@ -302,6 +302,8 @@ CREATE TABLE IF NOT EXISTS questions (
     difficulty VARCHAR(32) NOT NULL DEFAULT 'medium',
     title TEXT NOT NULL,
     analysis TEXT NOT NULL DEFAULT '',
+    standard_answer TEXT NOT NULL DEFAULT '',
+    reference_answer TEXT NOT NULL DEFAULT '',
     score_default NUMERIC(10,2) NOT NULL DEFAULT 0,
     choice_display_count INTEGER,
     shuffle_options BOOLEAN NOT NULL DEFAULT FALSE,
@@ -324,6 +326,8 @@ COMMENT ON COLUMN questions.type IS '题型：single / multiple / judge / fill_b
 COMMENT ON COLUMN questions.difficulty IS '难度：easy / medium / hard';
 COMMENT ON COLUMN questions.title IS '题干内容';
 COMMENT ON COLUMN questions.analysis IS '题目解析，出题人可选填';
+COMMENT ON COLUMN questions.standard_answer IS '填空题标准答案或判断题标准答案';
+COMMENT ON COLUMN questions.reference_answer IS '简答题参考答案';
 COMMENT ON COLUMN questions.score_default IS '默认分值';
 COMMENT ON COLUMN questions.choice_display_count IS '选择题展示选项数量，可为空';
 COMMENT ON COLUMN questions.shuffle_options IS '题库默认选项随机设置';

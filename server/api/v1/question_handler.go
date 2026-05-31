@@ -221,7 +221,10 @@ func writeQuestionServiceError(c *gin.Context, err error) {
 	}
 	if errors.Is(err, servicequestion.ErrChoiceQuestionNeedsCorrectAnswer) ||
 		errors.Is(err, servicequestion.ErrSingleQuestionOnlyOneCorrectAnswer) ||
-		errors.Is(err, servicequestion.ErrFillBlankOnlySupportsSingleBlank) {
+		errors.Is(err, servicequestion.ErrUnsupportedQuestionType) ||
+		errors.Is(err, servicequestion.ErrUnsupportedDifficulty) ||
+		errors.Is(err, servicequestion.ErrFillBlankOnlySupportsSingleBlank) ||
+		errors.Is(err, servicequestion.ErrFillBlankNeedsStandardAnswer) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}

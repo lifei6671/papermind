@@ -691,6 +691,8 @@ questions
 ├── difficulty            # 难度：easy / medium / hard
 ├── title                 # 题干内容
 ├── analysis              # 题目解析，出题人可选填
+├── standard_answer       # 填空题标准答案或判断题标准答案
+├── reference_answer      # 简答题参考答案
 ├── score_default         # 默认分值
 ├── choice_display_count  # 选择题展示选项数量
 ├── shuffle_options       # 题库默认选项随机设置

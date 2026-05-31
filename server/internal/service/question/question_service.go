@@ -41,6 +41,9 @@ var (
 	ErrChoiceQuestionNeedsCorrectAnswer   = errors.New("choice question needs at least one correct answer")
 	ErrSingleQuestionOnlyOneCorrectAnswer = errors.New("single choice question only allows one correct answer")
 	ErrFillBlankOnlySupportsSingleBlank   = errors.New("fill blank only supports single blank")
+	ErrFillBlankNeedsStandardAnswer       = errors.New("fill blank needs standard answer")
+	ErrUnsupportedQuestionType            = errors.New("unsupported question type")
+	ErrUnsupportedDifficulty              = errors.New("unsupported difficulty")
 )
 
 type Question struct {
@@ -268,6 +271,9 @@ func canWriteQuestionScope(ctx permission.PermissionContext, tenantID uint64, sp
 }
 
 func validateQuestionInput(input CreateQuestionInput, options []QuestionOption) error {
+	if input.Difficulty != "" && !supportedDifficulty(input.Difficulty) {
+		return ErrUnsupportedDifficulty
+	}
 	switch input.Type {
 	case QuestionTypeSingle:
 		return validateChoiceOptions(QuestionTypeSingle, options)
@@ -279,11 +285,23 @@ func validateQuestionInput(input CreateQuestionInput, options []QuestionOption) 
 		if input.BlankCount > 1 {
 			return ErrFillBlankOnlySupportsSingleBlank
 		}
+		if strings.TrimSpace(input.StandardAnswer) == "" {
+			return ErrFillBlankNeedsStandardAnswer
+		}
 		return nil
 	case QuestionTypeShortText:
 		return nil
 	default:
-		return nil
+		return ErrUnsupportedQuestionType
+	}
+}
+
+func supportedDifficulty(difficulty string) bool {
+	switch difficulty {
+	case DifficultyEasy, DifficultyMedium, DifficultyHard:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -349,16 +367,21 @@ func sameIDs(left []uint64, right []uint64) bool {
 
 func (row ImportRow) toCreateQuestionInput(tenantID uint64, spaceID *uint64) CreateQuestionInput {
 	options := parseImportOptions(row.Options, row.CorrectAnswer)
+	standardAnswer := ""
+	if row.Type == QuestionTypeFillBlank {
+		standardAnswer = strings.TrimSpace(row.CorrectAnswer)
+	}
 	return CreateQuestionInput{
-		TenantID:     tenantID,
-		SpaceID:      spaceID,
-		Type:         row.Type,
-		Difficulty:   row.Difficulty,
-		Title:        row.Title,
-		Analysis:     row.Analysis,
-		ScoreDefault: "1",
-		Options:      options,
-		Tags:         splitCSV(row.Tags),
+		TenantID:       tenantID,
+		SpaceID:        spaceID,
+		Type:           row.Type,
+		Difficulty:     row.Difficulty,
+		Title:          row.Title,
+		Analysis:       row.Analysis,
+		ScoreDefault:   "1",
+		Options:        options,
+		StandardAnswer: standardAnswer,
+		Tags:           splitCSV(row.Tags),
 	}
 }
 

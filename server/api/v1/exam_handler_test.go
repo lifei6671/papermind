@@ -88,6 +88,60 @@ func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 	}
 }
 
+func TestExamPublishRejectsUnsupportedResultStrategyAndPublishMode(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		resultStrategy string
+		publishMode    string
+	}{
+		{name: "unsupported result strategy", resultStrategy: "lowest", publishMode: serviceexam.PublishModeManualPublish},
+		{name: "unsupported publish mode", resultStrategy: serviceexam.ResultStrategyLatest, publishMode: "manual-pubish"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			gormDB := openExamAPITestDB(t)
+			seedExamAPITestData(t, gormDB)
+			seedSpaceAPITestData(t, gormDB)
+
+			router := NewRouter(RouterOptions{
+				DB:            gormDB,
+				Now:           func() int64 { return fixedAPINow },
+				CodeGenerator: fixedCodeGenerator{code: "PM2027"},
+			})
+			authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+			payload := []byte(fmt.Sprintf(`{
+				"tenant_id": 10,
+				"paper_id": 100,
+				"name": "非法发布策略考试",
+				"target_type": "space",
+				"target_id": 100,
+				"start_time": 1772269200000,
+				"end_time": 1772276400000,
+				"duration_minutes": 120,
+				"max_attempts": 1,
+				"result_strategy": %q,
+				"publish_mode": %q
+			}`, tc.resultStrategy, tc.publishMode))
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/exams", payload, authHeader))
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected invalid publish settings rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+
+			var createdCount int64
+			if err := gormDB.Table("exams").
+				Where("tenant_id = ? AND name = ?", 10, "非法发布策略考试").
+				Count(&createdCount).Error; err != nil {
+				t.Fatalf("count invalid publish exams: %v", err)
+			}
+			if createdCount != 0 {
+				t.Fatalf("expected invalid publish settings not to create exam, got %d", createdCount)
+			}
+		})
+	}
+}
+
 func TestExamBusinessRoutesRejectDisabledTenantAdminSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -1308,6 +1362,31 @@ func TestExamEntryResultVisibleForOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestExamEntryResultUsesExamResultStrategy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+	seedVisibleResultAPITestData(t, gormDB)
+	seedHighestStrategyVisibleResultAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/exam-entry/results/701", nil, authHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("result status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[visibleResultResponse](t, recorder.Body.Bytes())
+	if body.Data.AttemptID != 700 || body.Data.TotalScore != "8" {
+		t.Fatalf("expected highest strategy to return attempt 700 score 8, got %#v", body.Data)
+	}
+}
+
 func TestExamEntryResultRejectsDisabledStudentSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -1523,6 +1602,46 @@ func TestReviewAndResultAPIRoutesWithSQLite(t *testing.T) {
 	}
 }
 
+func TestGradeShortTextRejectsScoreOutsideQuestionMax(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedReviewResultAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.li", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/exam-attempts/900/questions/901/grade", []byte("{\n"+
+		"\t\"tenant_id\": 10,\n"+
+		"\t\"exam_id\": 1,\n"+
+		"\t\"space_id\": 301,\n"+
+		"\t\"answer_version\": 7,\n"+
+		"\t\"score\": \"10.1\",\n"+
+		"\t\"comment\": \"score over max\"\n"+
+		"}"), authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected score over max to be rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var answer struct {
+		Score         string
+		GradingStatus string
+	}
+	if err := gormDB.Table("exam_answers").
+		Select("score, grading_status").
+		Where("tenant_id = ? AND attempt_id = ? AND attempt_question_id = ?", 10, 900, 901).
+		Scan(&answer).Error; err != nil {
+		t.Fatalf("query answer after invalid grade: %v", err)
+	}
+	if answer.Score != "0" || answer.GradingStatus != "pending" {
+		t.Fatalf("expected invalid grade not to modify answer, got %#v", answer)
+	}
+}
+
 func TestReviewAndResultAPIRoutesRejectForgedSpaceIDWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -1675,6 +1794,44 @@ func TestResultPublishConfigRejectsForgedSpaceIDWithSQLite(t *testing.T) {
 	}
 	if exam.PublishMode != "immediate_score" || exam.ScorePublishTime != nil {
 		t.Fatalf("forged publish config should not update exam, got %#v", exam)
+	}
+}
+
+func TestResultPublishConfigRejectsUnsupportedPublishModeWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/results/publish-config", []byte(`{
+		"tenant_id": 10,
+		"exam_id": 1,
+		"publish_mode": "manual-pubish",
+		"score_publish_time": 1779795600000
+	}`), authHeader))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid publish mode rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var exam struct {
+		PublishMode      string
+		ScorePublishTime *int64
+	}
+	if err := gormDB.Table("exams").
+		Select("publish_mode, score_publish_time").
+		Where("tenant_id = ? AND id = ?", 10, 1).
+		Scan(&exam).Error; err != nil {
+		t.Fatalf("query invalid publish exam: %v", err)
+	}
+	if exam.PublishMode == "manual-pubish" || exam.ScorePublishTime != nil {
+		t.Fatalf("invalid publish config should not update exam, got %#v", exam)
 	}
 }
 
@@ -2129,6 +2286,26 @@ func seedVisibleResultAPITestData(t *testing.T, gormDB *gorm.DB) {
 		) VALUES (700, 10, 1, 20, 1, 'submitted', ?, ?, 'hash-result', ?, 6, 2, 8, ?, ?, 1, '{}')
 	`, fixedAPINow-3_600_000, fixedAPINow-60_000, fixedAPINow+3_600_000, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed visible result attempt: %v", err)
+	}
+}
+
+func seedHighestStrategyVisibleResultAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+	if err := gormDB.Exec(`
+		UPDATE exams
+		SET max_attempts = 2, result_strategy = ?
+		WHERE tenant_id = 10 AND id = 1
+	`, serviceexam.ResultStrategyHighest).Error; err != nil {
+		t.Fatalf("set highest result strategy: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_attempts (
+			id, tenant_id, exam_id, user_id, attempt_no, status, started_at, submitted_at,
+			exam_token_hash, exam_token_expires_at, objective_score, subjective_score, total_score,
+			created_at, updated_at, version, ext_json
+	) VALUES (701, 10, 1, 20, 2, 'submitted', ?, ?, 'hash-result-low', ?, 5, 0, 5, ?, ?, 1, '{}')
+	`, fixedAPINow-1_800_000, fixedAPINow-30_000, fixedAPINow+3_600_000, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed lower visible result attempt: %v", err)
 	}
 }
 

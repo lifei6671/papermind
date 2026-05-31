@@ -9,6 +9,8 @@ type QuestionDO struct {
 	Difficulty         string  `gorm:"column:difficulty"`           // 难度：easy / medium / hard。
 	Title              string  `gorm:"column:title"`                // 题干内容。
 	Analysis           string  `gorm:"column:analysis"`             // 题目解析，出题人可选填。
+	StandardAnswer     string  `gorm:"column:standard_answer"`      // 填空题标准答案或判断题标准答案。
+	ReferenceAnswer    string  `gorm:"column:reference_answer"`     // 简答题参考答案。
 	ScoreDefault       string  `gorm:"column:score_default"`        // 默认分值，使用字符串承载 DECIMAL/NUMERIC。
 	ChoiceDisplayCount *int    `gorm:"column:choice_display_count"` // 选择题展示选项数量，nil 表示不限制。
 	ShuffleOptions     bool    `gorm:"column:shuffle_options"`      // 题库默认选项随机设置。
@@ -28,6 +30,8 @@ var QuestionColumns = struct {
 	Difficulty         string
 	Title              string
 	Analysis           string
+	StandardAnswer     string
+	ReferenceAnswer    string
 	ScoreDefault       string
 	ChoiceDisplayCount string
 	ShuffleOptions     string
@@ -41,6 +45,8 @@ var QuestionColumns = struct {
 	Difficulty:         "difficulty",
 	Title:              "title",
 	Analysis:           "analysis",
+	StandardAnswer:     "standard_answer",
+	ReferenceAnswer:    "reference_answer",
 	ScoreDefault:       "score_default",
 	ChoiceDisplayCount: "choice_display_count",
 	ShuffleOptions:     "shuffle_options",

@@ -19,6 +19,10 @@ func writePermissionOrInternalError(c *gin.Context, err error, fallback string) 
 		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
 		return
 	}
+	if errors.Is(err, servicespace.ErrSpaceNotFound) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 不存在"))
+		return
+	}
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, fallback))
 }
 
@@ -147,6 +151,15 @@ func permissionContextForResourceScope(c *gin.Context, tenantID uint64, spaceID 
 		SpaceMemberships: map[uint64]string{},
 	}
 	if principal.Role == permission.RoleTenantAdmin {
+		if spaceID != nil {
+			exists, err := members.SpaceExists(c.Request.Context(), tenantID, *spaceID)
+			if err != nil {
+				return permission.PermissionContext{}, err
+			}
+			if !exists {
+				return permission.PermissionContext{}, servicespace.ErrSpaceNotFound
+			}
+		}
 		return ctx, nil
 	}
 	if spaceID == nil {

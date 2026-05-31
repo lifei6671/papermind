@@ -10,6 +10,7 @@ import (
 
 var (
 	ErrAnswerVersionConflict = errors.New("answer version conflict")
+	ErrInvalidGradeScore     = errors.New("invalid grade score")
 )
 
 type PendingAttempt struct {

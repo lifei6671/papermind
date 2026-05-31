@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	servicepaper "github.com/lifei6671/papermind/server/internal/service/paper"
@@ -517,6 +520,9 @@ func (r addPaperSectionQuestionRequest) validate() error {
 	if r.Score == "" {
 		return errors.New("score 不能为空")
 	}
+	if err := validateNonNegativeScore("score", r.Score); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -532,6 +538,17 @@ func (r createPaperRuleRequest) validate() error {
 	}
 	if r.ScorePerQuestion == "" {
 		return errors.New("score_per_question 不能为空")
+	}
+	if err := validateNonNegativeScore("score_per_question", r.ScorePerQuestion); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateNonNegativeScore(field string, value string) error {
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 {
+		return errors.New(field + " 必须是非负数字")
 	}
 	return nil
 }
