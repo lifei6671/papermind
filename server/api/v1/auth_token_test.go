@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	apimiddleware "github.com/lifei6671/papermind/server/api/middleware"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 )
@@ -21,7 +22,7 @@ func TestGinSessionPrincipalCanBeReadFromBearerToken(t *testing.T) {
 		t.Fatalf("NewSessionStore() error = %v", err)
 	}
 	router := gin.New()
-	router.Use(bearerSessionCookieMiddleware(authSessionName), sessions.Sessions(authSessionName, store), authContextMiddleware())
+	router.Use(apimiddleware.BearerSessionCookie(authSessionName), sessions.Sessions(authSessionName, store), apimiddleware.AuthContext())
 	router.POST("/login", func(c *gin.Context) {
 		token, err := saveAuthPrincipalSession(c, AuthPrincipal{
 			SubjectType: permission.SubjectPlatformUser,
@@ -102,7 +103,7 @@ func TestPermissionContextFromSessionUsesSpaceMembershipForSpaceAdmin(t *testing
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-	c.Set(authPrincipalGinKey, AuthPrincipal{
+	c.Set(apimiddleware.AuthPrincipalGinKey, AuthPrincipal{
 		SubjectType: permission.SubjectTenantUser,
 		UserID:      20,
 		TenantID:    10,
@@ -130,14 +131,14 @@ func TestPermissionContextFromSessionUsesSpaceMembershipForSpaceAdmin(t *testing
 func TestExamBusinessMiddlewareRejectsSpaceAdminSessionRole(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Set(authPrincipalGinKey, AuthPrincipal{
+	c.Set(apimiddleware.AuthPrincipalGinKey, AuthPrincipal{
 		SubjectType: permission.SubjectTenantUser,
 		UserID:      20,
 		TenantID:    10,
 		Role:        permission.RoleSpaceAdmin,
 	})
 
-	requireExamBusinessPrincipalMiddleware()(c)
+	apimiddleware.RequireExamBusinessPrincipal()(c)
 
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("space_admin session role should be forbidden, got status = %d", recorder.Code)
@@ -149,14 +150,14 @@ func TestExamBusinessMiddlewareAllowsTenantLevelExamRoles(t *testing.T) {
 		t.Run(role, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
-			c.Set(authPrincipalGinKey, AuthPrincipal{
+			c.Set(apimiddleware.AuthPrincipalGinKey, AuthPrincipal{
 				SubjectType: permission.SubjectTenantUser,
 				UserID:      20,
 				TenantID:    10,
 				Role:        role,
 			})
 
-			requireExamBusinessPrincipalMiddleware()(c)
+			apimiddleware.RequireExamBusinessPrincipal()(c)
 
 			if c.IsAborted() {
 				t.Fatalf("%s should pass exam business middleware", role)

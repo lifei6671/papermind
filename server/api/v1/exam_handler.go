@@ -274,7 +274,7 @@ func (h examHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
 		return
 	}
-	if !authorizeExamBusiness(c, tenantID, h.members) {
+	if !h.authorizeExamBusiness(c, tenantID) {
 		return
 	}
 	spaceID, err := readOptionalUintQuery(c, "space_id")
@@ -282,7 +282,7 @@ func (h examHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
 		return
 	}
-	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members); err != nil {
+	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.tenantUsers); err != nil {
 		writePermissionOrInternalError(c, err, "构建考试权限上下文失败")
 		return
 	}
@@ -319,7 +319,7 @@ func (h examHandler) publish(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
-	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+	if !h.authorizeExamBusiness(c, request.TenantID) {
 		return
 	}
 	if !h.authorizePublishScope(c, request.TenantID, request.PaperID, request.TargetType, request.TargetID) {
@@ -349,13 +349,34 @@ func (h examHandler) publish(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(result))
 }
 
+func (h examHandler) authorizeExamBusiness(c *gin.Context, tenantID uint64) bool {
+	principal, err := h.liveTenantPrincipal(c, tenantID)
+	if err != nil {
+		writePermissionContextError(c, err, "读取当前用户权限失败")
+		return false
+	}
+	if principal.Role == permission.RoleTenantAdmin || principal.Role == permission.RoleTeacher {
+		return true
+	}
+	allowed, err := hasExamBusinessMembership(c, h.members, tenantID, principal.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取当前用户空间授权失败"))
+		return false
+	}
+	if allowed {
+		return true
+	}
+	writePermissionOrInternalError(c, permission.ErrForbidden, "无权执行当前操作")
+	return false
+}
+
 func (h examHandler) authorizePublishScope(c *gin.Context, tenantID uint64, paperID uint64, targetType string, targetID uint64) bool {
 	spaceID, err := h.papers.GetPaperSpaceID(c.Request.Context(), tenantID, paperID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试试卷权限范围失败"))
 		return false
 	}
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members)
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.tenantUsers)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建考试发布权限上下文失败")
 		return false
@@ -393,7 +414,7 @@ func (h examHandler) authorizePublishSpaceTarget(c *gin.Context, tenantID uint64
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, servicespace.ErrSpaceNotFound.Error()))
 		return false
 	}
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, &spaceID, h.members)
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, &spaceID, h.members, h.tenantUsers)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建考试发布目标权限上下文失败")
 		return false
@@ -446,7 +467,7 @@ func (h examHandler) authorizePublishUserTarget(c *gin.Context, tenantID uint64,
 }
 
 func (h examHandler) actorCanPublishToSpace(c *gin.Context, tenantID uint64, spaceID uint64) bool {
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, &spaceID, h.members)
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, &spaceID, h.members, h.tenantUsers)
 	if err != nil {
 		return false
 	}
@@ -508,6 +529,27 @@ func saveExamEntrySession(c *gin.Context, exam serviceexam.Exam, userID uint64, 
 		SameSite: http.SameSiteLaxMode,
 	})
 	return session.Save()
+}
+
+func sessionUint64(value any) (uint64, bool) {
+	switch v := value.(type) {
+	case uint64:
+		return v, v > 0
+	case uint:
+		return uint64(v), v > 0
+	case int:
+		if v <= 0 {
+			return 0, false
+		}
+		return uint64(v), true
+	case int64:
+		if v <= 0 {
+			return 0, false
+		}
+		return uint64(v), true
+	default:
+		return 0, false
+	}
 }
 
 func examEntrySessionUser(c *gin.Context, tenantID uint64, examID uint64) (uint64, bool) {
@@ -715,6 +757,11 @@ func (h examHandler) getExamEntryResult(c *gin.Context) {
 	}
 	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID == 0 {
 		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "只有租户用户可以查看考试成绩"))
+		return
+	}
+	principal, err = h.liveTenantPrincipal(c, principal.TenantID)
+	if err != nil {
+		writePermissionContextError(c, err, "读取当前用户权限失败")
 		return
 	}
 	permissionContext := permission.PermissionContext{
@@ -1171,9 +1218,12 @@ func (h examHandler) permissionContextFromSession(c *gin.Context, tenantID uint6
 	if principal.SubjectType == permission.SubjectPlatformUser {
 		return permission.PermissionContext{}, permission.ErrForbidden
 	}
-	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
-		return permission.PermissionContext{}, permission.ErrForbidden
+	principal, err := h.liveTenantPrincipal(c, tenantID)
+	if err != nil {
+		return permission.PermissionContext{}, err
 	}
+	ctx.UserID = principal.UserID
+	ctx.Role = principal.Role
 	switch principal.Role {
 	case permission.RoleTenantAdmin:
 		return ctx, nil
@@ -1184,6 +1234,30 @@ func (h examHandler) permissionContextFromSession(c *gin.Context, tenantID uint6
 	default:
 		return permission.PermissionContext{}, permission.ErrForbidden
 	}
+}
+
+func (h examHandler) liveTenantPrincipal(c *gin.Context, tenantID uint64) (AuthPrincipal, error) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		return AuthPrincipal{}, errors.New("请先登录")
+	}
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
+		return AuthPrincipal{}, permission.ErrForbidden
+	}
+	if h.tenantUsers == nil {
+		return principal, nil
+	}
+	user, err := h.tenantUsers.Get(c.Request.Context(), tenantID, principal.UserID)
+	if errors.Is(err, servicetenantuser.ErrUserNotFound) {
+		return AuthPrincipal{}, permission.ErrForbidden
+	}
+	if err != nil {
+		return AuthPrincipal{}, err
+	}
+	if user.Status != servicetenantuser.StatusEnabled || user.Role != principal.Role {
+		return AuthPrincipal{}, permission.ErrForbidden
+	}
+	return principal, nil
 }
 
 func (h examHandler) permissionContextFromSpaceMembership(c *gin.Context, ctx permission.PermissionContext, tenantID uint64, spaceID uint64, userID uint64) (permission.PermissionContext, error) {

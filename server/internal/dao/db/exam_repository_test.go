@@ -189,6 +189,34 @@ func TestExamRepositoryReviewAndScoreRowsResolveUserTargetSpaces(t *testing.T) {
 	assertUint64s(t, spaces, []uint64{301, 302})
 }
 
+func TestExamRepositoryRejectsAnswerUpsertAfterAttemptSubmitted(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 2000 }})
+	seedMultiSpaceAttemptData(t, gormDB)
+
+	err := repo.UpsertAnswer(t.Context(), serviceexam.Answer{
+		TenantID:          10,
+		AttemptID:         700,
+		AttemptQuestionID: 800,
+		AnswerContent:     "提交后的覆盖答案",
+		UpdatedBy:         21,
+	})
+	if !errors.Is(err, serviceexam.ErrAttemptAlreadySubmitted) {
+		t.Fatalf("expected ErrAttemptAlreadySubmitted, got %v", err)
+	}
+
+	var answerContent string
+	if err := gormDB.Table("exam_answers").
+		Select("answer_content").
+		Where("tenant_id = ? AND attempt_id = ? AND attempt_question_id = ?", 10, 700, 800).
+		Scan(&answerContent).Error; err != nil {
+		t.Fatalf("query answer content: %v", err)
+	}
+	if answerContent != "答案" {
+		t.Fatalf("submitted attempt answer should not be overwritten, got %q", answerContent)
+	}
+}
+
 func TestExamRepositoryCreateAttemptMapsUniqueConflict(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})

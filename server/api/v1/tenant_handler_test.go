@@ -99,6 +99,40 @@ func TestTenantAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	}
 }
 
+func TestTenantAPICreateRejectsWeakInitialAdminPassword(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	seedTenantAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:                gormDB,
+		Now:               func() int64 { return fixedAPINow },
+		CodeGenerator:     fixedCodeGenerator{code: "PM-WEAK"},
+		PasswordMinLength: 12,
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/tenants", []byte(`{
+		"name": "弱密码租户",
+		"admin_username": "weak.admin",
+		"admin_real_name": "弱密码管理员",
+		"admin_password": "short"
+	}`), authHeader))
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected weak password rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var count int64
+	if err := gormDB.Table("users").Where("username = ?", "weak.admin").Count(&count).Error; err != nil {
+		t.Fatalf("count weak admin user: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("weak password tenant admin should not be created")
+	}
+}
+
 func TestTenantAPIListFiltersByKeywordWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

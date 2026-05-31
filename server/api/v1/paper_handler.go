@@ -10,6 +10,7 @@ import (
 	servicepaper "github.com/lifei6671/papermind/server/internal/service/paper"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
+	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/response"
 )
@@ -18,6 +19,7 @@ type paperHandler struct {
 	service *servicepaper.Service
 	papers  paperScopeFinder
 	members spaceMemberFinder
+	users   *servicetenantuser.Service
 }
 
 type paperScopeFinder interface {
@@ -143,7 +145,7 @@ func (h paperHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
 		return
 	}
-	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members); err != nil {
+	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users); err != nil {
 		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
 		return
 	}
@@ -551,9 +553,9 @@ func (h paperHandler) authorizePaperRead(c *gin.Context, tenantID uint64, paperI
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷权限范围失败"))
 		return false
 	}
-	principal, ok := currentAuthPrincipal(c)
-	if !ok || principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
-		writePermissionOrInternalError(c, permission.ErrForbidden, "校验试卷读权限失败")
+	principal, err := liveTenantPrincipalFromSession(c, tenantID, h.users)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "校验试卷读权限失败")
 		return false
 	}
 	if principal.Role == permission.RoleTenantAdmin {
@@ -562,7 +564,7 @@ func (h paperHandler) authorizePaperRead(c *gin.Context, tenantID uint64, paperI
 	if spaceID == nil {
 		return true
 	}
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members)
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
 		return false
@@ -585,7 +587,7 @@ func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paper
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷权限范围失败"))
 		return false
 	}
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members)
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
 		return false
@@ -606,7 +608,7 @@ func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paper
 }
 
 func (h paperHandler) authorizePaperCreate(c *gin.Context, tenantID uint64, spaceID *uint64) bool {
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members)
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
 		return false

@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
 	servicequestion "github.com/lifei6671/papermind/server/internal/service/question"
+	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
 	"github.com/lifei6671/papermind/server/library/response"
 )
@@ -18,6 +19,7 @@ import (
 type questionHandler struct {
 	service *servicequestion.QuestionService
 	members spaceMemberFinder
+	users   *servicetenantuser.Service
 }
 
 type createQuestionRequest struct {
@@ -83,7 +85,7 @@ func (h questionHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
 		return
 	}
-	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members); err != nil {
+	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users); err != nil {
 		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
 		return
 	}
@@ -128,7 +130,7 @@ func (h questionHandler) create(c *gin.Context) {
 	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
-	permissionContext, err := permissionContextForResourceScope(c, request.TenantID, request.SpaceID, h.members)
+	permissionContext, err := permissionContextForResourceScope(c, request.TenantID, request.SpaceID, h.members, h.users)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
 		return

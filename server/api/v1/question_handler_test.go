@@ -195,6 +195,42 @@ func TestDisabledTeacherCannotCreateQuestionWithStaleSession(t *testing.T) {
 	}
 }
 
+func TestDisabledTenantAdminCannotCreateQuestionWithStaleSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 99).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable tenant admin after login: %v", err)
+	}
+	payload := []byte(fmt.Sprintf(`{
+		"tenant_id": 10,
+		"type": "%s",
+		"difficulty": "medium",
+		"title": "禁用管理员旧会话不可写题",
+		"analysis": "租户管理员禁用后公共题库授权立即失效。",
+		"score_default": "2",
+		"tags": ["权限"],
+		"options": [
+			{"option_key": "A", "content": "拒绝", "is_correct": true},
+			{"option_key": "B", "content": "允许", "is_distractor": true}
+		]
+	}`, constant.QuestionTypeSingle))
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/questions", payload, authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled tenant admin stale session to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func seedQuestionAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
 

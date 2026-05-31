@@ -71,6 +71,30 @@ func TestPlatformLoginAPIRouteSavesSessionAndAuditWithSQLite(t *testing.T) {
 	}
 }
 
+func TestPlatformAdminSessionRejectsDisabledAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	seedTenantAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := platformAuthHeader(t, router)
+	if err := gormDB.Table("platform_users").
+		Where("id = ?", 1).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable platform user: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/tenants", nil, authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled platform admin rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestPlatformLoginAPIRouteRejectsInvalidCredential(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -159,6 +183,61 @@ func TestProfileAPIRoutesReadAndUpdateTenantUser(t *testing.T) {
 	if body.Data.DisplayName != "张同学更新" || body.Data.TenantID != 10 || body.Data.Role != "student" ||
 		body.Data.Phone != "13800002020" || body.Data.Email != "student20-new@example.test" {
 		t.Fatalf("unexpected tenant profile response: %#v", body.Data)
+	}
+}
+
+func TestProfileAPIRouteRejectsDisabledPlatformUserSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := platformAuthHeader(t, router)
+	if err := gormDB.Table("platform_users").
+		Where("id = ?", 1).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable platform user after login: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/profile", []byte(`{
+		"display_name": "禁用后不可更新",
+		"phone": "13800000001",
+		"email": "disabled-platform@example.test"
+	}`), authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled platform user profile update to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestProfileAPIRouteRejectsDisabledTenantUserSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedTenantRegisterAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 20).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable tenant user after login: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/profile", []byte(`{
+		"display_name": "禁用后不可更新",
+		"phone": "13800002020",
+		"email": "disabled-student@example.test"
+	}`), authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled tenant user profile update to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

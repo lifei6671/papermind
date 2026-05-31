@@ -101,7 +101,7 @@ func (h authHandler) getProfile(c *gin.Context) {
 		return
 	}
 	if principal.SubjectType == permission.SubjectPlatformUser {
-		user, err := h.platformUsers.Get(c.Request.Context(), principal.UserID)
+		user, err := h.livePlatformProfileUser(c, principal.UserID)
 		if err != nil {
 			writeProfileError(c, err)
 			return
@@ -109,13 +109,7 @@ func (h authHandler) getProfile(c *gin.Context) {
 		c.JSON(http.StatusOK, response.OK(platformProfileToResponse(user)))
 		return
 	}
-	var user servicetenantuser.User
-	var err error
-	if principal.TenantID == 0 {
-		user, err = h.tenantUsers.GetGlobal(c.Request.Context(), principal.UserID)
-	} else {
-		user, err = h.tenantUsers.Get(c.Request.Context(), principal.TenantID, principal.UserID)
-	}
+	user, err := h.liveTenantProfileUser(c, principal)
 	if err != nil {
 		writeProfileError(c, err)
 		return
@@ -172,6 +166,10 @@ func (h authHandler) updateProfile(c *gin.Context) {
 	phone := strings.TrimSpace(request.Phone)
 	email := strings.TrimSpace(request.Email)
 	if principal.SubjectType == permission.SubjectPlatformUser {
+		if _, err := h.livePlatformProfileUser(c, principal.UserID); err != nil {
+			writeProfileError(c, err)
+			return
+		}
 		user, err := h.platformUsers.UpdateProfile(c.Request.Context(), serviceplatformuser.UpdateProfileInput{
 			UserID:      principal.UserID,
 			DisplayName: displayName,
@@ -184,6 +182,10 @@ func (h authHandler) updateProfile(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusOK, response.OK(platformProfileToResponse(user)))
+		return
+	}
+	if _, err := h.liveTenantProfileUser(c, principal); err != nil {
+		writeProfileError(c, err)
 		return
 	}
 	user, err := h.tenantUsers.UpdateProfile(c.Request.Context(), servicetenantuser.UpdateProfileInput{
@@ -199,6 +201,41 @@ func (h authHandler) updateProfile(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(tenantProfileToResponse(user)))
+}
+
+func (h authHandler) livePlatformProfileUser(c *gin.Context, userID uint64) (serviceplatformuser.PlatformUser, error) {
+	user, err := h.platformUsers.Get(c.Request.Context(), userID)
+	if err != nil {
+		return serviceplatformuser.PlatformUser{}, err
+	}
+	if user.Status != serviceplatformuser.StatusEnabled {
+		return serviceplatformuser.PlatformUser{}, permission.ErrForbidden
+	}
+	return user, nil
+}
+
+func (h authHandler) liveTenantProfileUser(c *gin.Context, principal AuthPrincipal) (servicetenantuser.User, error) {
+	if principal.SubjectType != permission.SubjectTenantUser {
+		return servicetenantuser.User{}, permission.ErrForbidden
+	}
+	if principal.TenantID == 0 {
+		user, err := h.tenantUsers.GetGlobal(c.Request.Context(), principal.UserID)
+		if err != nil {
+			return servicetenantuser.User{}, err
+		}
+		if user.Status != servicetenantuser.StatusEnabled {
+			return servicetenantuser.User{}, permission.ErrForbidden
+		}
+		return user, nil
+	}
+	user, err := h.tenantUsers.Get(c.Request.Context(), principal.TenantID, principal.UserID)
+	if err != nil {
+		return servicetenantuser.User{}, err
+	}
+	if user.Status != servicetenantuser.StatusEnabled || user.Role != principal.Role {
+		return servicetenantuser.User{}, permission.ErrForbidden
+	}
+	return user, nil
 }
 
 func (h authHandler) platformLogin(c *gin.Context) {
@@ -429,6 +466,10 @@ func tenantProfileToResponse(user servicetenantuser.User) profileResponse {
 }
 
 func writeProfileError(c *gin.Context, err error) {
+	if errors.Is(err, permission.ErrForbidden) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return
+	}
 	if errors.Is(err, serviceplatformuser.ErrDisplayNameRequired) ||
 		errors.Is(err, servicetenantuser.ErrDisplayNameRequired) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "display_name 不能为空"))

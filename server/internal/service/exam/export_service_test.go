@@ -54,10 +54,49 @@ func TestExportServiceWritesExamScoresWithRequiredFields(t *testing.T) {
 	}
 }
 
+func TestExportServiceEscapesFormulaLikeCSVFields(t *testing.T) {
+	exportDir := t.TempDir()
+	repo := &fakeExportRepository{
+		rows: []ScoreExportRow{
+			{
+				StudentName:     "=HYPERLINK(\"http://example.test\",\"x\")",
+				SpaceID:         301,
+				SpaceName:       "@高一一班",
+				AttemptNo:       1,
+				ObjectiveScore:  "8",
+				SubjectiveScore: "4",
+				TotalScore:      "12",
+				SubmittedAt:     fixedUnixMilli,
+			},
+		},
+	}
+	svc := NewExportService(ExportServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), ExportDir: exportDir, Now: fixedNow})
+
+	result, err := svc.ExportExamScores(context.Background(), ExportExamScoresInput{Permission: exportPermissionContext(), TenantID: 10, ExamID: 20})
+	if err != nil {
+		t.Fatalf("ExportExamScores returned error: %v", err)
+	}
+	file, err := os.Open(result.FilePath)
+	if err != nil {
+		t.Fatalf("open exported CSV returned error: %v", err)
+	}
+	defer file.Close()
+	records, err := csv.NewReader(file).ReadAll()
+	if err != nil {
+		t.Fatalf("read exported CSV returned error: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected header and one data row, got %#v", records)
+	}
+	if records[1][0] != "'=HYPERLINK(\"http://example.test\",\"x\")" || records[1][1] != "'@高一一班" {
+		t.Fatalf("expected formula-like fields escaped, got %#v", records[1])
+	}
+}
+
 func TestExportServiceCreatesConfiguredExportDir(t *testing.T) {
 	root := t.TempDir()
 	exportDir := filepath.Join(root, "nested", "exports")
-	repo := &fakeExportRepository{}
+	repo := &fakeExportRepository{targetSpaceIDs: []uint64{301}}
 	svc := NewExportService(ExportServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), ExportDir: exportDir, Now: fixedNow})
 
 	result, err := svc.ExportExamScores(context.Background(), ExportExamScoresInput{Permission: exportPermissionContext(), TenantID: 10, ExamID: 20})
@@ -110,26 +149,23 @@ func TestExportServiceFiltersRowsByActualSpaceScope(t *testing.T) {
 	}
 }
 
-func TestExportServiceReturnsEmptyRowsWithoutExamScope(t *testing.T) {
-	repo := &fakeExportRepository{}
+func TestExportServiceRejectsEmptyRowsOutsideExamTargetScope(t *testing.T) {
+	repo := &fakeExportRepository{targetSpaceIDs: []uint64{301}}
 	svc := NewExportService(ExportServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), ExportDir: t.TempDir(), Now: fixedNow})
 
-	rows, err := svc.ListExamScores(context.Background(), ListExamScoresInput{
+	_, err := svc.ListExamScores(context.Background(), ListExamScoresInput{
 		Permission: permission.PermissionContext{
 			SubjectType:      permission.SubjectTenantUser,
 			UserID:           601,
 			TenantID:         10,
 			Role:             permission.RoleTeacher,
-			SpaceMemberships: map[uint64]string{301: permission.RoleTeacher},
+			SpaceMemberships: map[uint64]string{302: permission.RoleTeacher},
 		},
 		TenantID: 10,
 		ExamID:   20,
 	})
-	if err != nil {
-		t.Fatalf("ListExamScores returned error: %v", err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("expected empty score rows, got %#v", rows)
+	if !errors.Is(err, permission.ErrForbidden) {
+		t.Fatalf("expected empty score rows outside exam target scope rejected, got %v", err)
 	}
 }
 
@@ -212,11 +248,16 @@ func (failingWriter) Write(p []byte) (int, error) {
 }
 
 type fakeExportRepository struct {
-	rows   []ScoreExportRow
-	called bool
+	rows           []ScoreExportRow
+	targetSpaceIDs []uint64
+	called         bool
 }
 
 func (r *fakeExportRepository) ListScoreExportRows(ctx context.Context, tenantID uint64, examID uint64) ([]ScoreExportRow, error) {
 	r.called = true
 	return append([]ScoreExportRow(nil), r.rows...), nil
+}
+
+func (r *fakeExportRepository) ExamTargetSpaceIDs(ctx context.Context, tenantID uint64, examID uint64) ([]uint64, error) {
+	return append([]uint64(nil), r.targetSpaceIDs...), nil
 }

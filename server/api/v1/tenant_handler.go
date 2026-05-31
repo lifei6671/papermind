@@ -20,10 +20,11 @@ import (
 // 这些接口只能由 platform_admin 访问，租户用户不能通过构造 tenant_id
 // 进入平台治理能力。
 type tenantHandler struct {
-	service *servicetenant.Service
-	spaces  *servicespace.Service
-	users   *servicetenantuser.Service
-	members *dbdao.SpaceRepository
+	service           *servicetenant.Service
+	spaces            *servicespace.Service
+	users             *servicetenantuser.Service
+	members           *dbdao.SpaceRepository
+	passwordMinLength int
 }
 
 type createTenantRequest struct {
@@ -178,6 +179,10 @@ func (h tenantHandler) create(c *gin.Context) {
 	}
 	if request.AdminUsername == "" || request.AdminRealName == "" || request.AdminPassword == "" {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "首个租户管理员用户名、姓名和初始密码不能为空"))
+		return
+	}
+	if err := validatePasswordMinLength(request.AdminPassword, h.passwordMinLength); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
 	passwordHash, err := crypto.HashPassword(request.AdminPassword)

@@ -341,6 +341,38 @@ func TestTeacherCannotCreateOrDeletePublicPaperWithSQLite(t *testing.T) {
 	}
 }
 
+func TestDisabledTenantAdminCannotReadPublicPaperWithStaleSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+
+	if err := gormDB.Exec(`
+		INSERT INTO papers (
+			id, tenant_id, space_id, name, description, total_score, build_mode, status,
+			created_at, updated_at, ext_json
+		) VALUES (?, ?, NULL, ?, '', 0, ?, 'draft', ?, ?, '{}')
+	`, 200, 10, "租户公共试卷", constant.BuildModeManual, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed public paper: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 99).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable tenant admin after login: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/papers/200/sections?tenant_id=10", nil, authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled tenant admin stale session to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestCannotDeletePaperReferencedByExamWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

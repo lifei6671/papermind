@@ -78,6 +78,59 @@ func TestPlatformAdminCanUploadTenantLogo(t *testing.T) {
 	}
 }
 
+func TestUploadAPIRouteRejectsDisabledTenantAdminSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	uploadDir := t.TempDir()
+	gormDB := openExamAPITestDB(t)
+	seedTenantAPITestData(t, gormDB)
+	seedUserAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:        gormDB,
+		UploadDir: uploadDir,
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 99).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable tenant admin after login: %v", err)
+	}
+
+	requestBody, contentType := buildUploadMultipart(t, "tenant-logos", "logo.png", "image/png", "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/uploads", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled tenant admin upload to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestUploadAPIRouteRejectsDisabledPlatformAdminSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	uploadDir := t.TempDir()
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:        gormDB,
+		UploadDir: uploadDir,
+	})
+	authHeader := platformAuthHeader(t, router)
+	if err := gormDB.Table("platform_users").
+		Where("id = ?", 1).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable platform admin after login: %v", err)
+	}
+
+	requestBody, contentType := buildUploadMultipart(t, "tenant-logos", "logo.png", "image/png", "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/uploads", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled platform admin upload to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestBuildUploadObjectKeyUsesTimestampMD5AndExtension(t *testing.T) {
 	now := time.Date(2026, 5, 27, 16, 8, 9, 0, time.Local)
 	hash := md5.Sum([]byte("logo"))

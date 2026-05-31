@@ -38,7 +38,7 @@ func (h questionHandler) importQuestions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
 		return
 	}
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members)
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
 		return

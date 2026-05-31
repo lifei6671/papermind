@@ -109,10 +109,35 @@ func hasExamBusinessMembership(c *gin.Context, members spaceMemberFinder, tenant
 //
 // 该 helper 是题库、试卷、考试发布等写接口的关键边界：space_admin /
 // teacher 的空间身份必须从 space_members 反查，不能来自 session role。
-func permissionContextForResourceScope(c *gin.Context, tenantID uint64, spaceID *uint64, members spaceMemberFinder) (permission.PermissionContext, error) {
+func liveTenantPrincipalFromSession(c *gin.Context, tenantID uint64, users *servicetenantuser.Service) (AuthPrincipal, error) {
 	principal, ok := currentAuthPrincipal(c)
 	if !ok {
-		return permission.PermissionContext{}, errors.New("请先登录")
+		return AuthPrincipal{}, errors.New("请先登录")
+	}
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
+		return AuthPrincipal{}, permission.ErrForbidden
+	}
+	if users == nil {
+		return principal, nil
+	}
+	user, err := users.Get(c.Request.Context(), tenantID, principal.UserID)
+	if errors.Is(err, servicetenantuser.ErrUserNotFound) {
+		return AuthPrincipal{}, permission.ErrForbidden
+	}
+	if err != nil {
+		return AuthPrincipal{}, err
+	}
+	// 管理端权限入口必须实时读取租户用户状态和角色，避免旧 session 在降权、禁用或删除后继续生效。
+	if user.Status != servicetenantuser.StatusEnabled || user.Role != principal.Role {
+		return AuthPrincipal{}, permission.ErrForbidden
+	}
+	return principal, nil
+}
+
+func permissionContextForResourceScope(c *gin.Context, tenantID uint64, spaceID *uint64, members spaceMemberFinder, users *servicetenantuser.Service) (permission.PermissionContext, error) {
+	principal, err := liveTenantPrincipalFromSession(c, tenantID, users)
+	if err != nil {
+		return permission.PermissionContext{}, err
 	}
 	ctx := permission.PermissionContext{
 		SubjectType:      principal.SubjectType,
@@ -120,9 +145,6 @@ func permissionContextForResourceScope(c *gin.Context, tenantID uint64, spaceID 
 		TenantID:         tenantID,
 		Role:             principal.Role,
 		SpaceMemberships: map[uint64]string{},
-	}
-	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID != tenantID {
-		return permission.PermissionContext{}, permission.ErrForbidden
 	}
 	if principal.Role == permission.RoleTenantAdmin {
 		return ctx, nil

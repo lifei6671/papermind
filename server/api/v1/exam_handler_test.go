@@ -88,6 +88,30 @@ func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 	}
 }
 
+func TestExamBusinessRoutesRejectDisabledTenantAdminSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 99).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable tenant admin: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/exams?tenant_id=10", nil, authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled tenant admin rejected, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestExamPublishRejectsOtherSpacePaperOrTargetWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -1281,6 +1305,31 @@ func TestExamEntryResultVisibleForOwnerOnly(t *testing.T) {
 	router.ServeHTTP(forbiddenRecorder, authorizedRequest(http.MethodGet, "/api/v1/exam-entry/results/700", nil, otherAuthHeader))
 	if forbiddenRecorder.Code != http.StatusForbidden {
 		t.Fatalf("other student result status = %d, body = %s", forbiddenRecorder.Code, forbiddenRecorder.Body.String())
+	}
+}
+
+func TestExamEntryResultRejectsDisabledStudentSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+	seedVisibleResultAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 20).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable tenant user after login: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/exam-entry/results/700", nil, authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled student result access to be forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

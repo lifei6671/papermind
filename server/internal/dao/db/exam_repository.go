@@ -471,6 +471,50 @@ func (r *ExamRepository) ListTargets(ctx context.Context, tenantID uint64, examI
 	return targets, nil
 }
 
+// ExamTargetSpaceIDs 读取考试目标覆盖到的有效空间，用于无成绩时仍按真实考试范围鉴权。
+func (r *ExamRepository) ExamTargetSpaceIDs(ctx context.Context, tenantID uint64, examID uint64) ([]uint64, error) {
+	var rows []attemptTargetSpaceRow
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT DISTINCT spaces.id AS space_id, spaces.name AS space_name
+		FROM exam_targets AS targets
+		JOIN spaces ON spaces.tenant_id = targets.tenant_id
+			AND spaces.id = targets.target_id
+			AND spaces.status = ?
+			AND spaces.deleted_at = 0
+		WHERE targets.tenant_id = ?
+			AND targets.exam_id = ?
+			AND targets.target_type = ?
+		UNION
+		SELECT DISTINCT spaces.id AS space_id, spaces.name AS space_name
+		FROM exam_targets AS targets
+		JOIN space_members AS members ON members.tenant_id = targets.tenant_id
+			AND members.user_id = targets.target_id
+			AND members.status = ?
+			AND members.deleted_at = 0
+		JOIN spaces ON spaces.tenant_id = members.tenant_id
+			AND spaces.id = members.space_id
+			AND spaces.status = ?
+			AND spaces.deleted_at = 0
+		JOIN users ON users.id = members.user_id
+			AND users.status = ?
+			AND users.deleted_at = 0
+		JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id
+			AND tum.user_id = members.user_id
+			AND tum.status = ?
+		WHERE targets.tenant_id = ?
+			AND targets.exam_id = ?
+			AND targets.target_type = ?
+		ORDER BY space_id ASC
+	`,
+		servicespace.StatusEnabled, tenantID, examID, serviceexam.TargetTypeSpace,
+		servicespace.StatusEnabled, servicespace.StatusEnabled, servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled,
+		tenantID, examID, serviceexam.TargetTypeUser,
+	).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return targetSpaceIDs(rows), nil
+}
+
 // IsEligible 判断用户是否具备参加考试的资格。
 // 资格来源包括考试直投给用户，以及考试投放到用户所在的有效学生空间。
 func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (bool, error) {
@@ -1211,21 +1255,39 @@ func (r *ExamRepository) UpsertAnswer(ctx context.Context, answer serviceexam.An
 		AnswerContent:     answer.AnswerContent,
 		GradingStatus:     serviceexam.GradingStatusPending,
 	}
-	// 更新答案内容时同步递增 version，人工阅卷会用该版本做乐观锁，避免评分覆盖新答案。
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{
-			{Name: ExamAnswerColumns.TenantID},
-			{Name: ExamAnswerColumns.AttemptID},
-			{Name: ExamAnswerColumns.AttemptQuestionID},
-		},
-		DoUpdates: clause.Assignments(map[string]any{
-			ExamAnswerColumns.AnswerContent: answer.AnswerContent,
-			BaseColumns.UpdatedAt:           now,
-			BaseColumns.UpdatedBy:           answer.UpdatedBy,
-			BaseColumns.UpdatedByType:       AuditActorTenantUser,
-			BaseColumns.Version:             gorm.Expr(BaseColumns.Version + " + 1"),
-		}),
-	}).Create(&row).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var attempt ExamAttemptDO
+		// 自动保存和提交可能并发到达。这里锁住 attempt 行并重新校验状态，
+		// 防止提交完成后的滞后保存继续覆盖答案内容。
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(ExamAttemptColumns.TenantID+" = ?", answer.TenantID).
+			Where(ExamAttemptColumns.ID+" = ?", answer.AttemptID).
+			First(&attempt).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return serviceexam.ErrAttemptNotFound
+			}
+			return err
+		}
+		if attempt.Status != serviceexam.AttemptStatusInProgress {
+			return serviceexam.ErrAttemptAlreadySubmitted
+		}
+
+		// 更新答案内容时同步递增 version，人工阅卷会用该版本做乐观锁，避免评分覆盖新答案。
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: ExamAnswerColumns.TenantID},
+				{Name: ExamAnswerColumns.AttemptID},
+				{Name: ExamAnswerColumns.AttemptQuestionID},
+			},
+			DoUpdates: clause.Assignments(map[string]any{
+				ExamAnswerColumns.AnswerContent: answer.AnswerContent,
+				BaseColumns.UpdatedAt:           now,
+				BaseColumns.UpdatedBy:           answer.UpdatedBy,
+				BaseColumns.UpdatedByType:       AuditActorTenantUser,
+				BaseColumns.Version:             gorm.Expr(BaseColumns.Version + " + 1"),
+			}),
+		}).Create(&row).Error
+	})
 }
 
 // SubmitAttemptAndGradeObjectiveQuestions 提交作答并完成客观题自动判分。

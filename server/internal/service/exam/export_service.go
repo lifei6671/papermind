@@ -44,6 +44,7 @@ type ExportResult struct {
 
 type ExportRepository interface {
 	ListScoreExportRows(ctx context.Context, tenantID uint64, examID uint64) ([]ScoreExportRow, error)
+	ExamTargetSpaceIDs(ctx context.Context, tenantID uint64, examID uint64) ([]uint64, error)
 }
 
 type ExportServiceOptions struct {
@@ -69,7 +70,7 @@ func NewExportService(options ExportServiceOptions) *ExportService {
 }
 
 func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamScoresInput) (ExportResult, error) {
-	rows, err := s.listExamScoresByPermission(ctx, ListExamScoresInput(input), s.canExportExamInAnySpace, s.canExportEmptyExam)
+	rows, err := s.listExamScoresByPermission(ctx, ListExamScoresInput(input), s.canExportExamInAnySpace)
 	if err != nil {
 		return ExportResult{}, err
 	}
@@ -90,7 +91,7 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 }
 
 func (s *ExportService) ListExamScores(ctx context.Context, input ListExamScoresInput) ([]ScoreExportRow, error) {
-	return s.listExamScoresByPermission(ctx, input, s.canViewExamResultsInAnySpace, s.canViewEmptyExam)
+	return s.listExamScoresByPermission(ctx, input, s.canViewExamResultsInAnySpace)
 }
 
 func (s *ExportService) ResolveExportFile(fileName string, examID uint64, ctx permission.PermissionContext) (string, error) {
@@ -135,7 +136,7 @@ func exportFileScope(ctx permission.PermissionContext) string {
 	return fmt.Sprintf("space-%d", spaceIDs[0])
 }
 
-func (s *ExportService) listExamScoresByPermission(ctx context.Context, input ListExamScoresInput, allow func(permission.PermissionContext, uint64, []uint64) bool, allowEmpty func(permission.PermissionContext, uint64) bool) ([]ScoreExportRow, error) {
+func (s *ExportService) listExamScoresByPermission(ctx context.Context, input ListExamScoresInput, allow func(permission.PermissionContext, uint64, []uint64) bool) ([]ScoreExportRow, error) {
 	if !hasPossibleGradeRole(input.Permission) {
 		return nil, permission.ErrForbidden
 	}
@@ -143,8 +144,15 @@ func (s *ExportService) listExamScoresByPermission(ctx context.Context, input Li
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 && allowEmpty(input.Permission, input.ExamID) {
-		return []ScoreExportRow{}, nil
+	if len(rows) == 0 {
+		spaces, err := s.repo.ExamTargetSpaceIDs(ctx, input.TenantID, input.ExamID)
+		if err != nil {
+			return nil, err
+		}
+		if allow(input.Permission, input.ExamID, spaces) {
+			return []ScoreExportRow{}, nil
+		}
+		return nil, permission.ErrForbidden
 	}
 	allowed := make([]ScoreExportRow, 0, len(rows))
 	for _, row := range rows {
@@ -156,33 +164,6 @@ func (s *ExportService) listExamScoresByPermission(ctx context.Context, input Li
 		return nil, permission.ErrForbidden
 	}
 	return allowed, nil
-}
-
-func (s *ExportService) canViewEmptyExam(ctx permission.PermissionContext, examID uint64) bool {
-	return hasPossibleGradeRole(ctx)
-}
-
-func (s *ExportService) canExportEmptyExam(ctx permission.PermissionContext, examID uint64) bool {
-	if ctx.Role == permission.RoleTenantAdmin {
-		return true
-	}
-	for spaceID, role := range ctx.SpaceMemberships {
-		if role != permission.RoleSpaceAdmin {
-			continue
-		}
-		if err := s.permissionChecker.CanExportExamResults(permissionWithExamScope(ctx, examID, spaceID), examID); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func examScopeSpaceIDs(ctx permission.PermissionContext, examID uint64) []uint64 {
-	spaceID, ok := ctx.ExamScope[examID]
-	if !ok {
-		return nil
-	}
-	return []uint64{spaceID}
 }
 
 func (s *ExportService) canViewExamResultsInAnySpace(ctx permission.PermissionContext, examID uint64, spaces []uint64) bool {
@@ -217,12 +198,12 @@ func writeScoreExportCSV(writer *csv.Writer, rows []ScoreExportRow) error {
 	for _, row := range rows {
 		// 导出文件直接面向教师下载，首版使用本地时区的可读时间展示提交时间。
 		if err := writer.Write([]string{
-			row.StudentName,
-			row.SpaceName,
+			escapeCSVFormula(row.StudentName),
+			escapeCSVFormula(row.SpaceName),
 			strconv.Itoa(row.AttemptNo),
-			row.ObjectiveScore,
-			row.SubjectiveScore,
-			row.TotalScore,
+			escapeCSVFormula(row.ObjectiveScore),
+			escapeCSVFormula(row.SubjectiveScore),
+			escapeCSVFormula(row.TotalScore),
 			formatExportTime(row.SubmittedAt),
 		}); err != nil {
 			return err
@@ -233,6 +214,18 @@ func writeScoreExportCSV(writer *csv.Writer, rows []ScoreExportRow) error {
 		return err
 	}
 	return nil
+}
+
+func escapeCSVFormula(value string) string {
+	if value == "" {
+		return value
+	}
+	switch value[0] {
+	case '=', '+', '-', '@':
+		return "'" + value
+	default:
+		return value
+	}
 }
 
 func formatExportTime(unixMilli int64) string {

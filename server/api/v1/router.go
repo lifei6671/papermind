@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	apimiddleware "github.com/lifei6671/papermind/server/api/middleware"
 	apirouter "github.com/lifei6671/papermind/server/api/router"
 )
 
@@ -27,34 +28,34 @@ func NewRouter(options RouterOptions) *gin.Engine {
 func AuthMiddlewares(options RouterOptions) []gin.HandlerFunc {
 	sessionStore := defaultAuthSessionStore(options)
 	return []gin.HandlerFunc{
-		bearerSessionCookieMiddleware(authSessionName),
+		apimiddleware.BearerSessionCookie(authSessionName),
 		sessions.Sessions(authSessionName, sessionStore),
-		authContextMiddleware(),
+		apimiddleware.AuthContext(),
 	}
 }
 
 // RegisterRoutes 只负责注册 /api/v1 下的版本路由和对应 handler。
 func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	examHandler := examHandler{service: deps.Exams, taking: deps.Taking, review: deps.Review, export: deps.Export, result: deps.Results, papers: deps.PaperRepository, targets: deps.ExamRepository, members: deps.SpaceRepository, tenantUsers: deps.TenantUsers, sessionMaxAgeSeconds: deps.AuthSessionTTL, now: deps.Now}
-	tenantHandler := tenantHandler{service: deps.Tenants, spaces: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
+	tenantHandler := tenantHandler{service: deps.Tenants, spaces: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository, passwordMinLength: deps.PasswordMinLength}
 	spaceHandler := spaceHandler{service: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
 	userHandler := userHandler{service: deps.TenantUsers, passwordMinLength: deps.PasswordMinLength}
-	questionHandler := questionHandler{service: deps.Questions, members: deps.SpaceRepository}
-	paperHandler := paperHandler{service: deps.Papers, papers: deps.PaperRepository, members: deps.SpaceRepository}
+	questionHandler := questionHandler{service: deps.Questions, members: deps.SpaceRepository, users: deps.TenantUsers}
+	paperHandler := paperHandler{service: deps.Papers, papers: deps.PaperRepository, members: deps.SpaceRepository, users: deps.TenantUsers}
 	authHandler := authHandler{platformUsers: deps.PlatformUsers, tenantUsers: deps.TenantUsers, spaces: deps.Spaces, sessionMaxAgeSeconds: deps.AuthSessionTTL, passwordMinLength: deps.PasswordMinLength}
 	uploadHandler := uploadHandler{store: deps.UploadStore, now: time.Now}
 
 	api.POST("/auth/platform/login", authHandler.platformLogin)
 	api.POST("/auth/tenant/login", authHandler.tenantLogin)
-	api.POST("/auth/tenant/select-space", requireAuthPrincipalMiddleware(), authHandler.selectTenantSpace)
+	api.POST("/auth/tenant/select-space", apimiddleware.RequireAuthPrincipal(), authHandler.selectTenantSpace)
 	api.POST("/auth/tenant/register", authHandler.tenantRegister)
-	api.GET("/profile", requireAuthPrincipalMiddleware(), authHandler.getProfile)
-	api.POST("/profile", requireAuthPrincipalMiddleware(), authHandler.updateProfile)
-	api.GET("/profile/spaces", requireAuthPrincipalMiddleware(), authHandler.listProfileSpaces)
+	api.GET("/profile", apimiddleware.RequireAuthPrincipal(), authHandler.getProfile)
+	api.POST("/profile", apimiddleware.RequireAuthPrincipal(), authHandler.updateProfile)
+	api.GET("/profile/spaces", apimiddleware.RequireAuthPrincipal(), authHandler.listProfileSpaces)
 	tenant := api.Group("/tenant")
-	tenant.GET("/profile/spaces", requireAuthPrincipalMiddleware(), authHandler.listProfileSpaces)
-	api.GET("/exams", requireExamBusinessPrincipalMiddleware(), examHandler.list)
-	api.POST("/exams", requireExamBusinessPrincipalMiddleware(), examHandler.publish)
+	tenant.GET("/profile/spaces", apimiddleware.RequireAuthPrincipal(), authHandler.listProfileSpaces)
+	api.GET("/exams", apimiddleware.RequireExamBusinessPrincipal(), examHandler.list)
+	api.POST("/exams", apimiddleware.RequireExamBusinessPrincipal(), examHandler.publish)
 	api.POST("/exams/invite/resolve", examHandler.resolveInvite)
 	api.POST("/exams/:id/attempts/start", examHandler.startAttempt)
 	api.POST("/exam-entry/invite/resolve", examHandler.resolveInvite)
@@ -62,62 +63,63 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	api.POST("/exam-entry/attempts/:attempt_id/answers/:attempt_question_id", examEntryTokenMiddleware(deps.Taking), examHandler.saveAnswer)
 	api.POST("/exam-entry/attempts/:attempt_id/submit", examEntryTokenMiddleware(deps.Taking), examHandler.submitAttempt)
 	api.POST("/exam-entry/attempts/:attempt_id/events", examEntryTokenMiddleware(deps.Taking), examHandler.recordEvent)
-	api.GET("/exam-entry/results/:id", requireAuthPrincipalMiddleware(), examHandler.getExamEntryResult)
-	api.GET("/grading/pending", requireExamBusinessPrincipalMiddleware(), examHandler.listPendingReviews)
-	api.POST("/exam-attempts/:attempt_id/questions/:attempt_question_id/grade", requireExamBusinessPrincipalMiddleware(), examHandler.gradeShortText)
-	api.GET("/results", requireExamBusinessPrincipalMiddleware(), examHandler.listResults)
-	api.POST("/results/publish-config", requireExamBusinessPrincipalMiddleware(), examHandler.saveResultPublishConfig)
-	api.POST("/results/export", requireExamBusinessPrincipalMiddleware(), examHandler.exportResults)
-	api.GET("/results/export-files/:file_name", requireExamBusinessPrincipalMiddleware(), examHandler.downloadExport)
-	api.GET("/tenants", requirePlatformPrincipalMiddleware(), tenantHandler.list)
-	api.POST("/tenants", requirePlatformPrincipalMiddleware(), tenantHandler.create)
-	api.POST("/tenants/:id/profile", requirePlatformPrincipalMiddleware(), tenantHandler.updateProfile)
-	api.POST("/tenants/:id/reset-code", requirePlatformPrincipalMiddleware(), tenantHandler.resetCode)
-	api.POST("/tenants/:id/register-setting", requirePlatformPrincipalMiddleware(), tenantHandler.updateRegisterSetting)
-	api.GET("/tenants/:id/spaces", requirePlatformPrincipalMiddleware(), tenantHandler.listTenantSpaces)
-	api.GET("/tenants/:id/users", requirePlatformPrincipalMiddleware(), tenantHandler.listTenantUsers)
-	api.POST("/uploads", requireTenantAdminOrPlatformPrincipalMiddleware(), uploadHandler.create)
-	api.GET("/spaces", requireAuthPrincipalMiddleware(), spaceHandler.list)
-	api.POST("/spaces", requireAuthPrincipalMiddleware(), spaceHandler.create)
-	api.PUT("/spaces/:id", requireAuthPrincipalMiddleware(), spaceHandler.updateProfile)
-	api.DELETE("/spaces/:id", requireAuthPrincipalMiddleware(), spaceHandler.delete)
-	api.GET("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.listMembers)
-	api.POST("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.addMember)
-	api.PUT("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.updateMember)
-	api.DELETE("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.removeMember)
-	tenant.GET("/spaces", requireAuthPrincipalMiddleware(), spaceHandler.list)
-	tenant.POST("/spaces", requireAuthPrincipalMiddleware(), spaceHandler.create)
-	tenant.PUT("/spaces/:id", requireAuthPrincipalMiddleware(), spaceHandler.updateProfile)
-	tenant.DELETE("/spaces/:id", requireAuthPrincipalMiddleware(), spaceHandler.delete)
-	tenant.GET("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.listMembers)
-	tenant.POST("/spaces/:id/members", requireAuthPrincipalMiddleware(), spaceHandler.addMember)
-	tenant.PUT("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.updateMember)
-	tenant.DELETE("/spaces/:id/members/:user_id", requireAuthPrincipalMiddleware(), spaceHandler.removeMember)
-	api.GET("/users", requireAuthPrincipalMiddleware(), userHandler.list)
-	api.POST("/users", requireAuthPrincipalMiddleware(), userHandler.create)
-	api.POST("/users/import", requireAuthPrincipalMiddleware(), userHandler.importUsers)
-	api.POST("/users/:id/disable", requireAuthPrincipalMiddleware(), userHandler.disable)
-	api.DELETE("/users/:id", requireAuthPrincipalMiddleware(), userHandler.delete)
-	api.PUT("/users/:id/role", requireAuthPrincipalMiddleware(), userHandler.updateRole)
-	tenant.GET("/users", requireAuthPrincipalMiddleware(), userHandler.list)
-	tenant.POST("/users", requireAuthPrincipalMiddleware(), userHandler.create)
-	tenant.POST("/users/import", requireAuthPrincipalMiddleware(), userHandler.importUsers)
-	tenant.POST("/users/:id/disable", requireAuthPrincipalMiddleware(), userHandler.disable)
-	tenant.DELETE("/users/:id", requireAuthPrincipalMiddleware(), userHandler.delete)
-	tenant.PUT("/users/:id/role", requireAuthPrincipalMiddleware(), userHandler.updateRole)
-	api.GET("/questions", requireExamBusinessPrincipalMiddleware(), questionHandler.list)
-	api.POST("/questions", requireExamBusinessPrincipalMiddleware(), questionHandler.create)
-	api.POST("/questions/import", requireExamBusinessPrincipalMiddleware(), questionHandler.importQuestions)
-	api.GET("/papers", requireExamBusinessPrincipalMiddleware(), paperHandler.list)
-	api.POST("/papers", requireExamBusinessPrincipalMiddleware(), paperHandler.create)
-	api.DELETE("/papers/:id", requireExamBusinessPrincipalMiddleware(), paperHandler.delete)
-	api.GET("/papers/:id/rules", requireExamBusinessPrincipalMiddleware(), paperHandler.listRules)
-	api.POST("/papers/:id/rule-fixed/generate", requireExamBusinessPrincipalMiddleware(), paperHandler.generateRuleFixed)
-	api.POST("/papers/:id/rule-live/precheck", requireExamBusinessPrincipalMiddleware(), paperHandler.precheckRuleLive)
-	api.GET("/papers/:id/sections", requireExamBusinessPrincipalMiddleware(), paperHandler.listSections)
-	api.POST("/papers/:id/sections", requireExamBusinessPrincipalMiddleware(), paperHandler.createSection)
-	api.POST("/papers/:id/sections/:section_id/questions", requireExamBusinessPrincipalMiddleware(), paperHandler.addManualQuestion)
-	api.POST("/papers/:id/sections/:section_id/rules", requireExamBusinessPrincipalMiddleware(), paperHandler.createRule)
+	api.GET("/exam-entry/results/:id", apimiddleware.RequireAuthPrincipal(), examHandler.getExamEntryResult)
+	api.GET("/grading/pending", apimiddleware.RequireExamBusinessPrincipal(), examHandler.listPendingReviews)
+	api.POST("/exam-attempts/:attempt_id/questions/:attempt_question_id/grade", apimiddleware.RequireExamBusinessPrincipal(), examHandler.gradeShortText)
+	api.GET("/results", apimiddleware.RequireExamBusinessPrincipal(), examHandler.listResults)
+	api.POST("/results/publish-config", apimiddleware.RequireExamBusinessPrincipal(), examHandler.saveResultPublishConfig)
+	api.POST("/results/export", apimiddleware.RequireExamBusinessPrincipal(), examHandler.exportResults)
+	api.GET("/results/export-files/:file_name", apimiddleware.RequireExamBusinessPrincipal(), examHandler.downloadExport)
+	platformOnly := apimiddleware.RequireLivePlatformPrincipal(deps.PlatformUsers)
+	api.GET("/tenants", platformOnly, tenantHandler.list)
+	api.POST("/tenants", platformOnly, tenantHandler.create)
+	api.POST("/tenants/:id/profile", platformOnly, tenantHandler.updateProfile)
+	api.POST("/tenants/:id/reset-code", platformOnly, tenantHandler.resetCode)
+	api.POST("/tenants/:id/register-setting", platformOnly, tenantHandler.updateRegisterSetting)
+	api.GET("/tenants/:id/spaces", platformOnly, tenantHandler.listTenantSpaces)
+	api.GET("/tenants/:id/users", platformOnly, tenantHandler.listTenantUsers)
+	api.POST("/uploads", apimiddleware.RequireLiveTenantAdminOrPlatformPrincipal(deps.PlatformUsers, deps.TenantUsers), uploadHandler.create)
+	api.GET("/spaces", apimiddleware.RequireAuthPrincipal(), spaceHandler.list)
+	api.POST("/spaces", apimiddleware.RequireAuthPrincipal(), spaceHandler.create)
+	api.PUT("/spaces/:id", apimiddleware.RequireAuthPrincipal(), spaceHandler.updateProfile)
+	api.DELETE("/spaces/:id", apimiddleware.RequireAuthPrincipal(), spaceHandler.delete)
+	api.GET("/spaces/:id/members", apimiddleware.RequireAuthPrincipal(), spaceHandler.listMembers)
+	api.POST("/spaces/:id/members", apimiddleware.RequireAuthPrincipal(), spaceHandler.addMember)
+	api.PUT("/spaces/:id/members/:user_id", apimiddleware.RequireAuthPrincipal(), spaceHandler.updateMember)
+	api.DELETE("/spaces/:id/members/:user_id", apimiddleware.RequireAuthPrincipal(), spaceHandler.removeMember)
+	tenant.GET("/spaces", apimiddleware.RequireAuthPrincipal(), spaceHandler.list)
+	tenant.POST("/spaces", apimiddleware.RequireAuthPrincipal(), spaceHandler.create)
+	tenant.PUT("/spaces/:id", apimiddleware.RequireAuthPrincipal(), spaceHandler.updateProfile)
+	tenant.DELETE("/spaces/:id", apimiddleware.RequireAuthPrincipal(), spaceHandler.delete)
+	tenant.GET("/spaces/:id/members", apimiddleware.RequireAuthPrincipal(), spaceHandler.listMembers)
+	tenant.POST("/spaces/:id/members", apimiddleware.RequireAuthPrincipal(), spaceHandler.addMember)
+	tenant.PUT("/spaces/:id/members/:user_id", apimiddleware.RequireAuthPrincipal(), spaceHandler.updateMember)
+	tenant.DELETE("/spaces/:id/members/:user_id", apimiddleware.RequireAuthPrincipal(), spaceHandler.removeMember)
+	api.GET("/users", apimiddleware.RequireAuthPrincipal(), userHandler.list)
+	api.POST("/users", apimiddleware.RequireAuthPrincipal(), userHandler.create)
+	api.POST("/users/import", apimiddleware.RequireAuthPrincipal(), userHandler.importUsers)
+	api.POST("/users/:id/disable", apimiddleware.RequireAuthPrincipal(), userHandler.disable)
+	api.DELETE("/users/:id", apimiddleware.RequireAuthPrincipal(), userHandler.delete)
+	api.PUT("/users/:id/role", apimiddleware.RequireAuthPrincipal(), userHandler.updateRole)
+	tenant.GET("/users", apimiddleware.RequireAuthPrincipal(), userHandler.list)
+	tenant.POST("/users", apimiddleware.RequireAuthPrincipal(), userHandler.create)
+	tenant.POST("/users/import", apimiddleware.RequireAuthPrincipal(), userHandler.importUsers)
+	tenant.POST("/users/:id/disable", apimiddleware.RequireAuthPrincipal(), userHandler.disable)
+	tenant.DELETE("/users/:id", apimiddleware.RequireAuthPrincipal(), userHandler.delete)
+	tenant.PUT("/users/:id/role", apimiddleware.RequireAuthPrincipal(), userHandler.updateRole)
+	api.GET("/questions", apimiddleware.RequireExamBusinessPrincipal(), questionHandler.list)
+	api.POST("/questions", apimiddleware.RequireExamBusinessPrincipal(), questionHandler.create)
+	api.POST("/questions/import", apimiddleware.RequireExamBusinessPrincipal(), questionHandler.importQuestions)
+	api.GET("/papers", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.list)
+	api.POST("/papers", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.create)
+	api.DELETE("/papers/:id", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.delete)
+	api.GET("/papers/:id/rules", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.listRules)
+	api.POST("/papers/:id/rule-fixed/generate", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.generateRuleFixed)
+	api.POST("/papers/:id/rule-live/precheck", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.precheckRuleLive)
+	api.GET("/papers/:id/sections", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.listSections)
+	api.POST("/papers/:id/sections", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.createSection)
+	api.POST("/papers/:id/sections/:section_id/questions", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.addManualQuestion)
+	api.POST("/papers/:id/sections/:section_id/rules", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.createRule)
 }
 
 func defaultAuthSessionStore(options RouterOptions) sessions.Store {
