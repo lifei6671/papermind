@@ -1,6 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { examApi } from "../../api/exams";
 import type { StudentExamAPI, StudentExamOption, StudentExamQuestion as APIStudentExamQuestion, StudentVisibleResult } from "../../api/exams";
 import {
@@ -305,6 +305,7 @@ function DesktopStudentExamPage({
   examID,
 }: Required<StudentExamPageProps>) {
   const [isExamDrawerOpen, setIsExamDrawerOpen] = useState(false);
+  const navigate = useNavigate();
   const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
   const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -740,7 +741,7 @@ function DesktopStudentExamPage({
             <p>检测到您将离开考试页面，请确认是否离开？</p>
             <div>
               <Button onClick={() => setIsLeaveDialogOpen(false)} type="button">留在页面</Button>
-              <Button type="button">确认离开</Button>
+              <Button onClick={() => navigate("/exam-entry", { replace: true })} type="button">确认离开</Button>
             </div>
           </div>
         </div>

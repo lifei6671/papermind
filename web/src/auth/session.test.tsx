@@ -1,11 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { useSession } from "./session-context";
 import { SessionProvider } from "./session";
 
 afterEach(() => {
   window.localStorage.clear();
+  vi.restoreAllMocks();
 });
 
 function SessionProbe() {
@@ -54,6 +55,7 @@ test("登录态写入本地存储并在 Provider 重建后恢复", async () => {
 
 test("退出登录会清理本地存储", async () => {
   const user = userEvent.setup();
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ code: 0, message: "ok", data: { logged_out: true } })));
   render(
     <SessionProvider>
       <SessionProbe />
@@ -65,4 +67,8 @@ test("退出登录会清理本地存储", async () => {
 
   expect(screen.getByText("未登录")).toBeInTheDocument();
   expect(window.localStorage.getItem("papermind.session.v1")).toBeNull();
+  await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+    "/api/v1/auth/logout",
+    expect.objectContaining({ method: "POST" }),
+  ));
 });

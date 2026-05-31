@@ -877,6 +877,7 @@ P0 文档与项目骨架
 - [x] 认证 API 使用 `github.com/gin-contrib/sessions` 写入服务端 session。
 - [x] 当前 session provider 支持进程内 memory 和 `github.com/gin-contrib/sessions/redis`。
 - [x] 登录态以 HttpOnly session cookie 为准，登录响应不暴露 `access_token` / `refresh_token`，前端 API client 通过 `credentials: include` 携带 cookie。
+- [x] 退出登录调用 `/api/v1/auth/logout` 清除服务端 session，并让浏览器删除 HttpOnly session cookie。
 - [x] 个人设置页接入 `/api/v1/profile`，平台管理员登录账号只读，租户用户保存后同步本地 session 显示名称。
 - [x] 租户管理页面接入真实 API。
 - [x] 租户管理搜索和刷新接入后台列表接口。

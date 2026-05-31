@@ -2,7 +2,7 @@ import { render, screen, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ReactElement } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { StudentExamPage } from "./StudentExamPage";
 import type { StudentExamAPI, StudentExamQuestion } from "../../api/exams";
 
@@ -198,6 +198,27 @@ describe("StudentExamPage", () => {
     expect(screen.getByRole("menu", { name: "考生信息" })).toHaveTextContent("身份已校验");
     expect(screen.queryByText("考生编号：S1001001")).not.toBeInTheDocument();
   });
+  test("确认离开考试会返回考试入口", async () => {
+    const user = userEvent.setup();
+    const api = createStudentExamApiDouble();
+
+    render(
+      <MemoryRouter initialEntries={["/student/exam?tenant_id=10&exam_id=1"]}>
+        <Routes>
+          <Route path="/student/exam" element={<StudentExamPage api={api} />} />
+          <Route path="/exam-entry" element={<div>已回到考试入口</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("服务端题干")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "退出考试" }));
+    const dialog = screen.getByRole("dialog", { name: "离开页面提醒" });
+    await user.click(within(dialog).getByRole("button", { name: "确认离开" }));
+
+    expect(await screen.findByText("已回到考试入口")).toBeInTheDocument();
+  });
+
 });
 
 function mockExamViewport(matchesNarrow: boolean) {

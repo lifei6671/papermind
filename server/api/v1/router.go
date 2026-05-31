@@ -49,6 +49,7 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	api.POST("/auth/tenant/login", authHandler.tenantLogin)
 	api.POST("/auth/tenant/select-space", apimiddleware.RequireAuthPrincipal(), authHandler.selectTenantSpace)
 	api.POST("/auth/tenant/register", authHandler.tenantRegister)
+	api.POST("/auth/logout", authHandler.logout)
 	api.GET("/profile", apimiddleware.RequireAuthPrincipal(), authHandler.getProfile)
 	api.POST("/profile", apimiddleware.RequireAuthPrincipal(), authHandler.updateProfile)
 	api.GET("/profile/spaces", apimiddleware.RequireAuthPrincipal(), authHandler.listProfileSpaces)

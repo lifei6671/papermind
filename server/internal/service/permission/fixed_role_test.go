@@ -86,6 +86,18 @@ func TestFixedRoleCheckerUsesResourceScopeForQuestionsPapersAttemptsAndExams(t *
 	}
 }
 
+func TestFixedRoleCheckerAllowsTenantUserToViewOwnResultAfterOwnershipCheck(t *testing.T) {
+	checker := NewFixedRoleChecker()
+
+	ctx := PermissionContext{SubjectType: SubjectTenantUser, TenantID: 7, Role: RoleTeacher}
+	if err := checker.CanViewOwnResult(ctx, 400); err != nil {
+		t.Fatalf("tenant user should pass own-result subject check: %v", err)
+	}
+	if err := checker.CanViewOwnResult(PermissionContext{SubjectType: SubjectPlatformUser, Role: RolePlatformAdmin}, 400); err == nil {
+		t.Fatalf("platform user should not pass tenant own-result check")
+	}
+}
+
 func TestFixedRoleCheckerRejectsMissingOrUnknownScope(t *testing.T) {
 	checker := NewFixedRoleChecker()
 

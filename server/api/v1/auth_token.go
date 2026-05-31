@@ -133,6 +133,27 @@ func saveAuthPrincipalSession(c *gin.Context, principal AuthPrincipal, maxAgeSec
 	return token, nil
 }
 
+func clearAuthPrincipalSession(c *gin.Context) error {
+	session := sessions.Default(c)
+	session.Delete(apimiddleware.AuthSessionSubjectTypeKey)
+	session.Delete(apimiddleware.AuthSessionUserIDKey)
+	session.Delete(apimiddleware.AuthSessionTenantIDKey)
+	session.Delete(apimiddleware.AuthSessionRoleKey)
+	clearExamEntrySession(session)
+	session.Options(sessions.Options{
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	if err := session.Save(); err != nil {
+		return err
+	}
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(authSessionName, "", -1, "/", "", false, true)
+	return nil
+}
+
 func clearExamEntrySession(session sessions.Session) {
 	session.Delete(examEntrySessionTenantIDKey)
 	session.Delete(examEntrySessionExamIDKey)

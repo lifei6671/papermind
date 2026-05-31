@@ -834,6 +834,7 @@ POST   /api/v1/platform/tenant-admins/:id/reset-password
 | `POST /api/v1/auth/platform/login` | `/api/v1/auth/platform/login` | 匿名 | 平台管理员登录。 |
 | `POST /api/v1/auth/tenant/login` | `/api/v1/auth/tenant/login` | 匿名 | 租户用户使用通用账号登录，不提交租户 ID，登录后进入租户空间选择页。 |
 | `POST /api/v1/auth/tenant/select-space` | `/api/v1/auth/tenant/select-space` | 已登录 `tenant_user` | 从当前账号可进入的租户和空间中选择目标入口，成功后把 session 绑定到目标租户和角色。 |
+| `POST /api/v1/auth/logout` | `/api/v1/auth/logout` | 匿名或已登录主体 | 清除当前 session，并下发过期的 HttpOnly session cookie。 |
 | `GET/POST /api/v1/profile` | `/api/v1/profile` | 已登录主体 | 只操作当前账号资料。 |
 | `GET /api/v1/tenants` | `/api/v1/platform/tenants` | `platform_admin` | 平台侧租户列表。 |
 | `POST /api/v1/tenants` | `/api/v1/platform/tenants` | `platform_admin` | 创建租户并初始化首个 `tenant_admin`。 |
@@ -862,7 +863,7 @@ POST   /api/v1/platform/tenant-admins/:id/reset-password
 | `/api/v1/exams/invite/resolve` | `/api/v1/exam-entry/invite/resolve` | 已登录 `student` | 考试入口独立于管理端分组。 |
 | `/api/v1/exams/:id/attempts/start` | `/api/v1/exam-entry/exams/:id/attempts/start` | 目标 `student` | 必须校验考试目标和当前学生身份。 |
 | `/api/v1/exam-attempts/**` | `/api/v1/exam-entry/attempts/**` | 持有有效考试会话的 `student` | 答题、提交和事件记录不进入管理端权限分组。 |
-| `GET /api/v1/results/:id` | `GET /api/v1/exam-entry/results/:id` | 目标 `student` | 学生查看自己的已发布成绩，必须满足发布策略和可见时间。 |
+| `GET /api/v1/results/:id` | `GET /api/v1/exam-entry/results/:id` | 作答本人 | 考生查看自己的已发布成绩，必须满足发布策略和可见时间。 |
 
 平台管理员查看租户空间、用户等信息时，只能走平台侧只读概览接口。首版不允许平台管理员直接调用租户业务写接口，也不做 impersonation。
 
@@ -875,8 +876,8 @@ GET /api/v1/tenant/results/:id:
   不允许 student。
 
 GET /api/v1/exam-entry/results/:id:
-  用于学生查看自己的已发布成绩。
-  只允许目标 student。
+  用于考生查看自己的已发布成绩。
+  只允许作答本人；空间投放考试中，作答本人可以是空间内 student 身份，而不要求租户级角色必须为 student。
   必须满足成绩发布策略和可见时间。
 ```
 

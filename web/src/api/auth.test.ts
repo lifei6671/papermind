@@ -211,6 +211,25 @@ describe("authApi", () => {
     }]);
   });
 
+  test("退出登录会请求服务端清除 cookie 会话", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { logged_out: true },
+      }));
+    });
+    const api = createAuthAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await api.logout();
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/auth/logout",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   test("默认 authApi 通过 cookie 发送受保护接口请求", async () => {
     window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
       user: { userID: 20, displayName: "目标考生", role: "tenant_user" },

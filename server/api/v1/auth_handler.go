@@ -51,6 +51,10 @@ type tenantRegisterRequest struct {
 	Email      string `json:"email"`
 }
 
+type authLogoutResponse struct {
+	LoggedOut bool `json:"logged_out"`
+}
+
 type authSessionResponse struct {
 	User authUserResponse `json:"user"`
 }
@@ -92,6 +96,14 @@ type profileSpaceResponse struct {
 
 type profileSpaceListResponse struct {
 	Items []profileSpaceResponse `json:"items"`
+}
+
+func (h authHandler) logout(c *gin.Context) {
+	if err := clearAuthPrincipalSession(c); err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "退出登录失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(authLogoutResponse{LoggedOut: true}))
 }
 
 func (h authHandler) getProfile(c *gin.Context) {

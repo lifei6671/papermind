@@ -1349,7 +1349,7 @@ API 分组：
 └── 通用文件上传
 ```
 
-平台管理员和租户用户登录成功后都使用 `github.com/gin-contrib/sessions` 写入服务端 session。当前 provider 支持进程内 `memstore` 和组件自带 Redis store，可通过 `auth.session.provider` 切换。登录响应只返回当前用户身份信息，不返回 `access_token` 或 `refresh_token`；浏览器端认证以 HttpOnly session cookie 为准，前端 API client 统一使用 `credentials: include` 携带 cookie，本地登录态只保存页面渲染所需的用户身份和空间选择信息。
+平台管理员和租户用户登录成功后都使用 `github.com/gin-contrib/sessions` 写入服务端 session。当前 provider 支持进程内 `memstore` 和组件自带 Redis store，可通过 `auth.session.provider` 切换。登录响应只返回当前用户身份信息，不返回 `access_token` 或 `refresh_token`；浏览器端认证以 HttpOnly session cookie 为准，前端 API client 统一使用 `credentials: include` 携带 cookie，本地登录态只保存页面渲染所需的用户身份和空间选择信息；退出登录必须调用 `POST /api/v1/auth/logout` 清除服务端 session 并让浏览器删除 HttpOnly session cookie。
 
 认证上下文规则：
 
@@ -1380,7 +1380,7 @@ API 分组：
 
 阅卷和成绩 API 必须从登录态解析调用人身份。`tenant_admin` 可以管理本租户内成绩和阅卷；教师或空间管理员传入的 `space_id` 只表示当前操作空间，后端必须用 `space_members` 校验当前用户确实是该空间启用成员；`ExamScope`、`AttemptScope` 等资源范围必须由后端根据作答记录、成绩行或考试目标解析真实空间归属，不能信任请求参数拼接授权范围。空间投放考试只命中目标空间；用户直投考试必须把目标学生当前启用空间成员关系展开为真实阅卷和成绩导出空间，避免直投学生完成考试后对应空间教师无法处理成绩。成绩列表在尚无提交成绩时应对具备阅卷/成绩查看角色的调用方返回空列表，不应误报无权限；成绩导出即使没有成绩行，也必须单独走 `CanExportExamResults`，首版只允许 `tenant_admin` 和当前空间 `space_admin`，默认不开放给教师和学生。成绩发布配置属于考试级管理操作，只允许本租户 `tenant_admin` 或具备对应考试发布目标空间权限的 `space_admin` / `teacher` 修改；后端必须从 `exam_targets` 推导真实目标空间，不能用请求体 `space_id` 直接构造 `ExamScope`。
 
-学生成绩查看不走 `/api/v1/tenant/results/:id`。`GET /api/v1/tenant/results/:id` 仅用于管理端成绩详情，允许 `tenant_admin` / 授权空间 `space_admin` / 授权空间 `teacher`，不允许 `student`。`GET /api/v1/exam-entry/results/:id` 用于学生查看自己的已发布成绩，只允许目标 `student`，并且必须满足成绩发布策略和可见时间。
+学生成绩查看不走 `/api/v1/tenant/results/:id`。`GET /api/v1/tenant/results/:id` 仅用于管理端成绩详情，允许 `tenant_admin` / 授权空间 `space_admin` / 授权空间 `teacher`，不允许 `student`。`GET /api/v1/exam-entry/results/:id` 用于考生查看自己的已发布成绩，只允许作答本人，并且必须满足成绩发布策略和可见时间；空间投放考试中，作答本人可以是空间内 `student` 身份，而不要求租户级角色必须为 `student`。
 
 ```text
 POST /api/v1/auth/tenant/register
@@ -1393,6 +1393,9 @@ POST /api/v1/auth/tenant/login
 POST /api/v1/auth/tenant/select-space
      body: tenant_id, space_id?
      选择当前账号可进入的租户空间，成功后刷新 session，response 同登录态。
+
+POST /api/v1/auth/logout
+     清除当前服务端 session，并下发过期的 HttpOnly session cookie。
 
 GET  /api/v1/profile
      response: user_id, tenant_id?, display_name, avatar_url, phone, email, role, subject_type
@@ -1438,7 +1441,7 @@ GET  /api/v1/results
 GET  /api/v1/tenant/results/:id
      管理端成绩详情，仅 tenant_admin / 授权空间 space_admin / 授权空间 teacher
 GET  /api/v1/exam-entry/results/:id
-     学生查看自己的已发布成绩，必须满足成绩发布策略和可见时间；首版没有独立成绩表时，`:id` 使用 attempt_id，并由服务端反查 exam、paper 和 user_id 后再判断本人可见性。
+     考生查看自己的已发布成绩，必须满足成绩发布策略和可见时间；首版没有独立成绩表时，`:id` 使用 attempt_id，并由服务端反查 exam、paper 和 user_id 后再判断本人可见性，空间内 student 身份不要求租户级角色必须为 student。
 
 POST /api/v1/results/publish-config
      body: tenant_id, exam_id, publish_mode, score_publish_time?

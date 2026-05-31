@@ -94,7 +94,8 @@ func (FixedRoleChecker) CanExportExamResults(ctx PermissionContext, examID uint6
 }
 
 func (FixedRoleChecker) CanViewOwnResult(ctx PermissionContext, resultID uint64) error {
-	if ctx.SubjectType == SubjectTenantUser && ctx.hasTenantRole(RoleStudent) {
+	// 是否为本人由 ResultService 基于 attempt 快照校验；这里仅拒绝非租户主体。
+	if ctx.SubjectType == SubjectTenantUser {
 		return nil
 	}
 	return ErrForbidden

@@ -95,6 +95,48 @@ func TestPlatformAdminSessionRejectsDisabledAccount(t *testing.T) {
 	}
 }
 
+func TestAuthLogoutClearsServerSessionCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPlatformLoginAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := platformAuthHeader(t, router)
+
+	beforeRecorder := httptest.NewRecorder()
+	router.ServeHTTP(beforeRecorder, authorizedRequest(http.MethodGet, "/api/v1/profile", nil, authHeader))
+	if beforeRecorder.Code != http.StatusOK {
+		t.Fatalf("expected session valid before logout, got status = %d, body = %s", beforeRecorder.Code, beforeRecorder.Body.String())
+	}
+
+	logoutRecorder := httptest.NewRecorder()
+	router.ServeHTTP(logoutRecorder, authorizedRequest(http.MethodPost, "/api/v1/auth/logout", nil, authHeader))
+	if logoutRecorder.Code != http.StatusOK {
+		t.Fatalf("logout status = %d, body = %s", logoutRecorder.Code, logoutRecorder.Body.String())
+	}
+	if cookie := authCookieFromRecorder(logoutRecorder); cookie == nil || cookie.MaxAge >= 0 {
+		t.Fatalf("expected logout to expire auth cookie, got %#v", cookie)
+	}
+
+	afterRecorder := httptest.NewRecorder()
+	router.ServeHTTP(afterRecorder, authorizedRequest(http.MethodGet, "/api/v1/profile", nil, authHeader))
+	if afterRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected expired logout cookie to reject profile, got status = %d, body = %s", afterRecorder.Code, afterRecorder.Body.String())
+	}
+}
+
+func authCookieFromRecorder(recorder *httptest.ResponseRecorder) *http.Cookie {
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == authSessionName {
+			return cookie
+		}
+	}
+	return nil
+}
+
 func TestPlatformLoginAPIRouteRejectsInvalidCredential(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

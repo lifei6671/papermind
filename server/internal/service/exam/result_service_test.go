@@ -76,6 +76,34 @@ func TestResultServiceShowsManualPublishResultAtPublishTimeAndHonorsAnalysisSwit
 	}
 }
 
+func TestResultServiceShowsOwnResultForSpaceStudentMembership(t *testing.T) {
+	repo := newFakeResultRepository()
+	repo.result = ResultSnapshot{
+		AttemptID:   1001,
+		ExamID:      20,
+		UserID:      30,
+		AttemptNo:   1,
+		TotalScore:  "8",
+		PublishMode: PublishModeImmediateScore,
+	}
+	svc := NewResultService(ResultServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
+	permissionContext := permission.PermissionContext{
+		SubjectType:      permission.SubjectTenantUser,
+		UserID:           30,
+		TenantID:         10,
+		Role:             permission.RoleTeacher,
+		SpaceMemberships: map[uint64]string{301: permission.RoleStudent},
+	}
+
+	result, err := svc.GetVisibleResult(context.Background(), ResultQueryInput{Permission: permissionContext, TenantID: 10, AttemptID: 1001})
+	if err != nil {
+		t.Fatalf("space student should view own published result: %v", err)
+	}
+	if result.AttemptID != 1001 || result.TotalScore != "8" {
+		t.Fatalf("expected own visible result, got %#v", result)
+	}
+}
+
 func TestResultServiceSelectsLatestAndHighestAttempt(t *testing.T) {
 	repo := newFakeResultRepository()
 	repo.results = []ResultSnapshot{

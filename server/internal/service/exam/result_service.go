@@ -109,7 +109,7 @@ func (s *ResultService) SelectVisibleResult(ctx context.Context, input SelectRes
 }
 
 func (s *ResultService) canViewResult(ctx permission.PermissionContext, snapshot ResultSnapshot) bool {
-	// 考生只能查看自己的成绩；教师/空间管理员查看成绩列表走后续阅卷或导出专用服务。
+	// 查分入口先以作答本人为边界；空间学生可能不是租户级 student 角色。
 	if ctx.SubjectType != permission.SubjectTenantUser || ctx.UserID != snapshot.UserID {
 		return false
 	}

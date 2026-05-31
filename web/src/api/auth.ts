@@ -55,6 +55,7 @@ export type AuthAPI = {
   tenantLogin(input: TenantLoginInput): Promise<AuthSession>;
   selectTenantSpace(input: TenantSpaceSelectInput): Promise<AuthSession>;
   tenantRegister(input: TenantRegisterInput): Promise<TenantRegisterResult>;
+  logout(): Promise<void>;
   listProfileSpaces(): Promise<ProfileSpaceMembershipList>;
 };
 
@@ -130,6 +131,9 @@ export function createAuthAPI(apiClient: ApiClient): AuthAPI {
         email: input.email,
       });
       return mapTenantRegisterResponse(data);
+    },
+    async logout() {
+      await apiClient.post("/api/v1/auth/logout");
     },
     async listProfileSpaces() {
       const data = await apiClient.get<ProfileSpaceMembershipListAPIResponse>("/api/v1/tenant/profile/spaces");

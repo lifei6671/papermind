@@ -27,6 +27,7 @@ test("平台管理员登录成功后保存登录态并进入概览", async () =>
     tenantLogin: vi.fn(),
     selectTenantSpace: vi.fn(),
     tenantRegister: vi.fn(),
+    logout: vi.fn(),
     listProfileSpaces: vi.fn(),
   };
 
@@ -58,6 +59,7 @@ test("平台管理员登录失败时展示服务端错误且不保存登录态",
     tenantLogin: vi.fn(),
     selectTenantSpace: vi.fn(),
     tenantRegister: vi.fn(),
+    logout: vi.fn(),
     listProfileSpaces: vi.fn(),
   };
 
@@ -93,6 +95,7 @@ test("租户用户登录成功后保存通用登录态并进入空间选择页",
 		},
 		selectTenantSpace: vi.fn(),
 		tenantRegister: vi.fn(),
+    logout: vi.fn(),
 		listProfileSpaces: async () => ({ items: [] }),
 	};
 
@@ -138,6 +141,7 @@ test("租户登录成功后不再提前拉取授权空间", async () => {
 		}),
 		selectTenantSpace: vi.fn(),
 		tenantRegister: vi.fn(),
+    logout: vi.fn(),
 		listProfileSpaces,
 	};
 

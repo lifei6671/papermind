@@ -144,5 +144,6 @@ function createTenantEntryAPI(overrides: Pick<AuthAPI, "listProfileSpaces" | "se
     selectTenantSpace: overrides.selectTenantSpace,
     tenantLogin: vi.fn(),
     tenantRegister: vi.fn(),
+    logout: vi.fn(),
   };
 }
