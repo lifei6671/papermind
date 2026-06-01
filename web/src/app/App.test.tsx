@@ -93,6 +93,41 @@ function storeTenantAdminSession() {
   }));
 }
 
+function storeForcedPasswordTenantAdminSession() {
+  window.localStorage.setItem("papermind.session.v1", JSON.stringify({
+    user: {
+      userID: 88,
+      displayName: "租户管理员",
+      role: "tenant_admin",
+      tenantID: 77,
+      forcePasswordChange: true,
+    },
+  }));
+}
+
+function mockForcedProfileFetch() {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input) === "/api/v1/profile" && init?.method === "GET") {
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          user_id: 88,
+          tenant_id: 77,
+          display_name: "租户管理员",
+          avatar_url: "",
+          phone: "",
+          email: "",
+          role: "tenant_admin",
+          subject_type: "tenant_user",
+          force_password_change: true,
+        },
+      }));
+    }
+    return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
+  });
+}
+
 function mockStudentExamFetch() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -257,6 +292,17 @@ test("租户用户直接访问平台治理路由会回到概览且不触发平�
   expect(screen.getByRole("heading", { name: "教师工作概览" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "租户管理" })).not.toBeInTheDocument();
   expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test("强制改密租户用户访问后台业务页会进入个人设置页", async () => {
+  storeForcedPasswordTenantAdminSession();
+  mockForcedProfileFetch();
+
+  renderApp(["/users"]);
+
+  expect(await screen.findByRole("tab", { name: "个人设置" })).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("首次登录必须修改密码");
+  expect(screen.queryByRole("tab", { name: "用户管理" })).not.toBeInTheDocument();
 });
 
 test("学生考试端与管理员后台路由隔离", async () => {

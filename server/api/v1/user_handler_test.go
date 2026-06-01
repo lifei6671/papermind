@@ -41,7 +41,8 @@ func TestUserAPIRoutesListCreateAndDisableWithSQLite(t *testing.T) {
 		"real_name": "王同学",
 		"avatar_url": "wang.png",
 		"password": "wang-secure-123",
-		"role": "student"
+		"role": "student",
+		"force_password_change": true
 	}`)
 	createRecorder := httptest.NewRecorder()
 	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/users", payload, authHeader))
@@ -51,6 +52,9 @@ func TestUserAPIRoutesListCreateAndDisableWithSQLite(t *testing.T) {
 	createBody := decodeExamAPIResponse[userResponse](t, createRecorder.Body.Bytes())
 	if createBody.Data.RealName != "王同学" || createBody.Data.Role != "student" || createBody.Data.AvatarURL != "wang.png" {
 		t.Fatalf("unexpected created user: %#v", createBody.Data)
+	}
+	if !createBody.Data.ForcePasswordChange {
+		t.Fatalf("expected created user to require password change: %#v", createBody.Data)
 	}
 
 	temporaryLoginRecorder := httptest.NewRecorder()
@@ -70,6 +74,10 @@ func TestUserAPIRoutesListCreateAndDisableWithSQLite(t *testing.T) {
 	))
 	if realPasswordLoginRecorder.Code != http.StatusOK {
 		t.Fatalf("created user login status = %d, body = %s", realPasswordLoginRecorder.Code, realPasswordLoginRecorder.Body.String())
+	}
+	realPasswordLoginBody := decodeExamAPIResponse[authSessionResponse](t, realPasswordLoginRecorder.Body.Bytes())
+	if !realPasswordLoginBody.Data.User.ForcePasswordChange {
+		t.Fatalf("expected created user login to require password change: %#v", realPasswordLoginBody.Data.User)
 	}
 
 	disableRecorder := httptest.NewRecorder()

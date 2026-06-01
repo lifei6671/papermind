@@ -55,10 +55,14 @@ function routeRequiresRouteGuard(group: string) {
 
 function RequireSession({ allowTenantUser = false, children }: { allowTenantUser?: boolean; children: ReactNode }) {
   const { session } = useSession();
+  const location = useLocation();
   if (!session) {
     return <Navigate to="/login" replace />;
   }
-  if (!allowTenantUser && session.user.role === "tenant_user") {
+  if (session.user.forcePasswordChange && location.pathname !== "/settings/profile") {
+    return <Navigate to="/settings/profile" replace />;
+  }
+  if (!allowTenantUser && session.user.role === "tenant_user" && location.pathname !== "/settings/profile") {
     return <Navigate to="/tenant-entry" replace />;
   }
   return children;

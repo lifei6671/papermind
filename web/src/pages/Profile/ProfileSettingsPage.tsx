@@ -1,4 +1,4 @@
-import { Save } from "lucide-react";
+import { KeyRound, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { formatApiErrorMessage } from "../../api/client";
 import { profileApi } from "../../api/profile";
@@ -21,8 +21,14 @@ export function ProfileSettingsPage({ api = profileApi }: ProfileSettingsPagePro
   const [email, setEmail] = useState("");
   const [loadError, setLoadError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const isPlatformUser = profile?.subjectType === "platform_user";
+  const isTenantUser = profile?.subjectType === "tenant_user";
+  const mustChangePassword = Boolean(profile?.forcePasswordChange || session?.user.forcePasswordChange);
 
   useEffect(() => {
     let ignore = false;
@@ -72,6 +78,7 @@ export function ProfileSettingsPage({ api = profileApi }: ProfileSettingsPagePro
             ...session.user,
             displayName: nextProfile.displayName,
             tenantID: nextProfile.tenantID ?? session.user.tenantID,
+            forcePasswordChange: nextProfile.forcePasswordChange,
           },
         });
       }
@@ -80,6 +87,37 @@ export function ProfileSettingsPage({ api = profileApi }: ProfileSettingsPagePro
       setSaveMessage(formatApiErrorMessage(err, "保存个人资料失败"));
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handlePasswordSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsChangingPassword(true);
+    setPasswordMessage("");
+    try {
+      const nextProfile = await api.changePassword({
+        currentPassword,
+        newPassword,
+      });
+      setProfile(nextProfile);
+      setCurrentPassword("");
+      setNewPassword("");
+      if (session) {
+        signIn({
+          ...session,
+          user: {
+            ...session.user,
+            displayName: nextProfile.displayName,
+            tenantID: nextProfile.tenantID ?? session.user.tenantID,
+            forcePasswordChange: nextProfile.forcePasswordChange,
+          },
+        });
+      }
+      setPasswordMessage("密码已修改，请继续使用系统");
+    } catch (err) {
+      setPasswordMessage(formatApiErrorMessage(err, "修改密码失败"));
+    } finally {
+      setIsChangingPassword(false);
     }
   }
 
@@ -98,6 +136,11 @@ export function ProfileSettingsPage({ api = profileApi }: ProfileSettingsPagePro
         </div>
         {profile && <StatusBadge tone="info">{roleLabel(profile.role)}</StatusBadge>}
       </div>
+      {mustChangePassword && (
+        <p className="profile-warning profile-warning--banner" role="alert">
+          首次登录必须修改密码，修改完成后才能继续访问后台业务页面。
+        </p>
+      )}
 
       <div className="profile-settings-grid">
         <Panel className="profile-account-card" title="账号信息" subtitle="这些信息来自当前登录态对应的账号。">
@@ -170,6 +213,45 @@ export function ProfileSettingsPage({ api = profileApi }: ProfileSettingsPagePro
             )}
           </form>
         </Panel>
+
+        {isTenantUser && (
+          <Panel className="profile-form-card" title="登录密码" subtitle="修改成功后会解除首次登录强制改密状态。">
+            <form className="profile-form" onSubmit={handlePasswordSubmit}>
+              <label className="profile-field">
+                <span>当前密码</span>
+                <input
+                  aria-label="当前密码"
+                  autoComplete="current-password"
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                  required
+                  type="password"
+                  value={currentPassword}
+                />
+              </label>
+              <label className="profile-field">
+                <span>新密码</span>
+                <input
+                  aria-label="新密码"
+                  autoComplete="new-password"
+                  minLength={8}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  required
+                  type="password"
+                  value={newPassword}
+                />
+              </label>
+              <Button className="profile-save-button" disabled={isChangingPassword} variant="primary" type="submit">
+                <KeyRound aria-hidden="true" size={16} />
+                修改密码
+              </Button>
+              {passwordMessage && (
+                <p aria-label="password-change-result" className="profile-help" role="status">
+                  {passwordMessage}
+                </p>
+              )}
+            </form>
+          </Panel>
+        )}
       </div>
     </section>
   );

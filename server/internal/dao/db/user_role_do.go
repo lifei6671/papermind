@@ -70,17 +70,18 @@ var PlatformConfigColumns = struct {
 }
 
 type UserDO struct {
-	BaseFields              // 普通业务表公共字段。
-	SoftDeleteFields        // 软删除字段。
-	Username         string `gorm:"column:username"`      // 全局登录名。
-	RealName         string `gorm:"column:real_name"`     // 真实姓名，用于阅卷、成绩单和导出。
-	AvatarURL        string `gorm:"column:avatar_url"`    // 用户头像地址。
-	Phone            string `gorm:"column:phone"`         // 手机号，可用于登录或通知。
-	Email            string `gorm:"column:email"`         // 邮箱，可用于登录或通知。
-	PasswordHash     string `gorm:"column:password_hash"` // 密码哈希。
-	LastLoginIP      string `gorm:"column:last_login_ip"` // 最后登录 IP。
-	LastLoginAt      int64  `gorm:"column:last_login_at"` // 最后登录时间，Unix 毫秒时间戳。
-	Status           string `gorm:"column:status"`        // 用户状态：enabled / disabled。
+	BaseFields                 // 普通业务表公共字段。
+	SoftDeleteFields           // 软删除字段。
+	Username            string `gorm:"column:username"`              // 全局登录名。
+	RealName            string `gorm:"column:real_name"`             // 真实姓名，用于阅卷、成绩单和导出。
+	AvatarURL           string `gorm:"column:avatar_url"`            // 用户头像地址。
+	Phone               string `gorm:"column:phone"`                 // 手机号，可用于登录或通知。
+	Email               string `gorm:"column:email"`                 // 邮箱，可用于登录或通知。
+	PasswordHash        string `gorm:"column:password_hash"`         // 密码哈希。
+	ForcePasswordChange bool   `gorm:"column:force_password_change"` // 是否要求用户下次登录后修改密码。
+	LastLoginIP         string `gorm:"column:last_login_ip"`         // 最后登录 IP。
+	LastLoginAt         int64  `gorm:"column:last_login_at"`         // 最后登录时间，Unix 毫秒时间戳。
+	Status              string `gorm:"column:status"`                // 用户状态：enabled / disabled。
 }
 
 func (UserDO) TableName() string {
@@ -89,29 +90,31 @@ func (UserDO) TableName() string {
 
 // UserColumns 与 UserDO 同文件维护，用户表只保存全局账号，租户归属从 tenant_user_memberships 派生。
 var UserColumns = struct {
-	ID           string
-	Username     string
-	RealName     string
-	AvatarURL    string
-	Phone        string
-	Email        string
-	PasswordHash string
-	LastLoginIP  string
-	LastLoginAt  string
-	Status       string
-	DeletedAt    string
+	ID                  string
+	Username            string
+	RealName            string
+	AvatarURL           string
+	Phone               string
+	Email               string
+	PasswordHash        string
+	ForcePasswordChange string
+	LastLoginIP         string
+	LastLoginAt         string
+	Status              string
+	DeletedAt           string
 }{
-	ID:           BaseColumns.ID,
-	Username:     "username",
-	RealName:     "real_name",
-	AvatarURL:    "avatar_url",
-	Phone:        "phone",
-	Email:        "email",
-	PasswordHash: "password_hash",
-	LastLoginIP:  "last_login_ip",
-	LastLoginAt:  "last_login_at",
-	Status:       "status",
-	DeletedAt:    SoftDeleteColumns.DeletedAt,
+	ID:                  BaseColumns.ID,
+	Username:            "username",
+	RealName:            "real_name",
+	AvatarURL:           "avatar_url",
+	Phone:               "phone",
+	Email:               "email",
+	PasswordHash:        "password_hash",
+	ForcePasswordChange: "force_password_change",
+	LastLoginIP:         "last_login_ip",
+	LastLoginAt:         "last_login_at",
+	Status:              "status",
+	DeletedAt:           SoftDeleteColumns.DeletedAt,
 }
 
 type UserRoleDO struct {

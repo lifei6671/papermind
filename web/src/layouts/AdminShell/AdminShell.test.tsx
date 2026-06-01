@@ -177,6 +177,48 @@ test("租户管理员展示租户空间菜单", () => {
   expect(screen.getByRole("button", { name: "切换租户" })).toBeInTheDocument();
 });
 
+test("小屏幕菜单按钮以抽屉方式展开后台导航", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "明德学校",
+        spaceID: 0,
+        role: "tenant_admin",
+        status: "enabled",
+      }],
+      user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<AdminShell routes={adminRoutes} />}>
+            <Route path="/" element={<div>概览页面</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  const menuButton = screen.getByRole("button", { name: "展开后台导航" });
+  expect(menuButton).toHaveAttribute("aria-expanded", "false");
+
+  await user.click(menuButton);
+
+  expect(menuButton).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByLabelText("后台导航")).toHaveClass("sidebar--mobile-open");
+  expect(screen.getByRole("button", { name: "关闭后台导航" })).toHaveAttribute(
+    "data-placement",
+    "drawer-right",
+  );
+});
+
 test("租户用户点击切换租户进入租户空间选择页", async () => {
   const user = userEvent.setup();
   window.localStorage.setItem(

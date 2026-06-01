@@ -624,6 +624,19 @@ func (r *fakeRepository) UpdateProfile(ctx context.Context, input UpdateProfileI
 	}, nil
 }
 
+func (r *fakeRepository) UpdatePassword(ctx context.Context, userID uint64, passwordHash string, forcePasswordChange bool) (User, error) {
+	for username, user := range r.usersByUsername {
+		if user.ID != userID {
+			continue
+		}
+		user.PasswordHash = passwordHash
+		user.ForcePasswordChange = forcePasswordChange
+		r.usersByUsername[username] = user
+		return user, nil
+	}
+	return User{}, ErrUserNotFound
+}
+
 type fakePasswordVerifier struct {
 	match bool
 }

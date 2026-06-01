@@ -65,6 +65,7 @@ type AuthSessionAPIResponse = {
     display_name: string;
     role: string;
     tenant_id?: number;
+    force_password_change?: boolean;
   };
 };
 
@@ -149,6 +150,9 @@ function mapAuthSessionResponse(response: AuthSessionAPIResponse): AuthSession {
       displayName: response.user.display_name,
       role: toSessionRole(response.user.role),
       tenantID: response.user.tenant_id,
+      ...(response.user.force_password_change !== undefined
+        ? { forcePasswordChange: response.user.force_password_change }
+        : {}),
     },
   };
 }

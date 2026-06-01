@@ -18,6 +18,11 @@ const roleLabels: Record<MemberRole, string> = {
   teacher: "教师",
   student: "学生",
 };
+const userRoleSuggestionLabels: Record<TenantUserRow["role"], string> = {
+  tenant_admin: "租户管理员",
+  teacher: "教师",
+  student: "学生",
+};
 const statusLabels: Record<SpaceMember["status"], string> = {
   enabled: "启用",
   disabled: "禁用",
@@ -25,6 +30,7 @@ const statusLabels: Record<SpaceMember["status"], string> = {
 
 const memberPageSize = 5;
 const spacePageSize = 5;
+const addUserSuggestionDebounceMs = 300;
 
 const registerMethodLabels: Record<string, string> = {
   tenant_account: "租户账号",
@@ -61,8 +67,10 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
   const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
   const [isAddUserDialogOpen, setIsAddUserDialogOpen] = useState(false);
   const [addUserQuery, setAddUserQuery] = useState("");
+  const [debouncedAddUserQuery, setDebouncedAddUserQuery] = useState("");
   const [addUserSpaceID, setAddUserSpaceID] = useState("");
-  const [addUserRole, setAddUserRole] = useState<MemberRole>("student");
+  const [addUserRole, setAddUserRole] = useState<MemberRole | "">("");
+  const [isAddUserInputFocused, setIsAddUserInputFocused] = useState(false);
   const [isAddingUser, setIsAddingUser] = useState(false);
   const [selectedMemberSpaceID, setSelectedMemberSpaceID] = useState<number | null>(null);
   const [isSpaceListRefreshing, setIsSpaceListRefreshing] = useState(false);
@@ -99,6 +107,20 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     };
   }, [api, tenantID, userApi]);
 
+  useEffect(() => {
+    if (!isAddUserDialogOpen || addUserQuery.trim() === "") {
+      return;
+    }
+
+    const timeoutID = window.setTimeout(() => {
+      setDebouncedAddUserQuery(addUserQuery);
+    }, addUserSuggestionDebounceMs);
+
+    return () => {
+      window.clearTimeout(timeoutID);
+    };
+  }, [addUserQuery, isAddUserDialogOpen]);
+
   const filteredSpaces = spaces.filter((space) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
     if (!keyword) {
@@ -116,6 +138,9 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     (currentSpacePage - 1) * spacePageSize,
     currentSpacePage * spacePageSize,
   );
+  const addUserSuggestions = matchingAddUserSuggestions(users, spaces, addUserSpaceID, debouncedAddUserQuery);
+  const shouldShowAddUserSuggestions =
+    isAddUserInputFocused && debouncedAddUserQuery.trim() !== "" && addUserSuggestions.length > 0;
 
   async function handleCreateSpace(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -150,8 +175,10 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
   }
   function openAddUserDialog() {
     setAddUserQuery("");
-    setAddUserSpaceID(String(spaces[0]?.id ?? ""));
-    setAddUserRole("student");
+    setDebouncedAddUserQuery("");
+    setAddUserSpaceID("");
+    setAddUserRole("");
+    setIsAddUserInputFocused(false);
     setIsAddUserDialogOpen(true);
   }
 
@@ -175,6 +202,10 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     const targetSpace = spaces.find((space) => space.id === targetSpaceID);
     if (!targetSpace) {
       showError("请选择目标空间");
+      return;
+    }
+    if (!addUserRole) {
+      showError("请选择空间身份");
       return;
     }
 
@@ -561,21 +592,70 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
             <h2>添加用户到空间</h2>
             <form className="platform-form" onSubmit={(event) => void handleAddUserToSpace(event)}>
               <label className="field">
-                <span>用户账号或姓名</span>
+                <span className="field-label">
+                  用户账号或姓名
+                  <span className="required-marker" aria-hidden="true">*</span>
+                </span>
                 <input
-                  onChange={(event) => setAddUserQuery(event.target.value)}
+                  aria-label="用户账号或姓名"
+                  aria-autocomplete="list"
+                  aria-controls="add-user-suggestions"
+                  aria-expanded={shouldShowAddUserSuggestions}
+                  onBlur={() => setIsAddUserInputFocused(false)}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setAddUserQuery(value);
+                    if (value.trim() === "") {
+                      setDebouncedAddUserQuery("");
+                    }
+                  }}
+                  onFocus={() => setIsAddUserInputFocused(true)}
                   placeholder="输入已存在用户的账号或姓名"
                   required
                   value={addUserQuery}
                 />
               </label>
+              {shouldShowAddUserSuggestions && (
+                <div
+                  aria-label="用户账号或姓名候选"
+                  className="user-suggestion-list"
+                  id="add-user-suggestions"
+                  role="listbox"
+                >
+                  {addUserSuggestions.map((user) => (
+                    <button
+                      className="user-suggestion-option"
+                      key={user.id}
+                      onClick={() => {
+                        setAddUserQuery(user.username);
+                        setIsAddUserInputFocused(false);
+                      }}
+                      onMouseDown={(event) => event.preventDefault()}
+                      role="option"
+                      type="button"
+                    >
+                      <span>{user.name}</span>
+                      <small>
+                        {user.username} · {userRoleSuggestionLabels[user.role]}
+                      </small>
+                    </button>
+                  ))}
+                </div>
+              )}
               <label className="field">
-                <span>目标空间</span>
+                <span className="field-label">
+                  目标空间
+                  <span className="required-marker" aria-hidden="true">*</span>
+                </span>
                 <select
+                  aria-label="目标空间"
                   onChange={(event) => setAddUserSpaceID(event.target.value)}
                   required
                   value={addUserSpaceID}
                 >
+                  <option value="" disabled>
+                    请选择空间
+                  </option>
                   {spaces.map((space) => (
                     <option key={space.id} value={space.id}>
                       {space.name}
@@ -584,8 +664,19 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
                 </select>
               </label>
               <label className="field">
-                <span>空间身份</span>
-                <select onChange={(event) => setAddUserRole(event.target.value as MemberRole)} value={addUserRole}>
+                <span className="field-label">
+                  空间身份
+                  <span className="required-marker" aria-hidden="true">*</span>
+                </span>
+                <select
+                  aria-label="空间身份"
+                  onChange={(event) => setAddUserRole(event.target.value as MemberRole | "")}
+                  required
+                  value={addUserRole}
+                >
+                  <option value="" disabled>
+                    请选择身份
+                  </option>
                   <option value="space_admin">空间管理员</option>
                   <option value="teacher">教师</option>
                   <option value="student">学生</option>
@@ -1057,4 +1148,24 @@ function adminSummary(space: SpaceRow) {
     .join("、");
 
   return `空间管理员：${admins}`;
+}
+
+function matchingAddUserSuggestions(
+  users: TenantUserRow[],
+  spaces: SpaceRow[],
+  spaceID: string,
+  query: string,
+) {
+  const keyword = query.trim().toLowerCase();
+  const targetSpaceID = Number(spaceID);
+  const targetSpace = spaces.find((space) => space.id === targetSpaceID);
+  const existingUserIDs = new Set(targetSpace?.members.map((member) => member.userID) ?? []);
+
+  return users
+    .filter((user) =>
+      user.status === "enabled" &&
+      !existingUserIDs.has(user.id) &&
+      (keyword === "" || user.username.toLowerCase().includes(keyword) || user.name.toLowerCase().includes(keyword)),
+    )
+    .slice(0, 10);
 }

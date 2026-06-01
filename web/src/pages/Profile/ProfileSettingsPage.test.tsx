@@ -25,6 +25,7 @@ test("租户用户个人设置读取资料并保存后同步本地登录态名�
       email: "teacher@example.test",
       role: "teacher",
       subjectType: "tenant_user",
+      forcePasswordChange: false,
     }),
     updateProfile: vi.fn().mockResolvedValue({
       userID: 20,
@@ -35,7 +36,9 @@ test("租户用户个人设置读取资料并保存后同步本地登录态名�
       email: "teacher-new@example.test",
       role: "teacher",
       subjectType: "tenant_user",
+      forcePasswordChange: false,
     }),
+    changePassword: vi.fn(),
   };
 
   render(
@@ -79,6 +82,7 @@ test("平台管理员个人设置保持登录账号只读", async () => {
       email: "admin@example.test",
       role: "platform_admin",
       subjectType: "platform_user",
+      forcePasswordChange: false,
     }),
     updateProfile: vi.fn().mockResolvedValue({
       userID: 1,
@@ -88,7 +92,9 @@ test("平台管理员个人设置保持登录账号只读", async () => {
       email: "owner@example.test",
       role: "platform_admin",
       subjectType: "platform_user",
+      forcePasswordChange: false,
     }),
+    changePassword: vi.fn(),
   };
 
   render(
@@ -113,4 +119,60 @@ test("平台管理员个人设置保持登录账号只读", async () => {
     email: "owner@example.test",
   }));
   expect(window.localStorage.getItem(SESSION_STORAGE_KEY)).toContain("\"displayName\":\"admin\"");
+});
+
+test("强制改密的租户用户必须在个人设置页修改密码后解除状态", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+    user: {
+      userID: 20,
+      tenantID: 10,
+      displayName: "张三",
+      role: "student",
+      forcePasswordChange: true,
+    },
+  }));
+  const api: ProfileAPI = {
+    getProfile: vi.fn().mockResolvedValue({
+      userID: 20,
+      tenantID: 10,
+      displayName: "张三",
+      avatarURL: "",
+      phone: "",
+      email: "",
+      role: "student",
+      subjectType: "tenant_user",
+      forcePasswordChange: true,
+    }),
+    updateProfile: vi.fn(),
+    changePassword: vi.fn().mockResolvedValue({
+      userID: 20,
+      tenantID: 10,
+      displayName: "张三",
+      avatarURL: "",
+      phone: "",
+      email: "",
+      role: "student",
+      subjectType: "tenant_user",
+      forcePasswordChange: false,
+    }),
+  };
+
+  render(
+    <SessionProvider>
+      <ProfileSettingsPage api={api} />
+    </SessionProvider>,
+  );
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("首次登录必须修改密码");
+  await user.type(screen.getByLabelText("当前密码"), "old-password");
+  await user.type(screen.getByLabelText("新密码"), "new-password-123");
+  await user.click(screen.getByRole("button", { name: "修改密码" }));
+
+  await waitFor(() => expect(api.changePassword).toHaveBeenCalledWith({
+    currentPassword: "old-password",
+    newPassword: "new-password-123",
+  }));
+  expect(screen.getByRole("status", { name: "password-change-result" })).toHaveTextContent("密码已修改");
+  expect(window.localStorage.getItem(SESSION_STORAGE_KEY)).toContain("\"forcePasswordChange\":false");
 });

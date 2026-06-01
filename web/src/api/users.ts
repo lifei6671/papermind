@@ -11,6 +11,7 @@ export type TenantUserRow = {
   role: UserRole;
   avatarFileName: string;
   status: "enabled" | "disabled";
+  forcePasswordChange?: boolean;
 };
 
 export type CreateTenantUserInput = {
@@ -20,6 +21,7 @@ export type CreateTenantUserInput = {
   password: string;
   role: UserRole;
   avatarFileName: string;
+  forcePasswordChange: boolean;
 };
 
 export type UpdateTenantUserStatusInput = {
@@ -47,6 +49,7 @@ type TenantUserAPIResponse = {
   avatar_url: string;
   role: UserRole;
   status: "enabled" | "disabled";
+  force_password_change?: boolean;
 };
 
 const defaultApiClient = createApiClient({
@@ -69,6 +72,7 @@ export function createUserAPI(apiClient: ApiClient): UserManagementAPI {
         avatar_url: input.avatarFileName,
         password: input.password,
         role: input.role,
+        force_password_change: input.forcePasswordChange,
       });
       return mapUserResponse(data);
     },
@@ -98,5 +102,6 @@ function mapUserResponse(row: TenantUserAPIResponse): TenantUserRow {
     role: row.role,
     avatarFileName: row.avatar_url || "未上传",
     status: row.status,
+    forcePasswordChange: row.force_password_change ?? false,
   };
 }

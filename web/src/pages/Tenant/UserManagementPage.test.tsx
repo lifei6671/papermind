@@ -87,6 +87,7 @@ function createUserAPI() {
       role: "student",
       avatarFileName: "未上传",
       status: "enabled",
+      forcePasswordChange: true,
     }),
     disableUser: vi.fn().mockResolvedValue({
       id: 20,
@@ -217,6 +218,7 @@ test("租户管理员可以创建用户", async () => {
 
   expect(screen.getByRole("dialog", { name: "创建用户弹窗" })).toBeInTheDocument();
   expect(screen.queryByLabelText("用户头像")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("首次登录必须修改密码")).toBeChecked();
 
   await user.type(screen.getByLabelText("姓名"), "钱同学");
   await user.type(screen.getByLabelText("账号"), "qian.student");
@@ -230,6 +232,7 @@ test("租户管理员可以创建用户", async () => {
     password: "student-secure-123",
     role: "student",
     avatarFileName: "未上传",
+    forcePasswordChange: true,
   });
   expect(await screen.findByText("钱同学")).toBeInTheDocument();
   expect(screen.getByText("qian.student")).toBeInTheDocument();

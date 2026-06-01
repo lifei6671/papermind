@@ -39,6 +39,7 @@ export function UserManagementPage({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("student");
+  const [forcePasswordChange, setForcePasswordChange] = useState(true);
   const [detailTarget, setDetailTarget] = useState<TenantUserRow | null>(null);
   const [disableTarget, setDisableTarget] = useState<TenantUserRow | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -114,6 +115,7 @@ export function UserManagementPage({
       password,
       role,
       avatarFileName: "未上传",
+      forcePasswordChange,
     });
 
     setUsers((items) => [...items, nextUser]);
@@ -122,6 +124,7 @@ export function UserManagementPage({
     setUsername("");
     setPassword("");
     setRole("student");
+    setForcePasswordChange(true);
     setIsCreateDialogOpen(false);
   }
 
@@ -344,6 +347,14 @@ export function UserManagementPage({
                   type="password"
                   value={password}
                 />
+              </label>
+              <label className="platform-check">
+                <input
+                  checked={forcePasswordChange}
+                  onChange={(event) => setForcePasswordChange(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>首次登录必须修改密码</span>
               </label>
               <label className="field">
                 <span>角色</span>

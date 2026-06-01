@@ -22,12 +22,13 @@ type userHandler struct {
 }
 
 type createUserRequest struct {
-	TenantID  uint64 `json:"tenant_id"`
-	Username  string `json:"username"`
-	RealName  string `json:"real_name"`
-	AvatarURL string `json:"avatar_url"`
-	Password  string `json:"password"`
-	Role      string `json:"role"`
+	TenantID            uint64 `json:"tenant_id"`
+	Username            string `json:"username"`
+	RealName            string `json:"real_name"`
+	AvatarURL           string `json:"avatar_url"`
+	Password            string `json:"password"`
+	Role                string `json:"role"`
+	ForcePasswordChange bool   `json:"force_password_change"`
 }
 
 type disableUserRequest struct {
@@ -53,13 +54,14 @@ type importUserRequest struct {
 }
 
 type userResponse struct {
-	ID        uint64 `json:"id"`
-	TenantID  uint64 `json:"tenant_id"`
-	Username  string `json:"username"`
-	RealName  string `json:"real_name"`
-	AvatarURL string `json:"avatar_url"`
-	Role      string `json:"role"`
-	Status    string `json:"status"`
+	ID                  uint64 `json:"id"`
+	TenantID            uint64 `json:"tenant_id"`
+	Username            string `json:"username"`
+	RealName            string `json:"real_name"`
+	AvatarURL           string `json:"avatar_url"`
+	Role                string `json:"role"`
+	Status              string `json:"status"`
+	ForcePasswordChange bool   `json:"force_password_change"`
 }
 
 type userListResponse struct {
@@ -121,12 +123,13 @@ func (h userHandler) create(c *gin.Context) {
 		return
 	}
 	user, err := h.service.Create(c.Request.Context(), servicetenantuser.CreateInput{
-		TenantID:     principal.TenantID,
-		Username:     request.Username,
-		RealName:     request.RealName,
-		AvatarURL:    request.AvatarURL,
-		PasswordHash: passwordHash,
-		Role:         request.Role,
+		TenantID:            principal.TenantID,
+		Username:            request.Username,
+		RealName:            request.RealName,
+		AvatarURL:           request.AvatarURL,
+		PasswordHash:        passwordHash,
+		Role:                request.Role,
+		ForcePasswordChange: request.ForcePasswordChange,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "创建用户失败"))
@@ -338,13 +341,14 @@ func (r importUserRequest) validate(passwordMinLength int) error {
 
 func userToResponse(user servicetenantuser.User) userResponse {
 	return userResponse{
-		ID:        user.ID,
-		TenantID:  user.TenantID,
-		Username:  user.Username,
-		RealName:  user.RealName,
-		AvatarURL: user.AvatarURL,
-		Role:      user.Role,
-		Status:    user.Status,
+		ID:                  user.ID,
+		TenantID:            user.TenantID,
+		Username:            user.Username,
+		RealName:            user.RealName,
+		AvatarURL:           user.AvatarURL,
+		Role:                user.Role,
+		Status:              user.Status,
+		ForcePasswordChange: user.ForcePasswordChange,
 	}
 }
 

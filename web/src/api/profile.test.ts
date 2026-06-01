@@ -23,6 +23,7 @@ test("profile API 读取并更新当前登录用户资料", async () => {
           email: "admin@example.test",
           role: "platform_admin",
           subject_type: "platform_user",
+          force_password_change: false,
         },
       }));
     }
@@ -44,6 +45,7 @@ test("profile API 读取并更新当前登录用户资料", async () => {
           email: "owner@example.test",
           role: "platform_admin",
           subject_type: "platform_user",
+          force_password_change: false,
         },
       }));
     }
@@ -55,6 +57,7 @@ test("profile API 读取并更新当前登录用户资料", async () => {
   await expect(api.getProfile()).resolves.toMatchObject({
     displayName: "admin",
     role: "platform_admin",
+    forcePasswordChange: false,
   });
   await expect(api.updateProfile({
     displayName: "平台负责人",
@@ -64,6 +67,42 @@ test("profile API 读取并更新当前登录用户资料", async () => {
   })).resolves.toMatchObject({
     displayName: "平台负责人",
     avatarURL: "/uploads/avatars/admin.png",
+    forcePasswordChange: false,
+  });
+});
+
+test("profile API 支持租户用户修改密码并返回强制改密状态", async () => {
+  const fetcher = vi.fn(async (input, init) => {
+    expect(input).toBe("/api/v1/profile/password");
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe(JSON.stringify({
+      current_password: "old-password",
+      new_password: "new-password-123",
+    }));
+    return new Response(JSON.stringify({
+      code: 0,
+      message: "ok",
+      data: {
+        user_id: 20,
+        tenant_id: 10,
+        display_name: "张同学",
+        avatar_url: "",
+        phone: "",
+        email: "",
+        role: "student",
+        subject_type: "tenant_user",
+        force_password_change: false,
+      },
+    }));
+  });
+  const api = createProfileAPI(createApiClient({ baseUrl: "", fetcher }));
+
+  await expect(api.changePassword({
+    currentPassword: "old-password",
+    newPassword: "new-password-123",
+  })).resolves.toMatchObject({
+    userID: 20,
+    forcePasswordChange: false,
   });
 });
 

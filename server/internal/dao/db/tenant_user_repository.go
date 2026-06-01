@@ -25,19 +25,20 @@ type TenantUserRepositoryOptions struct {
 }
 
 type tenantUserRow struct {
-	ID               uint64
-	TenantID         uint64
-	Username         string
-	RealName         string
-	AvatarURL        string
-	Phone            string
-	Email            string
-	PasswordHash     string
-	LastLoginIP      string
-	LastLoginAt      int64
-	Role             string
-	MembershipStatus string
-	AccountStatus    string
+	ID                  uint64
+	TenantID            uint64
+	Username            string
+	RealName            string
+	AvatarURL           string
+	Phone               string
+	Email               string
+	PasswordHash        string
+	ForcePasswordChange bool
+	LastLoginIP         string
+	LastLoginAt         int64
+	Role                string
+	MembershipStatus    string
+	AccountStatus       string
 }
 
 func NewTenantUserRepository(gormDB *gorm.DB, options TenantUserRepositoryOptions) *TenantUserRepository {
@@ -173,13 +174,14 @@ func (r *TenantUserRepository) createUser(ctx context.Context, gormDB *gorm.DB, 
 			Version:       1,
 			ExtJSON:       datatypes.JSON("{}"),
 		},
-		Username:     user.Username,
-		RealName:     user.RealName,
-		AvatarURL:    user.AvatarURL,
-		Phone:        user.Phone,
-		Email:        user.Email,
-		PasswordHash: user.PasswordHash,
-		Status:       servicetenantuser.StatusEnabled,
+		Username:            user.Username,
+		RealName:            user.RealName,
+		AvatarURL:           user.AvatarURL,
+		Phone:               user.Phone,
+		Email:               user.Email,
+		PasswordHash:        user.PasswordHash,
+		ForcePasswordChange: user.ForcePasswordChange,
+		Status:              servicetenantuser.StatusEnabled,
 	}
 	if row.Phone == "" {
 		row.Phone = generatedUserPhone(user.TenantID, user.Username)
@@ -269,6 +271,26 @@ func (r *TenantUserRepository) UpdateProfile(ctx context.Context, input servicet
 		return r.FindGlobalUserByID(ctx, input.UserID)
 	}
 	return r.FindUserByID(ctx, input.TenantID, input.UserID)
+}
+
+func (r *TenantUserRepository) UpdatePassword(ctx context.Context, userID uint64, passwordHash string, forcePasswordChange bool) (servicetenantuser.User, error) {
+	result := r.db.WithContext(ctx).Model(&UserDO{}).
+		Where(UserColumns.ID+" = ?", userID).
+		Where(UserColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			UserColumns.PasswordHash:        passwordHash,
+			UserColumns.ForcePasswordChange: forcePasswordChange,
+			BaseColumns.UpdatedAt:           r.now(),
+			BaseColumns.UpdatedByType:       AuditActorTenantUser,
+			BaseColumns.Version:             gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if result.Error != nil {
+		return servicetenantuser.User{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicetenantuser.User{}, servicetenantuser.ErrUserNotFound
+	}
+	return r.FindGlobalUserByID(ctx, userID)
 }
 
 func (r *TenantUserRepository) UpdateAvatarURL(ctx context.Context, tenantID uint64, userID uint64, url string) error {
@@ -596,7 +618,7 @@ func (r *TenantUserRepository) validateSpaceAdminInvariantAfterUserStatusChange(
 		return err
 	}
 	enabledUserIDs := tx.WithContext(ctx).Table("tenant_user_memberships AS tum").
-		Select("tum." + UserRoleColumns.UserID).
+		Select("tum."+UserRoleColumns.UserID).
 		Joins("JOIN users ON users.id = tum.user_id AND users.status = ? AND users.deleted_at = 0", servicetenantuser.StatusEnabled).
 		Where("tum."+UserRoleColumns.TenantID+" = ?", tenantID).
 		Where("tum."+UserRoleColumns.Status+" = ?", servicetenantuser.StatusEnabled)
@@ -627,7 +649,7 @@ func (r *TenantUserRepository) tenantUserQuery(ctx context.Context) *gorm.DB {
 
 func (r *TenantUserRepository) tenantUserSelectColumns() string {
 	return "users.id, tum.tenant_id, users.username, users.real_name, users.avatar_url, users.phone, users.email, " +
-		"users.password_hash, users.last_login_ip, users.last_login_at, tum.role, tum.status AS membership_status, users.status AS account_status"
+		"users.password_hash, users.force_password_change, users.last_login_ip, users.last_login_at, tum.role, tum.status AS membership_status, users.status AS account_status"
 }
 
 func (r *TenantUserRepository) findUserByIDWithDB(ctx context.Context, gormDB *gorm.DB, tenantID uint64, userID uint64) (servicetenantuser.User, error) {
@@ -667,35 +689,37 @@ func (r *TenantUserRepository) findGlobalUserByUsername(ctx context.Context, gor
 
 func tenantUserFromRow(row tenantUserRow) servicetenantuser.User {
 	return servicetenantuser.User{
-		ID:           row.ID,
-		TenantID:     row.TenantID,
-		Username:     row.Username,
-		RealName:     row.RealName,
-		AvatarURL:    row.AvatarURL,
-		Phone:        row.Phone,
-		Email:        row.Email,
-		PasswordHash: row.PasswordHash,
-		LastLoginIP:  row.LastLoginIP,
-		LastLoginAt:  row.LastLoginAt,
-		Role:         roleOrStudent(row.Role),
-		Status:       tenantMembershipStatus(row.MembershipStatus, row.AccountStatus),
+		ID:                  row.ID,
+		TenantID:            row.TenantID,
+		Username:            row.Username,
+		RealName:            row.RealName,
+		AvatarURL:           row.AvatarURL,
+		Phone:               row.Phone,
+		Email:               row.Email,
+		PasswordHash:        row.PasswordHash,
+		ForcePasswordChange: row.ForcePasswordChange,
+		LastLoginIP:         row.LastLoginIP,
+		LastLoginAt:         row.LastLoginAt,
+		Role:                roleOrStudent(row.Role),
+		Status:              tenantMembershipStatus(row.MembershipStatus, row.AccountStatus),
 	}
 }
 
 func tenantUserFromGlobal(row UserDO, tenantID uint64, role string, status string) servicetenantuser.User {
 	return servicetenantuser.User{
-		ID:           row.ID,
-		TenantID:     tenantID,
-		Username:     row.Username,
-		RealName:     row.RealName,
-		AvatarURL:    row.AvatarURL,
-		Phone:        row.Phone,
-		Email:        row.Email,
-		PasswordHash: row.PasswordHash,
-		LastLoginIP:  row.LastLoginIP,
-		LastLoginAt:  row.LastLoginAt,
-		Role:         role,
-		Status:       status,
+		ID:                  row.ID,
+		TenantID:            tenantID,
+		Username:            row.Username,
+		RealName:            row.RealName,
+		AvatarURL:           row.AvatarURL,
+		Phone:               row.Phone,
+		Email:               row.Email,
+		PasswordHash:        row.PasswordHash,
+		ForcePasswordChange: row.ForcePasswordChange,
+		LastLoginIP:         row.LastLoginIP,
+		LastLoginAt:         row.LastLoginAt,
+		Role:                role,
+		Status:              status,
 	}
 }
 

@@ -15,6 +15,7 @@ go.work.sum
 .idea/
 .vscode/
 .codegraph/
+.DS_Store
 pnpm-lock.yaml
 server/conf/app.yaml
 

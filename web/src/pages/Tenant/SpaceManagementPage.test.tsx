@@ -166,6 +166,16 @@ function createSpaceAPI() {
 }
 
 function createUserAPI() {
+  const suggestionUsers = Array.from({ length: 12 }, (_, index) => ({
+    id: 30 + index,
+    tenantID: 10,
+    name: `测试同学 ${index + 1}`,
+    username: `student_suggest_${index + 1}`,
+    role: "student",
+    avatarFileName: "未上传",
+    status: "enabled",
+  }));
+
   return {
     listUsers: vi.fn().mockResolvedValue({
       items: [
@@ -196,6 +206,7 @@ function createUserAPI() {
           avatarFileName: "未上传",
           status: "enabled",
         },
+        ...suggestionUsers,
       ],
     }),
   };
@@ -269,6 +280,12 @@ test("租户管理员可以按账号或姓名将已有用户添加到空间", as
   await user.click(screen.getByRole("button", { name: "添加用户" }));
 
   expect(screen.getByRole("dialog", { name: "添加用户到空间弹窗" })).toBeInTheDocument();
+  const dialog = screen.getByRole("dialog", { name: "添加用户到空间弹窗" });
+  expect(within(dialog).getAllByText("*")).toHaveLength(3);
+  expect(screen.getByLabelText("目标空间")).toHaveValue("");
+  expect(screen.getByText("请选择空间")).toBeInTheDocument();
+  expect(screen.getByLabelText("空间身份")).toHaveValue("");
+  expect(screen.getByText("请选择身份")).toBeInTheDocument();
   await user.type(screen.getByLabelText("用户账号或姓名"), "student03");
   await user.selectOptions(screen.getByLabelText("目标空间"), "100");
   await user.selectOptions(screen.getByLabelText("空间身份"), "student");
@@ -282,6 +299,29 @@ test("租户管理员可以按账号或姓名将已有用户添加到空间", as
   await user.type(within(drawer).getByLabelText("成员检索关键词"), "陈同学");
   await user.click(within(drawer).getByRole("button", { name: "搜索成员" }));
   expect(within(drawer).getByText("陈同学")).toBeInTheDocument();
+});
+
+test("添加用户到空间时按账号或姓名展示最多十个候选用户", async () => {
+  const user = userEvent.setup();
+  renderWithFeedback(<SpaceManagementPage api={createSpaceAPI()} userApi={createUserAPI()} tenantID={10} />);
+
+  await screen.findByText("高一 1 班");
+  await user.click(screen.getByRole("button", { name: "添加用户" }));
+  await user.click(screen.getByLabelText("用户账号或姓名"));
+
+  expect(screen.queryByRole("listbox", { name: "用户账号或姓名候选" })).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("用户账号或姓名"), "student");
+  expect(screen.queryByRole("listbox", { name: "用户账号或姓名候选" })).not.toBeInTheDocument();
+
+  const suggestions = await screen.findByRole("listbox", { name: "用户账号或姓名候选" });
+  expect(within(suggestions).getAllByRole("option")).toHaveLength(10);
+  expect(within(suggestions).getByRole("option", { name: /student03/ })).toBeInTheDocument();
+  expect(within(suggestions).queryByRole("option", { name: /student_suggest_10/ })).not.toBeInTheDocument();
+
+  await user.click(within(suggestions).getByRole("option", { name: /student03/ }));
+
+  expect(screen.getByLabelText("用户账号或姓名")).toHaveValue("student03");
 });
 
 test("空间管理列表支持分页并在检索后重置到第一页", async () => {

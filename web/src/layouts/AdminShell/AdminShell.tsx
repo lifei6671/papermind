@@ -1,6 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeftRight, Home, LogOut, Settings } from "lucide-react";
+import { useState } from "react";
+import { ArrowLeftRight, Home, LogOut, Menu, Settings, X } from "lucide-react";
 import { type AuthSession, useSession } from "../../auth/session-context";
 import { routeVisibleForRole, type AdminRoute, type AdminRouteGroup } from "../../app/routes";
 import "./AdminShell.css";
@@ -20,6 +21,7 @@ export function AdminShell({ routes }: AdminShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { session, signOut } = useSession();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const visibleGroups = Object.keys(groupLabels) as Array<Exclude<AdminRouteGroup, "hidden">>;
   const scopedSpaceID = session?.selectedSpaceID ?? positiveID(new URLSearchParams(location.search).get("space_id"));
   const menuRoutes = routes.filter((route) =>
@@ -38,6 +40,7 @@ export function AdminShell({ routes }: AdminShellProps) {
         className={({ isActive }) => (isActive ? "menu-link menu-link--active" : "menu-link")}
         end={route.path === "/"}
         key={route.path}
+        onClick={() => setSidebarOpen(false)}
         to={routeLinkTarget(route, location.search)}
       >
         <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
@@ -49,7 +52,32 @@ export function AdminShell({ routes }: AdminShellProps) {
 
   return (
     <div className="admin-shell">
-      <aside className="sidebar" aria-label="后台导航">
+      <button
+        aria-controls="admin-sidebar"
+        aria-expanded={sidebarOpen}
+        aria-label={sidebarOpen ? "关闭后台导航" : "展开后台导航"}
+        className="mobile-nav-toggle"
+        data-placement={sidebarOpen ? "drawer-right" : "page-left"}
+        onClick={() => setSidebarOpen((open) => !open)}
+        type="button"
+      >
+        {sidebarOpen ? <X aria-hidden="true" size={20} /> : <Menu aria-hidden="true" size={20} />}
+      </button>
+
+      {sidebarOpen && (
+        <button
+          aria-label="关闭导航遮罩"
+          className="sidebar-backdrop"
+          onClick={() => setSidebarOpen(false)}
+          type="button"
+        />
+      )}
+
+      <aside
+        className={sidebarOpen ? "sidebar sidebar--mobile-open" : "sidebar"}
+        id="admin-sidebar"
+        aria-label="后台导航"
+      >
         <div className="brand-rail">
           <div className="brand-mark" aria-hidden="true">
             P
@@ -84,19 +112,28 @@ export function AdminShell({ routes }: AdminShellProps) {
               className={({ isActive }) =>
                 isActive ? "menu-panel__settings menu-panel__settings--active" : "menu-panel__settings"
               }
+              onClick={() => setSidebarOpen(false)}
               to="/settings/profile"
             >
               <Settings aria-hidden="true" size={15} strokeWidth={1.8} />
             </NavLink>
           </div>
 
-          <Button className="sidebar__home" onClick={() => navigate(sidebarIdentity.actionPath)} type="button">
+          <Button
+            className="sidebar__home"
+            onClick={() => {
+              setSidebarOpen(false);
+              navigate(sidebarIdentity.actionPath);
+            }}
+            type="button"
+          >
             <sidebarIdentity.ActionIcon aria-hidden="true" size={15} />
             {sidebarIdentity.actionLabel}
           </Button>
           <Button
             className="sidebar__logout"
             onClick={() => {
+              setSidebarOpen(false);
               signOut();
               navigate("/login", { replace: true });
             }}

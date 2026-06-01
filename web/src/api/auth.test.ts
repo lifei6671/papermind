@@ -114,6 +114,7 @@ describe("authApi", () => {
             user_id: 20,
             display_name: "目标考生",
             role: "tenant_user",
+            force_password_change: true,
           },
         },
       }));
@@ -131,6 +132,7 @@ describe("authApi", () => {
         userID: 20,
         displayName: "目标考生",
         role: "tenant_user",
+        forcePasswordChange: true,
       },
     });
   });
@@ -152,6 +154,7 @@ describe("authApi", () => {
             display_name: "目标考生",
             role: "student",
             tenant_id: 10,
+            force_password_change: true,
           },
         },
       }));
@@ -169,6 +172,7 @@ describe("authApi", () => {
       displayName: "目标考生",
       role: "student",
       tenantID: 10,
+      forcePasswordChange: true,
     });
   });
 

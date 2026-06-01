@@ -55,18 +55,19 @@ type Tenant struct {
 }
 
 type User struct {
-	ID           uint64 // 租户用户主键 ID。
-	TenantID     uint64 // 所属租户 ID。
-	Username     string // 租户内登录名。
-	RealName     string // 真实姓名，用于阅卷、成绩单和导出。
-	AvatarURL    string // 用户头像地址。
-	Phone        string // 手机号，可用于登录或通知。
-	Email        string // 邮箱，可用于登录或通知。
-	PasswordHash string // 密码哈希。
-	LastLoginIP  string // 最后登录 IP。
-	LastLoginAt  int64  // 最后登录时间，Unix 毫秒时间戳。
-	Role         string // 租户固定角色：tenant_admin / teacher / student。
-	Status       string // 用户状态：enabled / disabled。
+	ID                  uint64 // 租户用户主键 ID。
+	TenantID            uint64 // 所属租户 ID。
+	Username            string // 租户内登录名。
+	RealName            string // 真实姓名，用于阅卷、成绩单和导出。
+	AvatarURL           string // 用户头像地址。
+	Phone               string // 手机号，可用于登录或通知。
+	Email               string // 邮箱，可用于登录或通知。
+	PasswordHash        string // 密码哈希。
+	ForcePasswordChange bool   // 是否要求用户下次登录后修改密码。
+	LastLoginIP         string // 最后登录 IP。
+	LastLoginAt         int64  // 最后登录时间，Unix 毫秒时间戳。
+	Role                string // 租户固定角色：tenant_admin / teacher / student。
+	Status              string // 用户状态：enabled / disabled。
 }
 
 type RegisterInput struct {
@@ -79,14 +80,15 @@ type RegisterInput struct {
 }
 
 type CreateInput struct {
-	TenantID     uint64 // 所属租户 ID。
-	Username     string // 租户内登录名。
-	RealName     string // 真实姓名。
-	AvatarURL    string // 用户头像地址。
-	PasswordHash string // 密码哈希。
-	Phone        string // 手机号。
-	Email        string // 邮箱。
-	Role         string // 租户固定角色。
+	TenantID            uint64 // 所属租户 ID。
+	Username            string // 租户内登录名。
+	RealName            string // 真实姓名。
+	AvatarURL           string // 用户头像地址。
+	PasswordHash        string // 密码哈希。
+	Phone               string // 手机号。
+	Email               string // 邮箱。
+	Role                string // 租户固定角色。
+	ForcePasswordChange bool   // 是否要求用户首次登录后修改密码。
 }
 
 type ListInput struct {
@@ -188,6 +190,12 @@ type UpdateProfileInput struct {
 	Email       string // 邮箱。
 }
 
+type ChangePasswordInput struct {
+	UserID          uint64 // 当前租户用户 ID。
+	CurrentPassword string // 当前明文密码。
+	NewPasswordHash string // 新密码哈希。
+}
+
 type DisableImpact struct {
 	LoseLogin       bool     // 禁用后失去登录能力。
 	LoseExamAccess  bool     // 禁用后失去考试能力。
@@ -207,6 +215,7 @@ type Repository interface {
 	FindGlobalUserByUsername(ctx context.Context, username string) (User, error)
 	UpdateLoginAudit(ctx context.Context, tenantID uint64, userID uint64, ip string, at int64) error
 	UpdateProfile(ctx context.Context, input UpdateProfileInput) (User, error)
+	UpdatePassword(ctx context.Context, userID uint64, passwordHash string, forcePasswordChange bool) (User, error)
 	UpdateAvatarURL(ctx context.Context, tenantID uint64, userID uint64, url string) error
 	BuildDisableImpact(ctx context.Context, tenantID uint64, userID uint64) (DisableImpact, error)
 	UpdateStatus(ctx context.Context, tenantID uint64, userID uint64, status string) error
@@ -296,15 +305,16 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 		role = RoleStudent
 	}
 	user, err := s.repo.CreateUserWithRole(ctx, User{
-		TenantID:     input.TenantID,
-		Username:     input.Username,
-		RealName:     input.RealName,
-		AvatarURL:    input.AvatarURL,
-		PasswordHash: input.PasswordHash,
-		Phone:        input.Phone,
-		Email:        input.Email,
-		Role:         role,
-		Status:       StatusEnabled,
+		TenantID:            input.TenantID,
+		Username:            input.Username,
+		RealName:            input.RealName,
+		AvatarURL:           input.AvatarURL,
+		PasswordHash:        input.PasswordHash,
+		Phone:               input.Phone,
+		Email:               input.Email,
+		Role:                role,
+		Status:              StatusEnabled,
+		ForcePasswordChange: input.ForcePasswordChange,
 	}, role)
 	if err != nil {
 		return User{}, err
@@ -445,6 +455,20 @@ func (s *Service) UpdateProfile(ctx context.Context, input UpdateProfileInput) (
 		return User{}, ErrDisplayNameRequired
 	}
 	return s.repo.UpdateProfile(ctx, input)
+}
+
+func (s *Service) ChangePassword(ctx context.Context, input ChangePasswordInput) (User, error) {
+	user, err := s.repo.FindGlobalUserByID(ctx, input.UserID)
+	if err != nil {
+		return User{}, err
+	}
+	if user.Status != StatusEnabled {
+		return User{}, ErrUserDisabled
+	}
+	if !s.passwordVerifier.Verify(user.PasswordHash, input.CurrentPassword) {
+		return User{}, ErrInvalidCredential
+	}
+	return s.repo.UpdatePassword(ctx, input.UserID, input.NewPasswordHash, false)
 }
 
 func (s *Service) register(ctx context.Context, input RegisterInput) (User, error) {

@@ -60,10 +60,11 @@ type authSessionResponse struct {
 }
 
 type authUserResponse struct {
-	UserID      uint64 `json:"user_id"`
-	DisplayName string `json:"display_name"`
-	Role        string `json:"role"`
-	TenantID    uint64 `json:"tenant_id,omitempty"`
+	UserID              uint64 `json:"user_id"`
+	DisplayName         string `json:"display_name"`
+	Role                string `json:"role"`
+	TenantID            uint64 `json:"tenant_id,omitempty"`
+	ForcePasswordChange bool   `json:"force_password_change"`
 }
 
 type profileRequest struct {
@@ -73,15 +74,21 @@ type profileRequest struct {
 	Email       string `json:"email"`
 }
 
+type profilePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
 type profileResponse struct {
-	UserID      uint64 `json:"user_id"`
-	TenantID    uint64 `json:"tenant_id,omitempty"`
-	DisplayName string `json:"display_name"`
-	AvatarURL   string `json:"avatar_url"`
-	Phone       string `json:"phone"`
-	Email       string `json:"email"`
-	Role        string `json:"role"`
-	SubjectType string `json:"subject_type"`
+	UserID              uint64 `json:"user_id"`
+	TenantID            uint64 `json:"tenant_id,omitempty"`
+	DisplayName         string `json:"display_name"`
+	AvatarURL           string `json:"avatar_url"`
+	Phone               string `json:"phone"`
+	Email               string `json:"email"`
+	Role                string `json:"role"`
+	SubjectType         string `json:"subject_type"`
+	ForcePasswordChange bool   `json:"force_password_change"`
 }
 
 type profileSpaceResponse struct {
@@ -215,6 +222,54 @@ func (h authHandler) updateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(tenantProfileToResponse(user)))
 }
 
+func (h authHandler) updatePassword(c *gin.Context) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return
+	}
+	if principal.SubjectType != permission.SubjectTenantUser {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "平台管理员不支持在此修改密码"))
+		return
+	}
+	var request profilePasswordRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if strings.TrimSpace(request.CurrentPassword) == "" || strings.TrimSpace(request.NewPassword) == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "当前密码和新密码不能为空"))
+		return
+	}
+	if err := validatePasswordMinLength(request.NewPassword, h.passwordMinLength); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if _, err := h.liveTenantProfileUser(c, principal); err != nil {
+		writeProfileError(c, err)
+		return
+	}
+	passwordHash, err := crypto.HashPassword(request.NewPassword)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "生成密码哈希失败"))
+		return
+	}
+	user, err := h.tenantUsers.ChangePassword(c.Request.Context(), servicetenantuser.ChangePasswordInput{
+		UserID:          principal.UserID,
+		CurrentPassword: request.CurrentPassword,
+		NewPasswordHash: passwordHash,
+	})
+	if err != nil {
+		writeProfileError(c, err)
+		return
+	}
+	if principal.TenantID != 0 {
+		user.TenantID = principal.TenantID
+		user.Role = principal.Role
+	}
+	c.JSON(http.StatusOK, response.OK(tenantProfileToResponse(user)))
+}
+
 func (h authHandler) livePlatformProfileUser(c *gin.Context, userID uint64) (serviceplatformuser.PlatformUser, error) {
 	user, err := h.platformUsers.Get(c.Request.Context(), userID)
 	if err != nil {
@@ -321,9 +376,10 @@ func (h authHandler) tenantLogin(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, response.OK(authSessionResponse{
 		User: authUserResponse{
-			UserID:      user.ID,
-			DisplayName: user.RealName,
-			Role:        servicetenantuser.RoleTenantUser,
+			UserID:              user.ID,
+			DisplayName:         user.RealName,
+			Role:                servicetenantuser.RoleTenantUser,
+			ForcePasswordChange: user.ForcePasswordChange,
 		},
 	}))
 }
@@ -383,10 +439,11 @@ func (h authHandler) selectTenantSpace(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, response.OK(authSessionResponse{
 		User: authUserResponse{
-			UserID:      user.ID,
-			DisplayName: user.RealName,
-			Role:        user.Role,
-			TenantID:    request.TenantID,
+			UserID:              user.ID,
+			DisplayName:         user.RealName,
+			Role:                user.Role,
+			TenantID:            request.TenantID,
+			ForcePasswordChange: user.ForcePasswordChange,
 		},
 	}))
 }
@@ -454,26 +511,28 @@ func hasSelectedSpace(ctx context.Context, spaces *servicespace.Service, tenantI
 
 func platformProfileToResponse(user serviceplatformuser.PlatformUser) profileResponse {
 	return profileResponse{
-		UserID:      user.ID,
-		DisplayName: user.Username,
-		AvatarURL:   user.AvatarURL,
-		Phone:       user.Phone,
-		Email:       user.Email,
-		Role:        platformAdminRole,
-		SubjectType: permission.SubjectPlatformUser,
+		UserID:              user.ID,
+		DisplayName:         user.Username,
+		AvatarURL:           user.AvatarURL,
+		Phone:               user.Phone,
+		Email:               user.Email,
+		Role:                platformAdminRole,
+		SubjectType:         permission.SubjectPlatformUser,
+		ForcePasswordChange: false,
 	}
 }
 
 func tenantProfileToResponse(user servicetenantuser.User) profileResponse {
 	return profileResponse{
-		UserID:      user.ID,
-		TenantID:    user.TenantID,
-		DisplayName: user.RealName,
-		AvatarURL:   user.AvatarURL,
-		Phone:       user.Phone,
-		Email:       user.Email,
-		Role:        user.Role,
-		SubjectType: permission.SubjectTenantUser,
+		UserID:              user.ID,
+		TenantID:            user.TenantID,
+		DisplayName:         user.RealName,
+		AvatarURL:           user.AvatarURL,
+		Phone:               user.Phone,
+		Email:               user.Email,
+		Role:                user.Role,
+		SubjectType:         permission.SubjectTenantUser,
+		ForcePasswordChange: user.ForcePasswordChange,
 	}
 }
 
@@ -485,6 +544,14 @@ func writeProfileError(c *gin.Context, err error) {
 	if errors.Is(err, serviceplatformuser.ErrDisplayNameRequired) ||
 		errors.Is(err, servicetenantuser.ErrDisplayNameRequired) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "display_name 不能为空"))
+		return
+	}
+	if errors.Is(err, servicetenantuser.ErrInvalidCredential) {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "当前密码不正确"))
+		return
+	}
+	if errors.Is(err, servicetenantuser.ErrUserDisabled) {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "当前用户已禁用"))
 		return
 	}
 	if errors.Is(err, serviceplatformuser.ErrPlatformUserNotFound) ||

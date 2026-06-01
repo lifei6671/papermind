@@ -225,6 +225,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone VARCHAR(32) NOT NULL DEFAULT '',
     email VARCHAR(128) NOT NULL DEFAULT '',
     password_hash VARCHAR(255) NOT NULL,
+    force_password_change BOOLEAN NOT NULL DEFAULT FALSE,
     last_login_ip VARCHAR(64) NOT NULL DEFAULT '',
     last_login_at BIGINT NOT NULL DEFAULT 0,
     status VARCHAR(32) NOT NULL DEFAULT 'enabled',
@@ -246,6 +247,7 @@ COMMENT ON COLUMN users.avatar_url IS '用户头像地址';
 COMMENT ON COLUMN users.phone IS '手机号，可用于登录或通知';
 COMMENT ON COLUMN users.email IS '邮箱，可用于登录或通知';
 COMMENT ON COLUMN users.password_hash IS '密码哈希';
+COMMENT ON COLUMN users.force_password_change IS '是否要求用户下次登录后修改密码';
 COMMENT ON COLUMN users.last_login_ip IS '最后登录 IP';
 COMMENT ON COLUMN users.last_login_at IS '最后登录时间，Unix 毫秒时间戳';
 COMMENT ON COLUMN users.status IS '用户状态：enabled / disabled';

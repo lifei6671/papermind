@@ -19,6 +19,7 @@ export type SessionUser = {
   displayName: string;
   role: SessionRole;
   tenantID?: number;
+  forcePasswordChange?: boolean;
 };
 
 export type AuthSession = {

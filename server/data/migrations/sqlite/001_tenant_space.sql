@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone TEXT NOT NULL DEFAULT '',
     email TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
+    force_password_change INTEGER NOT NULL DEFAULT 0,
     last_login_ip TEXT NOT NULL DEFAULT '',
     last_login_at INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'enabled',

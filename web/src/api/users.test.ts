@@ -17,6 +17,7 @@ describe("user api", () => {
             avatar_url: "",
             role: "teacher",
             status: "enabled",
+            force_password_change: true,
           }],
           page: 1,
           page_size: 20,
@@ -35,6 +36,7 @@ describe("user api", () => {
         role: "teacher",
         avatarFileName: "未上传",
         status: "enabled",
+        forcePasswordChange: true,
       }],
     });
     expect(fetcher).toHaveBeenCalledWith("/api/v1/tenant/users?tenant_id=10", expect.objectContaining({ method: "GET" }));
@@ -53,6 +55,7 @@ describe("user api", () => {
           avatar_url: "avatar.png",
           role: "student",
           status: "enabled",
+          force_password_change: true,
         },
       })),
     );
@@ -65,11 +68,13 @@ describe("user api", () => {
       password: "student-secure-123",
       role: "student",
       avatarFileName: "avatar.png",
+      forcePasswordChange: true,
     })).resolves.toMatchObject({
       id: 21,
       tenantID: 10,
       name: "张三",
       role: "student",
+      forcePasswordChange: true,
     });
     expect(fetcher).toHaveBeenCalledWith(
       "/api/v1/tenant/users",
@@ -82,6 +87,7 @@ describe("user api", () => {
           avatar_url: "avatar.png",
           password: "student-secure-123",
           role: "student",
+          force_password_change: true,
         }),
       }),
     );

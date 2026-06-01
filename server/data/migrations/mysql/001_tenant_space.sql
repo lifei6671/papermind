@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone VARCHAR(32) NOT NULL DEFAULT '' COMMENT '手机号，可用于登录或通知',
     email VARCHAR(128) NOT NULL DEFAULT '' COMMENT '邮箱，可用于登录或通知',
     password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希',
+    force_password_change BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否要求用户下次登录后修改密码',
     last_login_ip VARCHAR(64) NOT NULL DEFAULT '' COMMENT '最后登录 IP',
     last_login_at BIGINT NOT NULL DEFAULT 0 COMMENT '最后登录时间，Unix 毫秒时间戳',
     status VARCHAR(32) NOT NULL DEFAULT 'enabled' COMMENT '用户状态：enabled / disabled',

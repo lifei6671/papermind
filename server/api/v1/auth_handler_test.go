@@ -228,6 +228,74 @@ func TestProfileAPIRoutesReadAndUpdateTenantUser(t *testing.T) {
 	}
 }
 
+func TestTenantUserCanChangeForcedPassword(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedTenantRegisterAPITestData(t, gormDB)
+	seedTakingAPITestData(t, gormDB)
+	if err := gormDB.Table("users").
+		Where("id = ?", 20).
+		Update("force_password_change", true).Error; err != nil {
+		t.Fatalf("mark forced password change: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	loginRecorder := httptest.NewRecorder()
+	router.ServeHTTP(loginRecorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/auth/tenant/login",
+		bytes.NewReader([]byte(`{"username":"student20","password":"papermind123"}`)),
+	))
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("tenant login status = %d, body = %s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+	loginBody := decodeExamAPIResponse[authSessionResponse](t, loginRecorder.Body.Bytes())
+	if !loginBody.Data.User.ForcePasswordChange {
+		t.Fatalf("expected login response to require password change: %#v", loginBody.Data.User)
+	}
+	authHeader := tenantAuthHeader(t, router, 10, "student20", "papermind123")
+
+	changeRecorder := httptest.NewRecorder()
+	router.ServeHTTP(changeRecorder, authorizedRequest(http.MethodPost, "/api/v1/profile/password", []byte(`{
+		"current_password": "papermind123",
+		"new_password": "new-secure-password"
+	}`), authHeader))
+	if changeRecorder.Code != http.StatusOK {
+		t.Fatalf("change password status = %d, body = %s", changeRecorder.Code, changeRecorder.Body.String())
+	}
+	changeBody := decodeExamAPIResponse[profileResponse](t, changeRecorder.Body.Bytes())
+	if changeBody.Data.ForcePasswordChange {
+		t.Fatalf("expected forced password change to be cleared: %#v", changeBody.Data)
+	}
+
+	oldPasswordRecorder := httptest.NewRecorder()
+	router.ServeHTTP(oldPasswordRecorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/auth/tenant/login",
+		bytes.NewReader([]byte(`{"username":"student20","password":"papermind123"}`)),
+	))
+	if oldPasswordRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("old password login status = %d, body = %s", oldPasswordRecorder.Code, oldPasswordRecorder.Body.String())
+	}
+
+	newPasswordRecorder := httptest.NewRecorder()
+	router.ServeHTTP(newPasswordRecorder, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/auth/tenant/login",
+		bytes.NewReader([]byte(`{"username":"student20","password":"new-secure-password"}`)),
+	))
+	if newPasswordRecorder.Code != http.StatusOK {
+		t.Fatalf("new password login status = %d, body = %s", newPasswordRecorder.Code, newPasswordRecorder.Body.String())
+	}
+	newPasswordBody := decodeExamAPIResponse[authSessionResponse](t, newPasswordRecorder.Body.Bytes())
+	if newPasswordBody.Data.User.ForcePasswordChange {
+		t.Fatalf("expected new password login not to require password change: %#v", newPasswordBody.Data.User)
+	}
+}
+
 func TestProfileAPIRouteRejectsDisabledPlatformUserSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

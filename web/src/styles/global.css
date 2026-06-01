@@ -2499,6 +2499,14 @@ code {
   font-weight: 700;
 }
 
+.profile-warning--banner {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid #fecdd3;
+  border-radius: 6px;
+  background: #fff1f2;
+}
+
 .profile-save-button {
   justify-self: start;
   min-width: 96px;
@@ -3356,6 +3364,47 @@ code {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.user-suggestion-list {
+  display: grid;
+  gap: 4px;
+  margin-top: -8px;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-card);
+}
+
+.user-suggestion-option {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 44px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-suggestion-option:hover,
+.user-suggestion-option:focus-visible {
+  background: var(--brand-soft);
+  outline: none;
+}
+
+.user-suggestion-option span {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.user-suggestion-option small {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .tenant-resource-drawer-layer {
