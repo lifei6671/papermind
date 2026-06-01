@@ -5,10 +5,55 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"gorm.io/gorm"
 )
+
+func TestTenantUserRepositoryListsUsersByCreatedAtDesc(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	if err := gormDB.Exec(`
+		INSERT INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, ext_json
+		) VALUES (10, '青藤一中', '', '', 'PM-QT01', 1, 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(20, 'old.user', '旧用户', '13800000020', 'old@example.test', 'hash', 'enabled', 5000, 5000, '{}'),
+			(21, 'new.user', '新用户', '13800000021', 'new@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
+			(22, 'same.time', '同时间用户', '13800000022', 'same@example.test', 'hash', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 20, 'teacher', 'enabled', 1000, 1000, '{}'),
+			(21, 10, 21, 'teacher', 'enabled', 3000, 3000, '{}'),
+			(22, 10, 22, 'teacher', 'enabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed memberships: %v", err)
+	}
+
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{})
+	result, err := repo.ListUsers(context.Background(), 10, pagination.Input{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListUsers returned error: %v", err)
+	}
+	got := make([]uint64, 0, len(result.Items))
+	for _, user := range result.Items {
+		got = append(got, user.ID)
+	}
+	assertUint64s(t, got, []uint64{22, 21, 20})
+}
 
 func TestTenantUserRepositoryRejectsDisablingLastTenantAdmin(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)

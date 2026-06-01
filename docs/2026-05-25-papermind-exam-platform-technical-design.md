@@ -1313,8 +1313,10 @@ API 分组：
 /api/v1/questions
 ├── 在线出题
 ├── 批量导入
-├── 标签/难度管理
+├── 标签/难度字段维护
 └── 题目查询
+
+前端题库页通过独立的新增题目页面承载在线出题，避免长表单挤在抽屉内。新增题目必须提交题型、难度、默认分值、题干、解析和标签；题干和解析使用 `@uiw/react-md-editor` 编辑器内置预览渲染阅读格式，后端按 Markdown 原始字符串存储；选择题选项数量由出题人动态增减，单选和多选都通过选项正确答案标记写入 `options[].is_correct`；题目标签支持从当前题库返回的标签集合中多选，也支持输入新标签后随题目创建绑定。
 
 /api/v1/papers
 ├── 创建试卷
@@ -1428,6 +1430,10 @@ POST /api/v1/uploads
 
 GET  /api/v1/questions
      query: tenant_id, space_id?, page?, page_size?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
+     response: 题目列表按 `created_at DESC, id DESC` 返回，保证新创建题目优先展示，同创建时间下顺序稳定。
+POST /api/v1/questions
+     body: tenant_id, space_id?, type, difficulty, title, analysis?, score_default?, tags[], options[], standard_answer?, reference_answer?, blank_count?
+     单选和多选题通过 options[].is_correct 标记正确答案；判断题使用 standard_answer；填空题必须提供 standard_answer，首版 blank_count 只支持 0 或 1；简答题可提供 reference_answer。
 GET  /api/v1/papers
      query: tenant_id, space_id?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
 GET  /api/v1/exams

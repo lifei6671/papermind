@@ -60,6 +60,9 @@ test("题目导入页可以搜索和刷新导入记录", async () => {
 
   await user.click(screen.getByRole("button", { name: "刷新导入记录" }));
 
+  expect(screen.getByRole("button", { name: "刷新导入记录" }).querySelector("svg")).toHaveClass(
+    "tenant-refresh-icon--spinning",
+  );
   expect(screen.getByText("questions.csv")).toBeInTheDocument();
 });
 

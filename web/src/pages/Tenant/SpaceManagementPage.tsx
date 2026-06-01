@@ -1,10 +1,12 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Pagination } from "../../components/ui/Pagination";
-import { ArrowLeft, Maximize2, Minimize2, RefreshCw, Search, X } from "lucide-react";
+import { ArrowLeft, Maximize2, Minimize2, Search, X } from "lucide-react";
 import { useEffect, useState, type TransitionEvent } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
+import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { useFeedback } from "../../app/feedback-context";
 import { formatApiErrorMessage } from "../../api/client";
@@ -53,21 +55,30 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
   const [spaceName, setSpaceName] = useState("");
   const [spaceDescription, setSpaceDescription] = useState("");
   const [spaceAdminUserID, setSpaceAdminUserID] = useState("");
+  const [spaceAdminQuery, setSpaceAdminQuery] = useState("");
+  const [debouncedSpaceAdminQuery, setDebouncedSpaceAdminQuery] = useState("");
+  const [selectedSpaceAdminName, setSelectedSpaceAdminName] = useState("");
+  const [isSpaceAdminInputFocused, setIsSpaceAdminInputFocused] = useState(false);
   const [spaceLogoFileName, setSpaceLogoFileName] = useState("");
   const [logoResetKey, setLogoResetKey] = useState(0);
   const [editingSpace, setEditingSpace] = useState<SpaceRow | null>(null);
+  const [editingName, setEditingName] = useState("");
   const [editingDescription, setEditingDescription] = useState("");
+  const [editingLogoFileName, setEditingLogoFileName] = useState("");
+  const [editingAdminUserID, setEditingAdminUserID] = useState("");
+  const [editingAdminQuery, setEditingAdminQuery] = useState("");
+  const [debouncedEditingAdminQuery, setDebouncedEditingAdminQuery] = useState("");
+  const [selectedEditingAdminName, setSelectedEditingAdminName] = useState("");
+  const [isEditingAdminInputFocused, setIsEditingAdminInputFocused] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [defaultDuration, setDefaultDuration] = useState(60);
-  const [showPracticeAnalysis, setShowPracticeAnalysis] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [spacePage, setSpacePage] = useState(1);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
   const [isAddUserDialogOpen, setIsAddUserDialogOpen] = useState(false);
   const [addUserQuery, setAddUserQuery] = useState("");
   const [debouncedAddUserQuery, setDebouncedAddUserQuery] = useState("");
+  const [selectedAddUserName, setSelectedAddUserName] = useState("");
   const [addUserSpaceID, setAddUserSpaceID] = useState("");
   const [addUserRole, setAddUserRole] = useState<MemberRole | "">("");
   const [isAddUserInputFocused, setIsAddUserInputFocused] = useState(false);
@@ -121,6 +132,34 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     };
   }, [addUserQuery, isAddUserDialogOpen]);
 
+  useEffect(() => {
+    if (!isCreateDialogOpen || spaceAdminQuery.trim() === "") {
+      return;
+    }
+
+    const timeoutID = window.setTimeout(() => {
+      setDebouncedSpaceAdminQuery(spaceAdminQuery);
+    }, addUserSuggestionDebounceMs);
+
+    return () => {
+      window.clearTimeout(timeoutID);
+    };
+  }, [isCreateDialogOpen, spaceAdminQuery]);
+
+  useEffect(() => {
+    if (!editingSpace || editingAdminQuery.trim() === "") {
+      return;
+    }
+
+    const timeoutID = window.setTimeout(() => {
+      setDebouncedEditingAdminQuery(editingAdminQuery);
+    }, addUserSuggestionDebounceMs);
+
+    return () => {
+      window.clearTimeout(timeoutID);
+    };
+  }, [editingAdminQuery, editingSpace]);
+
   const filteredSpaces = spaces.filter((space) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
     if (!keyword) {
@@ -141,6 +180,12 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
   const addUserSuggestions = matchingAddUserSuggestions(users, spaces, addUserSpaceID, debouncedAddUserQuery);
   const shouldShowAddUserSuggestions =
     isAddUserInputFocused && debouncedAddUserQuery.trim() !== "" && addUserSuggestions.length > 0;
+  const spaceAdminSuggestions = matchingUserSuggestions(users, debouncedSpaceAdminQuery);
+  const shouldShowSpaceAdminSuggestions =
+    isSpaceAdminInputFocused && debouncedSpaceAdminQuery.trim() !== "" && spaceAdminSuggestions.length > 0;
+  const editingAdminSuggestions = matchingUserSuggestions(users, debouncedEditingAdminQuery);
+  const shouldShowEditingAdminSuggestions =
+    isEditingAdminInputFocused && debouncedEditingAdminQuery.trim() !== "" && editingAdminSuggestions.length > 0;
 
   async function handleCreateSpace(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -173,9 +218,21 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     setLogoResetKey((value) => value + 1);
     setIsCreateDialogOpen(false);
   }
+
+  function openCreateSpaceDialog() {
+    const selectedUser = users.find((user) => String(user.id) === spaceAdminUserID) ?? users[0];
+    setSpaceAdminUserID(selectedUser ? String(selectedUser.id) : "");
+    setSpaceAdminQuery(selectedUser?.username ?? "");
+    setDebouncedSpaceAdminQuery("");
+    setSelectedSpaceAdminName(selectedUser?.name ?? "");
+    setIsSpaceAdminInputFocused(false);
+    setIsCreateDialogOpen(true);
+  }
+
   function openAddUserDialog() {
     setAddUserQuery("");
     setDebouncedAddUserQuery("");
+    setSelectedAddUserName("");
     setAddUserSpaceID("");
     setAddUserRole("");
     setIsAddUserInputFocused(false);
@@ -238,26 +295,96 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
   }
 
 
-  function openDescriptionEditor(space: SpaceRow) {
+  function openSpaceEditor(space: SpaceRow) {
+    const currentAdmin = space.members.find((member) => member.role === "space_admin" && member.status === "enabled");
     setEditingSpace(space);
+    setEditingName(space.name);
     setEditingDescription(space.description);
+    setEditingLogoFileName(space.logoFileName === "未上传" ? "" : space.logoFileName);
+    setEditingAdminUserID(currentAdmin ? String(currentAdmin.userID) : "");
+    setEditingAdminQuery(currentAdmin?.username ?? users.find((user) => user.id === currentAdmin?.userID)?.username ?? "");
+    setDebouncedEditingAdminQuery("");
+    setSelectedEditingAdminName(currentAdmin?.name ?? "");
+    setIsEditingAdminInputFocused(false);
   }
 
-  function saveDescription() {
-    if (!editingSpace) {
+  async function saveSpaceProfile() {
+    if (!editingSpace || !isPositiveInteger(tenantID)) {
       return;
     }
 
-    // 空间描述用于租户内教学场景识别，保存后只影响当前空间展示。
-    setSpaces((items) =>
-      items.map((space) =>
-        space.id === editingSpace.id ? { ...space, description: editingDescription } : space,
-      ),
-    );
-    setEditingSpace(null);
-    setEditingDescription("");
+    const nextAdminUserID = Number(editingAdminUserID);
+    if (!nextAdminUserID) {
+      showError("请先选择空间管理员");
+      return;
+    }
+
+    try {
+      const updatedSpace = await api.updateSpace({
+        tenantID,
+        spaceID: editingSpace.id,
+        name: editingName,
+        description: editingDescription,
+        logoFileName: editingLogoFileName || "未上传",
+      });
+      const previousAdmin = editingSpace.members.find(
+        (member) => member.role === "space_admin" && member.status === "enabled",
+      );
+      const nextAdmin = editingSpace.members.find((member) => member.userID === nextAdminUserID);
+      let nextMembers = mergeSpaceMembers(editingSpace.members, updatedSpace.members);
+
+      if (nextAdminUserID !== previousAdmin?.userID) {
+        if (nextAdmin) {
+          const promotedMember = await api.updateSpaceMember({
+            tenantID,
+            spaceID: editingSpace.id,
+            userID: nextAdminUserID,
+            role: "space_admin",
+          });
+          nextMembers = upsertSpaceMember(nextMembers, { ...nextAdmin, ...promotedMember });
+        } else {
+          const createdMember = await api.createSpaceMember({
+            tenantID,
+            spaceID: editingSpace.id,
+            userID: nextAdminUserID,
+            role: "space_admin",
+          });
+          nextMembers = upsertSpaceMember(nextMembers, createdMember);
+        }
+
+        if (previousAdmin) {
+          const downgradedMember = await api.updateSpaceMember({
+            tenantID,
+            spaceID: editingSpace.id,
+            userID: previousAdmin.userID,
+            role: "teacher",
+          });
+          nextMembers = upsertSpaceMember(nextMembers, { ...previousAdmin, ...downgradedMember, role: "teacher" });
+        }
+      }
+
+      setSpaces((items) =>
+        items.map((space) =>
+          space.id === editingSpace.id ? { ...updatedSpace, members: nextMembers } : space,
+        ),
+      );
+      closeSpaceEditor();
+    } catch (error) {
+      showError(formatApiErrorMessage(error, "保存空间信息失败"));
+    }
   }
 
+  function closeSpaceEditor() {
+    setEditingSpace(null);
+    setEditingName("");
+    setEditingDescription("");
+    setEditingLogoFileName("");
+    setEditingAdminUserID("");
+    setEditingAdminQuery("");
+    setDebouncedEditingAdminQuery("");
+    setSelectedEditingAdminName("");
+    setIsEditingAdminInputFocused(false);
+  }
 
   function downgradeMember(memberID: number) {
     if (!selectedMemberSpace) {
@@ -336,13 +463,6 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     }
   }
 
-  function handleSaveConfig(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    // 空间配置按空间维度生效，首版只暴露考试时长和练习解析展示两个高频项。
-    setIsConfigDialogOpen(false);
-  }
-
   function openMemberManager(spaceID: number) {
     setSelectedMemberSpaceID(spaceID);
   }
@@ -359,7 +479,9 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
 
     setIsSpaceListRefreshing(true);
     try {
-      const [spaceData, userData] = await Promise.all([api.listSpaces(tenantID), userApi.listUsers(tenantID)]);
+      const [spaceData, userData] = await withRefreshFeedback(
+        Promise.all([api.listSpaces(tenantID), userApi.listUsers(tenantID)]),
+      );
       setSpaces(spaceData.items);
       setUsers(userData.items);
       setSpaceAdminUserID((current) => current || String(userData.items[0]?.id ?? ""));
@@ -420,17 +542,10 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
             <div className="tenant-list-actions" aria-label="空间操作区">
               <Button
                 variant="toolbarPrimary"
-                onClick={() => setIsCreateDialogOpen(true)}
+                onClick={openCreateSpaceDialog}
                 type="button"
               >
                 创建空间
-              </Button>
-              <Button
-                variant="toolbarSecondary"
-                onClick={() => setIsConfigDialogOpen(true)}
-                type="button"
-              >
-                保存空间配置
               </Button>
               <Button
                 variant="toolbarSecondary"
@@ -459,7 +574,7 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
                 onClick={() => void handleRefreshSpaces()}
                 type="button"
               >
-                <RefreshCw aria-hidden="true" size={16} />
+                <RefreshIcon active={isSpaceListRefreshing} />
               </Button>
             </div>
           </div>
@@ -495,10 +610,10 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
                       <div className="tenant-actions">
                         <Button
                           variant="actionEdit"
-                          onClick={() => openDescriptionEditor(space)}
+                          onClick={() => openSpaceEditor(space)}
                           type="button"
                         >
-                          编辑描述
+                          编辑空间
                         </Button>
                         <Button
                           variant="actionReset"
@@ -541,31 +656,100 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
             <h2>创建空间</h2>
             <form className="platform-form" onSubmit={handleCreateSpace}>
               <label className="field">
-                <span>空间名称</span>
-                <input onChange={(event) => setSpaceName(event.target.value)} required value={spaceName} />
+                <span className="field-label">
+                  空间名称
+                  <span className="required-marker" aria-hidden="true">*</span>
+                </span>
+                <input
+                  aria-label="空间名称"
+                  onChange={(event) => setSpaceName(event.target.value)}
+                  required
+                  value={spaceName}
+                />
               </label>
               <label className="field">
-                <span>空间描述</span>
+                <span className="field-label">
+                  空间描述
+                  <span className="required-marker" aria-hidden="true">*</span>
+                </span>
                 <textarea
+                  aria-label="空间描述"
                   onChange={(event) => setSpaceDescription(event.target.value)}
                   required
                   value={spaceDescription}
                 />
               </label>
               <label className="field">
-                <span>空间管理员</span>
-                <select
-                  onChange={(event) => setSpaceAdminUserID(event.target.value)}
-                  required
-                  value={spaceAdminUserID}
+                <span className="field-label">
+                  空间管理员
+                  <span className="required-marker" aria-hidden="true">*</span>
+                </span>
+                <div
+                  className={[
+                    "add-user-identity-field",
+                    selectedSpaceAdminName ? "add-user-identity-field--selected" : "",
+                  ].filter(Boolean).join(" ")}
                 >
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.name}
-                    </option>
-                  ))}
-                </select>
+                  <input
+                    aria-label="空间管理员"
+                    aria-autocomplete="list"
+                    aria-controls="space-admin-suggestions"
+                    aria-expanded={shouldShowSpaceAdminSuggestions}
+                    className="add-user-identity-input"
+                    onBlur={() => setIsSpaceAdminInputFocused(false)}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setSpaceAdminQuery(value);
+                      setSpaceAdminUserID("");
+                      setSelectedSpaceAdminName("");
+                      if (value.trim() === "") {
+                        setDebouncedSpaceAdminQuery("");
+                      }
+                    }}
+                    onFocus={() => setIsSpaceAdminInputFocused(true)}
+                    placeholder="输入管理员账号或姓名"
+                    required
+                    style={
+                      selectedSpaceAdminName ? { width: `${Math.max(spaceAdminQuery.length + 1, 8)}ch` } : undefined
+                    }
+                    value={spaceAdminQuery}
+                  />
+                  {selectedSpaceAdminName && (
+                    <small className="add-user-identity-name" aria-label="已选空间管理员真实姓名">
+                      {selectedSpaceAdminName}
+                    </small>
+                  )}
+                </div>
               </label>
+              {shouldShowSpaceAdminSuggestions && (
+                <div
+                  aria-label="空间管理员候选"
+                  className="user-suggestion-list"
+                  id="space-admin-suggestions"
+                  role="listbox"
+                >
+                  {spaceAdminSuggestions.map((user) => (
+                    <button
+                      className="user-suggestion-option"
+                      key={user.id}
+                      onClick={() => {
+                        setSpaceAdminUserID(String(user.id));
+                        setSpaceAdminQuery(user.username);
+                        setSelectedSpaceAdminName(user.name);
+                        setIsSpaceAdminInputFocused(false);
+                      }}
+                      onMouseDown={(event) => event.preventDefault()}
+                      role="option"
+                      type="button"
+                    >
+                      <span>{user.name}</span>
+                      <small>
+                        {user.username} · {userRoleSuggestionLabels[user.role]}
+                      </small>
+                    </button>
+                  ))}
+                </div>
+              )}
               <FileUploadField
                 accept={["image/png", "image/jpeg"]}
                 key={logoResetKey}
@@ -596,24 +780,39 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
                   用户账号或姓名
                   <span className="required-marker" aria-hidden="true">*</span>
                 </span>
-                <input
-                  aria-label="用户账号或姓名"
-                  aria-autocomplete="list"
-                  aria-controls="add-user-suggestions"
-                  aria-expanded={shouldShowAddUserSuggestions}
-                  onBlur={() => setIsAddUserInputFocused(false)}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setAddUserQuery(value);
-                    if (value.trim() === "") {
-                      setDebouncedAddUserQuery("");
-                    }
-                  }}
-                  onFocus={() => setIsAddUserInputFocused(true)}
-                  placeholder="输入已存在用户的账号或姓名"
-                  required
-                  value={addUserQuery}
-                />
+                <div
+                  className={[
+                    "add-user-identity-field",
+                    selectedAddUserName ? "add-user-identity-field--selected" : "",
+                  ].filter(Boolean).join(" ")}
+                >
+                  <input
+                    aria-label="用户账号或姓名"
+                    aria-autocomplete="list"
+                    aria-controls="add-user-suggestions"
+                    aria-expanded={shouldShowAddUserSuggestions}
+                    className="add-user-identity-input"
+                    onBlur={() => setIsAddUserInputFocused(false)}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setAddUserQuery(value);
+                      setSelectedAddUserName("");
+                      if (value.trim() === "") {
+                        setDebouncedAddUserQuery("");
+                      }
+                    }}
+                    onFocus={() => setIsAddUserInputFocused(true)}
+                    placeholder="输入已存在用户的账号或姓名"
+                    required
+                    style={selectedAddUserName ? { width: `${Math.max(addUserQuery.length + 1, 8)}ch` } : undefined}
+                    value={addUserQuery}
+                  />
+                  {selectedAddUserName && (
+                    <small className="add-user-identity-name" aria-label="已选用户真实姓名">
+                      {selectedAddUserName}
+                    </small>
+                  )}
+                </div>
               </label>
               {shouldShowAddUserSuggestions && (
                 <div
@@ -628,6 +827,7 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
                       key={user.id}
                       onClick={() => {
                         setAddUserQuery(user.username);
+                        setSelectedAddUserName(user.name);
                         setIsAddUserInputFocused(false);
                       }}
                       onMouseDown={(event) => event.preventDefault()}
@@ -695,60 +895,127 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
         </div>
       )}
 
-      {isConfigDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="空间配置弹窗">
+      {editingSpace && (
+        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="编辑空间弹窗">
           <div className="platform-dialog__card">
-            <h2>空间配置</h2>
-            <form className="platform-settings-form" onSubmit={handleSaveConfig}>
+            <h2>编辑空间</h2>
+            <form className="platform-form" onSubmit={(event) => {
+              event.preventDefault();
+              void saveSpaceProfile();
+            }}>
               <label className="field">
-                <span>默认考试时长</span>
+                <span className="field-label">
+                  空间名称
+                  <span className="required-marker" aria-hidden="true">*</span>
+                </span>
                 <input
-                  min={1}
-                  onChange={(event) => setDefaultDuration(Number(event.target.value))}
-                  type="number"
-                  value={defaultDuration}
+                  aria-label="编辑空间名称"
+                  onChange={(event) => setEditingName(event.target.value)}
+                  required
+                  value={editingName}
                 />
               </label>
-              <label className="platform-check">
-                <input
-                  checked={showPracticeAnalysis}
-                  onChange={(event) => setShowPracticeAnalysis(event.target.checked)}
-                  type="checkbox"
+              <label className="field">
+                <span className="field-label">
+                  空间描述
+                  <span className="required-marker" aria-hidden="true">*</span>
+                </span>
+                <textarea
+                  aria-label="编辑空间描述"
+                  onChange={(event) => setEditingDescription(event.target.value)}
+                  required
+                  value={editingDescription}
                 />
-                允许学生查看练习解析
+              </label>
+              <label className="field">
+                <span className="field-label">
+                  空间管理员
+                  <span className="required-marker" aria-hidden="true">*</span>
+                </span>
+                <div
+                  className={[
+                    "add-user-identity-field",
+                    selectedEditingAdminName ? "add-user-identity-field--selected" : "",
+                  ].filter(Boolean).join(" ")}
+                >
+                  <input
+                    aria-label="编辑空间管理员"
+                    aria-autocomplete="list"
+                    aria-controls="editing-space-admin-suggestions"
+                    aria-expanded={shouldShowEditingAdminSuggestions}
+                    className="add-user-identity-input"
+                    onBlur={() => setIsEditingAdminInputFocused(false)}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setEditingAdminQuery(value);
+                      setEditingAdminUserID("");
+                      setSelectedEditingAdminName("");
+                      if (value.trim() === "") {
+                        setDebouncedEditingAdminQuery("");
+                      }
+                    }}
+                    onFocus={() => setIsEditingAdminInputFocused(true)}
+                    placeholder="输入管理员账号或姓名"
+                    required
+                    style={
+                      selectedEditingAdminName ? { width: `${Math.max(editingAdminQuery.length + 1, 8)}ch` } : undefined
+                    }
+                    value={editingAdminQuery}
+                  />
+                  {selectedEditingAdminName && (
+                    <small className="add-user-identity-name" aria-label="已选编辑空间管理员真实姓名">
+                      {selectedEditingAdminName}
+                    </small>
+                  )}
+                </div>
+              </label>
+              {shouldShowEditingAdminSuggestions && (
+                <div
+                  aria-label="编辑空间管理员候选"
+                  className="user-suggestion-list"
+                  id="editing-space-admin-suggestions"
+                  role="listbox"
+                >
+                  {editingAdminSuggestions.map((user) => (
+                    <button
+                      className="user-suggestion-option"
+                      key={user.id}
+                      onClick={() => {
+                        setEditingAdminUserID(String(user.id));
+                        setEditingAdminQuery(user.username);
+                        setSelectedEditingAdminName(user.name);
+                        setIsEditingAdminInputFocused(false);
+                      }}
+                      onMouseDown={(event) => event.preventDefault()}
+                      role="option"
+                      type="button"
+                    >
+                      <span>{user.name}</span>
+                      <small>
+                        {user.username} · {userRoleSuggestionLabels[user.role]}
+                      </small>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <label className="field">
+                <span>空间 Logo</span>
+                <input
+                  aria-label="编辑空间 Logo"
+                  onChange={(event) => setEditingLogoFileName(event.target.value)}
+                  placeholder="输入 Logo 文件名或留空为未上传"
+                  value={editingLogoFileName}
+                />
               </label>
               <div className="platform-dialog__actions">
-                <Button variant="secondary" onClick={() => setIsConfigDialogOpen(false)} type="button">
+                <Button variant="secondary" onClick={closeSpaceEditor} type="button">
                   取消
                 </Button>
                 <Button variant="primary" type="submit">
-                  确认保存配置
+                  保存空间信息
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {editingSpace && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="空间描述弹窗">
-          <div className="platform-dialog__card">
-            <h2>{editingSpace.name}</h2>
-            <label className="field">
-              <span>编辑空间描述</span>
-              <textarea
-                onChange={(event) => setEditingDescription(event.target.value)}
-                value={editingDescription}
-              />
-            </label>
-            <div className="platform-dialog__actions">
-              <Button variant="secondary" onClick={() => setEditingSpace(null)} type="button">
-                取消
-              </Button>
-              <Button variant="primary" onClick={saveDescription} type="button">
-                保存空间描述
-              </Button>
-            </div>
           </div>
         </div>
       )}
@@ -834,7 +1101,7 @@ function SpaceMemberDrawer({
   const refreshMembers = async () => {
     setIsMemberListRefreshing(true);
     try {
-      await onRefreshMembers(space.id);
+      await withRefreshFeedback(onRefreshMembers(space.id));
       setMemberSearchQuery("");
       setAppliedMemberSearchQuery("");
       setMemberPage(1);
@@ -933,7 +1200,7 @@ function SpaceMemberDrawer({
                 onClick={() => void refreshMembers()}
                 type="button"
               >
-                <RefreshCw aria-hidden="true" size={16} />
+                <RefreshIcon active={isMemberListRefreshing} />
               </Button>
             </div>
           </div>
@@ -1150,6 +1417,23 @@ function adminSummary(space: SpaceRow) {
   return `空间管理员：${admins}`;
 }
 
+function mergeSpaceMembers(currentMembers: SpaceMember[], incomingMembers: SpaceMember[]) {
+  if (incomingMembers.length === 0) {
+    return currentMembers;
+  }
+
+  return incomingMembers.map((member) => currentMembers.find((item) => item.userID === member.userID) ?? member);
+}
+
+function upsertSpaceMember(members: SpaceMember[], nextMember: SpaceMember) {
+  const exists = members.some((member) => member.userID === nextMember.userID);
+  if (!exists) {
+    return [...members, nextMember];
+  }
+
+  return members.map((member) => (member.userID === nextMember.userID ? nextMember : member));
+}
+
 function matchingAddUserSuggestions(
   users: TenantUserRow[],
   spaces: SpaceRow[],
@@ -1166,6 +1450,20 @@ function matchingAddUserSuggestions(
       user.status === "enabled" &&
       !existingUserIDs.has(user.id) &&
       (keyword === "" || user.username.toLowerCase().includes(keyword) || user.name.toLowerCase().includes(keyword)),
+    )
+    .slice(0, 10);
+}
+
+function matchingUserSuggestions(users: TenantUserRow[], query: string) {
+  const keyword = query.trim().toLowerCase();
+  if (keyword === "") {
+    return [];
+  }
+
+  return users
+    .filter((user) =>
+      user.status === "enabled" &&
+      (user.username.toLowerCase().includes(keyword) || user.name.toLowerCase().includes(keyword)),
     )
     .slice(0, 10);
 }

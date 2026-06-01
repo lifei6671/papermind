@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -66,6 +67,12 @@ func TestQuestionAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	}
 	if len(createBody.Data.Options) != 2 || createBody.Data.Options[0].Content != "y = x" {
 		t.Fatalf("expected created options in response, got %#v", createBody.Data.Options)
+	}
+}
+
+func TestQuestionResponseDoesNotExposeUnpersistedBlankCount(t *testing.T) {
+	if _, ok := reflect.TypeOf(questionResponse{}).FieldByName("BlankCount"); ok {
+		t.Fatalf("questionResponse must not expose blank_count before the field is persisted")
 	}
 }
 

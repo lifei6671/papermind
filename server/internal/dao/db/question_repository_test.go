@@ -44,6 +44,46 @@ func TestQuestionRepositoryPersistsStandardAndReferenceAnswers(t *testing.T) {
 	}
 }
 
+func TestQuestionRepositoryListsVisibleQuestionsByCreatedAtDesc(t *testing.T) {
+	gormDB := openQuestionRepositoryTestDB(t)
+	now := int64(1000)
+	repo := NewQuestionRepository(gormDB, QuestionRepositoryOptions{Now: func() int64 { return now }})
+
+	for _, item := range []struct {
+		title string
+		now   int64
+	}{
+		{title: "最早创建的题目", now: 1000},
+		{title: "最新创建的题目", now: 3000},
+		{title: "中间创建的题目", now: 2000},
+	} {
+		now = item.now
+		if _, err := repo.CreateQuestion(t.Context(), servicequestion.Question{
+			TenantID:     10,
+			Type:         servicequestion.QuestionTypeShortText,
+			Difficulty:   servicequestion.DifficultyMedium,
+			Title:        item.title,
+			ScoreDefault: "2",
+			Status:       servicequestion.QuestionStatusEnabled,
+		}, nil, nil); err != nil {
+			t.Fatalf("CreateQuestion(%s) returned error: %v", item.title, err)
+		}
+	}
+
+	result, err := repo.ListVisibleQuestions(t.Context(), servicequestion.ListQuestionsInput{TenantID: 10, Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListVisibleQuestions returned error: %v", err)
+	}
+	got := make([]string, 0, len(result.Items))
+	for _, item := range result.Items {
+		got = append(got, item.Title)
+	}
+	want := []string{"最新创建的题目", "中间创建的题目", "最早创建的题目"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("question order = %#v, want %#v", got, want)
+	}
+}
+
 func openQuestionRepositoryTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

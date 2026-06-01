@@ -3,12 +3,21 @@ import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import type { ReactElement } from "react";
 import { ApiError } from "../../api/client";
+import type { UserManagementAPI } from "../../api/users";
 import { FeedbackProvider } from "../../app/feedback";
 import { UserManagementPage } from "./UserManagementPage";
 function renderWithFeedback(page: ReactElement) {
   return render(<FeedbackProvider>{page}</FeedbackProvider>);
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+
+  return { promise, resolve };
+}
 
 function createUserAPI() {
   return {
@@ -235,6 +244,7 @@ test("租户管理员可以创建用户", async () => {
     forcePasswordChange: true,
   });
   expect(await screen.findByText("钱同学")).toBeInTheDocument();
+  expect(screen.getAllByRole("row")[1]).toHaveTextContent("钱同学");
   expect(screen.getByText("qian.student")).toBeInTheDocument();
   expect(screen.getByText("未上传")).toBeInTheDocument();
 });
@@ -268,9 +278,12 @@ test("用户列表支持分页并在搜索后回到第一页", async () => {
 
 test("租户管理员可以搜索和刷新用户列表", async () => {
   const user = userEvent.setup();
-  renderWithFeedback(<UserManagementPage api={createUserAPI()} spaceApi={createSpaceAPI()} tenantID={10} />);
+  const api = createUserAPI();
+  renderWithFeedback(<UserManagementPage api={api} spaceApi={createSpaceAPI()} tenantID={10} />);
 
   await screen.findByText("李老师");
+  const refreshResult = deferred<Awaited<ReturnType<UserManagementAPI["listUsers"]>>>();
+  vi.mocked(api.listUsers).mockReturnValueOnce(refreshResult.promise);
 
   await user.type(screen.getByLabelText("搜索用户"), "zhang.student");
   await user.click(screen.getByRole("button", { name: "搜索" }));
@@ -279,8 +292,34 @@ test("租户管理员可以搜索和刷新用户列表", async () => {
   expect(screen.getByText("张同学")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "刷新用户列表" }));
+  expect(screen.getByRole("button", { name: "刷新用户列表" }).querySelector("svg")).toHaveClass(
+    "tenant-refresh-icon--spinning",
+  );
 
-  expect(screen.getByText("李老师")).toBeInTheDocument();
+  refreshResult.resolve({
+    items: [
+      {
+        id: 20,
+        tenantID: 10,
+        name: "李老师",
+        username: "li.teacher",
+        role: "teacher",
+        avatarFileName: "li.png",
+        status: "enabled",
+      },
+      {
+        id: 21,
+        tenantID: 10,
+        name: "张同学",
+        username: "zhang.student",
+        role: "student",
+        avatarFileName: "zhang.png",
+        status: "disabled",
+      },
+    ],
+  });
+
+  expect(await screen.findByText("李老师")).toBeInTheDocument();
   expect(screen.getByText("张同学")).toBeInTheDocument();
 });
 

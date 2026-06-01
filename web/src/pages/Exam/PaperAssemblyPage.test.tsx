@@ -5,6 +5,15 @@ import type { PaperAssemblyAPI } from "../../api/papers";
 import type { QuestionBankAPI } from "../../api/questions";
 import { PaperAssemblyPage } from "./PaperAssemblyPage";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+
+  return { promise, resolve };
+}
+
 test("组卷页通过真实 API 展示试卷列表和大题结构", async () => {
   render(<PaperAssemblyPage api={createPaperApiDouble()} questionApi={createQuestionApiDouble()} />);
 
@@ -63,9 +72,12 @@ test("教师可以创建大题并手动选题", async () => {
 
 test("教师可以搜索和刷新试卷列表", async () => {
   const user = userEvent.setup();
-  render(<PaperAssemblyPage api={createPaperApiDouble()} questionApi={createQuestionApiDouble()} />);
+  const api = createPaperApiDouble();
+  render(<PaperAssemblyPage api={api} questionApi={createQuestionApiDouble()} />);
 
   await screen.findByText("高一语文月考试卷");
+  const refreshResult = deferred<Awaited<ReturnType<PaperAssemblyAPI["listPapers"]>>>();
+  vi.mocked(api.listPapers).mockReturnValueOnce(refreshResult.promise);
 
   await user.type(screen.getByLabelText("搜索试卷"), "不存在");
   await user.click(screen.getByRole("button", { name: "搜索" }));
@@ -73,8 +85,22 @@ test("教师可以搜索和刷新试卷列表", async () => {
   expect(screen.queryByText("高一语文月考试卷")).not.toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "刷新试卷列表" }));
+  expect(screen.getByRole("button", { name: "刷新试卷列表" }).querySelector("svg")).toHaveClass(
+    "tenant-refresh-icon--spinning",
+  );
 
-  expect(screen.getByText("高一语文月考试卷")).toBeInTheDocument();
+  refreshResult.resolve({
+    items: [{
+      id: 100,
+      tenantID: 10,
+      name: "高一语文月考试卷",
+      totalScore: "0",
+      buildMode: "rule_fixed",
+      status: "draft" as const,
+    }],
+  });
+
+  expect(await screen.findByText("高一语文月考试卷")).toBeInTheDocument();
 });
 
 test("rule_fixed 可以配置、生成、审题并替换题目", async () => {
@@ -241,11 +267,14 @@ function createQuestionApiDouble(): QuestionBankAPI {
       items: [{
         id: 101,
         tenantID: 10,
+        type: "single" as const,
         title: "现代文阅读主旨题",
         stem: "阅读文本后选择最准确的主旨。",
         options: ["把握中心句", "复述细节"],
         analysis: "定位中心句并排除以偏概全选项。",
+        difficulty: "medium" as const,
         tag: "阅读理解",
+        tags: ["阅读理解"],
         scoreDefault: "6",
         status: "ready" as const,
       }],

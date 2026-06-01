@@ -1,8 +1,10 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
+import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { PenLine, RefreshCw, Search } from "lucide-react";
+import { PenLine, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
@@ -38,6 +40,7 @@ export function GradingPage({
   const [loadError, setLoadError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
+  const [isPendingListRefreshing, setIsPendingListRefreshing] = useState(false);
   const teacherNeedsSpace = actorRole === "teacher" && !effectiveSpaceID;
   const needsExam = !effectiveExamID;
 
@@ -95,6 +98,17 @@ export function GradingPage({
     setComment("");
     setSaveMessage("");
     setCompleteMessage("");
+  }
+
+  async function handleRefreshPendingAttempts() {
+    setSearchQuery("");
+    setAppliedSearchQuery("");
+    setIsPendingListRefreshing(true);
+    try {
+      await withRefreshFeedback(loadPendingAttempts());
+    } finally {
+      setIsPendingListRefreshing(false);
+    }
   }
 
   async function handleSaveGrading(event: React.FormEvent<HTMLFormElement>) {
@@ -188,8 +202,13 @@ export function GradingPage({
       <Panel>
         <div className="tenant-list-toolbar">
           <div className="tenant-list-actions" aria-label="阅卷操作区">
-            <Button variant="toolbarSecondary" onClick={() => { setAppliedSearchQuery(""); void loadPendingAttempts(); }} type="button">
-              <RefreshCw aria-hidden="true" size={16} />
+            <Button
+              variant="toolbarSecondary"
+              disabled={isPendingListRefreshing}
+              onClick={() => void handleRefreshPendingAttempts()}
+              type="button"
+            >
+              <RefreshIcon active={isPendingListRefreshing} />
               刷新待阅卷
             </Button>
           </div>

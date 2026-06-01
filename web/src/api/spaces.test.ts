@@ -105,6 +105,46 @@ describe("space api", () => {
     );
   });
 
+  test("更新空间资料会调用租户空间接口", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      okResponse({
+        id: 302,
+        tenant_id: 10,
+        name: "高一二班",
+        logo_url: "next.png",
+        description: "实验班更新",
+        members: [],
+      }),
+    );
+    const api = createSpaceAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.updateSpace({
+      tenantID: 10,
+      spaceID: 302,
+      name: "高一二班",
+      description: "实验班更新",
+      logoFileName: "next.png",
+    })).resolves.toMatchObject({
+      id: 302,
+      name: "高一二班",
+      description: "实验班更新",
+      logoFileName: "next.png",
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/tenant/spaces/302",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          tenant_id: 10,
+          name: "高一二班",
+          description: "实验班更新",
+          logo_url: "next.png",
+          type: "class",
+        }),
+      }),
+    );
+  });
+
   test("空间成员列表会按授权空间接口读取", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       okResponse([{

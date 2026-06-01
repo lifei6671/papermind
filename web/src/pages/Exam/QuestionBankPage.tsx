@@ -1,32 +1,46 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
-import { RefreshCw, Search } from "lucide-react";
+import { ArrowLeft, Search, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
+import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { questionApi } from "../../api/questions";
-import type { QuestionBankAPI, QuestionRow } from "../../api/questions";
+import type { QuestionAPI, QuestionRow } from "../../api/questions";
 
 type QuestionBankPageProps = {
-  api?: QuestionBankAPI;
+  api?: QuestionAPI;
   tenantID?: number;
   spaceID?: number;
 };
 
+type ImportRecord = {
+  id: number;
+  fileName: string;
+  successCount: number;
+  errorCount: number;
+};
+
+const questionDifficultyLabels = {
+  easy: "简单",
+  medium: "中等",
+  hard: "困难",
+};
+
 export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: QuestionBankPageProps) {
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
-  const [tags, setTags] = useState(["选择题", "语言文字"]);
-  const [stem, setStem] = useState("");
-  const [optionA, setOptionA] = useState("选项 A");
-  const [optionB, setOptionB] = useState("选项 B");
-  const [analysis, setAnalysis] = useState("");
-  const [questionTag, setQuestionTag] = useState("");
-  const [newTag, setNewTag] = useState("");
-  const [isQuestionDialogOpen, setIsQuestionDialogOpen] = useState(false);
-  const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
+  const [isImportDrawerOpen, setIsImportDrawerOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importMessage, setImportMessage] = useState("");
+  const [importRecords, setImportRecords] = useState<ImportRecord[]>([]);
+  const [isImporting, setIsImporting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [isQuestionListRefreshing, setIsQuestionListRefreshing] = useState(false);
+  const questionCreateHref = `/questions/new${window.location.search}`;
 
   useEffect(() => {
     let ignore = false;
@@ -35,7 +49,6 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
       .then((data) => {
         if (!ignore) {
           setQuestions(data.items);
-          setTags((items) => mergeTags(items, data.items.map((item) => item.tag)));
           setLoadError("");
         }
       })
@@ -57,54 +70,69 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
     }
 
     // 题库搜索只匹配题目列表可见字段，便于按题干、标签、选项或解析快速定位。
-    return [item.title, item.stem, item.tag, item.options.join(" "), item.analysis, item.status === "ready" ? "可用" : "草稿"].some(
+    return [
+      item.title,
+      item.stem,
+      item.tags.join(" "),
+      item.options.join(" "),
+      item.analysis,
+      questionDifficultyLabels[item.difficulty],
+      item.status === "ready" ? "可用" : "草稿",
+    ].some(
       (value) => value.toLowerCase().includes(keyword),
     );
   });
-
-  async function handleSaveQuestion(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    // 在线出题同时保存选项、解析和标签，题目进入题库后可直接被组卷页选择。
-    const nextQuestion = await api.createQuestion({
-      tenantID,
-      ...(spaceID === undefined ? {} : { spaceID }),
-      title: stem,
-      options: [optionA, optionB],
-      analysis,
-      tag: questionTag,
-    });
-    setQuestions((items) => [...items, nextQuestion]);
-    setTags((items) => mergeTags(items, [nextQuestion.tag]));
-    setStem("");
-    setOptionA("选项 A");
-    setOptionB("选项 B");
-    setAnalysis("");
-    setQuestionTag("");
-    setIsQuestionDialogOpen(false);
-  }
-
-  function handleAddTag(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!newTag.trim()) {
-      return;
-    }
-
-    // 标签只维护当前租户内题目分类，重复标签不再追加到列表里。
-    setTags((items) => (items.includes(newTag.trim()) ? items : [...items, newTag.trim()]));
-    setNewTag("");
-    setIsTagDialogOpen(false);
-  }
-
 
   function handleSearchQuestions() {
     setAppliedSearchQuery(searchQuery);
   }
 
-  function handleRefreshQuestions() {
+  async function handleRefreshQuestions() {
     setSearchQuery("");
     setAppliedSearchQuery("");
+    setIsQuestionListRefreshing(true);
+    try {
+      const data = await withRefreshFeedback(api.listQuestions({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }));
+      setQuestions(data.items);
+      setLoadError("");
+    } catch {
+      setLoadError("题目列表加载失败");
+    } finally {
+      setIsQuestionListRefreshing(false);
+    }
+  }
+
+  async function handleImportQuestions() {
+    if (!importFile) {
+      setImportMessage("请选择题目导入文件");
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const result = await api.importQuestions({
+        tenantID,
+        ...(spaceID === undefined ? {} : { spaceID }),
+        file: importFile,
+      });
+      setImportRecords((items) => [
+        {
+          id: Date.now(),
+          fileName: importFile.name,
+          successCount: result.successCount,
+          errorCount: result.errors.length,
+        },
+        ...items,
+      ]);
+      setImportMessage(`${importFile.name} 导入成功 ${result.successCount} 条，失败 ${result.errors.length} 条`);
+      const data = await api.listQuestions({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) });
+      setQuestions(data.items);
+      setImportFile(null);
+    } catch {
+      setImportMessage("题目导入失败");
+    } finally {
+      setIsImporting(false);
+    }
   }
 
   return (
@@ -118,11 +146,11 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
       <Panel>
         <div className="tenant-list-toolbar">
           <div className="tenant-list-actions" aria-label="题库操作区">
-            <Button variant="toolbarPrimary" onClick={() => setIsQuestionDialogOpen(true)} type="button">
-              保存题目
-            </Button>
-            <Button variant="toolbarSecondary" onClick={() => setIsTagDialogOpen(true)} type="button">
-              新增标签
+            <a className="primary-button tenant-create-button" href={questionCreateHref}>
+              新增题目
+            </a>
+            <Button variant="toolbarSecondary" onClick={() => setIsImportDrawerOpen(true)} type="button">
+              导入题目
             </Button>
           </div>
           <div className="tenant-search-actions">
@@ -140,17 +168,13 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
             <Button
               aria-label="刷新题目列表"
               variant="icon"
-              onClick={handleRefreshQuestions}
+              disabled={isQuestionListRefreshing}
+              onClick={() => void handleRefreshQuestions()}
               type="button"
             >
-              <RefreshCw aria-hidden="true" size={16} />
+              <RefreshIcon active={isQuestionListRefreshing} />
             </Button>
           </div>
-        </div>
-        <div aria-label="题目标签列表" className="exam-tag-list">
-          {tags.map((item) => (
-            <span className="exam-tag" key={item}>{item}</span>
-          ))}
         </div>
         {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
         <div className="table-wrap">
@@ -172,7 +196,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
                     <strong>{item.title}</strong>
                     <p className="tenant-admin-muted">{item.stem}</p>
                   </td>
-                  <td>{item.tag}</td>
+                  <td>{(item.tags.length > 0 ? item.tags : [item.tag]).join("、")}</td>
                   <td>{item.options.join(" / ")}</td>
                   <td>{`解析：${item.analysis}`}</td>
                   <td>
@@ -187,78 +211,86 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
         </div>
       </Panel>
 
-      {isQuestionDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="保存题目弹窗">
-          <div className="platform-dialog__card">
-            <h2>保存题目</h2>
-            <form className="platform-form" onSubmit={handleSaveQuestion}>
-              <label className="field">
-                <span>题干</span>
-                <textarea onChange={(event) => setStem(event.target.value)} required value={stem} />
-              </label>
-              <div className="exam-option-grid">
-                <label className="field">
-                  <span>选项 A</span>
-                  <input onChange={(event) => setOptionA(event.target.value)} required value={optionA} />
-                </label>
-                <label className="field">
-                  <span>选项 B</span>
-                  <input onChange={(event) => setOptionB(event.target.value)} required value={optionB} />
-                </label>
+      {isImportDrawerOpen && (
+        <div className="tenant-resource-drawer-layer tenant-resource-drawer-layer--overlay tenant-resource-drawer-layer--visible">
+          <div aria-hidden="true" className="tenant-resource-drawer-backdrop" />
+          <aside
+            aria-label="题目导入抽屉"
+            aria-modal="true"
+            className="tenant-resource-drawer tenant-resource-drawer--half tenant-resource-drawer--open"
+            role="dialog"
+          >
+            <header className="tenant-resource-drawer__head tenant-resource-drawer__head--inline">
+              <div className="tenant-resource-drawer__return-line">
+                <button
+                  aria-label="返回题库"
+                  className="tenant-resource-drawer__back"
+                  onClick={() => setIsImportDrawerOpen(false)}
+                  type="button"
+                >
+                  <ArrowLeft aria-hidden="true" size={19} />
+                  <span>返回</span>
+                </button>
+                <span aria-hidden="true" className="tenant-resource-drawer__separator">
+                  |
+                </span>
+                <span className="tenant-resource-drawer__space-name">题目导入</span>
               </div>
-              <label className="field">
-                <span>题目解析</span>
-                <textarea onChange={(event) => setAnalysis(event.target.value)} required value={analysis} />
-              </label>
-              <label className="field">
-                <span>题目标签</span>
-                <input onChange={(event) => setQuestionTag(event.target.value)} required value={questionTag} />
-              </label>
+              <div className="tenant-resource-drawer__tools">
+                <button
+                  aria-label="关闭题目导入"
+                  className="tenant-resource-drawer__icon"
+                  onClick={() => setIsImportDrawerOpen(false)}
+                  type="button"
+                >
+                  <X aria-hidden="true" size={19} />
+                </button>
+              </div>
+            </header>
+            <div className="tenant-resource-drawer__body">
+              <FileUploadField
+                accept={["text/csv", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]}
+                emptyPreviewText="暂未选择文件"
+                label="题目导入文件"
+                maxSizeBytes={2 * 1024 * 1024}
+                onFileAccepted={(file) => {
+                  setImportFile(file);
+                  setImportMessage(file.name);
+                }}
+                uploadPrompt="选择 CSV/Excel 文件或拖动文件到此处"
+              />
               <div className="platform-dialog__actions">
-                <Button variant="secondary" onClick={() => setIsQuestionDialogOpen(false)} type="button">
-                  取消
-                </Button>
-                <Button variant="primary" type="submit">
-                  确认保存
+                <Button disabled={isImporting} variant="primary" onClick={() => void handleImportQuestions()} type="button">
+                  确认导入
                 </Button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {isTagDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="新增标签弹窗">
-          <div className="platform-dialog__card">
-            <h2>新增标签</h2>
-            <form className="platform-form" onSubmit={handleAddTag}>
-              <label className="field">
-                <span>新标签名称</span>
-                <input onChange={(event) => setNewTag(event.target.value)} value={newTag} />
-              </label>
-              <div className="platform-dialog__actions">
-                <Button variant="secondary" onClick={() => setIsTagDialogOpen(false)} type="button">
-                  取消
-                </Button>
-                <Button variant="primary" type="submit">
-                  确认新增
-                </Button>
+              {importMessage && <div role="status" className="tenant-admin-success">{importMessage}</div>}
+              <div className="table-wrap tenant-resource-drawer__table">
+                <table className="data-table tenant-resource-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">文件</th>
+                      <th scope="col">成功</th>
+                      <th scope="col">失败</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importRecords.length === 0 && <EmptyTableRow colSpan={3} />}
+                    {importRecords.map((record) => (
+                      <tr key={record.id}>
+                        <td>{record.fileName}</td>
+                        <td>{record.successCount}</td>
+                        <td>{record.errorCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </form>
-          </div>
+            </div>
+          </aside>
         </div>
       )}
 
     </section>
   );
-}
-
-function mergeTags(current: string[], incoming: string[]) {
-  const next = [...current];
-  for (const tag of incoming) {
-    if (tag && !next.includes(tag)) {
-      next.push(tag);
-    }
-  }
-  return next;
 }

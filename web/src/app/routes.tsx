@@ -11,7 +11,6 @@ import {
   School,
   Settings,
   Trophy,
-  Upload,
   Users,
 } from "lucide-react";
 import { DashboardPage } from "../pages/Dashboard/DashboardPage";
@@ -19,12 +18,13 @@ import { ExamEntryPage } from "../pages/Exam/ExamEntryPage";
 import { ExamManagementPage } from "../pages/Exam/ExamManagementPage";
 import { PaperAssemblyPage } from "../pages/Exam/PaperAssemblyPage";
 import { QuestionBankPage } from "../pages/Exam/QuestionBankPage";
-import { QuestionImportPage } from "../pages/Exam/QuestionImportPage";
+import { QuestionCreatePage } from "../pages/Exam/QuestionCreatePage";
 import { GradingPage } from "../pages/Grading/GradingPage";
 import { PlatformSettingsPage } from "../pages/Platform/PlatformSettingsPage";
 import { TenantManagementPage } from "../pages/Platform/TenantManagementPage";
 import { ProfileSettingsPage } from "../pages/Profile/ProfileSettingsPage";
 import { ResultsPage } from "../pages/Results/ResultsPage";
+import { SpaceConfigPage } from "../pages/Tenant/SpaceConfigPage";
 import { SpaceManagementPage } from "../pages/Tenant/SpaceManagementPage";
 import { SpaceMemberManagementPage } from "../pages/Tenant/SpaceMemberManagementPage";
 import { UserManagementPage } from "../pages/Tenant/UserManagementPage";
@@ -132,6 +132,21 @@ export function buildAdminRoutes(
     spaceMemberRoles: ["space_admin"],
   },
   {
+    path: "/space-config",
+    label: "空间配置",
+    description: "维护空间默认考试时长和练习解析展示",
+    icon: Settings,
+    element: (
+      <TenantScopedRoute
+        render={(tenantID) => <SpaceConfigPage tenantID={tenantID} />}
+        title="空间配置"
+        user={user}
+      />
+    ),
+    group: "tenant",
+    menuRoles: tenantAdminRoles,
+  },
+  {
     path: "/users",
     label: "用户管理",
     description: "维护租户用户、导入用户和禁用提示",
@@ -157,12 +172,12 @@ export function buildAdminRoutes(
     spaceMemberRoles: examSpaceMemberRoles,
   },
   {
-    path: "/imports",
-    label: "题目导入",
-    description: "上传 CSV/Excel 模板并查看导入错误行",
-    icon: Upload,
-    element: examNeedsSpace ? renderExamSpaceRequiredPage("题目导入") : <QuestionImportPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
-    group: "exam",
+    path: "/questions/new",
+    label: "新增题目",
+    description: "新增题目并维护 Markdown 题干、解析和选项",
+    icon: LibraryBig,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("新增题目") : <QuestionCreatePage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    group: "hidden",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
   },

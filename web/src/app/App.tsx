@@ -26,7 +26,7 @@ export function App() {
         {adminRoutes.map((route) => (
           <Route
             element={
-              routeRequiresRouteGuard(route.group) &&
+              routeRequiresRouteGuard(route) &&
               !routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? [], {
                 tenantID: session?.user.tenantID,
                 spaceID: scopedSpaceID,
@@ -49,8 +49,11 @@ function positiveID(value: string | null) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function routeRequiresRouteGuard(group: string) {
-  return group === "platform" || group === "tenant" || group === "exam";
+function routeRequiresRouteGuard(route: { group: string; menuRoles?: string[]; spaceMemberRoles?: unknown[] }) {
+  return route.group === "platform" ||
+    route.group === "tenant" ||
+    route.group === "exam" ||
+    (route.group === "hidden" && (!!route.menuRoles || !!route.spaceMemberRoles));
 }
 
 function RequireSession({ allowTenantUser = false, children }: { allowTenantUser?: boolean; children: ReactNode }) {

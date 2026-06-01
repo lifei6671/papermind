@@ -96,11 +96,29 @@ test("空间管理员授权可看到空间考试业务入口", () => {
     status: "enabled",
   }];
 
-  for (const path of ["/questions", "/imports", "/papers", "/exams", "/grading", "/results"]) {
+  for (const path of ["/questions", "/questions/new", "/papers", "/exams", "/grading", "/results"]) {
     const route = routes.find((item) => item.path === path);
     expect(routeVisibleForRole(route!, "student", profileSpaces)).toBe(true);
     expect(routeSpaceID(routes, path)).toBe(301);
   }
+});
+
+test("租户管理员可以在左侧菜单进入空间配置", () => {
+  const routes = buildAdminRoutes({
+    displayName: "租户管理员",
+    role: "tenant_admin",
+    tenantID: 10,
+    userID: 2,
+  });
+  const route = routes.find((item) => item.path === "/space-config");
+
+  expect(route).toMatchObject({
+    group: "tenant",
+    label: "空间配置",
+    menuRoles: ["tenant_admin"],
+  });
+  expect(routeVisibleForRole(route!, "tenant_admin")).toBe(true);
+  expect(routeVisibleForRole(route!, "teacher")).toBe(false);
 });
 
 test("考试业务路由会收到当前选择的空间范围", () => {
@@ -112,6 +130,7 @@ test("考试业务路由会收到当前选择的空间范围", () => {
   }, 301, [], 42);
 
   expect(routeSpaceID(routes, "/questions")).toBe(301);
+  expect(routeSpaceID(routes, "/questions/new")).toBe(301);
   expect(routeSpaceID(routes, "/grading")).toBe(301);
   expect(routeSpaceID(routes, "/results")).toBe(301);
   expect(routeExamID(routes, "/grading")).toBe(42);

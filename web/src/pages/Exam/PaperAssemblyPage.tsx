@@ -1,8 +1,10 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
-import { RefreshCw, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Panel } from "../../components/ui/Panel";
+import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { paperApi } from "../../api/papers";
 import type { PaperAssemblyAPI, PaperRow, PaperSectionRow } from "../../api/papers";
@@ -41,6 +43,7 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [isPaperListRefreshing, setIsPaperListRefreshing] = useState(false);
 
   useEffect(() => {
     let ignore = false;
@@ -226,9 +229,26 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
     setAppliedSearchQuery(searchQuery);
   }
 
-  function handleRefreshPapers() {
+  async function handleRefreshPapers() {
     setSearchQuery("");
     setAppliedSearchQuery("");
+    setIsPaperListRefreshing(true);
+    try {
+      const data = await withRefreshFeedback(api.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }));
+      setPapers(data.items);
+      setActivePaperID(data.items[0]?.id ?? null);
+      if (!data.items[0]) {
+        setSections([]);
+      } else {
+        const sectionData = await api.listSections({ tenantID, paperID: data.items[0].id });
+        setSections(sectionData.items);
+      }
+      setLoadError("");
+    } catch {
+      setLoadError("试卷数据加载失败");
+    } finally {
+      setIsPaperListRefreshing(false);
+    }
   }
 
   return (
@@ -275,10 +295,11 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
               <Button
                 aria-label="刷新试卷列表"
                 variant="icon"
-                onClick={handleRefreshPapers}
+                disabled={isPaperListRefreshing}
+                onClick={() => void handleRefreshPapers()}
                 type="button"
               >
-                <RefreshCw aria-hidden="true" size={16} />
+                <RefreshIcon active={isPaperListRefreshing} />
               </Button>
             </div>
           </div>

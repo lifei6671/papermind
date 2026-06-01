@@ -33,6 +33,14 @@ export type CreateSpaceInput = {
   adminUserID: number;
 };
 
+export type UpdateSpaceInput = {
+  tenantID: number;
+  spaceID: number;
+  name: string;
+  description: string;
+  logoFileName: string;
+};
+
 export type SpaceListResult = {
   items: SpaceRow[];
 };
@@ -64,6 +72,7 @@ export type SpaceMemberListResult = {
 export type SpaceManagementAPI = {
   listSpaces(tenantID: number): Promise<SpaceListResult>;
   createSpace(input: CreateSpaceInput): Promise<SpaceRow>;
+  updateSpace(input: UpdateSpaceInput): Promise<SpaceRow>;
 };
 
 export type SpaceMemberAPI = {
@@ -117,6 +126,19 @@ export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI & Space
         logo_url: input.logoFileName,
         type: "class",
         admin_user_ids: [input.adminUserID],
+      });
+      return mapSpaceResponse(data);
+    },
+    async updateSpace(input) {
+      const data = await apiClient.request<SpaceAPIResponse>(`/api/v1/tenant/spaces/${input.spaceID}`, {
+        method: "PUT",
+        body: {
+          tenant_id: input.tenantID,
+          name: input.name,
+          description: input.description,
+          logo_url: input.logoFileName,
+          type: "class",
+        },
       });
       return mapSpaceResponse(data);
     },

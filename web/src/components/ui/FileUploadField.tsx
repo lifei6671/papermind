@@ -9,6 +9,8 @@ type FileUploadFieldProps = {
   onReject?: (message: string) => void;
   previewSrc?: string;
   selectedLabel?: string;
+  uploadPrompt?: string;
+  emptyPreviewText?: string;
 };
 
 export function FileUploadField({
@@ -19,6 +21,8 @@ export function FileUploadField({
   onReject,
   previewSrc,
   selectedLabel,
+  uploadPrompt = "选择图片或拖动图片到此处",
+  emptyPreviewText = "暂未选择图片",
 }: FileUploadFieldProps) {
   const inputID = useId();
   const [selectedName, setSelectedName] = useState("");
@@ -91,7 +95,7 @@ export function FileUploadField({
           tabIndex={0}
         >
           <UploadCloud aria-hidden="true" size={18} />
-          <span>{selectedName || selectedLabel || "选择图片或拖动图片到此处"}</span>
+          <span>{selectedName || selectedLabel || uploadPrompt}</span>
           <input
             accept={accept.join(",")}
             id={inputID}
@@ -105,7 +109,7 @@ export function FileUploadField({
           {previewURL || previewSrc ? (
             <img alt={`${selectedName || selectedLabel || label} 预览`} src={previewURL || previewSrc} />
           ) : (
-            <span>暂未选择图片</span>
+            <span>{emptyPreviewText}</span>
           )}
         </div>
       </div>

@@ -2,9 +2,11 @@ import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { useFeedback } from "../../app/feedback-context";
 import { Pagination } from "../../components/ui/Pagination";
-import { RefreshCw, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Panel } from "../../components/ui/Panel";
+import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { spaceApi as defaultSpaceApi } from "../../api/spaces";
 import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
@@ -47,6 +49,7 @@ export function UserManagementPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [isUserListRefreshing, setIsUserListRefreshing] = useState(false);
   const hasTenantContext = isPositiveInteger(tenantID);
   const { showError } = useFeedback();
 
@@ -118,8 +121,8 @@ export function UserManagementPage({
       forcePasswordChange,
     });
 
-    setUsers((items) => [...items, nextUser]);
-    setUserPage(Math.ceil((users.length + 1) / userPageSize));
+    setUsers((items) => [nextUser, ...items]);
+    setUserPage(1);
     setName("");
     setUsername("");
     setPassword("");
@@ -191,10 +194,27 @@ export function UserManagementPage({
     setAppliedSearchQuery(searchQuery);
   }
 
-  function handleRefreshUsers() {
+  async function handleRefreshUsers() {
+    if (!isPositiveInteger(tenantID)) {
+      return;
+    }
+
     setSearchQuery("");
     setAppliedSearchQuery("");
     setUserPage(1);
+    setIsUserListRefreshing(true);
+    try {
+      const [userData, spaceData] = await withRefreshFeedback(
+        Promise.all([api.listUsers(tenantID), spaceApi.listSpaces(tenantID)]),
+      );
+      setUsers(userData.items);
+      setSpaces(spaceData.items);
+      setLoadError("");
+    } catch {
+      setLoadError("用户或空间列表加载失败");
+    } finally {
+      setIsUserListRefreshing(false);
+    }
   }
 
   if (!hasTenantContext) {
@@ -249,10 +269,11 @@ export function UserManagementPage({
               <Button
                 aria-label="刷新用户列表"
                 variant="icon"
-                onClick={handleRefreshUsers}
+                disabled={isUserListRefreshing}
+                onClick={() => void handleRefreshUsers()}
                 type="button"
               >
-                <RefreshCw aria-hidden="true" size={16} />
+                <RefreshIcon active={isUserListRefreshing} />
               </Button>
             </div>
           </div>

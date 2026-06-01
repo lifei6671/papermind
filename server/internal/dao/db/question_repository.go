@@ -101,7 +101,8 @@ func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input ser
 	if err := query.Count(&total).Error; err != nil {
 		return pagination.Result[servicequestion.Question]{}, err
 	}
-	if err := query.Order(QuestionColumns.ID + " ASC").
+	if err := query.Order(BaseColumns.CreatedAt + " DESC").
+		Order(QuestionColumns.ID + " DESC").
 		Limit(page.PageSize).
 		Offset(pagination.Offset(page)).
 		Find(&rows).Error; err != nil {

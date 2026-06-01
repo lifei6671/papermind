@@ -119,6 +119,14 @@ function createSpaceAPI() {
       logoFileName: "class8.png",
       members: [{ id: 15, userID: 15, name: "赵老师", role: "space_admin", status: "enabled" }],
     }),
+    updateSpace: vi.fn(async (input: { spaceID: number; name: string; description: string; logoFileName: string }) => ({
+      id: input.spaceID,
+      tenantID: 10,
+      name: input.name,
+      description: input.description,
+      logoFileName: input.logoFileName,
+      members: [],
+    })),
     listSpaceMembers: vi.fn().mockResolvedValue({
       items: [
         {
@@ -153,12 +161,19 @@ function createSpaceAPI() {
         { id: 10, userID: 10, name: "周同学", role: "student", status: "enabled" },
       ],
     }),
-    createSpaceMember: vi.fn().mockResolvedValue({ id: 16, userID: 23, name: "陈同学", username: "student03", role: "student", status: "enabled" }),
-    updateSpaceMember: vi.fn(async (input: { userID: number; status?: "enabled" | "disabled" }) => ({
+    createSpaceMember: vi.fn(async (input: { userID: number; role: "space_admin" | "teacher" | "student" }) => ({
       id: input.userID,
       userID: input.userID,
-      name: input.userID === 2 ? "张同学" : "成员",
-      role: "student" as const,
+      name: input.userID === 22 ? "赵老师" : "陈同学",
+      username: input.userID === 22 ? "teacher02" : "student03",
+      role: input.role,
+      status: "enabled" as const,
+    })),
+    updateSpaceMember: vi.fn(async (input: { userID: number; role?: "space_admin" | "teacher" | "student"; status?: "enabled" | "disabled" }) => ({
+      id: input.userID,
+      userID: input.userID,
+      name: input.userID === 2 ? "张同学" : input.userID === 21 ? "李老师" : input.userID === 22 ? "赵老师" : "成员",
+      role: input.role ?? "student",
       status: input.status ?? "enabled",
     })),
     removeSpaceMember: vi.fn(),
@@ -221,7 +236,7 @@ test("空间管理页展示空间列表和空间管理员", async () => {
   expect(screen.getByRole("tab", { name: "空间管理" })).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByRole("heading", { name: "空间管理" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "创建空间" })).toHaveClass("tenant-create-button");
-  expect(screen.getByRole("button", { name: "保存空间配置" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "保存空间配置" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("搜索空间")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "刷新空间列表" })).toBeInTheDocument();
   expect(await screen.findByText("高一 1 班")).toBeInTheDocument();
@@ -253,9 +268,18 @@ test("租户管理员可以创建空间并上传 logo", async () => {
   await user.click(screen.getByRole("button", { name: "创建空间" }));
 
   expect(screen.getByRole("dialog", { name: "创建空间弹窗" })).toBeInTheDocument();
+  const dialog = screen.getByRole("dialog", { name: "创建空间弹窗" });
+  expect(within(dialog).getAllByText("*")).toHaveLength(3);
+  expect(screen.getByLabelText("空间管理员")).toHaveValue("teacher01");
+  expect(screen.getByLabelText("已选空间管理员真实姓名")).toHaveTextContent("李老师");
   await user.type(screen.getByLabelText("空间名称"), "高一 8 班");
   await user.type(screen.getByLabelText("空间描述"), "面向月考与补测的学生空间");
-  await user.selectOptions(screen.getByLabelText("空间管理员"), "22");
+  await user.clear(screen.getByLabelText("空间管理员"));
+  await user.type(screen.getByLabelText("空间管理员"), "teacher02");
+  const suggestions = await screen.findByRole("listbox", { name: "空间管理员候选" });
+  await user.click(within(suggestions).getByRole("option", { name: /teacher02/ }));
+  expect(screen.getByLabelText("空间管理员")).toHaveValue("teacher02");
+  expect(screen.getByLabelText("已选空间管理员真实姓名")).toHaveTextContent("赵老师");
   await user.upload(screen.getByLabelText("空间 Logo"), new File(["logo"], "class8.png", { type: "image/png" }));
   await user.click(screen.getByRole("button", { name: "确认创建" }));
 
@@ -322,6 +346,7 @@ test("添加用户到空间时按账号或姓名展示最多十个候选用户",
   await user.click(within(suggestions).getByRole("option", { name: /student03/ }));
 
   expect(screen.getByLabelText("用户账号或姓名")).toHaveValue("student03");
+  expect(screen.getByLabelText("已选用户真实姓名")).toHaveTextContent("陈同学");
 });
 
 test("空间管理列表支持分页并在检索后重置到第一页", async () => {
@@ -365,7 +390,7 @@ test("租户管理员可以搜索和刷新空间列表", async () => {
 
   await user.click(screen.getByRole("button", { name: "刷新空间列表" }));
 
-  expect(screen.getByText("高一 1 班")).toBeInTheDocument();
+  expect(await screen.findByText("高一 1 班")).toBeInTheDocument();
   expect(screen.getByText("高一 2 班")).toBeInTheDocument();
 });
 
@@ -393,6 +418,9 @@ test("刷新空间列表会重新读取后端并播放过渡动画", async () =>
   await user.click(screen.getByRole("button", { name: "刷新空间列表" }));
 
   expect(screen.getByTestId("space-list-table-wrap")).toHaveClass("tenant-list-transition--refreshing");
+  expect(screen.getByRole("button", { name: "刷新空间列表" }).querySelector("svg")).toHaveClass(
+    "tenant-refresh-icon--spinning",
+  );
   expect(api.listSpaces).toHaveBeenCalledTimes(2);
 
   refreshResult.resolve({
@@ -413,21 +441,41 @@ test("刷新空间列表会重新读取后端并播放过渡动画", async () =>
   );
 });
 
-test("租户管理员可以编辑空间描述并通过抽屉管理成员", async () => {
+test("租户管理员可以编辑空间信息和管理员并通过抽屉管理成员", async () => {
   const user = userEvent.setup();
-  renderWithFeedback(<SpaceManagementPage api={createSpaceAPI()} userApi={createUserAPI()} tenantID={10} />);
+  const api = createSpaceAPI();
+  renderWithFeedback(<SpaceManagementPage api={api} userApi={createUserAPI()} tenantID={10} />);
 
   await screen.findByText("高一 1 班");
 
-  await user.click(within(screen.getByRole("row", { name: /高一 1 班/ })).getByRole("button", { name: "编辑描述" }));
+  await user.click(within(screen.getByRole("row", { name: /高一 1 班/ })).getByRole("button", { name: "编辑空间" }));
+  await user.clear(screen.getByLabelText("编辑空间名称"));
+  await user.type(screen.getByLabelText("编辑空间名称"), "高一实验班");
   await user.clear(screen.getByLabelText("编辑空间描述"));
   await user.type(screen.getByLabelText("编辑空间描述"), "高一语文月考主空间");
-  await user.click(screen.getByRole("button", { name: "保存空间描述" }));
+  await user.clear(screen.getByLabelText("编辑空间管理员"));
+  await user.type(screen.getByLabelText("编辑空间管理员"), "teacher02");
+  const suggestions = await screen.findByRole("listbox", { name: "编辑空间管理员候选" });
+  await user.click(within(suggestions).getByRole("option", { name: /赵老师/ }));
+  await user.clear(screen.getByLabelText("编辑空间 Logo"));
+  await user.type(screen.getByLabelText("编辑空间 Logo"), "class-next.png");
+  await user.click(screen.getByRole("button", { name: "保存空间信息" }));
 
+  expect(api.updateSpace).toHaveBeenCalledWith({
+    tenantID: 10,
+    spaceID: 100,
+    name: "高一实验班",
+    description: "高一语文月考主空间",
+    logoFileName: "class-next.png",
+  });
+  expect(api.createSpaceMember).toHaveBeenCalledWith({ tenantID: 10, spaceID: 100, userID: 22, role: "space_admin" });
+  expect(api.updateSpaceMember).toHaveBeenCalledWith({ tenantID: 10, spaceID: 100, userID: 1, role: "teacher" });
+  expect(screen.getByText("高一实验班")).toBeInTheDocument();
   expect(screen.getByText("高一语文月考主空间")).toBeInTheDocument();
+  expect(within(screen.getByRole("row", { name: /高一实验班/ })).getByText("空间管理员：赵老师")).toBeInTheDocument();
 
-  await user.click(within(screen.getByRole("row", { name: /高一 1 班/ })).getByRole("button", { name: "成员管理" }));
-  const drawer = await screen.findByRole("dialog", { name: "高一 1 班成员抽屉" });
+  await user.click(within(screen.getByRole("row", { name: /高一实验班/ })).getByRole("button", { name: "成员管理" }));
+  const drawer = await screen.findByRole("dialog", { name: "高一实验班成员抽屉" });
   const drawerLayer = screen.getByTestId("tenant-resource-drawer-layer");
   expect(drawerLayer).toHaveClass("tenant-resource-drawer-layer--overlay");
   expect(drawer).toHaveClass("tenant-resource-drawer--half");
@@ -436,8 +484,8 @@ test("租户管理员可以编辑空间描述并通过抽屉管理成员", async
   const drawerHeader = within(drawer).getByTestId("space-member-drawer-header");
   expect(within(drawerHeader).getByRole("button", { name: "返回空间列表" })).toHaveTextContent("返回");
   expect(within(drawerHeader).getByText("|")).toBeInTheDocument();
-  expect(within(drawerHeader).getByText("高一 1 班")).toBeInTheDocument();
-  expect(within(drawerHeader).queryByText("高一 1 班成员")).not.toBeInTheDocument();
+  expect(within(drawerHeader).getByText("高一实验班")).toBeInTheDocument();
+  expect(within(drawerHeader).queryByText("高一实验班成员")).not.toBeInTheDocument();
   expect(within(drawer).getByRole("button", { name: "全屏抽屉" })).toBeInTheDocument();
   expect(within(drawer).getByRole("button", { name: "关闭抽屉" })).toBeInTheDocument();
   const drawerBody = within(drawer).getByTestId("space-member-drawer-body");
@@ -529,7 +577,7 @@ test("成员管理抽屉支持当前空间内检索和分页", async () => {
 
   await user.click(within(drawer).getByRole("button", { name: "刷新成员列表" }));
 
-  expect(within(drawer).getByText("共 8 条")).toBeInTheDocument();
+  expect(await within(drawer).findByText("共 8 条")).toBeInTheDocument();
   expect(within(drawer).getByText("张同学")).toBeInTheDocument();
 });
 
@@ -550,6 +598,9 @@ test("刷新成员列表会重新读取当前空间成员并播放过渡动画",
   await user.click(within(drawer).getByRole("button", { name: "刷新成员列表" }));
 
   expect(api.listSpaceMembers).toHaveBeenCalledWith({ tenantID: 10, spaceID: 100 });
+  expect(within(drawer).getByRole("button", { name: "刷新成员列表" }).querySelector("svg")).toHaveClass(
+    "tenant-refresh-icon--spinning",
+  );
   expect(within(drawer).getByTestId("space-member-table-wrap")).toHaveClass("tenant-list-transition--refreshing");
 
   refreshResult.resolve({
@@ -630,27 +681,4 @@ test("成员管理抽屉禁用和启用成员时展示单行等待态", async ()
 
   enableResult.resolve({ id: 2, userID: 2, name: "张同学", role: "student", status: "enabled" });
   expect(await within(drawer).findByRole("row", { name: /张同学 学生 启用/ })).toBeInTheDocument();
-});
-
-test("空间配置保存后展示当前配置", async () => {
-  const user = userEvent.setup();
-  renderWithFeedback(<SpaceManagementPage api={createSpaceAPI()} userApi={createUserAPI()} tenantID={10} />);
-
-  await screen.findByText("高一 1 班");
-
-  await user.click(screen.getByRole("button", { name: "保存空间配置" }));
-
-  expect(screen.getByRole("dialog", { name: "空间配置弹窗" })).toBeInTheDocument();
-
-  await user.clear(screen.getByLabelText("默认考试时长"));
-  await user.type(screen.getByLabelText("默认考试时长"), "90");
-  await user.click(screen.getByLabelText("允许学生查看练习解析"));
-  await user.click(screen.getByRole("button", { name: "确认保存配置" }));
-
-  expect(screen.queryByRole("dialog", { name: "空间配置弹窗" })).not.toBeInTheDocument();
-
-  await user.click(screen.getByRole("button", { name: "保存空间配置" }));
-
-  expect(screen.getByLabelText("默认考试时长")).toHaveValue(90);
-  expect(screen.getByLabelText("允许学生查看练习解析")).not.toBeChecked();
 });

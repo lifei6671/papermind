@@ -23,15 +23,18 @@ type questionHandler struct {
 }
 
 type createQuestionRequest struct {
-	TenantID     uint64                  `json:"tenant_id"`
-	SpaceID      *uint64                 `json:"space_id"`
-	Type         string                  `json:"type"`
-	Difficulty   string                  `json:"difficulty"`
-	Title        string                  `json:"title"`
-	Analysis     string                  `json:"analysis"`
-	ScoreDefault string                  `json:"score_default"`
-	Tags         []string                `json:"tags"`
-	Options      []questionOptionRequest `json:"options"`
+	TenantID        uint64                  `json:"tenant_id"`
+	SpaceID         *uint64                 `json:"space_id"`
+	Type            string                  `json:"type"`
+	Difficulty      string                  `json:"difficulty"`
+	Title           string                  `json:"title"`
+	Analysis        string                  `json:"analysis"`
+	StandardAnswer  string                  `json:"standard_answer"`
+	ReferenceAnswer string                  `json:"reference_answer"`
+	BlankCount      int                     `json:"blank_count"`
+	ScoreDefault    string                  `json:"score_default"`
+	Tags            []string                `json:"tags"`
+	Options         []questionOptionRequest `json:"options"`
 }
 
 type questionOptionRequest struct {
@@ -42,18 +45,20 @@ type questionOptionRequest struct {
 }
 
 type questionResponse struct {
-	ID           uint64                   `json:"id"`
-	TenantID     uint64                   `json:"tenant_id"`
-	SpaceID      *uint64                  `json:"space_id,omitempty"`
-	Type         string                   `json:"type"`
-	Difficulty   string                   `json:"difficulty"`
-	Title        string                   `json:"title"`
-	Analysis     string                   `json:"analysis"`
-	ScoreDefault string                   `json:"score_default"`
-	Status       string                   `json:"status"`
-	Tag          string                   `json:"tag"`
-	Tags         []string                 `json:"tags"`
-	Options      []questionOptionResponse `json:"options"`
+	ID              uint64                   `json:"id"`
+	TenantID        uint64                   `json:"tenant_id"`
+	SpaceID         *uint64                  `json:"space_id,omitempty"`
+	Type            string                   `json:"type"`
+	Difficulty      string                   `json:"difficulty"`
+	Title           string                   `json:"title"`
+	Analysis        string                   `json:"analysis"`
+	StandardAnswer  string                   `json:"standard_answer,omitempty"`
+	ReferenceAnswer string                   `json:"reference_answer,omitempty"`
+	ScoreDefault    string                   `json:"score_default"`
+	Status          string                   `json:"status"`
+	Tag             string                   `json:"tag"`
+	Tags            []string                 `json:"tags"`
+	Options         []questionOptionResponse `json:"options"`
 }
 
 type questionOptionResponse struct {
@@ -136,16 +141,19 @@ func (h questionHandler) create(c *gin.Context) {
 		return
 	}
 	created, err := h.service.CreateQuestion(c.Request.Context(), servicequestion.CreateQuestionInput{
-		Permission:   permissionContext,
-		TenantID:     request.TenantID,
-		SpaceID:      request.SpaceID,
-		Type:         request.Type,
-		Difficulty:   request.Difficulty,
-		Title:        request.Title,
-		Analysis:     request.Analysis,
-		ScoreDefault: request.ScoreDefault,
-		Options:      request.toServiceOptions(),
-		Tags:         request.Tags,
+		Permission:      permissionContext,
+		TenantID:        request.TenantID,
+		SpaceID:         request.SpaceID,
+		Type:            request.Type,
+		Difficulty:      request.Difficulty,
+		Title:           request.Title,
+		Analysis:        request.Analysis,
+		StandardAnswer:  request.StandardAnswer,
+		ReferenceAnswer: request.ReferenceAnswer,
+		BlankCount:      request.BlankCount,
+		ScoreDefault:    request.ScoreDefault,
+		Options:         request.toServiceOptions(),
+		Tags:            request.Tags,
 	})
 	if err != nil {
 		writeQuestionServiceError(c, err)
@@ -199,18 +207,20 @@ func questionToResponse(item servicequestion.Question) questionResponse {
 		tag = item.Tags[0]
 	}
 	return questionResponse{
-		ID:           item.ID,
-		TenantID:     item.TenantID,
-		SpaceID:      item.SpaceID,
-		Type:         item.Type,
-		Difficulty:   item.Difficulty,
-		Title:        item.Title,
-		Analysis:     item.Analysis,
-		ScoreDefault: item.ScoreDefault,
-		Status:       item.Status,
-		Tag:          tag,
-		Tags:         item.Tags,
-		Options:      options,
+		ID:              item.ID,
+		TenantID:        item.TenantID,
+		SpaceID:         item.SpaceID,
+		Type:            item.Type,
+		Difficulty:      item.Difficulty,
+		Title:           item.Title,
+		Analysis:        item.Analysis,
+		StandardAnswer:  item.StandardAnswer,
+		ReferenceAnswer: item.ReferenceAnswer,
+		ScoreDefault:    item.ScoreDefault,
+		Status:          item.Status,
+		Tag:             tag,
+		Tags:            item.Tags,
+		Options:         options,
 	}
 }
 

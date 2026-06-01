@@ -1,9 +1,11 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
-import { ArrowLeft, Maximize2, Minimize2, RefreshCw, Search, X } from "lucide-react";
+import { ArrowLeft, Maximize2, Minimize2, Search, X } from "lucide-react";
 import { useEffect, useState, type TransitionEvent } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
+import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { tenantApi } from "../../api/tenants";
 import type { TenantManagementAPI, TenantRow } from "../../api/tenants";
@@ -53,6 +55,7 @@ export function TenantManagementPage({
   const [resourceUsers, setResourceUsers] = useState<TenantUserRow[]>([]);
   const [resourceError, setResourceError] = useState("");
   const [isResourceLoading, setIsResourceLoading] = useState(false);
+  const [isTenantListRefreshing, setIsTenantListRefreshing] = useState(false);
 
   useEffect(() => {
     let ignore = false;
@@ -236,9 +239,14 @@ export function TenantManagementPage({
     void reloadTenants(searchQuery.trim());
   }
 
-  function handleRefreshTenants() {
+  async function handleRefreshTenants() {
     setSearchQuery("");
-    void reloadTenants();
+    setIsTenantListRefreshing(true);
+    try {
+      await withRefreshFeedback(reloadTenants());
+    } finally {
+      setIsTenantListRefreshing(false);
+    }
   }
 
   async function openTenantResourceDrawer(tenant: TenantRow, kind: TenantResourceDrawer["kind"]) {
@@ -300,10 +308,11 @@ export function TenantManagementPage({
               <Button
                 aria-label="刷新租户列表"
                 variant="icon"
-                onClick={handleRefreshTenants}
+                disabled={isTenantListRefreshing}
+                onClick={() => void handleRefreshTenants()}
                 type="button"
               >
-                <RefreshCw aria-hidden="true" size={16} />
+                <RefreshIcon active={isTenantListRefreshing} />
               </Button>
             </div>
           </div>

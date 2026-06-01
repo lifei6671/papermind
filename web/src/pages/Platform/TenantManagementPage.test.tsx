@@ -7,6 +7,15 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+
+  return { promise, resolve };
+}
+
 function createTenantAPI() {
   return {
     listTenants: vi.fn().mockResolvedValue({
@@ -297,6 +306,7 @@ test("平台管理员可以创建租户并上传 logo", async () => {
 test("租户列表上方提供搜索输入和创建操作区", async () => {
   const user = userEvent.setup();
   const api = createTenantAPI();
+  const refreshResult = deferred<Awaited<ReturnType<ReturnType<typeof createTenantAPI>["listTenants"]>>>();
   api.listTenants
     .mockResolvedValueOnce({
       items: [
@@ -330,27 +340,7 @@ test("租户列表上方提供搜索输入和创建操作区", async () => {
         registerClosedLabel: "暂停注册",
       }],
     })
-    .mockResolvedValueOnce({
-      items: [
-        {
-          id: 1,
-          name: "青藤一中",
-          description: "统一管理月考、联考和补测",
-          code: "PM-QT01",
-          logoFileName: "qingteng.png",
-          allowRegister: true,
-        },
-        {
-          id: 2,
-          name: "知行培训",
-          description: "企业知识课堂和阶段测评",
-          code: "PM-ZX01",
-          logoFileName: "zhixing.png",
-          allowRegister: false,
-          registerClosedLabel: "暂停注册",
-        },
-      ],
-    });
+    .mockReturnValueOnce(refreshResult.promise);
   render(<TenantManagementPage api={api} />);
 
   await screen.findByText("青藤一中");
@@ -370,7 +360,31 @@ test("租户列表上方提供搜索输入和创建操作区", async () => {
   await user.click(screen.getByRole("button", { name: "刷新租户列表" }));
 
   expect(api.listTenants).toHaveBeenLastCalledWith();
-  expect(screen.getByText("青藤一中")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "刷新租户列表" }).querySelector("svg")).toHaveClass(
+    "tenant-refresh-icon--spinning",
+  );
+  refreshResult.resolve({
+    items: [
+      {
+        id: 1,
+        name: "青藤一中",
+        description: "统一管理月考、联考和补测",
+        code: "PM-QT01",
+        logoFileName: "qingteng.png",
+        allowRegister: true,
+      },
+      {
+        id: 2,
+        name: "知行培训",
+        description: "企业知识课堂和阶段测评",
+        code: "PM-ZX01",
+        logoFileName: "zhixing.png",
+        allowRegister: false,
+        registerClosedLabel: "暂停注册",
+      },
+    ],
+  });
+  expect(await screen.findByText("青藤一中")).toBeInTheDocument();
   expect(screen.getByText("知行培训")).toBeInTheDocument();
 });
 

@@ -59,7 +59,8 @@ func (r *TenantUserRepository) ListUsers(ctx context.Context, tenantID uint64, p
 	var rows []tenantUserRow
 	if err := query.
 		Select(r.tenantUserSelectColumns()).
-		Order("users." + UserColumns.ID + " ASC").
+		Order("tum." + BaseColumns.CreatedAt + " DESC").
+		Order("tum." + UserRoleColumns.ID + " DESC").
 		Limit(page.PageSize).
 		Offset(pagination.Offset(page)).
 		Scan(&rows).Error; err != nil {

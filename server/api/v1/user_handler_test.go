@@ -31,7 +31,7 @@ func TestUserAPIRoutesListCreateAndDisableWithSQLite(t *testing.T) {
 	if len(listBody.Data.Items) != 1 || listBody.Data.Total != 3 || listBody.Data.PageSize != 1 {
 		t.Fatalf("expected first page of three seeded users, got %#v", listBody.Data)
 	}
-	if listBody.Data.Items[0].RealName != "李老师" || listBody.Data.Items[0].Role != "teacher" {
+	if listBody.Data.Items[0].RealName != "租户管理员" || listBody.Data.Items[0].Role != "tenant_admin" {
 		t.Fatalf("unexpected first user: %#v", listBody.Data.Items[0])
 	}
 

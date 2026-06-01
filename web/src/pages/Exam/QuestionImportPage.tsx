@@ -1,9 +1,11 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
-import { RefreshCw, Search } from "lucide-react";
-import { useState } from "react";
+import { Search } from "lucide-react";
+import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
+import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { refreshFeedbackMinDurationMs } from "../../components/ui/refreshFeedback";
 import { questionApi } from "../../api/questions";
 import type { QuestionImportAPI } from "../../api/questions";
 import { formatApiErrorMessage } from "../../api/client";
@@ -28,6 +30,16 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
+  const [isImportRecordsRefreshing, setIsImportRecordsRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (!isImportRecordsRefreshing) {
+      return undefined;
+    }
+
+    const timeoutID = window.setTimeout(() => setIsImportRecordsRefreshing(false), refreshFeedbackMinDurationMs);
+    return () => window.clearTimeout(timeoutID);
+  }, [isImportRecordsRefreshing]);
 
   const filteredImportRecords = importRecords.filter((record) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
@@ -75,6 +87,7 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
   function handleRefreshImportRecords() {
     setSearchQuery("");
     setAppliedSearchQuery("");
+    setIsImportRecordsRefreshing(true);
   }
 
   function openImportDialog() {
@@ -121,10 +134,11 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
             <Button
               aria-label="刷新导入记录"
               variant="icon"
+              disabled={isImportRecordsRefreshing}
               onClick={handleRefreshImportRecords}
               type="button"
             >
-              <RefreshCw aria-hidden="true" size={16} />
+              <RefreshIcon active={isImportRecordsRefreshing} />
             </Button>
           </div>
         </div>

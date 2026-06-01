@@ -41,11 +41,11 @@ describe("questionApi", () => {
         tenant_id: 10,
         space_id: 301,
         type: "single",
-        difficulty: "medium",
+        difficulty: "hard",
         title: "下列函数在 R 上单调递增的是哪一项？",
         analysis: "一次函数斜率为正时单调递增。",
-        score_default: "2",
-        tags: ["函数"],
+        score_default: "6",
+        tags: ["函数", "基础"],
         options: [
           { option_key: "A", content: "y = x", is_correct: true, is_distractor: false },
           { option_key: "B", content: "y = -x", is_correct: false, is_distractor: true },
@@ -59,12 +59,14 @@ describe("questionApi", () => {
           id: 101,
           tenant_id: 10,
           space_id: 301,
+          type: "single",
+          difficulty: "hard",
           title: "下列函数在 R 上单调递增的是哪一项？",
           analysis: "一次函数斜率为正时单调递增。",
-          score_default: "2",
+          score_default: "6",
           status: "enabled",
           tag: "函数",
-          tags: ["函数"],
+          tags: ["函数", "基础"],
           options: [
             { option_key: "A", content: "y = x", is_correct: true, is_distractor: false },
             { option_key: "B", content: "y = -x", is_correct: false, is_distractor: true },
@@ -77,10 +79,14 @@ describe("questionApi", () => {
     const result = await api.createQuestion({
       tenantID: 10,
       spaceID: 301,
+      type: "single",
+      difficulty: "hard",
       title: "下列函数在 R 上单调递增的是哪一项？",
       options: ["y = x", "y = -x"],
+      correctOptionIndexes: [0],
       analysis: "一次函数斜率为正时单调递增。",
-      tag: "函数",
+      scoreDefault: "6",
+      tags: ["函数", "基础"],
     });
 
     expect(fetcher).toHaveBeenCalledWith(
@@ -89,5 +95,7 @@ describe("questionApi", () => {
     );
     expect(result.title).toBe("下列函数在 R 上单调递增的是哪一项？");
     expect(result.stem).toBe("下列函数在 R 上单调递增的是哪一项？");
+    expect(result.difficulty).toBe("hard");
+    expect(result.tags).toEqual(["函数", "基础"]);
   });
 });

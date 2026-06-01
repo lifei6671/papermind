@@ -22,6 +22,22 @@ test("文件上传组件接收符合类型和大小的文件", async () => {
   expect(screen.getByText("questions.csv")).toBeInTheDocument();
 });
 
+test("文件上传组件支持非图片上传文案", () => {
+  render(
+    <FileUploadField
+      emptyPreviewText="暂未选择文件"
+      label="题目导入文件"
+      onFileAccepted={vi.fn()}
+      uploadPrompt="选择文件或拖动文件到此处"
+    />,
+  );
+
+  expect(screen.getByText("选择文件或拖动文件到此处")).toBeInTheDocument();
+  expect(within(screen.getByLabelText("题目导入文件预览")).getByText("暂未选择文件")).toBeInTheDocument();
+  expect(screen.queryByText("选择图片或拖动图片到此处")).not.toBeInTheDocument();
+  expect(screen.queryByText("暂未选择图片")).not.toBeInTheDocument();
+});
+
 test("文件上传组件拒绝超过大小限制的文件", async () => {
   const user = userEvent.setup();
   const onReject = vi.fn();

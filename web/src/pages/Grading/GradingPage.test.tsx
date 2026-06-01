@@ -5,6 +5,15 @@ import { expect, test, vi } from "vitest";
 import type { GradingAPI } from "../../api/grading";
 import { GradingPage } from "./GradingPage";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+
+  return { promise, resolve };
+}
+
 test("阅卷页从真实 API 加载待阅卷列表并保存评分", async () => {
   const user = userEvent.setup();
   const api: GradingAPI = {
@@ -35,6 +44,30 @@ test("阅卷页从真实 API 加载待阅卷列表并保存评分", async () => 
 
   expect(await screen.findByText("张三")).toBeInTheDocument();
   expect(screen.getByText("岳阳楼记思想内涵")).toBeInTheDocument();
+  const refreshResult = deferred<Awaited<ReturnType<GradingAPI["listPendingAttempts"]>>>();
+  vi.mocked(api.listPendingAttempts).mockReturnValueOnce(refreshResult.promise);
+
+  await user.click(screen.getByRole("button", { name: "刷新待阅卷" }));
+  expect(screen.getByRole("button", { name: "刷新待阅卷" }).querySelector("svg")).toHaveClass(
+    "tenant-refresh-icon--spinning",
+  );
+  refreshResult.resolve({
+    items: [{
+      attemptID: 900,
+      attemptQuestionID: 901,
+      studentName: "张三",
+      spaceName: "高一 1 班",
+      examName: "高一语文期中考试",
+      questionTitle: "岳阳楼记思想内涵",
+      answerContent: "先忧后乐体现了责任意识。",
+      submittedAt: "2026-05-26 18:40",
+      maxScore: "10",
+      answerVersion: 7,
+      pendingShortTextCount: 1,
+      status: "pending",
+    }],
+  });
+  expect(await screen.findByText("岳阳楼记思想内涵")).toBeInTheDocument();
 
   await user.click(within(screen.getByRole("row", { name: /张三/ })).getByRole("button", { name: "开始阅卷" }));
   expect(screen.getByText("学生作答：先忧后乐体现了责任意识。")).toBeInTheDocument();
