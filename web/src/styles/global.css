@@ -3283,6 +3283,36 @@ code {
   border-color: #82c596;
   color: #1f5f31;
 }
+.tenant-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.tenant-action-button--pending {
+  gap: 6px;
+}
+
+.tenant-action-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentcolor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: tenant-action-spin 720ms linear infinite;
+}
+
+@keyframes tenant-action-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tenant-action-spinner {
+    animation: none;
+  }
+}
+
 
 .platform-dialog {
   position: fixed;

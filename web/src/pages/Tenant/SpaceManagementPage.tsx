@@ -7,6 +7,7 @@ import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { useFeedback } from "../../app/feedback-context";
+import { formatApiErrorMessage } from "../../api/client";
 import { spaceApi } from "../../api/spaces";
 import type { MemberRole, SpaceManagementAPI, SpaceMember, SpaceMemberAPI, SpaceRow } from "../../api/spaces";
 import { userApi as defaultUserApi } from "../../api/users";
@@ -23,6 +24,7 @@ const statusLabels: Record<SpaceMember["status"], string> = {
 };
 
 const memberPageSize = 5;
+const spacePageSize = 5;
 
 const registerMethodLabels: Record<string, string> = {
   tenant_account: "租户账号",
@@ -31,7 +33,7 @@ const registerMethodLabels: Record<string, string> = {
   import: "批量导入",
 };
 
-type SpacePageAPI = SpaceManagementAPI & Pick<SpaceMemberAPI, "listSpaceMembers" | "updateSpaceMember">;
+type SpacePageAPI = SpaceManagementAPI & Pick<SpaceMemberAPI, "createSpaceMember" | "listSpaceMembers" | "updateSpaceMember">;
 
 type SpaceManagementPageProps = {
   api?: SpacePageAPI;
@@ -54,8 +56,14 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
   const [showPracticeAnalysis, setShowPracticeAnalysis] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
+  const [spacePage, setSpacePage] = useState(1);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
+  const [isAddUserDialogOpen, setIsAddUserDialogOpen] = useState(false);
+  const [addUserQuery, setAddUserQuery] = useState("");
+  const [addUserSpaceID, setAddUserSpaceID] = useState("");
+  const [addUserRole, setAddUserRole] = useState<MemberRole>("student");
+  const [isAddingUser, setIsAddingUser] = useState(false);
   const [selectedMemberSpaceID, setSelectedMemberSpaceID] = useState<number | null>(null);
   const [isSpaceListRefreshing, setIsSpaceListRefreshing] = useState(false);
   const { showError } = useFeedback();
@@ -102,6 +110,12 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
       value.toLowerCase().includes(keyword),
     );
   });
+  const totalSpacePages = Math.max(1, Math.ceil(filteredSpaces.length / spacePageSize));
+  const currentSpacePage = Math.min(spacePage, totalSpacePages);
+  const pagedSpaces = filteredSpaces.slice(
+    (currentSpacePage - 1) * spacePageSize,
+    currentSpacePage * spacePageSize,
+  );
 
   async function handleCreateSpace(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -126,6 +140,7 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     });
 
     setSpaces((items) => [...items, nextSpace]);
+    setSpacePage(Math.ceil((spaces.length + 1) / spacePageSize));
     setSpaceName("");
     setSpaceDescription("");
     setSpaceAdminUserID(String(users[0]?.id ?? ""));
@@ -133,6 +148,64 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     setLogoResetKey((value) => value + 1);
     setIsCreateDialogOpen(false);
   }
+  function openAddUserDialog() {
+    setAddUserQuery("");
+    setAddUserSpaceID(String(spaces[0]?.id ?? ""));
+    setAddUserRole("student");
+    setIsAddUserDialogOpen(true);
+  }
+
+  async function handleAddUserToSpace(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!isPositiveInteger(tenantID)) {
+      setLoadError("当前账号没有租户上下文，请先登录租户账号后再添加用户");
+      return;
+    }
+
+    const keyword = addUserQuery.trim().toLowerCase();
+    const targetUser = users.find((user) =>
+      user.username.toLowerCase() === keyword || user.name.toLowerCase() === keyword,
+    );
+    if (!targetUser) {
+      showError("未找到匹配的租户用户");
+      return;
+    }
+
+    const targetSpaceID = Number(addUserSpaceID);
+    const targetSpace = spaces.find((space) => space.id === targetSpaceID);
+    if (!targetSpace) {
+      showError("请选择目标空间");
+      return;
+    }
+
+    if (targetSpace.members.some((member) => member.userID === targetUser.id)) {
+      showError("用户已在该空间中");
+      return;
+    }
+
+    setIsAddingUser(true);
+    try {
+      const nextMember = await api.createSpaceMember({
+        tenantID,
+        spaceID: targetSpaceID,
+        userID: targetUser.id,
+        role: addUserRole,
+      });
+
+      setSpaces((items) =>
+        items.map((space) =>
+          space.id === targetSpaceID ? { ...space, members: [...space.members, nextMember] } : space,
+        ),
+      );
+      setIsAddUserDialogOpen(false);
+      setAddUserQuery("");
+    } catch (error) {
+      showError(formatApiErrorMessage(error, "添加用户到空间失败"));
+    } finally {
+      setIsAddingUser(false);
+    }
+  }
+
 
   function openDescriptionEditor(space: SpaceRow) {
     setEditingSpace(space);
@@ -154,27 +227,6 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     setEditingDescription("");
   }
 
-  function addMemberToSelectedSpace(name: string, role: MemberRole) {
-    if (!selectedMemberSpace) {
-      return;
-    }
-
-    const localMemberID = Date.now();
-    // 成员是空间的子资源，添加时只能写入当前打开的空间成员列表。
-    setSpaces((items) =>
-      items.map((space) =>
-        space.id === selectedMemberSpace.id
-          ? {
-              ...space,
-              members: [
-                ...space.members,
-                { id: localMemberID, userID: localMemberID, name, role, status: "enabled" },
-              ],
-            }
-          : space,
-      ),
-    );
-  }
 
   function downgradeMember(memberID: number) {
     if (!selectedMemberSpace) {
@@ -265,6 +317,7 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
   }
 
   function handleSearchSpaces() {
+    setSpacePage(1);
     setAppliedSearchQuery(searchQuery);
   }
 
@@ -281,6 +334,7 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
       setSpaceAdminUserID((current) => current || String(userData.items[0]?.id ?? ""));
       setSearchQuery("");
       setAppliedSearchQuery("");
+      setSpacePage(1);
       setLoadError("");
     } catch {
       setLoadError("空间或用户列表加载失败");
@@ -347,6 +401,13 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
               >
                 保存空间配置
               </Button>
+              <Button
+                variant="toolbarSecondary"
+                onClick={openAddUserDialog}
+                type="button"
+              >
+                添加用户
+              </Button>
             </div>
             <div className="tenant-search-actions">
               <label className="tenant-search-field">
@@ -393,7 +454,7 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
               </thead>
               <tbody>
                 {filteredSpaces.length === 0 && <EmptyTableRow colSpan={5} />}
-                {filteredSpaces.map((space) => (
+                {pagedSpaces.map((space) => (
                   <tr key={space.id}>
                     <td>{space.name}</td>
                     <td>{space.logoFileName}</td>
@@ -422,11 +483,16 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
               </tbody>
             </table>
           </div>
+          <Pagination
+            page={currentSpacePage}
+            pageSize={spacePageSize}
+            total={filteredSpaces.length}
+            onPageChange={setSpacePage}
+          />
         </Panel>
 
       {selectedMemberSpace && (
         <SpaceMemberDrawer
-          onAddMember={addMemberToSelectedSpace}
           onClose={() => {
             setSelectedMemberSpaceID(null);
           }}
@@ -482,6 +548,55 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
                 </Button>
                 <Button variant="primary" type="submit">
                   确认创建
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isAddUserDialogOpen && (
+        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="添加用户到空间弹窗">
+          <div className="platform-dialog__card">
+            <h2>添加用户到空间</h2>
+            <form className="platform-form" onSubmit={(event) => void handleAddUserToSpace(event)}>
+              <label className="field">
+                <span>用户账号或姓名</span>
+                <input
+                  onChange={(event) => setAddUserQuery(event.target.value)}
+                  placeholder="输入已存在用户的账号或姓名"
+                  required
+                  value={addUserQuery}
+                />
+              </label>
+              <label className="field">
+                <span>目标空间</span>
+                <select
+                  onChange={(event) => setAddUserSpaceID(event.target.value)}
+                  required
+                  value={addUserSpaceID}
+                >
+                  {spaces.map((space) => (
+                    <option key={space.id} value={space.id}>
+                      {space.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>空间身份</span>
+                <select onChange={(event) => setAddUserRole(event.target.value as MemberRole)} value={addUserRole}>
+                  <option value="space_admin">空间管理员</option>
+                  <option value="teacher">教师</option>
+                  <option value="student">学生</option>
+                </select>
+              </label>
+              <div className="platform-dialog__actions">
+                <Button variant="secondary" onClick={() => setIsAddUserDialogOpen(false)} type="button">
+                  取消
+                </Button>
+                <Button disabled={isAddingUser} variant="primary" type="submit">
+                  确认添加
                 </Button>
               </div>
             </form>
@@ -551,7 +666,6 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
 }
 
 type SpaceMemberDrawerProps = {
-  onAddMember: (name: string, role: MemberRole) => void;
   onClose: () => void;
   onDisableMember: (member: SpaceMember) => Promise<void>;
   onDowngradeMember: (memberID: number) => void;
@@ -561,7 +675,6 @@ type SpaceMemberDrawerProps = {
 };
 
 function SpaceMemberDrawer({
-  onAddMember,
   onDisableMember,
   onClose,
   onDowngradeMember,
@@ -572,13 +685,11 @@ function SpaceMemberDrawer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [newMemberName, setNewMemberName] = useState("");
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [appliedMemberSearchQuery, setAppliedMemberSearchQuery] = useState("");
   const [memberPage, setMemberPage] = useState(1);
   const [detailMember, setDetailMember] = useState<SpaceMember | null>(null);
-  const [newMemberRole, setNewMemberRole] = useState<MemberRole>("student");
+  const [pendingMemberAction, setPendingMemberAction] = useState<{ userID: number; status: SpaceMember["status"] } | null>(null);
   const [isMemberListRefreshing, setIsMemberListRefreshing] = useState(false);
   const drawerClassName = [
     "tenant-resource-drawer",
@@ -606,13 +717,6 @@ function SpaceMemberDrawer({
       return;
     }
     onClose();
-  };
-  const submitAddMember = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    onAddMember(newMemberName, newMemberRole);
-    setNewMemberName("");
-    setNewMemberRole("student");
-    setIsAddDialogOpen(false);
   };
   const filteredMembers = space.members.filter((member) => {
     const keyword = appliedMemberSearchQuery.trim().toLowerCase();
@@ -645,6 +749,24 @@ function SpaceMemberDrawer({
       setMemberPage(1);
     } finally {
       setIsMemberListRefreshing(false);
+    }
+  };
+  const runMemberStatusAction = async (member: SpaceMember, status: SpaceMember["status"]) => {
+    if (pendingMemberAction) {
+      return;
+    }
+
+    setPendingMemberAction({ userID: member.userID, status });
+    try {
+      if (status === "disabled") {
+        await onDisableMember(member);
+      } else {
+        await onEnableMember(member);
+      }
+    } finally {
+      setPendingMemberAction((current) =>
+        current?.userID === member.userID && current.status === status ? null : current,
+      );
     }
   };
 
@@ -701,11 +823,6 @@ function SpaceMemberDrawer({
 
         <div className="tenant-resource-drawer__body" data-testid="space-member-drawer-body">
           <div className="tenant-resource-drawer__toolbar" data-testid="space-member-toolbar">
-            <div className="tenant-list-actions">
-              <Button variant="secondary" onClick={() => setIsAddDialogOpen(true)} type="button">
-                添加成员
-              </Button>
-            </div>
             <div className="tenant-search-actions">
               <label className="tenant-search-field">
                 <span className="sr-only">成员检索关键词</span>
@@ -749,38 +866,58 @@ function SpaceMemberDrawer({
               </thead>
               <tbody>
                 {pagedMembers.length === 0 && <EmptyTableRow colSpan={4} />}
-                {pagedMembers.map((member) => (
-                  <tr key={member.id}>
-                    <td>{member.name}</td>
-                    <td>{roleLabels[member.role]}</td>
-                    <td>
-                      <StatusBadge tone={member.status === "enabled" ? "success" : "warning"}>
-                        {statusLabels[member.status]}
-                      </StatusBadge>
-                    </td>
-                    <td>
-                      <div className="tenant-actions">
-                        <Button variant="actionEdit" onClick={() => setDetailMember(member)} type="button">
-                          查看详情
-                        </Button>
-                        {member.status === "enabled" ? (
-                          <Button variant="actionClose" onClick={() => void onDisableMember(member)} type="button">
-                            禁用
+                {pagedMembers.map((member) => {
+                  const isCurrentMemberAction = pendingMemberAction?.userID === member.userID;
+                  const isDisabling = isCurrentMemberAction && pendingMemberAction?.status === "disabled";
+                  const isEnabling = isCurrentMemberAction && pendingMemberAction?.status === "enabled";
+
+                  return (
+                    <tr key={member.id}>
+                      <td>{member.name}</td>
+                      <td>{roleLabels[member.role]}</td>
+                      <td>
+                        <StatusBadge tone={member.status === "enabled" ? "success" : "warning"}>
+                          {statusLabels[member.status]}
+                        </StatusBadge>
+                      </td>
+                      <td>
+                        <div className="tenant-actions">
+                          <Button variant="actionEdit" onClick={() => setDetailMember(member)} type="button">
+                            查看详情
                           </Button>
-                        ) : (
-                          <Button variant="actionOpen" onClick={() => void onEnableMember(member)} type="button">
-                            启用
-                          </Button>
-                        )}
-                        {member.role === "space_admin" && member.status === "enabled" && (
-                          <Button variant="actionReset" onClick={() => onDowngradeMember(member.id)} type="button">
-                            降级为教师
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {member.status === "enabled" ? (
+                            <Button
+                              variant="actionClose"
+                              className={isDisabling ? "tenant-action-button--pending" : ""}
+                              disabled={Boolean(pendingMemberAction)}
+                              onClick={() => void runMemberStatusAction(member, "disabled")}
+                              type="button"
+                            >
+                              {isDisabling && <span aria-hidden="true" className="tenant-action-spinner" />}
+                              {isDisabling ? "禁用中..." : "禁用"}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="actionOpen"
+                              className={isEnabling ? "tenant-action-button--pending" : ""}
+                              disabled={Boolean(pendingMemberAction)}
+                              onClick={() => void runMemberStatusAction(member, "enabled")}
+                              type="button"
+                            >
+                              {isEnabling && <span aria-hidden="true" className="tenant-action-spinner" />}
+                              {isEnabling ? "启用中..." : "启用"}
+                            </Button>
+                          )}
+                          {member.role === "space_admin" && member.status === "enabled" && (
+                            <Button variant="actionReset" onClick={() => onDowngradeMember(member.id)} type="button">
+                              降级为教师
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -866,35 +1003,6 @@ function SpaceMemberDrawer({
         </aside>
       )}
 
-      {isAddDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="添加空间成员弹窗">
-          <div className="platform-dialog__card">
-            <h2>添加成员</h2>
-            <form className="platform-form" onSubmit={submitAddMember}>
-              <label className="field">
-                <span>成员姓名</span>
-                <input onChange={(event) => setNewMemberName(event.target.value)} required value={newMemberName} />
-              </label>
-              <label className="field">
-                <span>成员角色</span>
-                <select onChange={(event) => setNewMemberRole(event.target.value as MemberRole)} value={newMemberRole}>
-                  <option value="space_admin">空间管理员</option>
-                  <option value="teacher">教师</option>
-                  <option value="student">学生</option>
-                </select>
-              </label>
-              <div className="platform-dialog__actions">
-                <Button variant="secondary" onClick={() => setIsAddDialogOpen(false)} type="button">
-                  取消
-                </Button>
-                <Button variant="primary" type="submit">
-                  确认添加
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

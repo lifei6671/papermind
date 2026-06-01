@@ -1,12 +1,14 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
+import { useFeedback } from "../../app/feedback-context";
+import { Pagination } from "../../components/ui/Pagination";
 import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { spaceApi as defaultSpaceApi } from "../../api/spaces";
 import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
+import { formatApiErrorMessage } from "../../api/client";
 import { userApi } from "../../api/users";
 import type { TenantUserRow, UserManagementAPI, UserRole } from "../../api/users";
 
@@ -15,6 +17,8 @@ const roleLabels: Record<UserRole, string> = {
   teacher: "教师",
   student: "学生",
 };
+const userPageSize = 5;
+
 
 type UserManagementPageProps = {
   api?: UserManagementAPI;
@@ -35,15 +39,15 @@ export function UserManagementPage({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("student");
-  const [avatarFileName, setAvatarFileName] = useState("");
-  const [avatarResetKey, setAvatarResetKey] = useState(0);
   const [detailTarget, setDetailTarget] = useState<TenantUserRow | null>(null);
   const [disableTarget, setDisableTarget] = useState<TenantUserRow | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [userPage, setUserPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
   const hasTenantContext = isPositiveInteger(tenantID);
+  const { showError } = useFeedback();
 
   useEffect(() => {
     if (!isPositiveInteger(tenantID)) {
@@ -88,6 +92,12 @@ export function UserManagementPage({
       item.status === "enabled" ? "启用" : "禁用",
     ].some((value) => value.toLowerCase().includes(keyword));
   });
+  const totalUserPages = Math.max(1, Math.ceil(filteredUsers.length / userPageSize));
+  const currentUserPage = Math.min(userPage, totalUserPages);
+  const pagedUsers = filteredUsers.slice(
+    (currentUserPage - 1) * userPageSize,
+    currentUserPage * userPageSize,
+  );
 
   async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -103,16 +113,15 @@ export function UserManagementPage({
       username,
       password,
       role,
-      avatarFileName: avatarFileName || "未上传",
+      avatarFileName: "未上传",
     });
 
     setUsers((items) => [...items, nextUser]);
+    setUserPage(Math.ceil((users.length + 1) / userPageSize));
     setName("");
     setUsername("");
     setPassword("");
     setRole("student");
-    setAvatarFileName("");
-    setAvatarResetKey((value) => value + 1);
     setIsCreateDialogOpen(false);
   }
 
@@ -130,19 +139,28 @@ export function UserManagementPage({
       setLoadError("当前账号没有操作人上下文，请重新登录后再禁用用户");
       return;
     }
+    if (disableTarget.id === actorID) {
+      showError("不能禁用当前登录用户");
+      setDisableTarget(null);
+      return;
+    }
 
-    const disabledUser = await api.disableUser({
-      tenantID,
-      actorID,
-      userID: disableTarget.id,
-    });
+    try {
+      const disabledUser = await api.disableUser({
+        tenantID,
+        actorID,
+        userID: disableTarget.id,
+      });
 
-    setUsers((items) =>
-      items.map((item) =>
-        item.id === disableTarget.id ? disabledUser : item,
-      ),
-    );
-    setDisableTarget(null);
+      setUsers((items) =>
+        items.map((item) =>
+          item.id === disableTarget.id ? disabledUser : item,
+        ),
+      );
+      setDisableTarget(null);
+    } catch (error) {
+      showError(formatApiErrorMessage(error, "禁用用户失败"));
+    }
   }
 
   async function enableUser(target: TenantUserRow) {
@@ -166,12 +184,14 @@ export function UserManagementPage({
   }
 
   function handleSearchUsers() {
+    setUserPage(1);
     setAppliedSearchQuery(searchQuery);
   }
 
   function handleRefreshUsers() {
     setSearchQuery("");
     setAppliedSearchQuery("");
+    setUserPage(1);
   }
 
   if (!hasTenantContext) {
@@ -249,7 +269,7 @@ export function UserManagementPage({
             </thead>
             <tbody>
               {filteredUsers.length === 0 && <EmptyTableRow colSpan={7} />}
-              {filteredUsers.map((item) => (
+              {pagedUsers.map((item) => (
                 <tr key={item.id}>
                   <td>{item.name}</td>
                   <td>{item.username}</td>
@@ -271,6 +291,8 @@ export function UserManagementPage({
                     </Button>
                     {item.status === "enabled" ? (
                       <Button
+                        disabled={item.id === actorID}
+                        title={item.id === actorID ? "不能禁用当前登录用户" : undefined}
                         variant="actionClose"
                         onClick={() => setDisableTarget(item)}
                         type="button"
@@ -292,6 +314,12 @@ export function UserManagementPage({
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={currentUserPage}
+          pageSize={userPageSize}
+          total={filteredUsers.length}
+          onPageChange={setUserPage}
+        />
       </Panel>
 
       {isCreateDialogOpen && (
@@ -325,13 +353,6 @@ export function UserManagementPage({
                   <option value="student">学生角色</option>
                 </select>
               </label>
-              <FileUploadField
-                accept={["image/png", "image/jpeg"]}
-                key={avatarResetKey}
-                label="用户头像"
-                maxSizeBytes={1024 * 1024}
-                onFileAccepted={(file) => setAvatarFileName(file.name)}
-              />
               <div className="platform-dialog__actions">
                 <Button variant="secondary" onClick={() => setIsCreateDialogOpen(false)} type="button">
                   取消
