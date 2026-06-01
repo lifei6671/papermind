@@ -59,11 +59,16 @@ type spaceResponse struct {
 }
 
 type spaceMemberResponse struct {
-	ID     uint64 `json:"id"`
-	UserID uint64 `json:"user_id"`
-	Name   string `json:"name"`
-	Role   string `json:"role"`
-	Status string `json:"status"`
+	ID             uint64 `json:"id"`
+	UserID         uint64 `json:"user_id"`
+	Name           string `json:"name"`
+	Username       string `json:"username"`
+	Phone          string `json:"phone"`
+	Email          string `json:"email"`
+	CreatedAt      int64  `json:"created_at"`
+	RegisterMethod string `json:"register_method"`
+	Role           string `json:"role"`
+	Status         string `json:"status"`
 }
 
 type addSpaceMemberRequest struct {
@@ -296,12 +301,12 @@ func (h spaceHandler) updateMember(c *gin.Context) {
 			return
 		}
 	}
-	member, err := h.members.FindMember(c.Request.Context(), tenantID, spaceID, userID)
+	member, err := h.findMemberRecordResponse(c.Request.Context(), tenantID, spaceID, userID)
 	if err != nil {
 		writeSpaceServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, response.OK(spaceMemberToResponse(member, "")))
+	c.JSON(http.StatusOK, response.OK(member))
 }
 
 func (h spaceHandler) removeMember(c *gin.Context) {
@@ -403,6 +408,19 @@ func (h spaceHandler) spaceToResponse(ctx context.Context, space servicespace.Sp
 	return result, nil
 }
 
+func (h spaceHandler) findMemberRecordResponse(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (spaceMemberResponse, error) {
+	members, err := h.members.ListMemberNames(ctx, tenantID, spaceID)
+	if err != nil {
+		return spaceMemberResponse{}, err
+	}
+	for _, member := range members {
+		if member.UserID == userID {
+			return spaceMemberNameToResponse(member), nil
+		}
+	}
+	return spaceMemberResponse{}, servicespace.ErrMemberNotFound
+}
+
 func spaceMemberNamesToResponse(members []dbdao.SpaceMemberName) []spaceMemberResponse {
 	items := make([]spaceMemberResponse, 0, len(members))
 	for _, member := range members {
@@ -413,11 +431,16 @@ func spaceMemberNamesToResponse(members []dbdao.SpaceMemberName) []spaceMemberRe
 
 func spaceMemberNameToResponse(member dbdao.SpaceMemberName) spaceMemberResponse {
 	return spaceMemberResponse{
-		ID:     member.ID,
-		UserID: member.UserID,
-		Name:   displaySpaceMemberName(member.UserID, member.Name),
-		Role:   member.Role,
-		Status: member.Status,
+		ID:             member.ID,
+		UserID:         member.UserID,
+		Name:           displaySpaceMemberName(member.UserID, member.Name),
+		Username:       member.Username,
+		Phone:          member.Phone,
+		Email:          member.Email,
+		CreatedAt:      member.CreatedAt,
+		RegisterMethod: member.RegisterMethod,
+		Role:           member.Role,
+		Status:         member.Status,
 	}
 }
 

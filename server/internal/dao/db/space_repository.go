@@ -456,15 +456,13 @@ func (r *SpaceRepository) updateMember(ctx context.Context, tenantID uint64, spa
 		if err := r.lockSpaceAdminRows(ctx, tx, tenantID, spaceID); err != nil {
 			return err
 		}
-		requiresEnabledUser := false
 		if _, ok := updates[SpaceMemberColumns.RoleInSpace]; ok {
-			requiresEnabledUser = true
+			if err := r.validateEnabledTenantUser(ctx, tx, tenantID, userID); err != nil {
+				return err
+			}
 		}
 		if status, ok := updates[SpaceMemberColumns.Status]; ok && status == servicespace.StatusEnabled {
-			requiresEnabledUser = true
-		}
-		if requiresEnabledUser {
-			if err := r.validateEnabledTenantUser(ctx, tx, tenantID, userID); err != nil {
+			if err := r.validateTenantUserExists(ctx, tx, tenantID, userID); err != nil {
 				return err
 			}
 		}
@@ -548,6 +546,23 @@ func (r *SpaceRepository) SpaceExists(ctx context.Context, tenantID uint64, spac
 	return r.spaceEnabled(ctx, r.db, tenantID, spaceID)
 }
 
+func (r *SpaceRepository) validateTenantUserExists(ctx context.Context, gormDB *gorm.DB, tenantID uint64, userID uint64) error {
+	var count int64
+	err := gormDB.WithContext(ctx).Table("tenant_user_memberships AS tum").
+		Joins("JOIN users ON users.id = tum.user_id").
+		Where("tum."+UserRoleColumns.TenantID+" = ?", tenantID).
+		Where("tum."+UserRoleColumns.UserID+" = ?", userID).
+		Where("users."+UserColumns.DeletedAt+" = ?", 0).
+		Count(&count).Error
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return servicespace.ErrMemberUserUnavailable
+	}
+	return nil
+}
+
 func (r *SpaceRepository) validateEnabledTenantUser(ctx context.Context, gormDB *gorm.DB, tenantID uint64, userID uint64) error {
 	var count int64
 	err := gormDB.WithContext(ctx).Table("tenant_user_memberships AS tum").
@@ -570,7 +585,7 @@ func (r *SpaceRepository) validateEnabledTenantUser(ctx context.Context, gormDB 
 func (r *SpaceRepository) ListMemberNames(ctx context.Context, tenantID uint64, spaceID uint64) ([]SpaceMemberName, error) {
 	var rows []SpaceMemberName
 	err := r.db.WithContext(ctx).Table(SpaceMemberDO{}.TableName()+" AS sm").
-		Select("sm.id, sm.tenant_id, sm.space_id, sm.user_id, u.real_name AS name, sm.role_in_space AS role, sm.status").
+		Select("sm.id, sm.tenant_id, sm.space_id, sm.user_id, u.real_name AS name, u.username, u.phone, u.email, u.created_at, 'tenant_account' AS register_method, sm.role_in_space AS role, sm.status").
 		Joins("LEFT JOIN users AS u ON u.id = sm.user_id AND u.deleted_at = 0").
 		Where("sm.tenant_id = ?", tenantID).
 		Where("sm.space_id = ?", spaceID).
@@ -581,13 +596,18 @@ func (r *SpaceRepository) ListMemberNames(ctx context.Context, tenantID uint64, 
 }
 
 type SpaceMemberName struct {
-	ID       uint64 `gorm:"column:id"`
-	TenantID uint64 `gorm:"column:tenant_id"`
-	SpaceID  uint64 `gorm:"column:space_id"`
-	UserID   uint64 `gorm:"column:user_id"`
-	Name     string `gorm:"column:name"`
-	Role     string `gorm:"column:role"`
-	Status   string `gorm:"column:status"`
+	ID             uint64 `gorm:"column:id"`
+	TenantID       uint64 `gorm:"column:tenant_id"`
+	SpaceID        uint64 `gorm:"column:space_id"`
+	UserID         uint64 `gorm:"column:user_id"`
+	Name           string `gorm:"column:name"`
+	Username       string `gorm:"column:username"`
+	Phone          string `gorm:"column:phone"`
+	Email          string `gorm:"column:email"`
+	CreatedAt      int64  `gorm:"column:created_at"`
+	RegisterMethod string `gorm:"column:register_method"`
+	Role           string `gorm:"column:role"`
+	Status         string `gorm:"column:status"`
 }
 
 type entryMembershipRow struct {

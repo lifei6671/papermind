@@ -59,6 +59,27 @@ test("真实空间成员入口由授权空间列表驱动", () => {
   expect(routeVisibleForRole(spaceMemberRoute!, "teacher", [])).toBe(false);
   expect(routeVisibleForRole(spaceMemberRoute!, "tenant_admin", [])).toBe(false);
 });
+test("概览入口对管理端角色显示在左侧菜单", () => {
+  const route = buildAdminRoutes({
+    displayName: "租户管理员",
+    role: "tenant_admin",
+    tenantID: 10,
+    userID: 2,
+  }).find((item) => item.path === "/")!;
+  const teacherSpaces: ProfileSpaceAuthorization[] = [{
+    id: 1,
+    tenantID: 10,
+    spaceID: 301,
+    role: "teacher",
+    status: "enabled",
+  }];
+
+  expect(route.group).toBe("overview");
+  expect(routeVisibleForRole(route, "platform_admin")).toBe(true);
+  expect(routeVisibleForRole(route, "tenant_admin")).toBe(true);
+  expect(routeVisibleForRole(route, "teacher", teacherSpaces, { tenantID: 10, spaceID: 301 })).toBe(true);
+  expect(routeVisibleForRole(route, "student")).toBe(false);
+});
 
 test("空间管理员授权可看到空间考试业务入口", () => {
   const routes = buildAdminRoutes({

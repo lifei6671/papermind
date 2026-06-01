@@ -7,6 +7,11 @@ export type SpaceMember = {
   id: number;
   userID: number;
   name: string;
+  username?: string;
+  phone?: string;
+  email?: string;
+  registeredAt?: number;
+  registerMethod?: string;
   role: MemberRole;
   status: "enabled" | "disabled";
 };
@@ -72,6 +77,11 @@ type SpaceMemberAPIResponse = {
   id: number;
   user_id: number;
   name: string;
+  username?: string;
+  phone?: string;
+  email?: string;
+  created_at?: number;
+  register_method?: string;
   role: MemberRole;
   status: "enabled" | "disabled";
 };
@@ -167,6 +177,11 @@ function mapSpaceMemberResponse(member: SpaceMemberAPIResponse): SpaceMember {
     id: member.id,
     userID: member.user_id,
     name: member.name,
+    username: member.username,
+    phone: member.phone,
+    email: member.email,
+    registeredAt: member.created_at,
+    registerMethod: member.register_method,
     role: member.role,
     status: member.status,
   };

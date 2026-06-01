@@ -202,6 +202,37 @@ func (h userHandler) disable(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
 }
 
+func (h userHandler) enable(c *gin.Context) {
+	userID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "用户 ID 必须是正整数"))
+		return
+	}
+	var request disableUserRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.service)
+	if !ok {
+		return
+	}
+	if err := h.service.Enable(c.Request.Context(), servicetenantuser.EnableInput{
+		TenantID: principal.TenantID,
+		ActorID:  principal.UserID,
+		TargetID: userID,
+	}); err != nil {
+		writeUserServiceError(c, err)
+		return
+	}
+	user, err := h.service.Get(c.Request.Context(), principal.TenantID, userID)
+	if err != nil {
+		writeUserServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
+}
+
 func (h userHandler) delete(c *gin.Context) {
 	userID, err := readUintParam(c, "id")
 	if err != nil {

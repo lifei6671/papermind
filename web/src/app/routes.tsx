@@ -34,7 +34,7 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { Panel } from "../components/ui/Panel";
 import { TenantScopedRoute } from "./TenantScopedRoute";
 
-export type AdminRouteGroup = "platform" | "tenant" | "exam" | "hidden";
+export type AdminRouteGroup = "overview" | "platform" | "tenant" | "exam" | "hidden";
 
 export type AdminRoute = {
   path: string;
@@ -76,8 +76,10 @@ export function buildAdminRoutes(
     label: "概览",
     description: "租户、考试、阅卷和成绩风险总览",
     icon: BarChart3,
-    element: <DashboardPage />,
-    group: "hidden",
+    element: <DashboardPage profileSpaces={profileSpaces} selectedSpaceID={selectedSpaceID} user={user} />,
+    group: "overview",
+    menuRoles: ["platform_admin", "tenant_admin", "teacher"],
+    spaceMemberRoles: ["space_admin", "teacher"],
   },
   {
     path: "/tenants",

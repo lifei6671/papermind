@@ -254,7 +254,7 @@ test("租户用户直接访问平台治理路由会回到概览且不触发平�
 
   renderApp(["/tenants"]);
 
-  expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "教师工作概览" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "租户管理" })).not.toBeInTheDocument();
   expect(fetchMock).not.toHaveBeenCalled();
 });

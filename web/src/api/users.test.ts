@@ -87,6 +87,41 @@ describe("user api", () => {
     );
   });
 
+
+  test("启用用户会携带操作者 ID", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          id: 21,
+          tenant_id: 10,
+          username: "student01",
+          real_name: "张三",
+          avatar_url: "avatar.png",
+          role: "student",
+          status: "enabled",
+        },
+      })),
+    );
+    const api = createUserAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.enableUser({ tenantID: 10, actorID: 99, userID: 21 })).resolves.toMatchObject({
+      id: 21,
+      status: "enabled",
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/tenant/users/21/enable",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          tenant_id: 10,
+          actor_id: 99,
+        }),
+      }),
+    );
+  });
+
   test("禁用用户会携带操作者 ID", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({

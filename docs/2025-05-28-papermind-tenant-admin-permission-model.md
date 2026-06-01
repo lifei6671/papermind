@@ -777,7 +777,7 @@ papers.space_id = NULL 表示租户公共试卷。
 
 `teacher` 是租户级角色标签，实际业务范围来自 `space_members`。教师没有加入任何启用空间时是合法状态，但该教师没有题库、试卷、考试、阅卷等实际操作权限。
 
-`tenant_admin` 创建 `teacher` 用户时，只创建租户用户和租户级 `teacher` 角色，不自动加入任何空间。教师加入空间必须通过空间成员接口显式分配；空间成员写入必须校验目标空间启用且未删除、目标用户属于当前租户且启用未删除，并且空间内角色只能是 `space_admin`、`teacher` 或 `student`。
+`tenant_admin` 创建 `teacher` 用户时，只创建租户用户和租户级 `teacher` 角色，不自动加入任何空间。教师加入空间必须通过空间成员接口显式分配；空间成员写入必须校验目标空间启用且未删除；新增成员和修改空间身份时，目标用户还必须属于当前租户且启用未删除，并且空间内角色只能是 `space_admin`、`teacher` 或 `student`。启用已有空间成员只恢复成员关系状态，允许租户用户账号暂时停用，但有效授权查询仍必须过滤未启用账号。
 
 创建或编辑教师时，首版不强制绑定空间；前端用户详情和空间分配入口必须提示：
 
@@ -851,6 +851,7 @@ POST   /api/v1/platform/tenant-admins/:id/reset-password
 | `DELETE /api/v1/spaces/:id/members/:user_id` | `DELETE /api/v1/tenant/spaces/:id/members/:user_id` | `tenant_admin` / 当前空间 `space_admin` | 移除空间成员前必须校验空间管理员不变式。 |
 | `GET/POST /api/v1/users` | `/api/v1/tenant/users` | `tenant_admin` | 租户管理员管理本租户用户。 |
 | `POST /api/v1/users/:id/disable` | `/api/v1/tenant/users/:id/disable` | `tenant_admin` | 禁用用户前校验租户管理员和空间管理员不变式。 |
+| `POST /api/v1/users/:id/enable` | `/api/v1/tenant/users/:id/enable` | `tenant_admin` | 启用已禁用的租户用户，恢复其租户成员状态。 |
 | `POST /api/v1/uploads` | `/api/v1/uploads` | `platform_admin` / `tenant_admin` | 当前通用上传接口同时承载平台租户 Logo 和租户内头像、空间 Logo；平台管理员只用于平台租户管理上传，租户用户按业务用途收口。 |
 | `GET/POST /api/v1/questions` | `/api/v1/tenant/questions` | `tenant_admin` / `space_admin` / `teacher` | 题库操作必须受租户或授权空间限制。 |
 | `POST /api/v1/questions/import` | `/api/v1/tenant/questions/import` | `tenant_admin` / `space_admin` / `teacher` | 导入题目按题库权限校验。 |

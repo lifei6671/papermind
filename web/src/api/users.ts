@@ -22,7 +22,7 @@ export type CreateTenantUserInput = {
   avatarFileName: string;
 };
 
-export type DisableTenantUserInput = {
+export type UpdateTenantUserStatusInput = {
   tenantID: number;
   actorID: number;
   userID: number;
@@ -35,7 +35,8 @@ export type TenantUserListResult = {
 export type UserManagementAPI = {
   listUsers(tenantID: number): Promise<TenantUserListResult>;
   createUser(input: CreateTenantUserInput): Promise<TenantUserRow>;
-  disableUser(input: DisableTenantUserInput): Promise<TenantUserRow>;
+  disableUser(input: UpdateTenantUserStatusInput): Promise<TenantUserRow>;
+  enableUser(input: UpdateTenantUserStatusInput): Promise<TenantUserRow>;
 };
 
 type TenantUserAPIResponse = {
@@ -73,6 +74,13 @@ export function createUserAPI(apiClient: ApiClient): UserManagementAPI {
     },
     async disableUser(input) {
       const data = await apiClient.post<TenantUserAPIResponse>(`/api/v1/tenant/users/${input.userID}/disable`, {
+        tenant_id: input.tenantID,
+        actor_id: input.actorID,
+      });
+      return mapUserResponse(data);
+    },
+    async enableUser(input) {
+      const data = await apiClient.post<TenantUserAPIResponse>(`/api/v1/tenant/users/${input.userID}/enable`, {
         tenant_id: input.tenantID,
         actor_id: input.actorID,
       });

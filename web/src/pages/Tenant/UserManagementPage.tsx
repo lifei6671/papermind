@@ -145,6 +145,26 @@ export function UserManagementPage({
     setDisableTarget(null);
   }
 
+  async function enableUser(target: TenantUserRow) {
+    if (!isPositiveInteger(tenantID)) {
+      setLoadError("当前账号没有租户上下文，请先登录租户账号后再启用用户");
+      return;
+    }
+
+    if (!isPositiveInteger(actorID)) {
+      setLoadError("当前账号没有操作人上下文，请重新登录后再启用用户");
+      return;
+    }
+
+    const enabledUser = await api.enableUser({
+      tenantID,
+      actorID,
+      userID: target.id,
+    });
+
+    setUsers((items) => items.map((item) => (item.id === target.id ? enabledUser : item)));
+  }
+
   function handleSearchUsers() {
     setAppliedSearchQuery(searchQuery);
   }
@@ -249,14 +269,23 @@ export function UserManagementPage({
                     >
                       查看详情
                     </Button>
-                    <Button
-                      variant="actionClose"
-                      disabled={item.status === "disabled"}
-                      onClick={() => setDisableTarget(item)}
-                      type="button"
-                    >
-                      禁用用户
-                    </Button>
+                    {item.status === "enabled" ? (
+                      <Button
+                        variant="actionClose"
+                        onClick={() => setDisableTarget(item)}
+                        type="button"
+                      >
+                        禁用用户
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="actionOpen"
+                        onClick={() => void enableUser(item)}
+                        type="button"
+                      >
+                        启用用户
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ))}

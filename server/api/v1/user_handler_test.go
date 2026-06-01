@@ -82,6 +82,16 @@ func TestUserAPIRoutesListCreateAndDisableWithSQLite(t *testing.T) {
 		t.Fatalf("expected disabled user, got %#v", disableBody.Data)
 	}
 
+	enableRecorder := httptest.NewRecorder()
+	router.ServeHTTP(enableRecorder, authorizedRequest(http.MethodPost, "/api/v1/users/20/enable", []byte(`{"tenant_id":10,"actor_id":99}`), authHeader))
+	if enableRecorder.Code != http.StatusOK {
+		t.Fatalf("enable status = %d, body = %s", enableRecorder.Code, enableRecorder.Body.String())
+	}
+	enableBody := decodeExamAPIResponse[userResponse](t, enableRecorder.Body.Bytes())
+	if enableBody.Data.Status != "enabled" {
+		t.Fatalf("expected enabled user, got %#v", enableBody.Data)
+	}
+
 	deleteRecorder := httptest.NewRecorder()
 	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/users/21?tenant_id=10", nil, authHeader))
 	if deleteRecorder.Code != http.StatusOK {

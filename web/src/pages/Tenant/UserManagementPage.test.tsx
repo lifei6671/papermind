@@ -45,6 +45,15 @@ function createUserAPI() {
       avatarFileName: "li.png",
       status: "disabled",
     }),
+    enableUser: vi.fn().mockResolvedValue({
+      id: 21,
+      tenantID: 10,
+      name: "张同学",
+      username: "zhang.student",
+      role: "student",
+      avatarFileName: "zhang.png",
+      status: "enabled",
+    }),
   };
 }
 
@@ -193,6 +202,21 @@ test("租户管理员可以搜索和刷新用户列表", async () => {
   expect(screen.getByText("李老师")).toBeInTheDocument();
   expect(screen.getByText("张同学")).toBeInTheDocument();
 });
+
+test("禁用状态用户的操作按钮改为启用用户并真实调用接口", async () => {
+  const user = userEvent.setup();
+  const api = createUserAPI();
+  render(<UserManagementPage api={api} spaceApi={createSpaceAPI()} tenantID={10} actorID={99} />);
+
+  const disabledUserRow = await screen.findByRole("row", { name: /张同学/ });
+
+  expect(within(disabledUserRow).queryByRole("button", { name: "禁用用户" })).not.toBeInTheDocument();
+  await user.click(within(disabledUserRow).getByRole("button", { name: "启用用户" }));
+
+  expect(api.enableUser).toHaveBeenCalledWith({ tenantID: 10, actorID: 99, userID: 21 });
+  expect(await within(disabledUserRow).findByText("启用")).toBeInTheDocument();
+});
+
 
 test("用户列表查询不到数据时显示无记录", async () => {
   const user = userEvent.setup();

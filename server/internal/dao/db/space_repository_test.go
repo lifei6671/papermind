@@ -72,6 +72,43 @@ func TestSpaceRepositoryAllowsChangingNonLastSpaceAdmin(t *testing.T) {
 	}
 }
 
+func TestSpaceRepositoryEnableMemberAllowsInactiveTenantUserMembership(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedSpaceAdminInvariantData(t, gormDB, true)
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 21).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable tenant user membership: %v", err)
+	}
+	if err := gormDB.Table("space_members").
+		Where("tenant_id = ? AND space_id = ? AND user_id = ?", 10, 301, 21).
+		Update("status", servicespace.StatusDisabled).Error; err != nil {
+		t.Fatalf("disable space member: %v", err)
+	}
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	if err := repo.EnableMember(context.Background(), 10, 301, 21); err != nil {
+		t.Fatalf("EnableMember returned error: %v", err)
+	}
+	var status string
+	if err := gormDB.Table("space_members").
+		Select("status").
+		Where("tenant_id = ? AND space_id = ? AND user_id = ?", 10, 301, 21).
+		Scan(&status).Error; err != nil {
+		t.Fatalf("query space member status: %v", err)
+	}
+	if status != servicespace.StatusEnabled {
+		t.Fatalf("expected space member enabled, got %q", status)
+	}
+	members, err := repo.ListEffectiveMembershipsForUser(context.Background(), 10, 21)
+	if err != nil {
+		t.Fatalf("ListEffectiveMembershipsForUser returned error: %v", err)
+	}
+	if len(members) != 0 {
+		t.Fatalf("inactive tenant user must not gain effective memberships, got %#v", members)
+	}
+}
+
 func TestSpaceRepositoryRejectsMissingMemberChanges(t *testing.T) {
 	for _, tc := range []struct {
 		name string

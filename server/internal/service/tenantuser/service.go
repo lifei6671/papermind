@@ -128,6 +128,12 @@ type DisableInput struct {
 	TargetID uint64 // 将被禁用的用户 ID。
 }
 
+type EnableInput struct {
+	TenantID uint64 // 所属租户 ID。
+	ActorID  uint64 // 执行启用操作的用户 ID。
+	TargetID uint64 // 将被启用的用户 ID。
+}
+
 type DeleteInput struct {
 	TenantID uint64 // 所属租户 ID。
 	ActorID  uint64 // 执行删除操作的用户 ID。
@@ -380,6 +386,10 @@ func (s *Service) Disable(ctx context.Context, input DisableInput) error {
 		return err
 	}
 	return s.repo.UpdateStatus(ctx, input.TenantID, input.TargetID, StatusDisabled)
+}
+
+func (s *Service) Enable(ctx context.Context, input EnableInput) error {
+	return s.repo.UpdateStatus(ctx, input.TenantID, input.TargetID, StatusEnabled)
 }
 
 func (s *Service) Delete(ctx context.Context, input DeleteInput) error {

@@ -37,6 +37,12 @@ func TestSpaceAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	if space.Members[0].Name != "李老师" || space.Members[0].Role != "space_admin" {
 		t.Fatalf("expected admin member from users join, got %#v", space.Members)
 	}
+	if space.Members[0].Username != "teacher_li" || space.Members[0].Phone != "13800000020" || space.Members[0].Email != "li@example.test" {
+		t.Fatalf("expected member user details from users join, got %#v", space.Members[0])
+	}
+	if space.Members[0].CreatedAt != fixedAPINow || space.Members[0].RegisterMethod != "tenant_account" {
+		t.Fatalf("expected member registration metadata, got %#v", space.Members[0])
+	}
 
 	payload := []byte(`{
 		"tenant_id": 10,
@@ -275,6 +281,9 @@ func TestSpaceMemberRoutesAllowCurrentSpaceAdminOnlyWithSQLite(t *testing.T) {
 	if len(listBody.Data) != 2 {
 		t.Fatalf("expected own space members, got %#v", listBody.Data)
 	}
+	if listBody.Data[1].Username != "student_zhang" || listBody.Data[1].Email != "zhang@example.test" {
+		t.Fatalf("expected list members to include user detail fields, got %#v", listBody.Data[1])
+	}
 
 	addRecorder := httptest.NewRecorder()
 	router.ServeHTTP(addRecorder, authorizedRequest(http.MethodPost, "/api/v1/spaces/100/members", []byte(`{
@@ -418,6 +427,32 @@ func TestTenantAdminCanManageSpaceMembersWithSQLite(t *testing.T) {
 	updateBody := decodeExamAPIResponse[spaceMemberResponse](t, updateRecorder.Body.Bytes())
 	if updateBody.Data.UserID != 22 || updateBody.Data.Role != "teacher" {
 		t.Fatalf("unexpected tenant admin update response: %#v", updateBody.Data)
+	}
+
+	disableRecorder := httptest.NewRecorder()
+	router.ServeHTTP(disableRecorder, authorizedRequest(http.MethodPut, "/api/v1/spaces/100/members/22", []byte(`{
+		"tenant_id": 10,
+		"status": "disabled"
+	}`), adminAuthHeader))
+	if disableRecorder.Code != http.StatusOK {
+		t.Fatalf("tenant admin disable member status = %d, body = %s", disableRecorder.Code, disableRecorder.Body.String())
+	}
+	disableBody := decodeExamAPIResponse[spaceMemberResponse](t, disableRecorder.Body.Bytes())
+	if disableBody.Data.UserID != 22 || disableBody.Data.Status != "disabled" {
+		t.Fatalf("unexpected tenant admin disable response: %#v", disableBody.Data)
+	}
+
+	enableRecorder := httptest.NewRecorder()
+	router.ServeHTTP(enableRecorder, authorizedRequest(http.MethodPut, "/api/v1/spaces/100/members/22", []byte(`{
+		"tenant_id": 10,
+		"status": "enabled"
+	}`), adminAuthHeader))
+	if enableRecorder.Code != http.StatusOK {
+		t.Fatalf("tenant admin enable member status = %d, body = %s", enableRecorder.Code, enableRecorder.Body.String())
+	}
+	enableBody := decodeExamAPIResponse[spaceMemberResponse](t, enableRecorder.Body.Bytes())
+	if enableBody.Data.UserID != 22 || enableBody.Data.Status != "enabled" {
+		t.Fatalf("unexpected tenant admin enable response: %#v", enableBody.Data)
 	}
 
 	removeRecorder := httptest.NewRecorder()
@@ -589,6 +624,52 @@ func TestSpaceMemberRoutesEnableDisabledMemberWithSQLite(t *testing.T) {
 	body := decodeExamAPIResponse[spaceMemberResponse](t, recorder.Body.Bytes())
 	if body.Data.UserID != 21 || body.Data.Status != "enabled" {
 		t.Fatalf("expected enabled member response, got %#v", body.Data)
+	}
+
+	var status string
+	if err := gormDB.Table("space_members").
+		Select("status").
+		Where("tenant_id = ? AND space_id = ? AND user_id = ?", 10, 100, 21).
+		Scan(&status).Error; err != nil {
+		t.Fatalf("query member status: %v", err)
+	}
+	if status != "enabled" {
+		t.Fatalf("expected member status enabled, got %q", status)
+	}
+}
+
+func TestSpaceMemberRoutesEnableInactiveTenantUserMemberWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	if err := gormDB.Table("tenant_user_memberships").
+		Where("tenant_id = ? AND user_id = ?", 10, 21).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable tenant user fixture: %v", err)
+	}
+	if err := gormDB.Table("space_members").
+		Where("tenant_id = ? AND space_id = ? AND user_id = ?", 10, 100, 21).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable member fixture: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	adminAuthHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPut, "/api/v1/tenant/spaces/100/members/21", []byte(`{
+		"tenant_id": 10,
+		"status": "enabled"
+	}`), adminAuthHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("enable inactive tenant user member status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[spaceMemberResponse](t, recorder.Body.Bytes())
+	if body.Data.UserID != 21 || body.Data.Status != "enabled" || body.Data.Username != "student_zhang" {
+		t.Fatalf("expected enabled inactive tenant user member response, got %#v", body.Data)
 	}
 
 	var status string

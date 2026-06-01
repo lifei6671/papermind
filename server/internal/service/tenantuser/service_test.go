@@ -313,6 +313,18 @@ func TestDisableValidatesSpaceAdminInvariantBeforeStatusChange(t *testing.T) {
 	}
 }
 
+func TestEnableUpdatesTenantUserStatus(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(ServiceOptions{Repo: repo, Now: fixedNow})
+
+	if err := svc.Enable(context.Background(), EnableInput{TenantID: 10, ActorID: 99, TargetID: 20}); err != nil {
+		t.Fatalf("Enable returned error: %v", err)
+	}
+	if repo.updatedStatusTenantID != 10 || repo.updatedStatusUserID != 20 || repo.updatedStatus != StatusEnabled {
+		t.Fatalf("expected enabled status update, got tenant=%d user=%d status=%q", repo.updatedStatusTenantID, repo.updatedStatusUserID, repo.updatedStatus)
+	}
+}
+
 func TestDeleteRejectsSelf(t *testing.T) {
 	svc := NewService(ServiceOptions{Repo: &fakeRepository{}, Now: fixedNow})
 

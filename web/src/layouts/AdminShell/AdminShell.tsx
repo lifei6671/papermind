@@ -10,6 +10,7 @@ type AdminShellProps = {
 };
 
 const groupLabels: Record<Exclude<AdminRouteGroup, "hidden">, string> = {
+  overview: "总览",
   platform: "平台运营",
   tenant: "租户空间",
   exam: "考试业务",
@@ -127,10 +128,10 @@ function routeLinkTarget(route: AdminRoute, currentSearch: string) {
   const tenantID = currentParams.get("tenant_id");
   const spaceID = currentParams.get("space_id");
   const examID = currentParams.get("exam_id");
-  if ((route.group === "tenant" || route.group === "exam") && tenantID) {
+  if ((route.group === "overview" || route.group === "tenant" || route.group === "exam") && tenantID) {
     nextParams.set("tenant_id", tenantID);
   }
-  if (route.group === "exam" && spaceID) {
+  if ((route.group === "overview" || route.group === "exam") && spaceID) {
     nextParams.set("space_id", spaceID);
   }
   if (routeNeedsExamContext(route.path) && examID) {

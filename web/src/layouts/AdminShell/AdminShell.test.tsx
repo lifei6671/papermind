@@ -101,6 +101,7 @@ test("阅卷和成绩导航保留当前考试 ID", () => {
     </SessionProvider>,
   );
 
+  expect(screen.getByRole("link", { name: /概览/ })).toHaveAttribute("href", "/?tenant_id=10&space_id=301");
   expect(screen.getByRole("link", { name: /阅卷中心/ })).toHaveAttribute(
     "href",
     "/grading?tenant_id=10&space_id=301&exam_id=42",
@@ -167,6 +168,7 @@ test("租户管理员展示租户空间菜单", () => {
   );
 
   expect(screen.getByText("租户空间")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /概览/ })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /空间管理/ })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /用户管理/ })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /空间成员/ })).not.toBeInTheDocument();
@@ -231,6 +233,7 @@ test("教师展示考试业务菜单", () => {
   );
 
   expect(screen.getByText("考试业务")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /概览/ })).toBeInTheDocument();
   expect(screen.queryByText("平台运营")).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /租户管理/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /平台配置/ })).not.toBeInTheDocument();
