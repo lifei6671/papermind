@@ -143,6 +143,60 @@ describe("examApi", () => {
       analysisVisible: true,
     });
   });
+
+  test("开始考试和保存填空题答案时保留 blank_count 与多空 JSON 文本", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/exam-entry/exams/1/attempts/start")) {
+        return jsonResponse({
+          attempt: { id: 99, answer_deadline: 1779795600000 },
+          exam_token: "exam-token",
+          questions: [{
+            id: 9002,
+            sort_order: 2,
+            section: { name: "三、填空题", instructions: "每题 2 分" },
+            question: { title: "填写两个目录", type: "fill_blank", blank_count: 2 },
+            options: [],
+            score: "2",
+          }],
+        });
+      }
+      if (url.endsWith("/api/v1/exam-entry/attempts/99/answers/9002")) {
+        expect(JSON.parse(init?.body as string)).toEqual({
+          tenant_id: 10,
+          exam_token: "exam-token",
+          question_type: "fill_blank",
+          option_ids: [],
+          text: "[\"/home\",\"/root\"]",
+        });
+        return jsonResponse({ saved: true, updated_at: 1779792000000 });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const started = await api.startAttempt({ tenantID: 10, examID: 1 });
+    await api.saveAnswer({
+      tenantID: 10,
+      attemptID: 99,
+      attemptQuestionID: 9002,
+      examToken: "exam-token",
+      questionType: "fill_blank",
+      text: "[\"/home\",\"/root\"]",
+    });
+
+    expect(started.questions[0]).toEqual({
+      id: 9002,
+      number: 2,
+      sectionTitle: "三、填空题",
+      sectionSubtitle: "每题 2 分",
+      type: "fill_blank",
+      stem: "填写两个目录",
+      score: 2,
+      options: [],
+      blankCount: 2,
+    });
+  });
   test("交卷请求支持自动交卷事件类型", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe("POST");

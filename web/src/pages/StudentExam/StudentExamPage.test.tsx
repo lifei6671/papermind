@@ -184,6 +184,39 @@ describe("StudentExamPage", () => {
     }));
   });
 
+  test("填空题会按 blankCount 渲染多个输入框并提交 JSON 数组答案", async () => {
+    const user = userEvent.setup();
+    const api = createStudentExamApiDouble({
+      questions: [
+        createStudentExamQuestion({
+          id: 9002,
+          number: 2,
+          type: "fill_blank",
+          stem: "填写两个目录",
+          options: [],
+          blankCount: 2,
+        }),
+      ],
+    });
+
+    renderStudentExam(<StudentExamPage api={api} tenantID={10} examID={1} userID={20} />);
+
+    const firstBlank = await screen.findByLabelText("第 1 空答案");
+    const secondBlank = screen.getByLabelText("第 2 空答案");
+    await user.type(firstBlank, "/home");
+    await user.type(secondBlank, "/root");
+
+    await waitFor(() => expect(api.saveAnswer).toHaveBeenLastCalledWith({
+      tenantID: 10,
+      attemptID: 99,
+      attemptQuestionID: 9002,
+      examToken: "exam-token",
+      questionType: "fill_blank",
+      optionIDs: [],
+      text: "[\"/home\",\"/root\"]",
+    }));
+  });
+
   test("答题页不展示伪造的固定考生身份", async () => {
     const user = userEvent.setup();
     const api = createStudentExamApiDouble();
@@ -281,6 +314,7 @@ function createStudentExamQuestion(overrides: Partial<StudentExamQuestion> = {})
       { id: 101, key: "A", content: "正确选项" },
       { id: 102, key: "B", content: "干扰项" },
     ],
+    blankCount: 1,
     ...overrides,
   };
 }

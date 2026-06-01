@@ -50,10 +50,13 @@ func TestSaveAnswerValidatesExamTokenDeadlineAndNormalizesAnswers(t *testing.T) 
 		AttemptQuestionID: 9002,
 		ExamToken:         "exam-token",
 		QuestionType:      QuestionTypeFillBlank,
-		Text:              "go.mod",
+		Text:              `["go.mod","go.sum"]`,
 	})
 	if err != nil {
 		t.Fatalf("SaveAnswer should allow transport grace: %v", err)
+	}
+	if repo.savedAnswer.AnswerContent != `["go.mod","go.sum"]` {
+		t.Fatalf("expected fill blank answer to keep structured JSON text, got %q", repo.savedAnswer.AnswerContent)
 	}
 
 	repo.now = fixedUnixMilli + 30*minuteMillis + answerTransportGraceMillis + 1
@@ -121,6 +124,36 @@ func TestSaveAnswerUsesAttemptQuestionSnapshotType(t *testing.T) {
 	}
 	if repo.savedAnswer.AnswerContent != "7" {
 		t.Fatalf("expected answer normalized by snapshot question type, got %q", repo.savedAnswer.AnswerContent)
+	}
+}
+
+func TestGradeAnswerSupportsMultiBlankJSONAnswers(t *testing.T) {
+	result, score, err := gradeAnswer(AnswerForGrading{
+		AttemptQuestionID:     1001,
+		QuestionType:          QuestionTypeFillBlank,
+		QuestionScore:         "4",
+		AnswerContent:         `[" /home "," /root "]`,
+		CorrectAnswerSnapshot: `{"option_ids":[],"text":"[\"/home\",\"/root\"]"}`,
+	})
+	if err != nil {
+		t.Fatalf("gradeAnswer returned error: %v", err)
+	}
+	if result.Score != "4" || result.GradingStatus != GradingStatusAuto || score != 4 {
+		t.Fatalf("expected multi-blank correct answer to get full score, result=%#v score=%v", result, score)
+	}
+
+	result, score, err = gradeAnswer(AnswerForGrading{
+		AttemptQuestionID:     1002,
+		QuestionType:          QuestionTypeFillBlank,
+		QuestionScore:         "4",
+		AnswerContent:         `["/home","/usr"]`,
+		CorrectAnswerSnapshot: `{"option_ids":[],"text":"[\"/home\",\"/root\"]"}`,
+	})
+	if err != nil {
+		t.Fatalf("gradeAnswer returned error: %v", err)
+	}
+	if result.Score != "0" || score != 0 {
+		t.Fatalf("expected wrong multi-blank answer to score 0, result=%#v score=%v", result, score)
 	}
 }
 

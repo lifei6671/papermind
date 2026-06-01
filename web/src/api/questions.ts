@@ -19,6 +19,7 @@ export type QuestionRow = {
   tags: string[];
   scoreDefault?: string;
   standardAnswer?: string;
+  blankAnswers?: string[];
   referenceAnswer?: string;
   authorName?: string;
   authorRole?: string;
@@ -238,6 +239,7 @@ function questionMutationBody(input: CreateQuestionInput) {
 
 function mapQuestionResponse(row: QuestionAPIResponse): QuestionRow {
   const tags = row.tags && row.tags.length > 0 ? row.tags : row.tag ? [row.tag] : [];
+  const blankAnswers = parseBlankAnswers(row.type, row.standard_answer);
 
   return {
     id: row.id,
@@ -253,6 +255,7 @@ function mapQuestionResponse(row: QuestionAPIResponse): QuestionRow {
     tags,
     scoreDefault: row.score_default ?? "0",
     standardAnswer: row.standard_answer,
+    blankAnswers,
     referenceAnswer: row.reference_answer,
     authorName: row.author_name ?? "",
     authorRole: row.author_role ?? "",
@@ -283,4 +286,28 @@ function mapImportQuestionsResponse(response: ImportQuestionsAPIResponse): Impor
       reason: item.reason,
     })),
   };
+}
+
+function parseBlankAnswers(type: QuestionType, standardAnswer: string | undefined) {
+  if (type !== "fill_blank" || !standardAnswer) {
+    return undefined;
+  }
+  const trimmed = standardAnswer.trim();
+  if (!trimmed) {
+    return [];
+  }
+  if (!trimmed.startsWith("[")) {
+    return [trimmed];
+  }
+  try {
+    const items = JSON.parse(trimmed);
+    if (!Array.isArray(items)) {
+      return [trimmed];
+    }
+    return items
+      .map((item) => typeof item === "string" ? item.trim() : "")
+      .filter((item) => item !== "");
+  } catch {
+    return [trimmed];
+  }
 }

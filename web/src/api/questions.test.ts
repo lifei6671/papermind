@@ -64,7 +64,7 @@ describe("questionApi", () => {
           title: "下列函数在 R 上单调递增的是哪一项？",
           analysis: "一次函数斜率为正时单调递增。",
           score_default: "6",
-          status: "enabled",
+          status: "draft",
           author_name: "teacher01",
           author_role: "teacher",
           created_at: 1700000000000,
@@ -103,6 +103,51 @@ describe("questionApi", () => {
     expect(result.authorName).toBe("teacher01");
     expect(result.authorRole).toBe("teacher");
     expect(result.createdAt).toBe(1700000000000);
+    expect(result.status).toBe("draft");
+  });
+
+  test("填空题创建会把多个标准答案编码成 JSON 数组，并在读取时解析", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        tenant_id: 10,
+        type: "fill_blank",
+        difficulty: "medium",
+        title: "填写两个路径",
+        analysis: "两个空都要填写正确。",
+        score_default: "3",
+        standard_answer: "[\"/home\",\"/root\"]",
+        blank_count: 2,
+        tags: ["Linux"],
+        options: [],
+      });
+
+      return questionResponse({
+        type: "fill_blank",
+        title: "填写两个路径",
+        analysis: "两个空都要填写正确。",
+        score_default: "3",
+        standard_answer: "[\"/home\",\"/root\"]",
+        options: [],
+      });
+    });
+    const api = createQuestionAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.createQuestion({
+      tenantID: 10,
+      type: "fill_blank",
+      difficulty: "medium",
+      title: "填写两个路径",
+      options: [],
+      analysis: "两个空都要填写正确。",
+      scoreDefault: "3",
+      tags: ["Linux"],
+      standardAnswer: "[\"/home\",\"/root\"]",
+      blankCount: 2,
+    });
+
+    expect(result.standardAnswer).toBe("[\"/home\",\"/root\"]");
+    expect(result.blankAnswers).toEqual(["/home", "/root"]);
   });
 
   test("更新、禁用和删除题目时提交租户和题目 ID", async () => {

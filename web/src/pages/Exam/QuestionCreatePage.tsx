@@ -3,7 +3,9 @@ import "@uiw/react-md-editor/markdown-editor.css";
 import "@uiw/react-markdown-preview/markdown.css";
 import { ArrowLeft, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { formatApiErrorMessage } from "../../api/client";
+import { useFeedback } from "../../app/feedback-context";
 import { questionApi } from "../../api/questions";
 import type { QuestionAPI, QuestionDifficulty, QuestionType } from "../../api/questions";
 import { Button } from "../../components/ui/Button";
@@ -35,6 +37,7 @@ const defaultChoiceOptions = ["选项 A", "选项 B"];
 export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 10, spaceID }: QuestionCreatePageProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { showError } = useFeedback();
   const isEditMode = questionID !== undefined;
   const [tags, setTags] = useState(["选择题", "语言文字"]);
   const [questionType, setQuestionType] = useState<QuestionType>("single");
@@ -45,13 +48,12 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
   const [singleCorrectIndex, setSingleCorrectIndex] = useState(0);
   const [multipleCorrectIndexes, setMultipleCorrectIndexes] = useState([0, 1]);
   const [judgeAnswer, setJudgeAnswer] = useState("true");
-  const [standardAnswer, setStandardAnswer] = useState("");
+  const [fillBlankAnswers, setFillBlankAnswers] = useState([""]);
   const [referenceAnswer, setReferenceAnswer] = useState("");
   const [analysis, setAnalysis] = useState("");
   const [selectedQuestionTags, setSelectedQuestionTags] = useState<string[]>([]);
   const [questionTagQuery, setQuestionTagQuery] = useState("");
   const [isQuestionTagInputFocused, setIsQuestionTagInputFocused] = useState(false);
-  const [saveError, setSaveError] = useState("");
 
   const questionTagSuggestions = tags
     .filter((item) => item.toLowerCase().includes(questionTagQuery.trim().toLowerCase()))
@@ -99,8 +101,8 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
         const correctOptionIndexes = item.correctOptionIndexes ?? [];
         setSingleCorrectIndex(correctOptionIndexes[0] ?? 0);
         setMultipleCorrectIndexes(correctOptionIndexes.length > 0 ? correctOptionIndexes : [0]);
-        setJudgeAnswer(item.standardAnswer ?? "true");
-        setStandardAnswer(item.standardAnswer ?? "");
+        setJudgeAnswer(item.type === "judge" ? (item.standardAnswer ?? "true") : "true");
+        setFillBlankAnswers(readFillBlankAnswers(item.blankAnswers, item.standardAnswer));
         setReferenceAnswer(item.referenceAnswer ?? "");
         setAnalysis(item.analysis);
         setSelectedQuestionTags(item.tags);
@@ -108,29 +110,33 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
       })
       .catch(() => {
         if (!ignore) {
-          setSaveError("题目加载失败");
+          showError("题目加载失败");
         }
       });
 
     return () => {
       ignore = true;
     };
-  }, [api, questionID, tenantID]);
+  }, [api, questionID, tenantID, showError]);
 
   async function handleSaveQuestion(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!stem.trim() || !analysis.trim()) {
-      setSaveError("题干和题目解析不能为空");
+      showError("题干和题目解析不能为空");
       return;
     }
 
-    setSaveError("");
     const optionPayload = buildOptionPayload(questionType, optionValues, singleCorrectIndex, multipleCorrectIndexes);
     if (optionPayload.hasBlankCorrectOption) {
-      setSaveError("正确答案选项不能为空");
+      showError("正确答案选项不能为空");
+      return;
+    }
+    if (questionType === "fill_blank" && hasBlankFillBlankAnswer(fillBlankAnswers)) {
+      showError("填空题每个空都需要标准答案");
       return;
     }
     const questionTags = normalizeTags([...selectedQuestionTags, questionTagQuery]);
+    const normalizedFillBlankAnswers = normalizeFillBlankAnswers(fillBlankAnswers);
 
     try {
       const payload = {
@@ -144,9 +150,9 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
         analysis,
         scoreDefault,
         tags: questionTags,
-        standardAnswer: readStandardAnswer(questionType, judgeAnswer, standardAnswer),
+        standardAnswer: readStandardAnswer(questionType, judgeAnswer, normalizedFillBlankAnswers),
         referenceAnswer: questionType === "short_text" ? referenceAnswer : undefined,
-        blankCount: questionType === "fill_blank" ? 1 : undefined,
+        blankCount: questionType === "fill_blank" ? normalizedFillBlankAnswers.length : undefined,
       };
       if (questionID !== undefined) {
         await api.updateQuestion({ ...payload, questionID });
@@ -155,7 +161,7 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
       }
       navigate(questionListPath);
     } catch (error) {
-      setSaveError(error instanceof Error && error.message ? error.message : "题目保存失败");
+      showError(formatApiErrorMessage(error, "题目保存失败"));
     }
   }
 
@@ -190,12 +196,20 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
     setSelectedQuestionTags((items) => items.filter((item) => item !== tag));
   }
 
+  function handleAddFillBlankAnswer() {
+    setFillBlankAnswers((items) => [...items, ""]);
+  }
+
+  function handleRemoveFillBlankAnswer(index: number) {
+    setFillBlankAnswers((items) => items.filter((_, itemIndex) => itemIndex !== index));
+  }
+
   return (
     <section className="page platform-page exam-builder-page exam-question-create-page">
       <nav aria-label="题库菜单" className="platform-tabbar" role="tablist">
-        <a className="platform-tab" href={questionListPath} role="tab" aria-selected="false">
+        <Link className="platform-tab" to={questionListPath} role="tab" aria-selected="false">
           题库
-        </a>
+        </Link>
         <span className="platform-tab platform-tab--active" role="tab" aria-selected="true">
           {isEditMode ? "编辑题目" : "新增题目"}
         </span>
@@ -203,14 +217,13 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
 
       <Panel>
         <div className="exam-question-create-head">
-          <a className="exam-question-create-head__back tenant-resource-drawer__back" href={questionListPath}>
+          <Link className="exam-question-create-head__back tenant-resource-drawer__back" to={questionListPath}>
             <ArrowLeft aria-hidden="true" size={19} />
             <span>返回题库</span>
-          </a>
+          </Link>
           <span aria-hidden="true" className="exam-question-create-head__divider">|</span>
           <h1 className="exam-question-create-head__title">{isEditMode ? "编辑题目" : "新增题目"}</h1>
         </div>
-        {saveError && <div className="tenant-admin-warning" role="alert">{saveError}</div>}
         <form className="platform-form exam-question-page-form" onSubmit={handleSaveQuestion}>
           <div className="exam-question-form-grid">
             <label className="field">
@@ -335,15 +348,41 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
             </label>
           )}
           {questionType === "fill_blank" && (
-            <label className="field">
-              <span>标准答案</span>
-              <input
-                aria-label="填空题标准答案"
-                onChange={(event) => setStandardAnswer(event.target.value)}
-                required
-                value={standardAnswer}
-              />
-            </label>
+            <section className="exam-option-list" aria-label="填空题标准答案">
+              <div className="exam-option-list__head">
+                <span>标准答案</span>
+                <button className="secondary-button tenant-create-button" onClick={handleAddFillBlankAnswer} type="button">
+                  新增填空答案
+                </button>
+              </div>
+              {fillBlankAnswers.map((value, index) => (
+                <div className="exam-option-item" key={index}>
+                  <label className="field">
+                    <span>{`第 ${index + 1} 空标准答案`}</span>
+                    <input
+                      aria-label={`第 ${index + 1} 空标准答案`}
+                      onChange={(event) => setFillBlankAnswers((items) =>
+                        items.map((item, itemIndex) => itemIndex === index ? event.target.value : item),
+                      )}
+                      required
+                      value={value}
+                    />
+                  </label>
+                  {fillBlankAnswers.length > 1 && (
+                    <div className="exam-option-item__controls">
+                      <button
+                        aria-label={`删除第 ${index + 1} 空标准答案`}
+                        className="tenant-action-button tenant-action--danger"
+                        onClick={() => handleRemoveFillBlankAnswer(index)}
+                        type="button"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </section>
           )}
           {questionType === "short_text" && (
             <label className="field">
@@ -522,12 +561,45 @@ function buildOptionPayload(
   return { options, correctOptionIndexes, hasBlankCorrectOption };
 }
 
-function readStandardAnswer(questionType: QuestionType, judgeAnswer: string, standardAnswer: string) {
+function readStandardAnswer(questionType: QuestionType, judgeAnswer: string, fillBlankAnswers: string[]) {
   if (questionType === "judge") {
     return judgeAnswer;
   }
   if (questionType === "fill_blank") {
-    return standardAnswer;
+    return JSON.stringify(fillBlankAnswers);
   }
   return undefined;
+}
+
+function readFillBlankAnswers(blankAnswers: string[] | undefined, standardAnswer: string | undefined) {
+  if (blankAnswers && blankAnswers.length > 0) {
+    return blankAnswers;
+  }
+  if (!standardAnswer) {
+    return [""];
+  }
+  const trimmed = standardAnswer.trim();
+  if (!trimmed.startsWith("[")) {
+    return [trimmed];
+  }
+  try {
+    const items = JSON.parse(trimmed);
+    if (!Array.isArray(items) || items.length === 0) {
+      return [""];
+    }
+    const next = items
+      .map((item) => typeof item === "string" ? item.trim() : "")
+      .filter((item) => item !== "");
+    return next.length > 0 ? next : [""];
+  } catch {
+    return [trimmed];
+  }
+}
+
+function normalizeFillBlankAnswers(values: string[]) {
+  return values.map((value) => value.trim()).filter((value) => value !== "");
+}
+
+function hasBlankFillBlankAnswer(values: string[]) {
+  return values.length === 0 || values.some((value) => value.trim() === "");
 }

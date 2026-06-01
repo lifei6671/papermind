@@ -70,6 +70,7 @@ export type StudentExamQuestion = {
   stem: string;
   score: number;
   options: StudentExamOption[];
+  blankCount?: number;
 };
 
 export type StartAttemptInput = {
@@ -172,6 +173,7 @@ type AttemptQuestionAPIResponse = {
   question: {
     title: string;
     type: StudentExamQuestionType;
+    blank_count?: number;
   };
   options: Array<{
     id: number;
@@ -285,6 +287,7 @@ function mapAttemptQuestionResponse(row: AttemptQuestionAPIResponse): StudentExa
       key: option.key,
       content: option.content,
     })),
+    blankCount: row.question.blank_count,
   };
 }
 

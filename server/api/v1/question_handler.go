@@ -431,7 +431,6 @@ func writeQuestionServiceError(c *gin.Context, err error) {
 		errors.Is(err, servicequestion.ErrUnsupportedQuestionType) ||
 		errors.Is(err, servicequestion.ErrUnsupportedDifficulty) ||
 		errors.Is(err, servicequestion.ErrUnsupportedQuestionStatus) ||
-		errors.Is(err, servicequestion.ErrFillBlankOnlySupportsSingleBlank) ||
 		errors.Is(err, servicequestion.ErrFillBlankNeedsStandardAnswer) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return

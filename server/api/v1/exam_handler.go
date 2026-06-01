@@ -178,8 +178,9 @@ type sectionSnapshotResponse struct {
 }
 
 type questionSnapshotResponse struct {
-	Title string `json:"title"`
-	Type  string `json:"type"`
+	Title      string `json:"title"`
+	Type       string `json:"type"`
+	BlankCount int    `json:"blank_count,omitempty"`
 }
 
 type optionSnapshotResponse struct {

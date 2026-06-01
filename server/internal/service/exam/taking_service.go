@@ -403,7 +403,7 @@ func gradeAnswer(item AnswerForGrading) (AnswerGradingResult, float64, error) {
 	case QuestionTypeMultiple:
 		correct, err = gradeMultipleOptionAnswer(item.AnswerContent, snapshot.OptionIDs)
 	case QuestionTypeFillBlank:
-		correct = strings.TrimSpace(item.AnswerContent) == strings.TrimSpace(snapshot.Text)
+		correct, err = gradeFillBlankAnswer(item.AnswerContent, snapshot.Text)
 	default:
 		return AnswerGradingResult{}, 0, ErrUnsupportedQuestionType
 	}
@@ -444,12 +444,43 @@ func gradeMultipleOptionAnswer(answer string, correctOptionIDs []uint64) (bool, 
 	return sameUint64Set(selectedIDs, correctOptionIDs), nil
 }
 
+func gradeFillBlankAnswer(answer string, standardAnswer string) (bool, error) {
+	left, err := parseFillBlankAnswerParts(answer)
+	if err != nil {
+		return false, err
+	}
+	right, err := parseFillBlankAnswerParts(standardAnswer)
+	if err != nil {
+		return false, err
+	}
+	return sameStringSetByOrder(left, right), nil
+}
+
 func parseCorrectAnswerSnapshot(value string) (correctAnswerSnapshot, error) {
 	var snapshot correctAnswerSnapshot
 	if err := json.Unmarshal([]byte(value), &snapshot); err != nil {
 		return correctAnswerSnapshot{}, err
 	}
 	return snapshot, nil
+}
+
+func parseFillBlankAnswerParts(value string) ([]string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(trimmed, "[") {
+		return []string{trimmed}, nil
+	}
+	var answers []string
+	if err := json.Unmarshal([]byte(trimmed), &answers); err != nil {
+		return nil, err
+	}
+	items := make([]string, 0, len(answers))
+	for _, answer := range answers {
+		items = append(items, strings.TrimSpace(answer))
+	}
+	return items, nil
 }
 
 func sameUint64Set(left []uint64, right []uint64) bool {
@@ -472,6 +503,18 @@ func sortedUint64s(values []uint64) []uint64 {
 		return sorted[i] < sorted[j]
 	})
 	return sorted
+}
+
+func sameStringSetByOrder(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func parseGradingScore(value string) (float64, error) {

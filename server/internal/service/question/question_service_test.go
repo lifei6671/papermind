@@ -69,7 +69,8 @@ func TestCreateQuestionSupportsAllTypesAndBaseFields(t *testing.T) {
 				Difficulty:     DifficultyHard,
 				Title:          "Go 的包管理文件是 ____。",
 				ScoreDefault:   "3",
-				StandardAnswer: "go.mod",
+				StandardAnswer: `["go.mod","go.sum"]`,
+				BlankCount:     2,
 			},
 		},
 		{
@@ -106,6 +107,9 @@ func TestCreateQuestionSupportsAllTypesAndBaseFields(t *testing.T) {
 			}
 			if repo.createdQuestion.ScoreDefault != item.input.ScoreDefault {
 				t.Fatalf("expected score %q, got %q", item.input.ScoreDefault, repo.createdQuestion.ScoreDefault)
+			}
+			if repo.createdQuestion.Status != "draft" || created.Status != "draft" {
+				t.Fatalf("expected newly created question to stay draft, repo=%q created=%q", repo.createdQuestion.Status, created.Status)
 			}
 			if item.name == "single" && repo.createdQuestion.SpaceID == nil {
 				t.Fatalf("expected space question to keep space ID")
@@ -286,18 +290,6 @@ func TestFillBlankAndShortTextRules(t *testing.T) {
 	svc := NewQuestionService(QuestionServiceOptions{Repo: &fakeQuestionRepository{}})
 
 	_, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{
-		Permission:     tenantAdminQuestionPermission(),
-		TenantID:       10,
-		Type:           QuestionTypeFillBlank,
-		Title:          "多空题",
-		ScoreDefault:   "3",
-		StandardAnswer: "A|B",
-		BlankCount:     2,
-	})
-	if !errors.Is(err, ErrFillBlankOnlySupportsSingleBlank) {
-		t.Fatalf("expected ErrFillBlankOnlySupportsSingleBlank, got %v", err)
-	}
-	_, err = svc.CreateQuestion(context.Background(), CreateQuestionInput{
 		Permission:   tenantAdminQuestionPermission(),
 		TenantID:     10,
 		Type:         QuestionTypeFillBlank,
@@ -308,11 +300,33 @@ func TestFillBlankAndShortTextRules(t *testing.T) {
 		t.Fatalf("expected ErrFillBlankNeedsStandardAnswer, got %v", err)
 	}
 
-	if !svc.GradeFillBlankAnswer(" go.mod ", "go.mod") {
-		t.Fatalf("expected fill blank grading to trim answer before exact match")
+	createdBlank, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission:     tenantAdminQuestionPermission(),
+		TenantID:       10,
+		Type:           QuestionTypeFillBlank,
+		Title:          "多空题",
+		ScoreDefault:   "3",
+		StandardAnswer: `["A","B"]`,
+		BlankCount:     2,
+	})
+	if err != nil {
+		t.Fatalf("expected multi-blank question accepted, got %v", err)
 	}
-	if svc.GradeFillBlankAnswer("go.sum", "go.mod") {
-		t.Fatalf("expected different fill blank answer to fail")
+	if createdBlank.StandardAnswer != `["A","B"]` {
+		t.Fatalf("expected multi-blank standard answer persisted, got %q", createdBlank.StandardAnswer)
+	}
+
+	if !svc.GradeFillBlankAnswer(`[" go.mod "]`, "go.mod") {
+		t.Fatalf("expected single blank grading to trim answer before exact match")
+	}
+	if !svc.GradeFillBlankAnswer(`[" /home "," /root "]`, `["/home","/root"]`) {
+		t.Fatalf("expected multi-blank grading to compare each blank after trim")
+	}
+	if svc.GradeFillBlankAnswer(`["/home"]`, `["/home","/root"]`) {
+		t.Fatalf("expected different blank count to fail")
+	}
+	if svc.GradeFillBlankAnswer(`["/home","/usr"]`, `["/home","/root"]`) {
+		t.Fatalf("expected different multi-blank answer to fail")
 	}
 
 	created, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{

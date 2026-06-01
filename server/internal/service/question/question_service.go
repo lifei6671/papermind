@@ -2,6 +2,7 @@ package question
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -32,6 +33,8 @@ const (
 
 	// QuestionStatusEnabled 表示题目可用。
 	QuestionStatusEnabled = constant.QuestionStatusEnabled
+	// QuestionStatusDraft 表示题目草稿，必须手动启用后才可参与组卷。
+	QuestionStatusDraft = constant.QuestionStatusDraft
 	// QuestionStatusDisabled 表示题目被禁用。
 	QuestionStatusDisabled = "disabled"
 
@@ -42,7 +45,6 @@ const (
 var (
 	ErrChoiceQuestionNeedsCorrectAnswer   = errors.New("choice question needs at least one correct answer")
 	ErrSingleQuestionOnlyOneCorrectAnswer = errors.New("single choice question only allows one correct answer")
-	ErrFillBlankOnlySupportsSingleBlank   = errors.New("fill blank only supports single blank")
 	ErrFillBlankNeedsStandardAnswer       = errors.New("fill blank needs standard answer")
 	ErrUnsupportedQuestionType            = errors.New("unsupported question type")
 	ErrUnsupportedDifficulty              = errors.New("unsupported difficulty")
@@ -97,7 +99,7 @@ type CreateQuestionInput struct {
 	Options            []QuestionOptionInput        // 选择题选项。
 	StandardAnswer     string                       // 填空题标准答案或判断题答案。
 	ReferenceAnswer    string                       // 简答题参考答案。
-	BlankCount         int                          // 填空数量，首版只允许 0 或 1。
+	BlankCount         int                          // 填空数量，仅用于前端/导入阶段表达题目有几个空。
 	Tags               []string                     // 题目标签名称。
 }
 
@@ -128,7 +130,7 @@ type UpdateQuestionInput struct {
 	Options            []QuestionOptionInput        // 选择题选项。
 	StandardAnswer     string                       // 填空题标准答案或判断题答案。
 	ReferenceAnswer    string                       // 简答题参考答案。
-	BlankCount         int                          // 填空数量，首版只允许 0 或 1。
+	BlankCount         int                          // 填空数量，仅用于前端/导入阶段表达题目有几个空。
 	Tags               []string                     // 题目标签名称。
 }
 
@@ -244,7 +246,7 @@ func (s *QuestionService) CreateQuestion(ctx context.Context, input CreateQuesti
 		ShuffleOptions:     input.ShuffleOptions,
 		StandardAnswer:     input.StandardAnswer,
 		ReferenceAnswer:    input.ReferenceAnswer,
-		Status:             QuestionStatusEnabled,
+		Status:             QuestionStatusDraft,
 		CreatedBy:          input.Permission.UserID,
 	}
 	if input.Type == QuestionTypeShortText {
@@ -379,7 +381,15 @@ func (s *QuestionService) ReplaceOptions(ctx context.Context, input ReplaceOptio
 }
 
 func (s *QuestionService) GradeFillBlankAnswer(answer string, standardAnswer string) bool {
-	return strings.TrimSpace(answer) == strings.TrimSpace(standardAnswer)
+	left, err := parseFillBlankAnswers(answer)
+	if err != nil {
+		return false
+	}
+	right, err := parseFillBlankAnswers(standardAnswer)
+	if err != nil {
+		return false
+	}
+	return sameStrings(left, right)
 }
 
 func (s *QuestionService) ImportTemplateHeaders() []string {
@@ -435,10 +445,8 @@ func validateQuestionInput(input CreateQuestionInput, options []QuestionOption) 
 	case QuestionTypeJudge:
 		return nil
 	case QuestionTypeFillBlank:
-		if input.BlankCount > 1 {
-			return ErrFillBlankOnlySupportsSingleBlank
-		}
-		if strings.TrimSpace(input.StandardAnswer) == "" {
+		answers, err := parseFillBlankAnswers(input.StandardAnswer)
+		if err != nil || len(answers) == 0 {
 			return ErrFillBlankNeedsStandardAnswer
 		}
 		return nil
@@ -579,4 +587,39 @@ func splitCSV(value string) []string {
 		}
 	}
 	return items
+}
+
+func parseFillBlankAnswers(raw string) ([]string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(trimmed, "[") {
+		return []string{trimmed}, nil
+	}
+	var items []string
+	if err := json.Unmarshal([]byte(trimmed), &items); err != nil {
+		return nil, err
+	}
+	normalized := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			return nil, ErrFillBlankNeedsStandardAnswer
+		}
+		normalized = append(normalized, value)
+	}
+	return normalized, nil
+}
+
+func sameStrings(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }

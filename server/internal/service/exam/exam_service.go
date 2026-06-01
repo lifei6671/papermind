@@ -147,6 +147,7 @@ type SnapshotSourceQuestion struct {
 	Title            string // 题干。
 	Score            string // 分值。
 	Options          []SnapshotSourceOption
+	BlankCount       int      // 填空题空位数量，供考试前端渲染多个输入框。
 	OptionIDs        []uint64 // 最终展示选项 ID 顺序。
 	CorrectOptionIDs []uint64 // 正确选项 ID。
 	CorrectText      string   // 填空或简答正确答案。
@@ -545,7 +546,7 @@ func (s *Service) GenerateAttemptSnapshots(ctx context.Context, input GenerateSn
 			SectionSnapshot:       mustJSON(map[string]any{"name": source.SectionName, "instructions": source.Instructions}),
 			SortOrder:             index + 1,
 			Score:                 source.Score,
-			QuestionSnapshot:      mustJSON(map[string]any{"title": source.Title, "type": source.QuestionType}),
+			QuestionSnapshot:      mustJSON(map[string]any{"title": source.Title, "type": source.QuestionType, "blank_count": source.BlankCount}),
 			OptionSnapshot:        mustJSON(map[string]any{"option_ids": source.OptionIDs, "options": source.Options}),
 			CorrectAnswerSnapshot: mustJSON(map[string]any{"option_ids": source.CorrectOptionIDs, "text": source.CorrectText}),
 		})

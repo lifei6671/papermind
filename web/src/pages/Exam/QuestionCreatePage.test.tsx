@@ -1,8 +1,14 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { expect, test, vi } from "vitest";
+import { FeedbackProvider } from "../../app/feedback";
 import { QuestionCreatePage } from "./QuestionCreatePage";
+
+function renderWithFeedback(page: ReactElement) {
+  return render(<FeedbackProvider>{page}</FeedbackProvider>);
+}
 
 function createQuestionAPI() {
   return {
@@ -42,7 +48,7 @@ function createQuestionAPI() {
       authorName: "teacher01",
       authorRole: "teacher",
       createdAt: 1700000000000,
-      status: "ready",
+      status: "draft",
     }),
     getQuestion: vi.fn().mockResolvedValue({
       id: 100,
@@ -88,7 +94,7 @@ function createQuestionAPI() {
 }
 
 function renderCreatePage(api = createQuestionAPI()) {
-  render(
+  renderWithFeedback(
     <MemoryRouter initialEntries={["/questions/new?space_id=301"]}>
       <Routes>
         <Route path="/questions/new" element={<QuestionCreatePage api={api} tenantID={10} spaceID={301} />} />
@@ -100,7 +106,7 @@ function renderCreatePage(api = createQuestionAPI()) {
 }
 
 function renderEditPage(api = createQuestionAPI()) {
-  render(
+  renderWithFeedback(
     <MemoryRouter initialEntries={["/questions/100/edit?space_id=301"]}>
       <Routes>
         <Route path="/questions/:questionID/edit" element={<QuestionCreatePage api={api} tenantID={10} spaceID={301} questionID={100} />} />
@@ -201,8 +207,55 @@ test("新增选择题时不能把空白选项设为正确答案", async () => {
   await user.type(screen.getByLabelText("题目解析"), "空白选项不能作为正确答案。");
   await user.click(screen.getByRole("button", { name: "确认新增" }));
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("正确答案选项不能为空");
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("正确答案选项不能为空");
+  expect(alert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(document.querySelector(".tenant-admin-warning")).not.toBeInTheDocument();
   expect(api.createQuestion).not.toHaveBeenCalled();
+});
+
+test("教师可以为填空题录入多个空的标准答案", async () => {
+  const user = userEvent.setup();
+  const api = renderCreatePage();
+
+  await user.selectOptions(screen.getByLabelText("题型"), "fill_blank");
+  await user.clear(screen.getByLabelText("题干"));
+  await user.type(screen.getByLabelText("题干"), "Linux 常见目录 ____ 和 ____ 分别用于用户 home 与 root home。");
+  await user.clear(screen.getByLabelText("第 1 空标准答案"));
+  await user.type(screen.getByLabelText("第 1 空标准答案"), "/home");
+  await user.click(screen.getByRole("button", { name: "新增填空答案" }));
+  await user.type(screen.getByLabelText("第 2 空标准答案"), "/root");
+  await user.clear(screen.getByLabelText("题目解析"));
+  await user.type(screen.getByLabelText("题目解析"), "普通用户默认目录为 /home，root 用户目录为 /root。");
+  await user.click(screen.getByRole("button", { name: "确认新增" }));
+
+  expect(api.createQuestion).toHaveBeenCalledWith({
+    tenantID: 10,
+    spaceID: 301,
+    type: "fill_blank",
+    difficulty: "medium",
+    title: "Linux 常见目录 ____ 和 ____ 分别用于用户 home 与 root home。",
+    options: [],
+    correctOptionIndexes: [],
+    analysis: "普通用户默认目录为 /home，root 用户目录为 /root。",
+    scoreDefault: "2",
+    tags: [],
+    standardAnswer: "[\"/home\",\"/root\"]",
+    referenceAnswer: undefined,
+    blankCount: 2,
+  });
+});
+
+test("编辑题目加载失败时使用 toast 提示", async () => {
+  const api = createQuestionAPI();
+  api.getQuestion.mockRejectedValueOnce(new Error("load failed"));
+
+  renderEditPage(api);
+
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("题目加载失败");
+  expect(alert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(document.querySelector(".tenant-admin-warning")).not.toBeInTheDocument();
 });
 
 test("教师可以打开编辑题目页面并保存修改", async () => {
@@ -235,4 +288,43 @@ test("教师可以打开编辑题目页面并保存修改", async () => {
     blankCount: undefined,
   });
   expect(await screen.findByText("题库列表页")).toBeInTheDocument();
+});
+
+test("编辑填空题时会加载多个空答案", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  api.getQuestion.mockResolvedValueOnce({
+    id: 100,
+    tenantID: 10,
+    type: "fill_blank",
+    title: "请填写两个目录",
+    stem: "请填写两个目录",
+    options: [],
+    analysis: "解析",
+    difficulty: "easy",
+    tag: "系统",
+    tags: ["系统"],
+    scoreDefault: "4",
+    standardAnswer: "[\"/etc\",\"/var\"]",
+    blankAnswers: ["/etc", "/var"],
+    authorName: "teacher01",
+    authorRole: "teacher",
+    createdAt: 1700000000000,
+    status: "ready",
+  });
+
+  renderEditPage(api);
+
+  expect(await screen.findByLabelText("第 1 空标准答案")).toHaveValue("/etc");
+  expect(screen.getByLabelText("第 2 空标准答案")).toHaveValue("/var");
+  await user.clear(screen.getByLabelText("第 2 空标准答案"));
+  await user.type(screen.getByLabelText("第 2 空标准答案"), "/usr");
+  await user.click(screen.getByRole("button", { name: "确认保存" }));
+
+  expect(api.updateQuestion).toHaveBeenCalledWith(expect.objectContaining({
+    questionID: 100,
+    type: "fill_blank",
+    standardAnswer: "[\"/etc\",\"/usr\"]",
+    blankCount: 2,
+  }));
 });

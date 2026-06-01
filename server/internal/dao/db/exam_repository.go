@@ -705,6 +705,7 @@ func (r *ExamRepository) ListFixedSnapshotQuestions(ctx context.Context, tenantI
 			CorrectText:      row.CorrectText,
 			Score:            row.Score,
 			Options:          options.options,
+			BlankCount:       fillBlankCount(row.QuestionType, row.CorrectText),
 			OptionIDs:        options.optionIDs,
 			CorrectOptionIDs: options.correctOptionIDs,
 		})
@@ -754,6 +755,7 @@ func (r *ExamRepository) ListFrozenLiveSnapshotQuestions(ctx context.Context, te
 			CorrectText:      row.CorrectText,
 			Score:            row.Score,
 			Options:          options.options,
+			BlankCount:       fillBlankCount(row.QuestionType, row.CorrectText),
 			OptionIDs:        options.optionIDs,
 			CorrectOptionIDs: options.correctOptionIDs,
 		})
@@ -1533,6 +1535,24 @@ func parseQuestionSnapshotTitle(raw string) (string, error) {
 		return "", err
 	}
 	return snapshot.Title, nil
+}
+
+func fillBlankCount(questionType string, correctText string) int {
+	if questionType != constant.QuestionTypeFillBlank {
+		return 0
+	}
+	trimmed := strings.TrimSpace(correctText)
+	if trimmed == "" {
+		return 1
+	}
+	if !strings.HasPrefix(trimmed, "[") {
+		return 1
+	}
+	var answers []string
+	if err := json.Unmarshal([]byte(trimmed), &answers); err != nil || len(answers) == 0 {
+		return 1
+	}
+	return len(answers)
 }
 
 // sumGradedSubjectiveScore 汇总一次作答中已完成人工评分的主观题分数。

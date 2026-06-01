@@ -40,6 +40,7 @@ type ExamQuestion = {
   score: number;
   options?: string[];
   optionMeta?: StudentExamOption[];
+  blankCount?: number;
   analysis: string;
 };
 
@@ -65,6 +66,7 @@ function mapAPIQuestion(question: APIStudentExamQuestion): ExamQuestion {
     score: question.score,
     options: question.options.map(formatOptionLabel),
     optionMeta: question.options,
+    blankCount: question.blankCount,
     analysis: "题目解析将在成绩公布后展示。",
   };
 }
@@ -87,7 +89,10 @@ function formatOptionLabel(option: StudentExamOption) {
 }
 
 function hasAnswer(answer: ExamAnswer | undefined) {
-  return Array.isArray(answer) ? answer.length > 0 : Boolean(answer);
+  if (Array.isArray(answer)) {
+    return answer.some((value) => value.trim() !== "");
+  }
+  return typeof answer === "string" ? answer.trim() !== "" : false;
 }
 
 function buildQuestionGroups(questions: ExamQuestion[]): QuestionGroup[] {
@@ -177,15 +182,26 @@ function DesktopQuestionBody({
   const answerValue = Array.isArray(answer) ? answer : typeof answer === "string" ? answer : "";
 
   if (question.type === "fill_blank") {
+    const blankCount = question.blankCount ?? 1;
+    const values = normalizeFillBlankAnswer(answer, blankCount);
     return (
       <div className="written-answer">
-        <label htmlFor="fill-blank-answer">填空题答案</label>
-        <input
-          id="fill-blank-answer"
-          onChange={(event) => onAnswer(event.target.value)}
-          placeholder="请输入答案"
-          value={answerValue}
-        />
+        <span>填空题答案</span>
+        {values.map((value, index) => (
+          <div key={index}>
+            <label htmlFor={`fill-blank-answer-${index + 1}`}>{`第 ${index + 1} 空答案`}</label>
+            <input
+              id={`fill-blank-answer-${index + 1}`}
+              onChange={(event) => {
+                const next = [...values];
+                next[index] = event.target.value;
+                onAnswer(next);
+              }}
+              placeholder={`请输入第 ${index + 1} 空答案`}
+              value={value}
+            />
+          </div>
+        ))}
       </div>
     );
   }
@@ -424,7 +440,9 @@ function DesktopStudentExamPage({
           examToken: examSession.examToken,
           questionType: currentQuestion.type,
           optionIDs: answerToOptionIDs(currentQuestion, value),
-          text: Array.isArray(value) ? "" : value,
+          text: currentQuestion.type === "fill_blank"
+            ? serializeFillBlankAnswer(value, currentQuestion.blankCount ?? 1)
+            : Array.isArray(value) ? "" : value,
         });
       }
       setSaveMessage(`第 ${currentQuestionNumber} 题已自动保存`);
@@ -822,4 +840,18 @@ function StudentExamLoadError({ message }: { message: string }) {
       </main>
     </div>
   );
+}
+
+function normalizeFillBlankAnswer(answer: ExamAnswer | undefined, blankCount: number) {
+  const base = Array.isArray(answer)
+    ? answer
+    : typeof answer === "string" && answer !== ""
+      ? [answer]
+      : [];
+  const values = Array.from({ length: Math.max(blankCount, 1) }, (_, index) => base[index] ?? "");
+  return values;
+}
+
+function serializeFillBlankAnswer(answer: ExamAnswer, blankCount: number) {
+  return JSON.stringify(normalizeFillBlankAnswer(answer, blankCount));
 }
