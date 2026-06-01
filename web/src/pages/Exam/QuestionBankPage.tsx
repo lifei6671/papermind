@@ -7,8 +7,9 @@ import { Panel } from "../../components/ui/Panel";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { formatApiErrorMessage } from "../../api/client";
 import { questionApi } from "../../api/questions";
-import type { QuestionAPI, QuestionRow } from "../../api/questions";
+import type { QuestionAPI, QuestionRow, QuestionType } from "../../api/questions";
 
 type QuestionBankPageProps = {
   api?: QuestionAPI;
@@ -29,6 +30,21 @@ const questionDifficultyLabels = {
   hard: "困难",
 };
 
+const questionTypeLabels: Record<QuestionType, string> = {
+  single: "单选题",
+  multiple: "多选题",
+  judge: "判断题",
+  fill_blank: "填空题",
+  short_text: "简答题",
+};
+
+const questionAuthorRoleLabels: Record<string, string> = {
+  tenant_admin: "租户管理员",
+  space_admin: "空间管理员",
+  teacher: "教师",
+  student: "学生",
+};
+
 export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: QuestionBankPageProps) {
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
   const [isImportDrawerOpen, setIsImportDrawerOpen] = useState(false);
@@ -39,6 +55,8 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [pendingQuestionID, setPendingQuestionID] = useState<number | null>(null);
   const [isQuestionListRefreshing, setIsQuestionListRefreshing] = useState(false);
   const questionCreateHref = `/questions/new${window.location.search}`;
 
@@ -77,7 +95,11 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
       item.options.join(" "),
       item.analysis,
       questionDifficultyLabels[item.difficulty],
-      item.status === "ready" ? "可用" : "草稿",
+      questionTypeLabels[item.type],
+      item.authorName ?? "",
+      questionAuthorRoleLabels[item.authorRole ?? ""] ?? item.authorRole ?? "",
+      formatQuestionCreatedAt(item.createdAt ?? 0),
+      item.status === "ready" ? "可用" : item.status === "disabled" ? "禁用" : "草稿",
     ].some(
       (value) => value.toLowerCase().includes(keyword),
     );
@@ -135,6 +157,29 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
     }
   }
 
+  async function runQuestionAction(question: QuestionRow, action: "delete" | "disable" | "enable") {
+    setPendingQuestionID(question.id);
+    setLoadError("");
+    setActionMessage("");
+    try {
+      if (action === "delete") {
+        await api.deleteQuestion({ tenantID, questionID: question.id });
+        setQuestions((items) => items.filter((item) => item.id !== question.id));
+        setActionMessage("题目已删除");
+        return;
+      }
+      const updated = action === "disable"
+        ? await api.disableQuestion({ tenantID, questionID: question.id })
+        : await api.enableQuestion({ tenantID, questionID: question.id });
+      setQuestions((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setActionMessage(action === "disable" ? "题目已禁用" : "题目已启用");
+    } catch (error) {
+      setLoadError(formatApiErrorMessage(error, action === "delete" ? "删除题目失败" : "更新题目状态失败"));
+    } finally {
+      setPendingQuestionID(null);
+    }
+  }
+
   return (
     <section className="page platform-page exam-builder-page">
       <nav aria-label="题库菜单" className="platform-tabbar" role="tablist">
@@ -177,32 +222,76 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
           </div>
         </div>
         {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
+        {actionMessage && <div className="tenant-admin-success" role="status">{actionMessage}</div>}
         <div className="table-wrap">
           <table className="data-table tenant-admin-table">
             <thead>
               <tr>
-                <th scope="col">题目</th>
-                <th scope="col">标签</th>
-                <th scope="col">选项</th>
-                <th scope="col">解析</th>
-                <th scope="col">状态</th>
+                <th scope="col">题干</th>
+                <th scope="col">难度</th>
+                <th scope="col">题目类型</th>
+                <th scope="col">出题人</th>
+                <th scope="col">出题人身份角色</th>
+                <th scope="col">出题时间</th>
+                <th scope="col">操作区</th>
               </tr>
             </thead>
             <tbody>
-              {filteredQuestions.length === 0 && <EmptyTableRow colSpan={5} />}
+              {filteredQuestions.length === 0 && <EmptyTableRow colSpan={7} />}
               {filteredQuestions.map((item) => (
                 <tr key={item.id}>
                   <td>
-                    <strong>{item.title}</strong>
-                    <p className="tenant-admin-muted">{item.stem}</p>
+                    <strong title={item.title}>{truncateQuestionTitle(item.title)}</strong>
+                    {item.status === "disabled" && (
+                      <p className="tenant-admin-muted">
+                        <StatusBadge tone="warning">已禁用</StatusBadge>
+                      </p>
+                    )}
                   </td>
-                  <td>{(item.tags.length > 0 ? item.tags : [item.tag]).join("、")}</td>
-                  <td>{item.options.join(" / ")}</td>
-                  <td>{`解析：${item.analysis}`}</td>
                   <td>
-                    <StatusBadge tone={item.status === "ready" ? "success" : "info"}>
-                      {item.status === "ready" ? "可用" : "草稿"}
-                    </StatusBadge>
+                    {questionDifficultyLabels[item.difficulty]}
+                  </td>
+                  <td>{questionTypeLabels[item.type]}</td>
+                  <td>{item.authorName || "-"}</td>
+                  <td>{questionAuthorRoleLabels[item.authorRole ?? ""] ?? (item.authorRole || "-")}</td>
+                  <td>{formatQuestionCreatedAt(item.createdAt ?? 0)}</td>
+                  <td>
+                    <div className="tenant-table-actions">
+                      <a
+                        aria-label={`编辑 ${item.title}`}
+                        className="tenant-action-button tenant-action--edit"
+                        href={`/questions/${item.id}/edit${window.location.search}`}
+                      >
+                        编辑
+                      </a>
+                      {item.status === "disabled" ? (
+                        <Button
+                          aria-label={`启用 ${item.title}`}
+                          disabled={pendingQuestionID === item.id}
+                          onClick={() => void runQuestionAction(item, "enable")}
+                          variant="actionOpen"
+                        >
+                          启用
+                        </Button>
+                      ) : (
+                        <Button
+                          aria-label={`禁用 ${item.title}`}
+                          disabled={pendingQuestionID === item.id}
+                          onClick={() => void runQuestionAction(item, "disable")}
+                          variant="actionClose"
+                        >
+                          禁用
+                        </Button>
+                      )}
+                      <Button
+                        aria-label={`删除 ${item.title}`}
+                        disabled={pendingQuestionID === item.id}
+                        onClick={() => void runQuestionAction(item, "delete")}
+                        variant="actionReset"
+                      >
+                        删除
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -293,4 +382,21 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
 
     </section>
   );
+}
+
+function truncateQuestionTitle(title: string) {
+  const normalized = title.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 32) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 32)}...`;
+}
+
+function formatQuestionCreatedAt(value: number) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  const pad = (item: number) => String(item).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }

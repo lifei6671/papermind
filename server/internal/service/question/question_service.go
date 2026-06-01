@@ -32,6 +32,8 @@ const (
 
 	// QuestionStatusEnabled 表示题目可用。
 	QuestionStatusEnabled = constant.QuestionStatusEnabled
+	// QuestionStatusDisabled 表示题目被禁用。
+	QuestionStatusDisabled = "disabled"
 
 	// GradingModeManual 表示人工阅卷。
 	GradingModeManual = constant.GradingModeManual
@@ -44,6 +46,9 @@ var (
 	ErrFillBlankNeedsStandardAnswer       = errors.New("fill blank needs standard answer")
 	ErrUnsupportedQuestionType            = errors.New("unsupported question type")
 	ErrUnsupportedDifficulty              = errors.New("unsupported difficulty")
+	ErrUnsupportedQuestionStatus          = errors.New("unsupported question status")
+	ErrQuestionNotFound                   = errors.New("question not found")
+	ErrQuestionReferenced                 = errors.New("question referenced")
 )
 
 type Question struct {
@@ -61,6 +66,10 @@ type Question struct {
 	ReferenceAnswer    string  // 简答题参考答案。
 	GradingMode        string  // 阅卷方式。
 	Status             string  // 题目状态。
+	CreatedAt          int64   // 出题时间，Unix 毫秒时间戳。
+	CreatedBy          uint64  // 出题人用户 ID。
+	AuthorName         string  // 出题人账号。
+	AuthorRole         string  // 出题人在租户内的身份角色。
 	Options            []QuestionOption
 	Tags               []string
 }
@@ -97,6 +106,43 @@ type ListQuestionsInput struct {
 	SpaceID  *uint64
 	Page     int
 	PageSize int
+}
+
+type GetQuestionInput struct {
+	Permission permission.PermissionContext
+	TenantID   uint64
+	QuestionID uint64
+}
+
+type UpdateQuestionInput struct {
+	Permission         permission.PermissionContext // 当前写入人权限上下文。
+	TenantID           uint64                       // 所属租户 ID。
+	QuestionID         uint64                       // 待更新题目 ID。
+	Type               string                       // 题型。
+	Difficulty         string                       // 难度。
+	Title              string                       // 题干内容。
+	Analysis           string                       // 题目解析，可选。
+	ScoreDefault       string                       // 默认分值。
+	ChoiceDisplayCount *int                         // 选择题展示选项数量。
+	ShuffleOptions     bool                         // 题库默认选项随机设置。
+	Options            []QuestionOptionInput        // 选择题选项。
+	StandardAnswer     string                       // 填空题标准答案或判断题答案。
+	ReferenceAnswer    string                       // 简答题参考答案。
+	BlankCount         int                          // 填空数量，首版只允许 0 或 1。
+	Tags               []string                     // 题目标签名称。
+}
+
+type UpdateQuestionStatusInput struct {
+	Permission permission.PermissionContext
+	TenantID   uint64
+	QuestionID uint64
+	Status     string
+}
+
+type DeleteQuestionInput struct {
+	Permission permission.PermissionContext
+	TenantID   uint64
+	QuestionID uint64
 }
 
 type QuestionOptionInput struct {
@@ -157,7 +203,12 @@ type ImportError struct {
 
 type QuestionRepository interface {
 	CreateQuestion(ctx context.Context, item Question, options []QuestionOption, tags []string) (Question, error)
+	GetQuestion(ctx context.Context, tenantID uint64, questionID uint64) (Question, error)
 	ListVisibleQuestions(ctx context.Context, input ListQuestionsInput) (pagination.Result[Question], error)
+	UpdateQuestion(ctx context.Context, item Question, options []QuestionOption, tags []string) (Question, error)
+	UpdateQuestionStatus(ctx context.Context, tenantID uint64, questionID uint64, status string, actorID uint64) (Question, error)
+	DeleteQuestion(ctx context.Context, tenantID uint64, questionID uint64, actorID uint64) error
+	QuestionReferenced(ctx context.Context, tenantID uint64, questionID uint64) (bool, error)
 	ReplaceOptionsInTransaction(ctx context.Context, tenantID uint64, questionID uint64, options []QuestionOption) error
 }
 
@@ -194,6 +245,7 @@ func (s *QuestionService) CreateQuestion(ctx context.Context, input CreateQuesti
 		StandardAnswer:     input.StandardAnswer,
 		ReferenceAnswer:    input.ReferenceAnswer,
 		Status:             QuestionStatusEnabled,
+		CreatedBy:          input.Permission.UserID,
 	}
 	if input.Type == QuestionTypeShortText {
 		item.GradingMode = GradingModeManual
@@ -201,8 +253,109 @@ func (s *QuestionService) CreateQuestion(ctx context.Context, input CreateQuesti
 	return s.repo.CreateQuestion(ctx, item, options, input.Tags)
 }
 
+func (s *QuestionService) GetQuestion(ctx context.Context, input GetQuestionInput) (Question, error) {
+	item, err := s.repo.GetQuestion(ctx, input.TenantID, input.QuestionID)
+	if err != nil {
+		return Question{}, err
+	}
+	if err := canWriteQuestionScope(input.Permission, item.TenantID, item.SpaceID); err != nil {
+		return Question{}, err
+	}
+	return item, nil
+}
+
 func (s *QuestionService) ListVisibleQuestions(ctx context.Context, input ListQuestionsInput) (pagination.Result[Question], error) {
 	return s.repo.ListVisibleQuestions(ctx, input)
+}
+
+func (s *QuestionService) UpdateQuestion(ctx context.Context, input UpdateQuestionInput) (Question, error) {
+	existing, err := s.repo.GetQuestion(ctx, input.TenantID, input.QuestionID)
+	if err != nil {
+		return Question{}, err
+	}
+	if err := canWriteQuestionScope(input.Permission, existing.TenantID, existing.SpaceID); err != nil {
+		return Question{}, err
+	}
+	referenced, err := s.repo.QuestionReferenced(ctx, input.TenantID, input.QuestionID)
+	if err != nil {
+		return Question{}, err
+	}
+	if referenced {
+		return Question{}, ErrQuestionReferenced
+	}
+	options := toQuestionOptions(input.Options)
+	createInput := CreateQuestionInput{
+		Permission:         input.Permission,
+		TenantID:           input.TenantID,
+		SpaceID:            existing.SpaceID,
+		Type:               input.Type,
+		Difficulty:         input.Difficulty,
+		Title:              input.Title,
+		Analysis:           input.Analysis,
+		ScoreDefault:       input.ScoreDefault,
+		ChoiceDisplayCount: input.ChoiceDisplayCount,
+		ShuffleOptions:     input.ShuffleOptions,
+		Options:            input.Options,
+		StandardAnswer:     input.StandardAnswer,
+		ReferenceAnswer:    input.ReferenceAnswer,
+		BlankCount:         input.BlankCount,
+		Tags:               input.Tags,
+	}
+	if err := validateQuestionInput(createInput, options); err != nil {
+		return Question{}, err
+	}
+	item := Question{
+		ID:                 input.QuestionID,
+		TenantID:           input.TenantID,
+		SpaceID:            existing.SpaceID,
+		Type:               input.Type,
+		Difficulty:         input.Difficulty,
+		Title:              input.Title,
+		Analysis:           input.Analysis,
+		ScoreDefault:       input.ScoreDefault,
+		ChoiceDisplayCount: input.ChoiceDisplayCount,
+		ShuffleOptions:     input.ShuffleOptions,
+		StandardAnswer:     input.StandardAnswer,
+		ReferenceAnswer:    input.ReferenceAnswer,
+		Status:             existing.Status,
+		CreatedBy:          input.Permission.UserID,
+	}
+	if input.Type == QuestionTypeShortText {
+		item.GradingMode = GradingModeManual
+	}
+	return s.repo.UpdateQuestion(ctx, item, options, input.Tags)
+}
+
+func (s *QuestionService) UpdateQuestionStatus(ctx context.Context, input UpdateQuestionStatusInput) (Question, error) {
+	if input.Status != QuestionStatusEnabled && input.Status != QuestionStatusDisabled {
+		return Question{}, ErrUnsupportedQuestionStatus
+	}
+	item, err := s.repo.GetQuestion(ctx, input.TenantID, input.QuestionID)
+	if err != nil {
+		return Question{}, err
+	}
+	if err := canWriteQuestionScope(input.Permission, item.TenantID, item.SpaceID); err != nil {
+		return Question{}, err
+	}
+	return s.repo.UpdateQuestionStatus(ctx, input.TenantID, input.QuestionID, input.Status, input.Permission.UserID)
+}
+
+func (s *QuestionService) DeleteQuestion(ctx context.Context, input DeleteQuestionInput) error {
+	item, err := s.repo.GetQuestion(ctx, input.TenantID, input.QuestionID)
+	if err != nil {
+		return err
+	}
+	if err := canWriteQuestionScope(input.Permission, item.TenantID, item.SpaceID); err != nil {
+		return err
+	}
+	referenced, err := s.repo.QuestionReferenced(ctx, input.TenantID, input.QuestionID)
+	if err != nil {
+		return err
+	}
+	if referenced {
+		return ErrQuestionReferenced
+	}
+	return s.repo.DeleteQuestion(ctx, input.TenantID, input.QuestionID, input.Permission.UserID)
 }
 
 func (s *QuestionService) GradeChoiceAnswer(snapshot ChoiceSnapshot, selectedIDs []uint64) bool {

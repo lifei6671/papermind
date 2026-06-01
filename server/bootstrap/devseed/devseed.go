@@ -178,7 +178,7 @@ func seedQuestionPaperAndExam(tx *gorm.DB, now int64) error {
 
 	if err := insertIgnore(tx, []dbmodel.QuestionDO{
 		{
-			BaseFields:     baseFields(demoSingleQuestionID, now),
+			BaseFields:     tenantUserBaseFields(demoSingleQuestionID, now, demoTeacherID),
 			TenantID:       demoTenantID,
 			Type:           constant.QuestionTypeSingle,
 			Difficulty:     "easy",
@@ -189,7 +189,7 @@ func seedQuestionPaperAndExam(tx *gorm.DB, now int64) error {
 			Status:         constant.QuestionStatusEnabled,
 		},
 		{
-			BaseFields:     baseFields(demoShortQuestionID, now),
+			BaseFields:     tenantUserBaseFields(demoShortQuestionID, now, demoTeacherID),
 			TenantID:       demoTenantID,
 			Type:           constant.QuestionTypeShortText,
 			Difficulty:     "medium",
@@ -201,6 +201,9 @@ func seedQuestionPaperAndExam(tx *gorm.DB, now int64) error {
 		},
 	}); err != nil {
 		return fmt.Errorf("seed questions: %w", err)
+	}
+	if err := backfillDemoQuestionAudit(tx); err != nil {
+		return err
 	}
 
 	if err := insertIgnore(tx, []dbmodel.QuestionOptionDO{
@@ -299,6 +302,32 @@ func baseFields(id uint64, now int64) dbmodel.BaseFields {
 		Version:   1,
 		ExtJSON:   datatypes.JSON([]byte("{}")),
 	}
+}
+
+func tenantUserBaseFields(id uint64, now int64, actorID uint64) dbmodel.BaseFields {
+	fields := baseFields(id, now)
+	fields.CreatedBy = actorID
+	fields.CreatedByType = dbmodel.AuditActorTenantUser
+	fields.UpdatedBy = actorID
+	fields.UpdatedByType = dbmodel.AuditActorTenantUser
+	return fields
+}
+
+func backfillDemoQuestionAudit(tx *gorm.DB) error {
+	err := tx.Model(&dbmodel.QuestionDO{}).
+		Where("tenant_id = ?", demoTenantID).
+		Where("id IN ?", []uint64{demoSingleQuestionID, demoShortQuestionID}).
+		Where("created_by = ?", 0).
+		Updates(map[string]any{
+			"created_by":      demoTeacherID,
+			"created_by_type": dbmodel.AuditActorTenantUser,
+			"updated_by":      demoTeacherID,
+			"updated_by_type": dbmodel.AuditActorTenantUser,
+		}).Error
+	if err != nil {
+		return fmt.Errorf("backfill demo question audit: %w", err)
+	}
+	return nil
 }
 
 func relationFields(id uint64, now int64) dbmodel.RelationFields {

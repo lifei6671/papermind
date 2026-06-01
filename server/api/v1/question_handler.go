@@ -56,9 +56,16 @@ type questionResponse struct {
 	ReferenceAnswer string                   `json:"reference_answer,omitempty"`
 	ScoreDefault    string                   `json:"score_default"`
 	Status          string                   `json:"status"`
+	AuthorName      string                   `json:"author_name"`
+	AuthorRole      string                   `json:"author_role"`
+	CreatedAt       int64                    `json:"created_at"`
 	Tag             string                   `json:"tag"`
 	Tags            []string                 `json:"tags"`
 	Options         []questionOptionResponse `json:"options"`
+}
+
+type questionTenantRequest struct {
+	TenantID uint64 `json:"tenant_id"`
 }
 
 type questionOptionResponse struct {
@@ -162,6 +169,185 @@ func (h questionHandler) create(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(questionToResponse(created)))
 }
 
+func (h questionHandler) get(c *gin.Context) {
+	questionID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "题目 ID 必须是正整数"))
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	permissionContext, err := h.permissionContextForQuestionOperation(c, tenantID)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
+	item, err := h.service.GetQuestion(c.Request.Context(), servicequestion.GetQuestionInput{
+		Permission: permissionContext,
+		TenantID:   tenantID,
+		QuestionID: questionID,
+	})
+	if err != nil {
+		writeQuestionServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(questionToResponse(item)))
+}
+
+func (h questionHandler) update(c *gin.Context) {
+	questionID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "题目 ID 必须是正整数"))
+		return
+	}
+	var request createQuestionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	permissionContext, err := h.permissionContextForQuestionOperation(c, request.TenantID)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
+	updated, err := h.service.UpdateQuestion(c.Request.Context(), servicequestion.UpdateQuestionInput{
+		Permission:      permissionContext,
+		TenantID:        request.TenantID,
+		QuestionID:      questionID,
+		Type:            request.Type,
+		Difficulty:      request.Difficulty,
+		Title:           request.Title,
+		Analysis:        request.Analysis,
+		StandardAnswer:  request.StandardAnswer,
+		ReferenceAnswer: request.ReferenceAnswer,
+		BlankCount:      request.BlankCount,
+		ScoreDefault:    request.ScoreDefault,
+		Options:         request.toServiceOptions(),
+		Tags:            request.Tags,
+	})
+	if err != nil {
+		writeQuestionServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(questionToResponse(updated)))
+}
+
+func (h questionHandler) disable(c *gin.Context) {
+	h.updateStatus(c, servicequestion.QuestionStatusDisabled)
+}
+
+func (h questionHandler) enable(c *gin.Context) {
+	h.updateStatus(c, servicequestion.QuestionStatusEnabled)
+}
+
+func (h questionHandler) updateStatus(c *gin.Context, status string) {
+	questionID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "题目 ID 必须是正整数"))
+		return
+	}
+	var request questionTenantRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	permissionContext, err := h.permissionContextForQuestionOperation(c, request.TenantID)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
+	updated, err := h.service.UpdateQuestionStatus(c.Request.Context(), servicequestion.UpdateQuestionStatusInput{
+		Permission: permissionContext,
+		TenantID:   request.TenantID,
+		QuestionID: questionID,
+		Status:     status,
+	})
+	if err != nil {
+		writeQuestionServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(questionToResponse(updated)))
+}
+
+func (h questionHandler) delete(c *gin.Context) {
+	questionID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "题目 ID 必须是正整数"))
+		return
+	}
+	var request questionTenantRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	permissionContext, err := h.permissionContextForQuestionOperation(c, request.TenantID)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
+	if err := h.service.DeleteQuestion(c.Request.Context(), servicequestion.DeleteQuestionInput{
+		Permission: permissionContext,
+		TenantID:   request.TenantID,
+		QuestionID: questionID,
+	}); err != nil {
+		writeQuestionServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(nil))
+}
+
+func (h questionHandler) permissionContextForQuestionOperation(c *gin.Context, tenantID uint64) (permission.PermissionContext, error) {
+	principal, err := liveTenantPrincipalFromSession(c, tenantID, h.users)
+	if err != nil {
+		return permission.PermissionContext{}, err
+	}
+	ctx := permission.PermissionContext{
+		SubjectType:      principal.SubjectType,
+		UserID:           principal.UserID,
+		TenantID:         tenantID,
+		Role:             principal.Role,
+		SpaceMemberships: map[uint64]string{},
+	}
+	if principal.Role == permission.RoleTenantAdmin || h.members == nil {
+		return ctx, nil
+	}
+	memberships, err := h.members.ListEffectiveMembershipsForUser(c.Request.Context(), tenantID, principal.UserID)
+	if err != nil {
+		return permission.PermissionContext{}, err
+	}
+	for _, member := range memberships {
+		ctx.SpaceMemberships[member.SpaceID] = member.Role
+	}
+	return ctx, nil
+}
+
 func (r createQuestionRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -218,6 +404,9 @@ func questionToResponse(item servicequestion.Question) questionResponse {
 		ReferenceAnswer: item.ReferenceAnswer,
 		ScoreDefault:    item.ScoreDefault,
 		Status:          item.Status,
+		AuthorName:      item.AuthorName,
+		AuthorRole:      item.AuthorRole,
+		CreatedAt:       item.CreatedAt,
 		Tag:             tag,
 		Tags:            item.Tags,
 		Options:         options,
@@ -229,10 +418,19 @@ func writeQuestionServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
 		return
 	}
+	if errors.Is(err, servicequestion.ErrQuestionNotFound) {
+		c.JSON(http.StatusNotFound, response.Fail(code.InvalidParam, "题目不存在"))
+		return
+	}
+	if errors.Is(err, servicequestion.ErrQuestionReferenced) {
+		c.JSON(http.StatusConflict, response.Fail(code.InvalidParam, "题目已被试卷或考试引用，不能编辑或删除"))
+		return
+	}
 	if errors.Is(err, servicequestion.ErrChoiceQuestionNeedsCorrectAnswer) ||
 		errors.Is(err, servicequestion.ErrSingleQuestionOnlyOneCorrectAnswer) ||
 		errors.Is(err, servicequestion.ErrUnsupportedQuestionType) ||
 		errors.Is(err, servicequestion.ErrUnsupportedDifficulty) ||
+		errors.Is(err, servicequestion.ErrUnsupportedQuestionStatus) ||
 		errors.Is(err, servicequestion.ErrFillBlankOnlySupportsSingleBlank) ||
 		errors.Is(err, servicequestion.ErrFillBlankNeedsStandardAnswer) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))

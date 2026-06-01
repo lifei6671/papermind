@@ -20,6 +20,9 @@ function createQuestionAPI() {
           tag: "阅读理解",
           tags: ["阅读理解"],
           scoreDefault: "4",
+          authorName: "teacher01",
+          authorRole: "teacher",
+          createdAt: 1700000000000,
           status: "ready",
         },
       ],
@@ -36,8 +39,50 @@ function createQuestionAPI() {
       tag: "函数",
       tags: ["阅读理解", "函数"],
       scoreDefault: "6",
+      authorName: "teacher01",
+      authorRole: "teacher",
+      createdAt: 1700000000000,
       status: "ready",
     }),
+    getQuestion: vi.fn().mockResolvedValue({
+      id: 100,
+      tenantID: 10,
+      type: "single",
+      title: "原题干",
+      stem: "原题干",
+      options: ["原选项 A", "原选项 B"],
+      correctOptionIndexes: [0],
+      analysis: "原解析",
+      difficulty: "easy",
+      tag: "阅读理解",
+      tags: ["阅读理解"],
+      scoreDefault: "4",
+      authorName: "teacher01",
+      authorRole: "teacher",
+      createdAt: 1700000000000,
+      status: "ready",
+    }),
+    updateQuestion: vi.fn().mockResolvedValue({
+      id: 100,
+      tenantID: 10,
+      type: "single",
+      title: "更新后题干",
+      stem: "更新后题干",
+      options: ["原选项 A", "原选项 B"],
+      correctOptionIndexes: [0],
+      analysis: "更新后解析",
+      difficulty: "easy",
+      tag: "阅读理解",
+      tags: ["阅读理解"],
+      scoreDefault: "4",
+      authorName: "teacher01",
+      authorRole: "teacher",
+      createdAt: 1700000000000,
+      status: "ready",
+    }),
+    deleteQuestion: vi.fn(),
+    disableQuestion: vi.fn(),
+    enableQuestion: vi.fn(),
     importQuestions: vi.fn(),
   };
 }
@@ -47,6 +92,18 @@ function renderCreatePage(api = createQuestionAPI()) {
     <MemoryRouter initialEntries={["/questions/new?space_id=301"]}>
       <Routes>
         <Route path="/questions/new" element={<QuestionCreatePage api={api} tenantID={10} spaceID={301} />} />
+        <Route path="/questions" element={<div>题库列表页</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  return api;
+}
+
+function renderEditPage(api = createQuestionAPI()) {
+  render(
+    <MemoryRouter initialEntries={["/questions/100/edit?space_id=301"]}>
+      <Routes>
+        <Route path="/questions/:questionID/edit" element={<QuestionCreatePage api={api} tenantID={10} spaceID={301} questionID={100} />} />
         <Route path="/questions" element={<div>题库列表页</div>} />
       </Routes>
     </MemoryRouter>,
@@ -146,4 +203,36 @@ test("新增选择题时不能把空白选项设为正确答案", async () => {
 
   expect(await screen.findByRole("alert")).toHaveTextContent("正确答案选项不能为空");
   expect(api.createQuestion).not.toHaveBeenCalled();
+});
+
+test("教师可以打开编辑题目页面并保存修改", async () => {
+  const user = userEvent.setup();
+  const api = renderEditPage();
+
+  expect(await screen.findByRole("heading", { name: "编辑题目" })).toBeInTheDocument();
+  expect(api.getQuestion).toHaveBeenCalledWith({ tenantID: 10, questionID: 100 });
+  expect(screen.getByLabelText("题干")).toHaveValue("原题干");
+  await user.clear(screen.getByLabelText("题干"));
+  await user.type(screen.getByLabelText("题干"), "更新后题干");
+  await user.clear(screen.getByLabelText("题目解析"));
+  await user.type(screen.getByLabelText("题目解析"), "更新后解析");
+  await user.click(screen.getByRole("button", { name: "确认保存" }));
+
+  expect(api.updateQuestion).toHaveBeenCalledWith({
+    tenantID: 10,
+    spaceID: 301,
+    questionID: 100,
+    type: "single",
+    difficulty: "easy",
+    title: "更新后题干",
+    options: ["原选项 A", "原选项 B"],
+    correctOptionIndexes: [0],
+    analysis: "更新后解析",
+    scoreDefault: "4",
+    tags: ["阅读理解"],
+    standardAnswer: undefined,
+    referenceAnswer: undefined,
+    blankCount: undefined,
+  });
+  expect(await screen.findByText("题库列表页")).toBeInTheDocument();
 });

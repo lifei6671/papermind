@@ -431,6 +431,11 @@ type fakeQuestionRepository struct {
 	createdQuestion Question
 	createdOptions  []QuestionOption
 
+	currentQuestion Question
+	referenced      bool
+	deletedQuestion uint64
+	updatedQuestion Question
+
 	visibleQuestions  []Question
 	listVisibleCalled bool
 
@@ -453,6 +458,13 @@ func (r *fakeQuestionRepository) CreateQuestion(ctx context.Context, item Questi
 	return item, nil
 }
 
+func (r *fakeQuestionRepository) GetQuestion(ctx context.Context, tenantID uint64, questionID uint64) (Question, error) {
+	if r.currentQuestion.ID != 0 {
+		return r.currentQuestion, nil
+	}
+	return Question{ID: questionID, TenantID: tenantID}, nil
+}
+
 func (r *fakeQuestionRepository) ListVisibleQuestions(ctx context.Context, input ListQuestionsInput) (pagination.Result[Question], error) {
 	r.listVisibleCalled = true
 	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
@@ -462,6 +474,26 @@ func (r *fakeQuestionRepository) ListVisibleQuestions(ctx context.Context, input
 		PageSize: page.PageSize,
 		Total:    int64(len(r.visibleQuestions)),
 	}, nil
+}
+
+func (r *fakeQuestionRepository) UpdateQuestion(ctx context.Context, item Question, options []QuestionOption, tags []string) (Question, error) {
+	r.updatedQuestion = item
+	item.Options = options
+	item.Tags = tags
+	return item, nil
+}
+
+func (r *fakeQuestionRepository) UpdateQuestionStatus(ctx context.Context, tenantID uint64, questionID uint64, status string, actorID uint64) (Question, error) {
+	return Question{ID: questionID, TenantID: tenantID, Status: status, CreatedBy: actorID}, nil
+}
+
+func (r *fakeQuestionRepository) DeleteQuestion(ctx context.Context, tenantID uint64, questionID uint64, actorID uint64) error {
+	r.deletedQuestion = questionID
+	return nil
+}
+
+func (r *fakeQuestionRepository) QuestionReferenced(ctx context.Context, tenantID uint64, questionID uint64) (bool, error) {
+	return r.referenced, nil
 }
 
 func (r *fakeQuestionRepository) ReplaceOptionsInTransaction(ctx context.Context, tenantID uint64, questionID uint64, options []QuestionOption) error {

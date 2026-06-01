@@ -39,6 +39,9 @@ func TestQuestionAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	if seeded.Title != "现代文阅读主旨题" || seeded.Tag != "阅读理解" {
 		t.Fatalf("unexpected seeded question: %#v", seeded)
 	}
+	if seeded.AuthorName != "tenant.admin" || seeded.AuthorRole != constant.RoleTenantAdmin || seeded.CreatedAt != fixedAPINow {
+		t.Fatalf("expected seeded author fields, got %#v", seeded)
+	}
 	if len(seeded.Options) != 2 || seeded.Options[0].Content != "把握中心句" {
 		t.Fatalf("expected seeded options in response, got %#v", seeded.Options)
 	}
@@ -67,6 +70,9 @@ func TestQuestionAPIRoutesListAndCreateWithSQLite(t *testing.T) {
 	}
 	if len(createBody.Data.Options) != 2 || createBody.Data.Options[0].Content != "y = x" {
 		t.Fatalf("expected created options in response, got %#v", createBody.Data.Options)
+	}
+	if createBody.Data.AuthorName != "tenant.admin" || createBody.Data.AuthorRole != constant.RoleTenantAdmin {
+		t.Fatalf("expected created author from current session, got %#v", createBody.Data)
 	}
 }
 
@@ -333,15 +339,119 @@ func TestDisabledTenantAdminCannotCreateQuestionWithStaleSession(t *testing.T) {
 	}
 }
 
+func TestQuestionManagementRejectsReferencedQuestionUpdateAndDelete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedQuestionAPITestData(t, gormDB)
+	seedQuestionPaperReferenceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow + 1000 },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	updatePayload := []byte(fmt.Sprintf(`{
+		"tenant_id": 10,
+		"type": "%s",
+		"difficulty": "medium",
+		"title": "被引用题目不允许编辑",
+		"analysis": "编辑前必须校验引用。",
+		"score_default": "2",
+		"tags": ["权限"],
+		"options": [
+			{"option_key": "A", "content": "拒绝", "is_correct": true},
+			{"option_key": "B", "content": "允许", "is_distractor": true}
+		]
+	}`, constant.QuestionTypeSingle))
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPut, "/api/v1/questions/100", updatePayload, authHeader))
+	if updateRecorder.Code != http.StatusConflict {
+		t.Fatalf("expected referenced update conflict, got status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/questions/100", []byte(`{"tenant_id":10}`), authHeader))
+	if deleteRecorder.Code != http.StatusConflict {
+		t.Fatalf("expected referenced delete conflict, got status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+
+	var title string
+	if err := gormDB.Table("questions").Select("title").Where("tenant_id = ? AND id = ?", 10, 100).Scan(&title).Error; err != nil {
+		t.Fatalf("read referenced question title: %v", err)
+	}
+	if title != "现代文阅读主旨题" {
+		t.Fatalf("expected referenced question unchanged, got %q", title)
+	}
+}
+
+func TestQuestionManagementCanUpdateDisableAndDeleteUnreferencedQuestion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedQuestionAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow + 1000 },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	updatePayload := []byte(fmt.Sprintf(`{
+		"tenant_id": 10,
+		"type": "%s",
+		"difficulty": "hard",
+		"title": "更新后的题干",
+		"analysis": "更新后的解析。",
+		"score_default": "5",
+		"tags": ["更新"],
+		"options": [
+			{"option_key": "A", "content": "选项 A", "is_correct": true},
+			{"option_key": "B", "content": "选项 B", "is_distractor": true}
+		]
+	}`, constant.QuestionTypeSingle))
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPut, "/api/v1/questions/100", updatePayload, authHeader))
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+	updateBody := decodeExamAPIResponse[questionResponse](t, updateRecorder.Body.Bytes())
+	if updateBody.Data.Title != "更新后的题干" || updateBody.Data.Difficulty != "hard" || updateBody.Data.Tag != "更新" {
+		t.Fatalf("unexpected updated question response: %#v", updateBody.Data)
+	}
+
+	disableRecorder := httptest.NewRecorder()
+	router.ServeHTTP(disableRecorder, authorizedRequest(http.MethodPost, "/api/v1/questions/100/disable", []byte(`{"tenant_id":10}`), authHeader))
+	if disableRecorder.Code != http.StatusOK {
+		t.Fatalf("disable status = %d, body = %s", disableRecorder.Code, disableRecorder.Body.String())
+	}
+	disableBody := decodeExamAPIResponse[questionResponse](t, disableRecorder.Body.Bytes())
+	if disableBody.Data.Status != "disabled" {
+		t.Fatalf("expected disabled question, got %#v", disableBody.Data)
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/questions/100", []byte(`{"tenant_id":10}`), authHeader))
+	if deleteRecorder.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+	var deletedAt int64
+	if err := gormDB.Table("questions").Select("deleted_at").Where("tenant_id = ? AND id = ?", 10, 100).Scan(&deletedAt).Error; err != nil {
+		t.Fatalf("read deleted question: %v", err)
+	}
+	if deletedAt == 0 {
+		t.Fatalf("expected question to be soft deleted")
+	}
+}
+
 func seedQuestionAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
 
 	if err := gormDB.Exec(`
 		INSERT INTO questions (
 			id, tenant_id, type, difficulty, title, analysis, score_default, status,
-			created_at, updated_at, ext_json
+			created_at, created_by, created_by_type, updated_at, updated_by, updated_by_type, ext_json
 		) VALUES
-			(100, 10, ?, 'easy', '现代文阅读主旨题', '定位中心句并排除以偏概全选项。', 2, 'enabled', ?, ?, '{}')
+			(100, 10, ?, 'easy', '现代文阅读主旨题', '定位中心句并排除以偏概全选项。', 2, 'enabled', ?, 99, 'tenant_user', ?, 99, 'tenant_user', '{}')
 	`, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed question: %v", err)
 	}
@@ -370,6 +480,35 @@ func seedQuestionAPITestData(t *testing.T, gormDB *gorm.DB) {
 			(1, 10, 100, 1, ?, '{}')
 	`, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed question tag: %v", err)
+	}
+}
+
+func seedQuestionPaperReferenceAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	if err := gormDB.Exec(`
+		INSERT INTO papers (
+			id, tenant_id, name, description, total_score, build_mode, status,
+			created_at, updated_at, ext_json
+		) VALUES (200, 10, '引用题目的试卷', '', 2, 'manual', 'draft', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed referenced paper: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_sections (
+			id, tenant_id, paper_id, sort_order, name, question_type, instructions,
+			total_score, question_count, created_at, updated_at, ext_json
+		) VALUES (200, 10, 200, 1, '一、单选题', ?, '', 2, 1, ?, ?, '{}')
+	`, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed referenced paper section: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_section_questions (
+			id, tenant_id, section_id, paper_id, question_id, sort_order, score,
+			created_at, updated_at, ext_json
+		) VALUES (200, 10, 200, 200, 100, 1, 2, ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed paper question reference: %v", err)
 	}
 }
 

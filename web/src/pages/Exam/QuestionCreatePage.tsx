@@ -11,6 +11,7 @@ import { Panel } from "../../components/ui/Panel";
 
 type QuestionCreatePageProps = {
   api?: QuestionAPI;
+  questionID?: number;
   tenantID?: number;
   spaceID?: number;
 };
@@ -31,9 +32,10 @@ const questionDifficultyLabels: Record<QuestionDifficulty, string> = {
 
 const defaultChoiceOptions = ["选项 A", "选项 B"];
 
-export function QuestionCreatePage({ api = questionApi, tenantID = 10, spaceID }: QuestionCreatePageProps) {
+export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 10, spaceID }: QuestionCreatePageProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const isEditMode = questionID !== undefined;
   const [tags, setTags] = useState(["选择题", "语言文字"]);
   const [questionType, setQuestionType] = useState<QuestionType>("single");
   const [difficulty, setDifficulty] = useState<QuestionDifficulty>("medium");
@@ -78,6 +80,43 @@ export function QuestionCreatePage({ api = questionApi, tenantID = 10, spaceID }
     };
   }, [api, tenantID, spaceID]);
 
+  useEffect(() => {
+    if (questionID === undefined) {
+      return;
+    }
+    let ignore = false;
+
+    api.getQuestion({ tenantID, questionID })
+      .then((item) => {
+        if (ignore) {
+          return;
+        }
+        setQuestionType(item.type);
+        setDifficulty(item.difficulty);
+        setScoreDefault(item.scoreDefault ?? "0");
+        setStem(item.title);
+        setOptionValues(item.options.length > 0 ? item.options : defaultChoiceOptions);
+        const correctOptionIndexes = item.correctOptionIndexes ?? [];
+        setSingleCorrectIndex(correctOptionIndexes[0] ?? 0);
+        setMultipleCorrectIndexes(correctOptionIndexes.length > 0 ? correctOptionIndexes : [0]);
+        setJudgeAnswer(item.standardAnswer ?? "true");
+        setStandardAnswer(item.standardAnswer ?? "");
+        setReferenceAnswer(item.referenceAnswer ?? "");
+        setAnalysis(item.analysis);
+        setSelectedQuestionTags(item.tags);
+        setTags((items) => mergeTags(items, item.tags));
+      })
+      .catch(() => {
+        if (!ignore) {
+          setSaveError("题目加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api, questionID, tenantID]);
+
   async function handleSaveQuestion(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!stem.trim() || !analysis.trim()) {
@@ -94,7 +133,7 @@ export function QuestionCreatePage({ api = questionApi, tenantID = 10, spaceID }
     const questionTags = normalizeTags([...selectedQuestionTags, questionTagQuery]);
 
     try {
-      await api.createQuestion({
+      const payload = {
         tenantID,
         ...(spaceID === undefined ? {} : { spaceID }),
         type: questionType,
@@ -108,10 +147,15 @@ export function QuestionCreatePage({ api = questionApi, tenantID = 10, spaceID }
         standardAnswer: readStandardAnswer(questionType, judgeAnswer, standardAnswer),
         referenceAnswer: questionType === "short_text" ? referenceAnswer : undefined,
         blankCount: questionType === "fill_blank" ? 1 : undefined,
-      });
+      };
+      if (questionID !== undefined) {
+        await api.updateQuestion({ ...payload, questionID });
+      } else {
+        await api.createQuestion(payload);
+      }
       navigate(questionListPath);
-    } catch {
-      setSaveError("题目保存失败");
+    } catch (error) {
+      setSaveError(error instanceof Error && error.message ? error.message : "题目保存失败");
     }
   }
 
@@ -153,7 +197,7 @@ export function QuestionCreatePage({ api = questionApi, tenantID = 10, spaceID }
           题库
         </a>
         <span className="platform-tab platform-tab--active" role="tab" aria-selected="true">
-          新增题目
+          {isEditMode ? "编辑题目" : "新增题目"}
         </span>
       </nav>
 
@@ -164,7 +208,7 @@ export function QuestionCreatePage({ api = questionApi, tenantID = 10, spaceID }
             <span>返回题库</span>
           </a>
           <span aria-hidden="true" className="exam-question-create-head__divider">|</span>
-          <h1 className="exam-question-create-head__title">新增题目</h1>
+          <h1 className="exam-question-create-head__title">{isEditMode ? "编辑题目" : "新增题目"}</h1>
         </div>
         {saveError && <div className="tenant-admin-warning" role="alert">{saveError}</div>}
         <form className="platform-form exam-question-page-form" onSubmit={handleSaveQuestion}>
@@ -380,7 +424,7 @@ export function QuestionCreatePage({ api = questionApi, tenantID = 10, spaceID }
               取消
             </Button>
             <Button variant="primary" type="submit">
-              确认新增
+              {isEditMode ? "确认保存" : "确认新增"}
             </Button>
           </div>
         </form>

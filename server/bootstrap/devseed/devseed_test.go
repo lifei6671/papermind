@@ -28,6 +28,7 @@ func TestRunForDriverSeedsSQLiteDevDataForE2E(t *testing.T) {
 	assertCount(t, gormDB, "questions", 2)
 	assertCount(t, gormDB, "paper_section_questions", 2)
 	assertCount(t, gormDB, "exam_targets", 1)
+	assertDemoQuestionAudit(t, gormDB)
 
 	var tenant struct {
 		TenantCode    string
@@ -80,6 +81,11 @@ func TestRunForDriverIsIdempotentAndRefreshesExamWindow(t *testing.T) {
 	if err := runForDriver(gormDB, "sqlite", "dev", func() int64 { return fixedSeedNow }); err != nil {
 		t.Fatalf("first runForDriver returned error: %v", err)
 	}
+	if err := gormDB.Model(&dbmodel.QuestionDO{}).
+		Where("tenant_id = ? AND id IN ?", demoTenantID, []uint64{demoSingleQuestionID, demoShortQuestionID}).
+		Updates(map[string]any{"created_by": 0, "created_by_type": "system", "updated_by": 0, "updated_by_type": "system"}).Error; err != nil {
+		t.Fatalf("clear seeded question audit: %v", err)
+	}
 	if err := runForDriver(gormDB, "sqlite", "dev", func() int64 { return fixedSeedNow + time.Hour.Milliseconds() }); err != nil {
 		t.Fatalf("second runForDriver returned error: %v", err)
 	}
@@ -101,6 +107,7 @@ func TestRunForDriverIsIdempotentAndRefreshesExamWindow(t *testing.T) {
 	if exam.StartTime != fixedSeedNow || exam.EndTime != fixedSeedNow+time.Hour.Milliseconds()+sevenDaysMillis {
 		t.Fatalf("exam window was not refreshed by second seed run: %#v", exam)
 	}
+	assertDemoQuestionAudit(t, gormDB)
 }
 
 func TestRunForDriverSkipsOutsideSQLiteDev(t *testing.T) {
@@ -147,6 +154,25 @@ func assertCount(t *testing.T, gormDB *gorm.DB, table string, want int64) {
 	}
 	if got != want {
 		t.Fatalf("count %s = %d, want %d", table, got, want)
+	}
+}
+
+func assertDemoQuestionAudit(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	var count int64
+	if err := gormDB.Table("questions").
+		Where("tenant_id = ?", demoTenantID).
+		Where("id IN ?", []uint64{demoSingleQuestionID, demoShortQuestionID}).
+		Where("created_by = ?", demoTeacherID).
+		Where("created_by_type = ?", dbmodel.AuditActorTenantUser).
+		Where("updated_by = ?", demoTeacherID).
+		Where("updated_by_type = ?", dbmodel.AuditActorTenantUser).
+		Count(&count).Error; err != nil {
+		t.Fatalf("query demo question audit: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("demo questions should be attributed to teacher01, got %d rows", count)
 	}
 }
 

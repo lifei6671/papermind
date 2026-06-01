@@ -1,7 +1,7 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
 
-export type QuestionStatus = "draft" | "ready";
+export type QuestionStatus = "draft" | "ready" | "disabled";
 export type QuestionType = "single" | "multiple" | "judge" | "fill_blank" | "short_text";
 export type QuestionDifficulty = "easy" | "medium" | "hard";
 
@@ -12,11 +12,17 @@ export type QuestionRow = {
   title: string;
   stem: string;
   options: string[];
+  correctOptionIndexes?: number[];
   analysis: string;
   difficulty: QuestionDifficulty;
   tag: string;
   tags: string[];
   scoreDefault?: string;
+  standardAnswer?: string;
+  referenceAnswer?: string;
+  authorName?: string;
+  authorRole?: string;
+  createdAt?: number;
   status: QuestionStatus;
 };
 
@@ -39,6 +45,20 @@ export type CreateQuestionInput = {
   standardAnswer?: string;
   referenceAnswer?: string;
   blankCount?: number;
+};
+
+export type GetQuestionInput = {
+  tenantID: number;
+  questionID: number;
+};
+
+export type UpdateQuestionInput = CreateQuestionInput & {
+  questionID: number;
+};
+
+export type QuestionActionInput = {
+  tenantID: number;
+  questionID: number;
 };
 
 export type ImportQuestionsInput = {
@@ -66,11 +86,19 @@ export type QuestionBankAPI = {
   createQuestion(input: CreateQuestionInput): Promise<QuestionRow>;
 };
 
+export type QuestionManagementAPI = {
+  getQuestion(input: GetQuestionInput): Promise<QuestionRow>;
+  updateQuestion(input: UpdateQuestionInput): Promise<QuestionRow>;
+  disableQuestion(input: QuestionActionInput): Promise<QuestionRow>;
+  enableQuestion(input: QuestionActionInput): Promise<QuestionRow>;
+  deleteQuestion(input: QuestionActionInput): Promise<void>;
+};
+
 export type QuestionImportAPI = {
   importQuestions(input: ImportQuestionsInput): Promise<ImportQuestionsResult>;
 };
 
-export type QuestionAPI = QuestionBankAPI & QuestionImportAPI;
+export type QuestionAPI = QuestionBankAPI & QuestionManagementAPI & QuestionImportAPI;
 
 type QuestionAPIResponse = {
   id: number;
@@ -83,6 +111,9 @@ type QuestionAPIResponse = {
   reference_answer?: string;
   blank_count?: number;
   score_default?: string;
+  author_name?: string;
+  author_role?: string;
+  created_at?: number;
   status: "draft" | "enabled" | "disabled";
   tag: string;
   tags?: string[];
@@ -118,6 +149,11 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
       const data = await apiClient.get<PageData<QuestionAPIResponse>>(`/api/v1/questions?${params.toString()}`);
       return { items: data.items.map(mapQuestionResponse) };
     },
+    async getQuestion(input) {
+      const params = new URLSearchParams({ tenant_id: String(input.tenantID) });
+      const data = await apiClient.get<QuestionAPIResponse>(`/api/v1/questions/${input.questionID}?${params.toString()}`);
+      return mapQuestionResponse(data);
+    },
     async createQuestion(input) {
       const data = await apiClient.post<QuestionAPIResponse>("/api/v1/questions", {
         tenant_id: input.tenantID,
@@ -140,6 +176,31 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
       });
       return mapQuestionResponse(data);
     },
+    async updateQuestion(input) {
+      const data = await apiClient.request<QuestionAPIResponse>(`/api/v1/questions/${input.questionID}`, {
+        method: "PUT",
+        body: questionMutationBody(input),
+      });
+      return mapQuestionResponse(data);
+    },
+    async disableQuestion(input) {
+      const data = await apiClient.post<QuestionAPIResponse>(`/api/v1/questions/${input.questionID}/disable`, {
+        tenant_id: input.tenantID,
+      });
+      return mapQuestionResponse(data);
+    },
+    async enableQuestion(input) {
+      const data = await apiClient.post<QuestionAPIResponse>(`/api/v1/questions/${input.questionID}/enable`, {
+        tenant_id: input.tenantID,
+      });
+      return mapQuestionResponse(data);
+    },
+    async deleteQuestion(input) {
+      await apiClient.request<null>(`/api/v1/questions/${input.questionID}`, {
+        method: "DELETE",
+        body: { tenant_id: input.tenantID },
+      });
+    },
     async importQuestions(input) {
       const formData = new FormData();
       formData.append("tenant_id", String(input.tenantID));
@@ -153,6 +214,28 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
   };
 }
 
+function questionMutationBody(input: CreateQuestionInput) {
+  return {
+    tenant_id: input.tenantID,
+    ...(input.spaceID === undefined ? {} : { space_id: input.spaceID }),
+    type: input.type,
+    difficulty: input.difficulty,
+    title: input.title,
+    analysis: input.analysis,
+    score_default: input.scoreDefault,
+    standard_answer: input.standardAnswer,
+    reference_answer: input.referenceAnswer,
+    blank_count: input.blankCount,
+    tags: input.tags,
+    options: input.options.map((content, index) => ({
+      option_key: optionKeyByIndex(index),
+      content,
+      is_correct: input.correctOptionIndexes?.includes(index) ?? index === 0,
+      is_distractor: !(input.correctOptionIndexes?.includes(index) ?? index === 0),
+    })),
+  };
+}
+
 function mapQuestionResponse(row: QuestionAPIResponse): QuestionRow {
   const tags = row.tags && row.tags.length > 0 ? row.tags : row.tag ? [row.tag] : [];
 
@@ -163,13 +246,29 @@ function mapQuestionResponse(row: QuestionAPIResponse): QuestionRow {
     title: row.title,
     stem: row.title,
     options: row.options.map((option) => option.content),
+    correctOptionIndexes: row.options.flatMap((option, index) => option.is_correct ? [index] : []),
     analysis: row.analysis,
     difficulty: row.difficulty ?? "medium",
     tag: tags[0] ?? "",
     tags,
     scoreDefault: row.score_default ?? "0",
-    status: row.status === "enabled" ? "ready" : "draft",
+    standardAnswer: row.standard_answer,
+    referenceAnswer: row.reference_answer,
+    authorName: row.author_name ?? "",
+    authorRole: row.author_role ?? "",
+    createdAt: row.created_at ?? 0,
+    status: mapQuestionStatus(row.status),
   };
+}
+
+function mapQuestionStatus(status: QuestionAPIResponse["status"]): QuestionStatus {
+  if (status === "enabled") {
+    return "ready";
+  }
+  if (status === "disabled") {
+    return "disabled";
+  }
+  return "draft";
 }
 
 function optionKeyByIndex(index: number) {

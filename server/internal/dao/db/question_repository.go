@@ -21,6 +21,12 @@ type QuestionRepositoryOptions struct {
 	Now func() int64
 }
 
+type questionListRow struct {
+	QuestionDO
+	AuthorName string `gorm:"column:author_name"`
+	AuthorRole string `gorm:"column:author_role"`
+}
+
 func NewQuestionRepository(gormDB *gorm.DB, options QuestionRepositoryOptions) *QuestionRepository {
 	now := options.Now
 	if now == nil {
@@ -36,8 +42,10 @@ func (r *QuestionRepository) CreateQuestion(ctx context.Context, item serviceque
 		row := QuestionDO{
 			BaseFields: BaseFields{
 				CreatedAt:     now,
+				CreatedBy:     item.CreatedBy,
 				CreatedByType: AuditActorTenantUser,
 				UpdatedAt:     now,
+				UpdatedBy:     item.CreatedBy,
 				UpdatedByType: AuditActorTenantUser,
 				Version:       1,
 				ExtJSON:       datatypes.JSON("{}"),
@@ -82,40 +90,62 @@ func (r *QuestionRepository) CreateQuestion(ctx context.Context, item serviceque
 	if err != nil {
 		return servicequestion.Question{}, err
 	}
-	return created, nil
+	return r.GetQuestion(ctx, created.TenantID, created.ID)
+}
+
+func (r *QuestionRepository) GetQuestion(ctx context.Context, tenantID uint64, questionID uint64) (servicequestion.Question, error) {
+	row, err := r.findQuestionRow(ctx, tenantID, questionID)
+	if err != nil {
+		return servicequestion.Question{}, err
+	}
+	item := questionFromListRow(row)
+	options, err := r.listOptions(ctx, tenantID, questionID)
+	if err != nil {
+		return servicequestion.Question{}, err
+	}
+	tags, err := r.listTags(ctx, tenantID, questionID)
+	if err != nil {
+		return servicequestion.Question{}, err
+	}
+	item.Options = options
+	item.Tags = tags
+	return item, nil
 }
 
 func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input servicequestion.ListQuestionsInput) (pagination.Result[servicequestion.Question], error) {
 	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
-	var rows []QuestionDO
 	query := r.db.WithContext(ctx).
-		Model(&QuestionDO{}).
-		Where(QuestionColumns.TenantID+" = ?", input.TenantID).
-		Where(QuestionColumns.DeletedAt+" = ?", 0)
+		Table(QuestionDO{}.TableName()+" AS questions").
+		Where("questions."+QuestionColumns.TenantID+" = ?", input.TenantID).
+		Where("questions."+QuestionColumns.DeletedAt+" = ?", 0)
 	if input.SpaceID == nil {
-		query = query.Where(QuestionColumns.SpaceID + " IS NULL")
+		query = query.Where("questions." + QuestionColumns.SpaceID + " IS NULL")
 	} else {
-		query = query.Where(r.db.Where(QuestionColumns.SpaceID+" IS NULL").Or(QuestionColumns.SpaceID+" = ?", *input.SpaceID))
+		query = query.Where(r.db.Where("questions."+QuestionColumns.SpaceID+" IS NULL").Or("questions."+QuestionColumns.SpaceID+" = ?", *input.SpaceID))
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return pagination.Result[servicequestion.Question]{}, err
 	}
-	if err := query.Order(BaseColumns.CreatedAt + " DESC").
-		Order(QuestionColumns.ID + " DESC").
+	var rows []questionListRow
+	if err := query.Select(r.questionSelectColumns()).
+		Joins("LEFT JOIN users AS users ON users.id = questions."+BaseColumns.CreatedBy+" AND questions."+BaseColumns.CreatedByType+" = ? AND users.deleted_at = 0", AuditActorTenantUser).
+		Joins("LEFT JOIN tenant_user_memberships AS tum ON tum.tenant_id = questions.tenant_id AND tum.user_id = questions." + BaseColumns.CreatedBy).
+		Order("questions." + BaseColumns.CreatedAt + " DESC").
+		Order("questions." + QuestionColumns.ID + " DESC").
 		Limit(page.PageSize).
 		Offset(pagination.Offset(page)).
-		Find(&rows).Error; err != nil {
+		Scan(&rows).Error; err != nil {
 		return pagination.Result[servicequestion.Question]{}, err
 	}
 	questions := make([]servicequestion.Question, 0, len(rows))
 	for _, row := range rows {
-		item := questionFromDO(row)
-		options, err := r.listOptions(ctx, row.TenantID, row.ID)
+		item := questionFromListRow(row)
+		options, err := r.listOptions(ctx, row.QuestionDO.TenantID, row.QuestionDO.ID)
 		if err != nil {
 			return pagination.Result[servicequestion.Question]{}, err
 		}
-		tags, err := r.listTags(ctx, row.TenantID, row.ID)
+		tags, err := r.listTags(ctx, row.QuestionDO.TenantID, row.QuestionDO.ID)
 		if err != nil {
 			return pagination.Result[servicequestion.Question]{}, err
 		}
@@ -129,6 +159,116 @@ func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input ser
 		PageSize: page.PageSize,
 		Total:    total,
 	}, nil
+}
+
+func (r *QuestionRepository) UpdateQuestion(ctx context.Context, item servicequestion.Question, options []servicequestion.QuestionOption, tags []string) (servicequestion.Question, error) {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		updates := map[string]any{
+			QuestionColumns.Type:               item.Type,
+			QuestionColumns.Difficulty:         item.Difficulty,
+			QuestionColumns.Title:              item.Title,
+			QuestionColumns.Analysis:           item.Analysis,
+			QuestionColumns.StandardAnswer:     item.StandardAnswer,
+			QuestionColumns.ReferenceAnswer:    item.ReferenceAnswer,
+			QuestionColumns.ScoreDefault:       item.ScoreDefault,
+			QuestionColumns.ChoiceDisplayCount: item.ChoiceDisplayCount,
+			QuestionColumns.ShuffleOptions:     item.ShuffleOptions,
+			BaseColumns.UpdatedAt:              r.now(),
+			BaseColumns.UpdatedBy:              item.CreatedBy,
+			BaseColumns.UpdatedByType:          AuditActorTenantUser,
+			BaseColumns.Version:                gorm.Expr(BaseColumns.Version + " + 1"),
+		}
+		result := tx.Model(&QuestionDO{}).
+			Where(QuestionColumns.TenantID+" = ?", item.TenantID).
+			Where(QuestionColumns.ID+" = ?", item.ID).
+			Where(QuestionColumns.DeletedAt+" = ?", 0).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicequestion.ErrQuestionNotFound
+		}
+		if err := tx.Where(QuestionOptionColumns.TenantID+" = ?", item.TenantID).
+			Where(QuestionOptionColumns.QuestionID+" = ?", item.ID).
+			Delete(&QuestionOptionDO{}).Error; err != nil {
+			return err
+		}
+		if _, err := r.createOptions(ctx, tx, item.TenantID, item.ID, options); err != nil {
+			return err
+		}
+		if err := tx.Where(QuestionTagColumns.TenantID+" = ?", item.TenantID).
+			Where(QuestionTagColumns.QuestionID+" = ?", item.ID).
+			Delete(&QuestionTagDO{}).Error; err != nil {
+			return err
+		}
+		_, err := r.bindTags(ctx, tx, item.TenantID, item.ID, tags)
+		return err
+	})
+	if err != nil {
+		return servicequestion.Question{}, err
+	}
+	return r.GetQuestion(ctx, item.TenantID, item.ID)
+}
+
+func (r *QuestionRepository) UpdateQuestionStatus(ctx context.Context, tenantID uint64, questionID uint64, status string, actorID uint64) (servicequestion.Question, error) {
+	result := r.db.WithContext(ctx).Model(&QuestionDO{}).
+		Where(QuestionColumns.TenantID+" = ?", tenantID).
+		Where(QuestionColumns.ID+" = ?", questionID).
+		Where(QuestionColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			QuestionColumns.Status:    status,
+			BaseColumns.UpdatedAt:     r.now(),
+			BaseColumns.UpdatedBy:     actorID,
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if result.Error != nil {
+		return servicequestion.Question{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicequestion.Question{}, servicequestion.ErrQuestionNotFound
+	}
+	return r.GetQuestion(ctx, tenantID, questionID)
+}
+
+func (r *QuestionRepository) DeleteQuestion(ctx context.Context, tenantID uint64, questionID uint64, actorID uint64) error {
+	result := r.db.WithContext(ctx).Model(&QuestionDO{}).
+		Where(QuestionColumns.TenantID+" = ?", tenantID).
+		Where(QuestionColumns.ID+" = ?", questionID).
+		Where(QuestionColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			QuestionColumns.DeletedAt: r.now(),
+			BaseColumns.UpdatedAt:     r.now(),
+			BaseColumns.UpdatedBy:     actorID,
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicequestion.ErrQuestionNotFound
+	}
+	return nil
+}
+
+func (r *QuestionRepository) QuestionReferenced(ctx context.Context, tenantID uint64, questionID uint64) (bool, error) {
+	tables := []string{"paper_section_questions", "exam_live_question_pools", "exam_attempt_questions"}
+	for _, tableName := range tables {
+		var count int64
+		err := r.db.WithContext(ctx).Table(tableName).
+			Where("tenant_id = ?", tenantID).
+			Where("question_id = ?", questionID).
+			Count(&count).Error
+		if err != nil {
+			return false, err
+		}
+		if count > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *QuestionRepository) ReplaceOptionsInTransaction(ctx context.Context, tenantID uint64, questionID uint64, options []servicequestion.QuestionOption) error {
@@ -287,7 +427,39 @@ func questionFromDO(row QuestionDO) servicequestion.Question {
 		ChoiceDisplayCount: row.ChoiceDisplayCount,
 		ShuffleOptions:     row.ShuffleOptions,
 		Status:             row.Status,
+		CreatedAt:          row.CreatedAt,
+		CreatedBy:          row.CreatedBy,
 	}
+}
+
+func questionFromListRow(row questionListRow) servicequestion.Question {
+	item := questionFromDO(row.QuestionDO)
+	item.AuthorName = row.AuthorName
+	item.AuthorRole = row.AuthorRole
+	return item
+}
+
+func (r *QuestionRepository) findQuestionRow(ctx context.Context, tenantID uint64, questionID uint64) (questionListRow, error) {
+	var row questionListRow
+	err := r.db.WithContext(ctx).Table(QuestionDO{}.TableName()+" AS questions").
+		Select(r.questionSelectColumns()).
+		Joins("LEFT JOIN users AS users ON users.id = questions."+BaseColumns.CreatedBy+" AND questions."+BaseColumns.CreatedByType+" = ? AND users.deleted_at = 0", AuditActorTenantUser).
+		Joins("LEFT JOIN tenant_user_memberships AS tum ON tum.tenant_id = questions.tenant_id AND tum.user_id = questions."+BaseColumns.CreatedBy).
+		Where("questions."+QuestionColumns.TenantID+" = ?", tenantID).
+		Where("questions."+QuestionColumns.ID+" = ?", questionID).
+		Where("questions."+QuestionColumns.DeletedAt+" = ?", 0).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return questionListRow{}, servicequestion.ErrQuestionNotFound
+	}
+	if err != nil {
+		return questionListRow{}, err
+	}
+	return row, nil
+}
+
+func (r *QuestionRepository) questionSelectColumns() string {
+	return "questions.*, users.username AS author_name, tum.role AS author_role"
 }
 
 func optionFromDO(row QuestionOptionDO) servicequestion.QuestionOption {

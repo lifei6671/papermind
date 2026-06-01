@@ -65,6 +65,9 @@ describe("questionApi", () => {
           analysis: "一次函数斜率为正时单调递增。",
           score_default: "6",
           status: "enabled",
+          author_name: "teacher01",
+          author_role: "teacher",
+          created_at: 1700000000000,
           tag: "函数",
           tags: ["函数", "基础"],
           options: [
@@ -97,5 +100,76 @@ describe("questionApi", () => {
     expect(result.stem).toBe("下列函数在 R 上单调递增的是哪一项？");
     expect(result.difficulty).toBe("hard");
     expect(result.tags).toEqual(["函数", "基础"]);
+    expect(result.authorName).toBe("teacher01");
+    expect(result.authorRole).toBe("teacher");
+    expect(result.createdAt).toBe(1700000000000);
+  });
+
+  test("更新、禁用和删除题目时提交租户和题目 ID", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/questions/100" && init?.method === "PUT") {
+        expect(JSON.parse(String(init.body))).toMatchObject({
+          tenant_id: 10,
+          title: "更新后的题干",
+        });
+        return questionResponse({ title: "更新后的题干" });
+      }
+      if (url === "/api/v1/questions/100/disable" && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toEqual({ tenant_id: 10 });
+        return questionResponse({ status: "disabled" });
+      }
+      if (url === "/api/v1/questions/100" && init?.method === "DELETE") {
+        expect(JSON.parse(String(init.body))).toEqual({ tenant_id: 10 });
+        return new Response(JSON.stringify({ code: 0, message: "ok", data: null }));
+      }
+      throw new Error(`unexpected request ${init?.method} ${url}`);
+    });
+    const api = createQuestionAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const updated = await api.updateQuestion({
+      tenantID: 10,
+      questionID: 100,
+      type: "single",
+      difficulty: "medium",
+      title: "更新后的题干",
+      options: ["A", "B"],
+      correctOptionIndexes: [0],
+      analysis: "解析",
+      scoreDefault: "2",
+      tags: ["函数"],
+    });
+    const disabled = await api.disableQuestion({ tenantID: 10, questionID: 100 });
+    await api.deleteQuestion({ tenantID: 10, questionID: 100 });
+
+    expect(updated.title).toBe("更新后的题干");
+    expect(disabled.status).toBe("disabled");
   });
 });
+
+function questionResponse(overrides: Record<string, unknown> = {}) {
+  return new Response(JSON.stringify({
+    code: 0,
+    message: "ok",
+    data: {
+      id: 100,
+      tenant_id: 10,
+      type: "single",
+      difficulty: "medium",
+      title: "题干",
+      analysis: "解析",
+      score_default: "2",
+      status: "enabled",
+      author_name: "teacher01",
+      author_role: "teacher",
+      created_at: 1700000000000,
+      tag: "函数",
+      tags: ["函数"],
+      options: [
+        { option_key: "A", content: "A", is_correct: true, is_distractor: false },
+        { option_key: "B", content: "B", is_correct: false, is_distractor: true },
+      ],
+      ...overrides,
+    },
+  }));
+}

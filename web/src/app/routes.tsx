@@ -19,6 +19,7 @@ import { ExamManagementPage } from "../pages/Exam/ExamManagementPage";
 import { PaperAssemblyPage } from "../pages/Exam/PaperAssemblyPage";
 import { QuestionBankPage } from "../pages/Exam/QuestionBankPage";
 import { QuestionCreatePage } from "../pages/Exam/QuestionCreatePage";
+import { QuestionEditRoute } from "../pages/Exam/QuestionEditRoute";
 import { GradingPage } from "../pages/Grading/GradingPage";
 import { PlatformSettingsPage } from "../pages/Platform/PlatformSettingsPage";
 import { TenantManagementPage } from "../pages/Platform/TenantManagementPage";
@@ -177,6 +178,16 @@ export function buildAdminRoutes(
     description: "新增题目并维护 Markdown 题干、解析和选项",
     icon: LibraryBig,
     element: examNeedsSpace ? renderExamSpaceRequiredPage("新增题目") : <QuestionCreatePage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    group: "hidden",
+    menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
+  },
+  {
+    path: "/questions/:questionID/edit",
+    label: "编辑题目",
+    description: "编辑未被引用的题目内容、选项、解析和标签",
+    icon: LibraryBig,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("编辑题目") : <QuestionEditRoute tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "hidden",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
