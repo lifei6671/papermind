@@ -6,9 +6,11 @@ import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { refreshFeedbackMinDurationMs } from "../../components/ui/refreshFeedback";
+import { useFeedback } from "../../app/feedback-context";
 import { questionApi } from "../../api/questions";
 import type { QuestionImportAPI } from "../../api/questions";
 import { formatApiErrorMessage } from "../../api/client";
+import { questionImportTemplateFileName, questionImportTemplateHref } from "./questionImportTemplate";
 
 type ImportRecord = {
   id: number;
@@ -23,9 +25,9 @@ type QuestionImportPageProps = {
 };
 
 export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }: QuestionImportPageProps) {
+  const { showError, showSuccess } = useFeedback();
   const [importRecords, setImportRecords] = useState<ImportRecord[]>([]);
   const [importFile, setImportFile] = useState<File | null>(null);
-  const [importMessage, setImportMessage] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -53,7 +55,7 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
 
   async function handleImportQuestions() {
     if (!importFile) {
-      setImportMessage("请选择题目导入文件");
+      showError("请选择题目导入文件");
       return;
     }
 
@@ -67,14 +69,14 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
       });
       const summary = formatImportSummary(result.successCount, result.errors.length);
       const detail = formatImportErrors(result.errors);
-      setImportMessage(`${importFile.name} ${summary}${detail ? `：${detail}` : ""}`);
+      showSuccess(`${importFile.name} ${summary}${detail ? `：${detail}` : ""}`);
       setImportRecords((items) => [
         ...items,
         { id: Date.now(), fileName: importFile.name, result: summary },
       ]);
       setIsImportDialogOpen(false);
     } catch (err) {
-      setImportMessage(formatApiErrorMessage(err, "导入题目失败"));
+      showError(formatApiErrorMessage(err, "导入题目失败"));
     } finally {
       setIsImporting(false);
     }
@@ -142,7 +144,6 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
             </Button>
           </div>
         </div>
-        {importMessage && <div className="tenant-admin-status" role="status">{importMessage}</div>}
         <div className="table-wrap">
           <table className="data-table tenant-admin-table">
             <thead>
@@ -170,12 +171,19 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
             <h2>导入题目</h2>
             <div className="platform-form">
               <FileUploadField
-                accept={["text/csv", "application/vnd.ms-excel"]}
+                accept={["text/csv"]}
+                helperAction={
+                  <a className="file-upload-field__template-link" download={questionImportTemplateFileName} href={questionImportTemplateHref}>
+                    下载 CSV 模板
+                  </a>
+                }
                 label="题目导入文件"
                 maxSizeBytes={2 * 1024 * 1024}
                 onFileAccepted={(file) => {
                   setImportFile(file);
                 }}
+                showPreview={false}
+                uploadPrompt="选择 CSV 文件或拖动文件到此处"
               />
               <div className="platform-dialog__actions">
                 <Button variant="secondary" onClick={closeImportDialog} type="button">

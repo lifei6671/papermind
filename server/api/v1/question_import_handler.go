@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	servicequestion "github.com/lifei6671/papermind/server/internal/service/question"
@@ -22,6 +23,32 @@ type importQuestionsResponse struct {
 type importQuestionErrorResponse struct {
 	RowNumber int    `json:"row_number"`
 	Reason    string `json:"reason"`
+}
+
+type questionImportHeaderSchema struct {
+	headers              []string
+	typeIndex            int
+	titleIndex           int
+	optionsIndex         int
+	correctAnswerIndex   int
+	standardAnswerIndex  int
+	referenceAnswerIndex int
+	analysisIndex        int
+	difficultyIndex      int
+	tagsIndex            int
+}
+
+var legacyQuestionImportHeaderSchema = questionImportHeaderSchema{
+	headers:              []string{"type", "title", "options", "correct_answer", "analysis", "difficulty", "tags"},
+	typeIndex:            0,
+	titleIndex:           1,
+	optionsIndex:         2,
+	correctAnswerIndex:   3,
+	standardAnswerIndex:  -1,
+	referenceAnswerIndex: -1,
+	analysisIndex:        4,
+	difficultyIndex:      5,
+	tagsIndex:            6,
 }
 
 func (h questionHandler) importQuestions(c *gin.Context) {
@@ -84,7 +111,8 @@ func parseQuestionImportCSV(fileHeader *multipart.FileHeader, expectedHeaders []
 		}
 		return nil, nil, errors.New("读取导入表头失败")
 	}
-	if !sameImportHeaders(header, expectedHeaders) {
+	schema, ok := matchImportHeaderSchema(header, expectedHeaders)
+	if !ok {
 		return nil, nil, errors.New("导入文件表头不符合模板")
 	}
 
@@ -101,20 +129,22 @@ func parseQuestionImportCSV(fileHeader *multipart.FileHeader, expectedHeaders []
 			rowErrors = append(rowErrors, servicequestion.ImportError{RowNumber: rowNumber, Reason: "CSV 行解析失败"})
 			continue
 		}
-		if len(record) != len(expectedHeaders) {
+		if len(record) != len(schema.headers) {
 			rowErrors = append(rowErrors, servicequestion.ImportError{RowNumber: rowNumber, Reason: "列数量与模板不一致"})
 			continue
 		}
-		// CSV 模板列顺序与 QuestionService.ImportTemplateHeaders 保持一致，行号用于前端准确提示错误位置。
+		// 新模板走中文表头，历史英文表头继续兼容；解析后统一映射到同一 ImportRow。
 		rows = append(rows, servicequestion.ImportRow{
-			RowNumber:     rowNumber,
-			Type:          record[0],
-			Title:         record[1],
-			Options:       record[2],
-			CorrectAnswer: record[3],
-			Analysis:      record[4],
-			Difficulty:    record[5],
-			Tags:          record[6],
+			RowNumber:       rowNumber,
+			Type:            readImportRecordCell(record, schema.typeIndex),
+			Title:           readImportRecordCell(record, schema.titleIndex),
+			Options:         readImportRecordCell(record, schema.optionsIndex),
+			CorrectAnswer:   readImportRecordCell(record, schema.correctAnswerIndex),
+			StandardAnswer:  readImportRecordCell(record, schema.standardAnswerIndex),
+			ReferenceAnswer: readImportRecordCell(record, schema.referenceAnswerIndex),
+			Analysis:        readImportRecordCell(record, schema.analysisIndex),
+			Difficulty:      readImportRecordCell(record, schema.difficultyIndex),
+			Tags:            readImportRecordCell(record, schema.tagsIndex),
 		})
 	}
 	return rows, rowErrors, nil
@@ -136,11 +166,44 @@ func sameImportHeaders(actual []string, expected []string) bool {
 		return false
 	}
 	for index := range expected {
-		if actual[index] != expected[index] {
+		if normalizeImportHeaderCell(actual[index]) != expected[index] {
 			return false
 		}
 	}
 	return true
+}
+
+func matchImportHeaderSchema(actual []string, expectedHeaders []string) (questionImportHeaderSchema, bool) {
+	current := questionImportHeaderSchema{
+		headers:              expectedHeaders,
+		typeIndex:            0,
+		titleIndex:           1,
+		optionsIndex:         2,
+		correctAnswerIndex:   3,
+		standardAnswerIndex:  4,
+		referenceAnswerIndex: 5,
+		analysisIndex:        6,
+		difficultyIndex:      7,
+		tagsIndex:            8,
+	}
+	if sameImportHeaders(actual, current.headers) {
+		return current, true
+	}
+	if sameImportHeaders(actual, legacyQuestionImportHeaderSchema.headers) {
+		return legacyQuestionImportHeaderSchema, true
+	}
+	return questionImportHeaderSchema{}, false
+}
+
+func normalizeImportHeaderCell(value string) string {
+	return strings.TrimPrefix(strings.TrimSpace(value), "\uFEFF")
+}
+
+func readImportRecordCell(record []string, index int) string {
+	if index < 0 || index >= len(record) {
+		return ""
+	}
+	return record[index]
 }
 
 func readUintForm(c *gin.Context, key string) (uint64, error) {

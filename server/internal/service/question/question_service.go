@@ -53,6 +53,8 @@ var (
 	ErrQuestionReferenced                 = errors.New("question referenced")
 )
 
+var importTemplateHeaders = []string{"题型", "题干", "选项", "正确答案", "标准答案", "参考答案", "题目解析", "难度", "标签"}
+
 type Question struct {
 	ID                 uint64  // 题目主键 ID。
 	TenantID           uint64  // 所属租户 ID。
@@ -183,14 +185,16 @@ type ImportQuestionsInput struct {
 }
 
 type ImportRow struct {
-	RowNumber     int    // 原始表格行号。
-	Type          string // 题型。
-	Title         string // 题干。
-	Options       string // 选项，格式示例：A.对|B.错。
-	CorrectAnswer string // 正确答案，选择题填写 option_key，多个用逗号分隔。
-	Analysis      string // 解析。
-	Difficulty    string // 难度。
-	Tags          string // 标签，逗号分隔。
+	RowNumber       int    // 原始表格行号。
+	Type            string // 题型。
+	Title           string // 题干。
+	Options         string // 选项，格式示例：A.对|B.错。
+	CorrectAnswer   string // 正确答案，选择题填写 option_key，多个用逗号分隔。
+	StandardAnswer  string // 标准答案，判断题/填空题使用。
+	ReferenceAnswer string // 参考答案，简答题使用。
+	Analysis        string // 解析。
+	Difficulty      string // 难度。
+	Tags            string // 标签，逗号分隔。
 }
 
 type ImportResult struct {
@@ -393,7 +397,7 @@ func (s *QuestionService) GradeFillBlankAnswer(answer string, standardAnswer str
 }
 
 func (s *QuestionService) ImportTemplateHeaders() []string {
-	return []string{"type", "title", "options", "correct_answer", "analysis", "difficulty", "tags"}
+	return append([]string(nil), importTemplateHeaders...)
 }
 
 func (s *QuestionService) ImportQuestions(ctx context.Context, input ImportQuestionsInput) (ImportResult, error) {
@@ -527,23 +531,119 @@ func sameIDs(left []uint64, right []uint64) bool {
 }
 
 func (row ImportRow) toCreateQuestionInput(tenantID uint64, spaceID *uint64) CreateQuestionInput {
-	options := parseImportOptions(row.Options, row.CorrectAnswer)
-	standardAnswer := ""
-	if row.Type == QuestionTypeFillBlank {
-		standardAnswer = strings.TrimSpace(row.CorrectAnswer)
+	questionType := normalizeImportQuestionType(row.Type)
+	options := []QuestionOptionInput(nil)
+	if questionType == QuestionTypeSingle || questionType == QuestionTypeMultiple {
+		options = parseImportOptions(row.Options, row.CorrectAnswer)
 	}
 	return CreateQuestionInput{
-		TenantID:       tenantID,
-		SpaceID:        spaceID,
-		Type:           row.Type,
-		Difficulty:     row.Difficulty,
-		Title:          row.Title,
-		Analysis:       row.Analysis,
-		ScoreDefault:   "1",
-		Options:        options,
-		StandardAnswer: standardAnswer,
-		Tags:           splitCSV(row.Tags),
+		TenantID:        tenantID,
+		SpaceID:         spaceID,
+		Type:            questionType,
+		Difficulty:      normalizeImportDifficulty(row.Difficulty),
+		Title:           strings.TrimSpace(row.Title),
+		Analysis:        strings.TrimSpace(row.Analysis),
+		ScoreDefault:    "1",
+		Options:         options,
+		StandardAnswer:  normalizeImportStandardAnswer(questionType, row.StandardAnswer, row.CorrectAnswer),
+		ReferenceAnswer: normalizeImportReferenceAnswer(questionType, row.ReferenceAnswer, row.CorrectAnswer),
+		Tags:            splitCSV(row.Tags),
 	}
+}
+
+func normalizeImportQuestionType(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case "单选题":
+		return QuestionTypeSingle
+	case "多选题":
+		return QuestionTypeMultiple
+	case "判断题":
+		return QuestionTypeJudge
+	case "填空题":
+		return QuestionTypeFillBlank
+	case "简答题":
+		return QuestionTypeShortText
+	default:
+		return strings.TrimSpace(raw)
+	}
+}
+
+func normalizeImportDifficulty(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case "简单":
+		return DifficultyEasy
+	case "中等":
+		return DifficultyMedium
+	case "困难":
+		return DifficultyHard
+	default:
+		return strings.TrimSpace(raw)
+	}
+}
+
+func normalizeImportStandardAnswer(questionType string, standardAnswer string, fallback string) string {
+	value := strings.TrimSpace(standardAnswer)
+	if value == "" {
+		value = strings.TrimSpace(fallback)
+	}
+	switch questionType {
+	case QuestionTypeJudge:
+		return normalizeImportJudgeAnswer(value)
+	case QuestionTypeFillBlank:
+		return normalizeImportFillBlankAnswer(value)
+	default:
+		return value
+	}
+}
+
+func normalizeImportReferenceAnswer(questionType string, referenceAnswer string, fallback string) string {
+	if questionType != QuestionTypeShortText {
+		return ""
+	}
+	value := strings.TrimSpace(referenceAnswer)
+	if value == "" {
+		value = strings.TrimSpace(fallback)
+	}
+	return value
+}
+
+func normalizeImportJudgeAnswer(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "正确", "对", "true", "1", "yes", "y":
+		return "true"
+	case "错误", "错", "false", "0", "no", "n":
+		return "false"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func normalizeImportFillBlankAnswer(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.HasPrefix(trimmed, "[") {
+		return trimmed
+	}
+	answers := splitDelimitedValues(trimmed, "|")
+	if len(answers) <= 1 {
+		return trimmed
+	}
+	encoded, err := json.Marshal(answers)
+	if err != nil {
+		return trimmed
+	}
+	return string(encoded)
+}
+
+func splitDelimitedValues(value string, delimiter string) []string {
+	parts := strings.Split(value, delimiter)
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			items = append(items, part)
+		}
+	}
+	return items
 }
 
 func parseImportOptions(rawOptions string, rawCorrect string) []QuestionOptionInput {

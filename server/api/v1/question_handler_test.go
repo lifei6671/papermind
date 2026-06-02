@@ -92,10 +92,12 @@ func TestQuestionImportAPIRouteParsesCSVAndReturnsRowErrors(t *testing.T) {
 	})
 	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
 
-	requestBody, contentType := buildQuestionImportMultipart(t, fmt.Sprintf(`type,title,options,correct_answer,analysis,difficulty,tags
-%s,函数单调性判断,A.y = x|B.y = -x,A,一次函数斜率为正时单调递增。,medium,函数
-%s,无正确选项,A.正确|B.错误,,缺少正确答案。,medium,基础
-`, constant.QuestionTypeSingle, constant.QuestionTypeSingle))
+	requestBody, contentType := buildQuestionImportMultipart(t, fmt.Sprintf(`%s题型,题干,选项,正确答案,标准答案,参考答案,题目解析,难度,标签
+单选题,函数单调性判断,A.y = x|B.y = -x,A,,,一次函数斜率为正时单调递增。,中等,函数
+判断题,零是自然数。,,,正确,,基础数学常识。,简单,基础
+简答题,简述零信任架构的核心思想。,,,,持续验证身份并遵循最小权限原则。,覆盖身份验证与授权。,困难,安全
+单选题,无正确选项,A.正确|B.错误,,,,缺少正确答案。,中等,基础
+`, "\uFEFF"))
 	recorder := httptest.NewRecorder()
 	request := authorizedRequest(http.MethodPost, "/api/v1/questions/import", requestBody.Bytes(), authHeader)
 	request.Header.Set("Content-Type", contentType)
@@ -105,22 +107,22 @@ func TestQuestionImportAPIRouteParsesCSVAndReturnsRowErrors(t *testing.T) {
 	}
 
 	body := decodeExamAPIResponse[importQuestionsResponse](t, recorder.Body.Bytes())
-	if body.Data.SuccessCount != 1 {
-		t.Fatalf("expected one imported row, got %#v", body.Data)
+	if body.Data.SuccessCount != 3 {
+		t.Fatalf("expected three imported rows, got %#v", body.Data)
 	}
-	if len(body.Data.Errors) != 1 || body.Data.Errors[0].RowNumber != 3 {
-		t.Fatalf("expected row 3 error, got %#v", body.Data.Errors)
+	if len(body.Data.Errors) != 1 || body.Data.Errors[0].RowNumber != 5 {
+		t.Fatalf("expected row 5 error, got %#v", body.Data.Errors)
 	}
 
 	var importedCount int64
 	if err := gormDB.Table("questions").
 		Where("tenant_id = ?", 10).
-		Where("title = ?", "函数单调性判断").
+		Where("title IN ?", []string{"函数单调性判断", "零是自然数。", "简述零信任架构的核心思想。"}).
 		Count(&importedCount).Error; err != nil {
 		t.Fatalf("count imported questions: %v", err)
 	}
-	if importedCount != 1 {
-		t.Fatalf("expected imported question persisted, got %d", importedCount)
+	if importedCount != 3 {
+		t.Fatalf("expected imported questions persisted, got %d", importedCount)
 	}
 }
 

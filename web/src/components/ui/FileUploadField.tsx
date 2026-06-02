@@ -1,5 +1,6 @@
 import { UploadCloud } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import type { ReactNode } from "react";
 
 type FileUploadFieldProps = {
   label: string;
@@ -9,6 +10,8 @@ type FileUploadFieldProps = {
   onReject?: (message: string) => void;
   previewSrc?: string;
   selectedLabel?: string;
+  showPreview?: boolean;
+  helperAction?: ReactNode;
   uploadPrompt?: string;
   emptyPreviewText?: string;
 };
@@ -21,6 +24,8 @@ export function FileUploadField({
   onReject,
   previewSrc,
   selectedLabel,
+  showPreview = true,
+  helperAction,
   uploadPrompt = "选择图片或拖动图片到此处",
   emptyPreviewText = "暂未选择图片",
 }: FileUploadFieldProps) {
@@ -75,17 +80,22 @@ export function FileUploadField({
     }
 
     setSelectedName(file.name);
-    const canPreviewImage = file.type.startsWith("image/") && typeof URL.createObjectURL === "function";
+    const canPreviewImage = showPreview && file.type.startsWith("image/") && typeof URL.createObjectURL === "function";
     setPreviewURL(canPreviewImage ? URL.createObjectURL(file) : "");
     onFileAccepted(file);
   }
+
+  const layoutClassName = [
+    "file-upload-field__layout",
+    showPreview ? "" : "file-upload-field__layout--single",
+  ].filter(Boolean).join(" ");
 
   return (
     <div className="file-upload-field">
       <label className="file-upload-field__label" htmlFor={inputID}>
         {label}
       </label>
-      <div className="file-upload-field__layout">
+      <div className={layoutClassName}>
         <div
           aria-label={`${label}上传区域`}
           className="file-upload-field__control"
@@ -105,15 +115,22 @@ export function FileUploadField({
             type="file"
           />
         </div>
-        <div aria-label={`${label}预览`} className="file-upload-field__preview">
-          {previewURL || previewSrc ? (
-            <img alt={`${selectedName || selectedLabel || label} 预览`} src={previewURL || previewSrc} />
-          ) : (
-            <span>{emptyPreviewText}</span>
-          )}
-        </div>
+        {showPreview && (
+          <div aria-label={`${label}预览`} className="file-upload-field__preview">
+            {previewURL || previewSrc ? (
+              <img alt={`${selectedName || selectedLabel || label} 预览`} src={previewURL || previewSrc} />
+            ) : (
+              <span>{emptyPreviewText}</span>
+            )}
+          </div>
+        )}
       </div>
-      {maxSizeBytes !== undefined && <small>最大 {formatBytes(maxSizeBytes)}</small>}
+      {(maxSizeBytes !== undefined || helperAction) && (
+        <div className="file-upload-field__meta">
+          {maxSizeBytes !== undefined && <small>最大 {formatBytes(maxSizeBytes)}</small>}
+          {helperAction}
+        </div>
+      )}
     </div>
   );
 }

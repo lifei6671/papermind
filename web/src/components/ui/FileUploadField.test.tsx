@@ -38,6 +38,30 @@ test("文件上传组件支持非图片上传文案", () => {
   expect(screen.queryByText("暂未选择图片")).not.toBeInTheDocument();
 });
 
+test("文件上传组件可以关闭预览区", async () => {
+  const user = userEvent.setup();
+  const onFileAccepted = vi.fn();
+
+  render(
+    <FileUploadField
+      accept={["text/csv"]}
+      label="题目导入文件"
+      onFileAccepted={onFileAccepted}
+      showPreview={false}
+      uploadPrompt="选择 CSV/Excel 文件或拖动文件到此处"
+    />,
+  );
+
+  expect(screen.getByLabelText("题目导入文件上传区域")).toBeInTheDocument();
+  expect(screen.queryByLabelText("题目导入文件预览")).not.toBeInTheDocument();
+
+  await user.upload(screen.getByLabelText("题目导入文件"), new File(["title,type"], "questions.csv", { type: "text/csv" }));
+
+  expect(onFileAccepted).toHaveBeenCalledWith(expect.objectContaining({ name: "questions.csv" }));
+  expect(screen.getByText("questions.csv")).toBeInTheDocument();
+  expect(screen.queryByLabelText("题目导入文件预览")).not.toBeInTheDocument();
+});
+
 test("文件上传组件拒绝超过大小限制的文件", async () => {
   const user = userEvent.setup();
   const onReject = vi.fn();
