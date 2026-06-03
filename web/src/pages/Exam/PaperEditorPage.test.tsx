@@ -344,6 +344,62 @@ test("智能组卷知识点使用下拉输入选择并保存标签", async () =>
   });
 });
 
+test("智能组卷难度分布使用分段滑块并保存百分比", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble();
+  paperApi.createRule = vi.fn(async (input) => ({
+    id: 501,
+    tenantID: input.tenantID,
+    paperID: input.paperID,
+    sectionID: input.sectionID,
+    sortOrder: 1,
+    questionType: input.questionType,
+    questionCount: input.questionCount,
+    scorePerQuestion: input.scorePerQuestion,
+    difficulty: input.difficulty,
+    tagIDs: input.tagIDs,
+    tagNames: input.tagNames,
+    questionScope: input.questionScope,
+    difficultyPercentages: input.difficultyPercentages,
+    prioritizeQuality: input.prioritizeQuality,
+    excludeRecentExamQuestions: input.excludeRecentExamQuestions,
+    excludeUsedQuestions: input.excludeUsedQuestions,
+  }));
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+  await user.click(screen.getByRole("tab", { name: "智能组卷" }));
+
+  expect(screen.getByRole("group", { name: "难度分布滑块" })).toBeInTheDocument();
+  expect(screen.getByText("较易 30%")).toBeInTheDocument();
+  expect(screen.getByText("中等 50%")).toBeInTheDocument();
+  expect(screen.getByText("较难 20%")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("较易占比边界"), { target: { value: "25" } });
+  fireEvent.change(screen.getByLabelText("中等占比边界"), { target: { value: "70" } });
+
+  expect(screen.getByText("较易 25%")).toBeInTheDocument();
+  expect(screen.getByText("中等 45%")).toBeInTheDocument();
+  expect(screen.getByText("较难 30%")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  await waitFor(() => {
+    expect(paperApi.createRule).toHaveBeenCalledWith(expect.objectContaining({
+      difficultyPercentages: {
+        easy: 25,
+        medium: 45,
+        hard: 30,
+      },
+    }));
+  });
+});
+
 test("编辑基础信息后底部草稿状态会联动切换", async () => {
   const user = userEvent.setup();
   const paperApi = createPaperApiDouble();

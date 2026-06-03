@@ -1,4 +1,5 @@
 import { Eye, FilePlus2, GripVertical, Sparkles, Trash2 } from "lucide-react";
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
@@ -272,6 +273,30 @@ export function PaperEditorPage({
     setSmartSelectedTags((items) => items.filter((item) => item !== tag));
   }
 
+  function updateEasyBoundary(value: number) {
+    setSmartDifficultyPercentages((current) => {
+      const mediumEnd = current.easy + current.medium;
+      const easy = clamp(value, 0, mediumEnd);
+      return {
+        easy,
+        medium: mediumEnd - easy,
+        hard: 100 - mediumEnd,
+      };
+    });
+  }
+
+  function updateMediumBoundary(value: number) {
+    setSmartDifficultyPercentages((current) => {
+      const easy = current.easy;
+      const mediumEnd = clamp(value, easy, 100);
+      return {
+        easy,
+        medium: mediumEnd - easy,
+        hard: 100 - mediumEnd,
+      };
+    });
+  }
+
   const filteredQuestions = questionPool.filter((item) => {
     if (selectedType !== "all" && item.type !== selectedType) {
       return false;
@@ -289,6 +314,12 @@ export function PaperEditorPage({
   const groupedSelectedQuestions = buildSelectedGroups(sections, sectionQuestions, questionMap);
   const selectedQuestionCount = sectionQuestions.length;
   const totalScore = sectionQuestions.reduce((sum, item) => sum + Number(item.score || "0"), 0);
+  const easyBoundary = clamp(smartDifficultyPercentages.easy, 0, 100);
+  const mediumBoundary = clamp(smartDifficultyPercentages.easy + smartDifficultyPercentages.medium, easyBoundary, 100);
+  const difficultySliderStyle = {
+    "--easy-percent": `${easyBoundary}%`,
+    "--medium-end-percent": `${mediumBoundary}%`,
+  } as CSSProperties;
   const canAssemble = paper !== null;
   const isRuleLivePaper = buildMode === "rule_live";
   const isSmartPaper = buildMode === "rule_fixed";
@@ -1194,24 +1225,36 @@ export function PaperEditorPage({
 
               <section className="exam-paper-editor__smart-block">
                 <h3>难度分布</h3>
-                <div className="exam-paper-editor__difficulty-grid">
-                  {(["easy", "medium", "hard"] as const).map((difficulty) => (
-                    <label key={difficulty}>
-                      <span>{difficultyLabels[difficulty]}</span>
-                      <input
-                        aria-label={`${difficultyLabels[difficulty]}难度占比`}
-                        min={0}
-                        max={100}
-                        onChange={(event) => setSmartDifficultyPercentages((current) => ({
-                          ...current,
-                          [difficulty]: Number.parseInt(event.target.value || "0", 10),
-                        }))}
-                        type="number"
-                        value={smartDifficultyPercentages[difficulty]}
-                      />
-                      <em>%</em>
-                    </label>
-                  ))}
+                <div
+                  aria-label="难度分布滑块"
+                  className="exam-paper-editor__difficulty-slider"
+                  role="group"
+                  style={difficultySliderStyle}
+                >
+                  <div className="exam-paper-editor__difficulty-values">
+                    <span>{difficultyLabels.easy} {smartDifficultyPercentages.easy}%</span>
+                    <span>{difficultyLabels.medium} {smartDifficultyPercentages.medium}%</span>
+                    <span>{difficultyLabels.hard} {smartDifficultyPercentages.hard}%</span>
+                  </div>
+                  <div className="exam-paper-editor__difficulty-track">
+                    <span className="exam-paper-editor__difficulty-fill" aria-hidden="true" />
+                    <input
+                      aria-label="较易占比边界"
+                      max={100}
+                      min={0}
+                      onChange={(event) => updateEasyBoundary(Number.parseInt(event.target.value || "0", 10))}
+                      type="range"
+                      value={easyBoundary}
+                    />
+                    <input
+                      aria-label="中等占比边界"
+                      max={100}
+                      min={0}
+                      onChange={(event) => updateMediumBoundary(Number.parseInt(event.target.value || "0", 10))}
+                      type="range"
+                      value={mediumBoundary}
+                    />
+                  </div>
                 </div>
               </section>
 
@@ -1530,6 +1573,10 @@ function defaultRuleDraftForSection(section: PaperSectionRow, sectionQuestions: 
     questionCount: String(Math.max(1, questions.length || section.questionCount || 1)),
     scorePerQuestion: firstScore,
   };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function cloneSectionQuestion(item: ManualQuestionRow): ManualQuestionRow {
