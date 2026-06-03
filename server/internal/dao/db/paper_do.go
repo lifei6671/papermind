@@ -7,6 +7,8 @@ type PaperDO struct {
 	SpaceID          *uint64 `gorm:"column:space_id"`          // 所属空间 ID，nil 表示租户公共试卷。
 	Name             string  `gorm:"column:name"`              // 试卷名称。
 	Description      string  `gorm:"column:description"`       // 试卷说明。
+	DurationMinutes  int     `gorm:"column:duration_minutes"`  // 默认考试时长，单位分钟。
+	GradeLevel       string  `gorm:"column:grade_level"`       // 适用年级，例如高一 / 高二。
 	TotalScore       string  `gorm:"column:total_score"`       // 试卷总分，使用字符串承载 DECIMAL/NUMERIC。
 	BuildMode        string  `gorm:"column:build_mode"`        // 组卷方式：manual / rule_fixed / rule_live。
 	ShuffleQuestions bool    `gorm:"column:shuffle_questions"` // 是否对每个考生随机题目顺序。
@@ -25,6 +27,8 @@ var PaperColumns = struct {
 	SpaceID          string
 	Name             string
 	Description      string
+	DurationMinutes  string
+	GradeLevel       string
 	TotalScore       string
 	BuildMode        string
 	ShuffleQuestions string
@@ -37,6 +41,8 @@ var PaperColumns = struct {
 	SpaceID:          "space_id",
 	Name:             "name",
 	Description:      "description",
+	DurationMinutes:  "duration_minutes",
+	GradeLevel:       "grade_level",
 	TotalScore:       "total_score",
 	BuildMode:        "build_mode",
 	ShuffleQuestions: "shuffle_questions",

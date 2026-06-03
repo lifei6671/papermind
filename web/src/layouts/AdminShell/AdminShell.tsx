@@ -1,7 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { ArrowLeftRight, Home, LogOut, Menu, Settings, X } from "lucide-react";
+import { ArrowLeftRight, ChevronLeft, ChevronRight, Home, LogOut, Menu, Settings, X } from "lucide-react";
 import { type AuthSession, useSession } from "../../auth/session-context";
 import { routeVisibleForRole, type AdminRoute, type AdminRouteGroup } from "../../app/routes";
 import "./AdminShell.css";
@@ -22,8 +22,11 @@ export function AdminShell({ routes }: AdminShellProps) {
   const navigate = useNavigate();
   const { session, signOut } = useSession();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
   const visibleGroups = Object.keys(groupLabels) as Array<Exclude<AdminRouteGroup, "hidden">>;
-  const scopedSpaceID = session?.selectedSpaceID ?? positiveID(new URLSearchParams(location.search).get("space_id"));
+  const scopedSpaceID = scopedSpaceIDFromSession(session, new URLSearchParams(location.search));
+  const iconOnly = sidebarCollapsed && !sidebarHovered && !sidebarOpen;
   const menuRoutes = routes.filter((route) =>
     routeVisibleForRole(route, session?.user.role, session?.profileSpaces ?? [], {
       tenantID: session?.user.tenantID,
@@ -37,11 +40,20 @@ export function AdminShell({ routes }: AdminShellProps) {
 
     return (
       <NavLink
-        className={({ isActive }) => (isActive ? "menu-link menu-link--active" : "menu-link")}
+        className={({ isActive }) => {
+          const classes = ["menu-link"];
+          if (isActive) {
+            classes.push("menu-link--active");
+          }
+          if (iconOnly) {
+            classes.push("menu-link--icon-only");
+          }
+          return classes.join(" ");
+        }}
         end={route.path === "/"}
         key={route.path}
         onClick={() => setSidebarOpen(false)}
-        to={routeLinkTarget(route, location.search)}
+        to={routeLinkTarget(route, location.search, session)}
       >
         <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
         <span>{route.label}</span>
@@ -51,7 +63,7 @@ export function AdminShell({ routes }: AdminShellProps) {
   };
 
   return (
-    <div className="admin-shell">
+    <div className={sidebarCollapsed ? "admin-shell admin-shell--sidebar-collapsed" : "admin-shell"}>
       <button
         aria-controls="admin-sidebar"
         aria-expanded={sidebarOpen}
@@ -74,15 +86,32 @@ export function AdminShell({ routes }: AdminShellProps) {
       )}
 
       <aside
-        className={sidebarOpen ? "sidebar sidebar--mobile-open" : "sidebar"}
+        className={buildSidebarClassName(sidebarOpen, sidebarCollapsed, sidebarHovered)}
         id="admin-sidebar"
         aria-label="后台导航"
+        onMouseEnter={() => {
+          if (sidebarCollapsed) {
+            setSidebarHovered(true);
+          }
+        }}
+        onMouseLeave={() => setSidebarHovered(false)}
       >
-        <div className="brand-rail">
+        <div className={iconOnly ? "brand-rail brand-rail--icon-only" : "brand-rail"}>
           <div className="brand-mark" aria-hidden="true">
             P
           </div>
           <span className="brand-word">Papermind</span>
+          <button
+            aria-label={sidebarCollapsed ? "展开后台导航" : "收起后台导航"}
+            className="sidebar-desktop-toggle"
+            onClick={() => {
+              setSidebarCollapsed((current) => !current);
+              setSidebarHovered(false);
+            }}
+            type="button"
+          >
+            {sidebarCollapsed ? <ChevronRight aria-hidden="true" size={16} /> : <ChevronLeft aria-hidden="true" size={16} />}
+          </button>
         </div>
 
         <div className="menu-panel">
@@ -120,7 +149,7 @@ export function AdminShell({ routes }: AdminShellProps) {
           </div>
 
           <Button
-            className="sidebar__home"
+            className={iconOnly ? "sidebar__home sidebar__home--icon-only" : "sidebar__home"}
             onClick={() => {
               setSidebarOpen(false);
               navigate(sidebarIdentity.actionPath);
@@ -128,10 +157,10 @@ export function AdminShell({ routes }: AdminShellProps) {
             type="button"
           >
             <sidebarIdentity.ActionIcon aria-hidden="true" size={15} />
-            {sidebarIdentity.actionLabel}
+            <span>{sidebarIdentity.actionLabel}</span>
           </Button>
           <Button
-            className="sidebar__logout"
+            className={iconOnly ? "sidebar__logout sidebar__logout--icon-only" : "sidebar__logout"}
             onClick={() => {
               setSidebarOpen(false);
               signOut();
@@ -140,7 +169,7 @@ export function AdminShell({ routes }: AdminShellProps) {
             type="button"
           >
             <LogOut aria-hidden="true" size={15} />
-            退出登录
+            <span>退出登录</span>
           </Button>
         </div>
       </aside>
@@ -154,16 +183,40 @@ export function AdminShell({ routes }: AdminShellProps) {
   );
 }
 
+function buildSidebarClassName(sidebarOpen: boolean, sidebarCollapsed: boolean, sidebarHovered: boolean) {
+  const classes = ["sidebar"];
+  if (sidebarOpen) {
+    classes.push("sidebar--mobile-open");
+  }
+  if (!sidebarOpen && sidebarCollapsed) {
+    classes.push("sidebar--collapsed");
+  }
+  if (!sidebarOpen && sidebarCollapsed && !sidebarHovered) {
+    classes.push("sidebar--icon-only");
+  }
+  if (!sidebarOpen && sidebarCollapsed && sidebarHovered) {
+    classes.push("sidebar--hover-open");
+  }
+  return classes.join(" ");
+}
+
 function positiveID(value: string | null) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function routeLinkTarget(route: AdminRoute, currentSearch: string) {
+function scopedSpaceIDFromSession(session: AuthSession | null, searchParams: URLSearchParams) {
+  if (!session || session.user.role === "platform_admin" || session.user.role === "tenant_admin") {
+    return undefined;
+  }
+  return session.selectedSpaceID ?? positiveID(searchParams.get("space_id"));
+}
+
+function routeLinkTarget(route: AdminRoute, currentSearch: string, session: AuthSession | null) {
   const currentParams = new URLSearchParams(currentSearch);
   const nextParams = new URLSearchParams();
   const tenantID = currentParams.get("tenant_id");
-  const spaceID = currentParams.get("space_id");
+  const spaceID = shouldPreserveSpaceScope(session) ? currentParams.get("space_id") : null;
   const examID = currentParams.get("exam_id");
   if ((route.group === "overview" || route.group === "tenant" || route.group === "exam") && tenantID) {
     nextParams.set("tenant_id", tenantID);
@@ -176,6 +229,10 @@ function routeLinkTarget(route: AdminRoute, currentSearch: string) {
   }
   const query = nextParams.toString();
   return query ? `${route.path}?${query}` : route.path;
+}
+
+function shouldPreserveSpaceScope(session: AuthSession | null) {
+  return session?.user.role !== "platform_admin" && session?.user.role !== "tenant_admin";
 }
 
 function routeNeedsExamContext(path: string) {

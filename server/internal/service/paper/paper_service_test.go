@@ -68,6 +68,27 @@ func TestSectionLifecycleUsesStableOrderAndCascadingDelete(t *testing.T) {
 	}
 }
 
+func TestSectionWritesRejectPublishedRuleLiveExam(t *testing.T) {
+	repo := &fakeRepository{ruleChangeLocked: true}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	if _, err := svc.CreateSection(context.Background(), CreateSectionInput{
+		TenantID:     10,
+		PaperID:      100,
+		SortOrder:    1,
+		Name:         "一、选择题",
+		QuestionType: constant.QuestionTypeSingle,
+	}); !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
+		t.Fatalf("CreateSection expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
+	}
+	if err := svc.ReorderSections(context.Background(), 10, 100, []SectionOrder{{SectionID: 1, SortOrder: 2}}); !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
+		t.Fatalf("ReorderSections expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
+	}
+	if repo.checkedSectionSortOrder || len(repo.sectionOrders) > 0 || repo.deletedSectionInTransaction {
+		t.Fatalf("expected published rule_live section writes to stop before repository writes, repo=%#v", repo)
+	}
+}
+
 func TestManualPaperAddQuestionPreventsDuplicatesAndRecalculates(t *testing.T) {
 	repo := &fakeRepository{
 		duplicatePaperQuestion: true,
@@ -77,14 +98,26 @@ func TestManualPaperAddQuestionPreventsDuplicatesAndRecalculates(t *testing.T) {
 	paper, err := svc.CreateManualPaper(context.Background(), CreatePaperInput{
 		TenantID:         10,
 		Name:             "期中考试",
+		DurationMinutes:  150,
+		GradeLevel:       "高一",
 		ShuffleQuestions: true,
 		ShowAnalysis:     true,
+		ActorID:          501,
 	})
 	if err != nil {
 		t.Fatalf("CreateManualPaper returned error: %v", err)
 	}
 	if paper.BuildMode != BuildModeManual || paper.Status != StatusDraft {
 		t.Fatalf("expected manual draft paper, got %#v", paper)
+	}
+	if repo.createdPaper.CreatedBy != 501 {
+		t.Fatalf("expected created paper actor to be persisted, got %#v", repo.createdPaper)
+	}
+	if repo.createdPaper.DurationMinutes != 150 {
+		t.Fatalf("expected created paper duration to be persisted, got %#v", repo.createdPaper)
+	}
+	if repo.createdPaper.GradeLevel != "高一" {
+		t.Fatalf("expected created paper grade level to be persisted, got %#v", repo.createdPaper)
 	}
 
 	err = svc.AddManualQuestion(context.Background(), AddSectionQuestionInput{
@@ -125,8 +158,63 @@ func TestManualPaperAddQuestionPreventsDuplicatesAndRecalculates(t *testing.T) {
 	}
 }
 
+func TestRuleLivePaperRejectsManualQuestionWrites(t *testing.T) {
+	repo := &fakeRepository{
+		currentBuildMode:       BuildModeRuleLive,
+		questionUsableForPaper: true,
+	}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	err := svc.AddManualQuestion(context.Background(), AddSectionQuestionInput{
+		TenantID:   10,
+		PaperID:    100,
+		SectionID:  200,
+		QuestionID: 300,
+		SortOrder:  1,
+		Score:      "2",
+	})
+	if !errors.Is(err, ErrRuleLiveManualQuestionChange) {
+		t.Fatalf("AddManualQuestion expected ErrRuleLiveManualQuestionChange, got %v", err)
+	}
+
+	err = svc.UpdateSectionQuestion(context.Background(), UpdateSectionQuestionInput{
+		TenantID:   10,
+		PaperID:    100,
+		SectionID:  200,
+		QuestionID: 300,
+		SortOrder:  2,
+		Score:      "3",
+	})
+	if !errors.Is(err, ErrRuleLiveManualQuestionChange) {
+		t.Fatalf("UpdateSectionQuestion expected ErrRuleLiveManualQuestionChange, got %v", err)
+	}
+
+	err = svc.DeleteSectionQuestion(context.Background(), 10, 100, 200, 300)
+	if !errors.Is(err, ErrRuleLiveManualQuestionChange) {
+		t.Fatalf("DeleteSectionQuestion expected ErrRuleLiveManualQuestionChange, got %v", err)
+	}
+
+	err = svc.ReplaceGeneratedQuestion(context.Background(), ReplaceGeneratedQuestionInput{
+		TenantID:      10,
+		PaperID:       100,
+		SectionID:     200,
+		OldQuestionID: 300,
+		NewQuestionID: 301,
+		SortOrder:     1,
+		Score:         "2",
+	})
+	if !errors.Is(err, ErrRuleLiveManualQuestionChange) {
+		t.Fatalf("ReplaceGeneratedQuestion expected ErrRuleLiveManualQuestionChange, got %v", err)
+	}
+
+	if repo.addQuestionAndRecalculateInTransaction || repo.adjustedQuestionID != 0 || repo.replacedNewQuestionID != 0 || repo.deletedSectionQuestionID != 0 {
+		t.Fatalf("expected live manual writes to stop before repository writes, repo=%#v", repo)
+	}
+}
+
 func TestRuleFixedGenerateAndReviewBehavesLikeManualAfterGeneration(t *testing.T) {
 	repo := &fakeRepository{
+		questionUsableForPaper: true,
 		ruleMatches: map[uint64][]uint64{
 			1: {300, 301},
 		},
@@ -176,6 +264,9 @@ func TestRuleFixedGenerateAndReviewBehavesLikeManualAfterGeneration(t *testing.T
 	if !repo.generatedFixedInTransaction || len(repo.generatedQuestions) != 2 {
 		t.Fatalf("expected generated fixed questions in transaction, got %#v", repo.generatedQuestions)
 	}
+	if repo.generatedFixedBuildMode != BuildModeRuleFixed {
+		t.Fatalf("expected generated fixed build mode %q, got %q", BuildModeRuleFixed, repo.generatedFixedBuildMode)
+	}
 
 	if err := svc.ReplaceGeneratedQuestion(context.Background(), ReplaceGeneratedQuestionInput{
 		TenantID:      10,
@@ -204,6 +295,24 @@ func TestRuleFixedGenerateAndReviewBehavesLikeManualAfterGeneration(t *testing.T
 	}
 	if repo.adjustedQuestionID != 399 || repo.adjustedSortOrder != 3 || repo.adjustedScore != "5" {
 		t.Fatalf("expected adjusted generated question, got question=%d order=%d score=%q", repo.adjustedQuestionID, repo.adjustedSortOrder, repo.adjustedScore)
+	}
+}
+
+func TestGenerateRuleFixedRejectsPublishedRuleLiveExam(t *testing.T) {
+	repo := &fakeRepository{
+		ruleChangeLocked: true,
+		ruleMatches: map[uint64][]uint64{
+			1: {300, 301},
+		},
+	}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	err := svc.GenerateRuleFixed(context.Background(), 10, 100)
+	if !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
+		t.Fatalf("expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
+	}
+	if repo.generatedFixedInTransaction {
+		t.Fatalf("expected fixed-question generation not to start when published rule_live exam exists")
 	}
 }
 
@@ -259,6 +368,43 @@ func TestRuleLivePrecheckDedupeAndFreezePool(t *testing.T) {
 	}
 }
 
+func TestRuleChangesRejectPublishedRuleLiveExam(t *testing.T) {
+	repo := &fakeRepository{ruleChangeLocked: true}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	_, err := svc.ConfigureRule(context.Background(), ConfigureRuleInput{
+		TenantID:         10,
+		PaperID:          100,
+		SectionID:        200,
+		SortOrder:        1,
+		TagIDs:           []uint64{1},
+		QuestionCount:    2,
+		ScorePerQuestion: "5",
+	})
+	if !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
+		t.Fatalf("ConfigureRule expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
+	}
+
+	err = svc.UpdateRuleLiveRule(context.Background(), UpdateRuleInput{
+		TenantID:         10,
+		PaperID:          100,
+		RuleID:           300,
+		SectionID:        200,
+		SortOrder:        1,
+		TagIDs:           []uint64{1},
+		QuestionCount:    2,
+		ScorePerQuestion: "5",
+	})
+	if !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
+		t.Fatalf("UpdateRuleLiveRule expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
+	}
+
+	err = svc.DeleteRule(context.Background(), 10, 100, 300)
+	if !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
+		t.Fatalf("DeleteRule expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
+	}
+}
+
 func TestAggregateRecalculationByBuildMode(t *testing.T) {
 	repo := &fakeRepository{
 		manualSectionQuestions: []SectionQuestion{
@@ -287,6 +433,23 @@ func TestAggregateRecalculationByBuildMode(t *testing.T) {
 	}
 }
 
+func TestUpdateBuildModeRejectsPublishedRuleLiveExam(t *testing.T) {
+	repo := &fakeRepository{ruleChangeLocked: true}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	_, err := svc.UpdateBuildMode(context.Background(), UpdateBuildModeInput{
+		TenantID:  10,
+		PaperID:   100,
+		BuildMode: BuildModeRuleFixed,
+	})
+	if !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
+		t.Fatalf("expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
+	}
+	if repo.updatedBuildMode {
+		t.Fatalf("expected build mode update not to hit repository when rule_live exam is published")
+	}
+}
+
 type fakeRepository struct {
 	checkedSectionSortOrder     bool
 	createdSection              Section
@@ -297,17 +460,23 @@ type fakeRepository struct {
 	deletedSectionInTransaction bool
 	deletedSectionID            uint64
 	listActiveSectionsCalled    bool
+	currentBuildMode            string
 
-	createdPaper Paper
+	createdPaper  Paper
+	updatedPaper  UpdatePaperInput
+	updatedStatus string
+	updatedBy     uint64
 
 	duplicatePaperQuestion                 bool
 	questionUsableForPaper                 bool
 	addQuestionAndRecalculateInTransaction bool
 	addedQuestion                          SectionQuestion
+	deletedSectionQuestionID               uint64
 
 	ruleMatches                 map[uint64][]uint64
 	configuredRule              Rule
 	generatedFixedInTransaction bool
+	generatedFixedBuildMode     string
 	generatedQuestions          []SectionQuestion
 	replacedOldQuestionID       uint64
 	replacedNewQuestionID       uint64
@@ -317,6 +486,8 @@ type fakeRepository struct {
 
 	frozenLivePool    bool
 	frozenQuestionIDs []uint64
+	ruleChangeLocked  bool
+	updatedBuildMode  bool
 
 	manualSectionQuestions    []SectionQuestion
 	ruleLiveRules             []Rule
@@ -333,6 +504,14 @@ func (r *fakeRepository) SectionSortOrderExists(ctx context.Context, tenantID ui
 
 func (r *fakeRepository) ListPapers(ctx context.Context, input ListPapersInput) ([]Paper, error) {
 	return nil, nil
+}
+
+func (r *fakeRepository) GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (Paper, error) {
+	buildMode := r.currentBuildMode
+	if buildMode == "" {
+		buildMode = BuildModeManual
+	}
+	return Paper{ID: paperID, TenantID: tenantID, BuildMode: buildMode}, nil
 }
 
 func (r *fakeRepository) CreateSection(ctx context.Context, section Section) (Section, error) {
@@ -370,6 +549,21 @@ func (r *fakeRepository) CreatePaper(ctx context.Context, paper Paper) (Paper, e
 	return paper, nil
 }
 
+func (r *fakeRepository) UpdatePaper(ctx context.Context, input UpdatePaperInput) (Paper, error) {
+	r.updatedPaper = input
+	paper := Paper{ID: input.PaperID, TenantID: input.TenantID, Name: input.Name, Description: input.Description}
+	if input.DurationMinutes != nil {
+		paper.DurationMinutes = *input.DurationMinutes
+	}
+	return paper, nil
+}
+
+func (r *fakeRepository) UpdatePaperStatus(ctx context.Context, tenantID uint64, paperID uint64, status string, actorID uint64) (Paper, error) {
+	r.updatedStatus = status
+	r.updatedBy = actorID
+	return Paper{ID: paperID, TenantID: tenantID, Status: status}, nil
+}
+
 func (r *fakeRepository) DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error {
 	return nil
 }
@@ -391,9 +585,30 @@ func (r *fakeRepository) AddSectionQuestionAndRecalculate(ctx context.Context, q
 	return nil
 }
 
+func (r *fakeRepository) UpdateSectionQuestionAndRecalculate(ctx context.Context, input UpdateSectionQuestionInput) error {
+	r.adjustedQuestionID = input.QuestionID
+	r.adjustedSortOrder = input.SortOrder
+	r.adjustedScore = input.Score
+	return nil
+}
+
+func (r *fakeRepository) DeleteSectionQuestionAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, sectionID uint64, questionID uint64) error {
+	r.deletedSectionQuestionID = questionID
+	return nil
+}
+
 func (r *fakeRepository) CreateRule(ctx context.Context, rule Rule) (Rule, error) {
 	rule.ID = uint64(rule.SortOrder)
 	r.configuredRule = rule
+	return rule, nil
+}
+
+func (r *fakeRepository) CreateRuleAndRecalculate(ctx context.Context, rule Rule, buildMode string) (Rule, error) {
+	rule.ID = uint64(rule.SortOrder)
+	r.configuredRule = rule
+	if buildMode == BuildModeRuleLive {
+		r.recalculatedInTransaction = true
+	}
 	return rule, nil
 }
 
@@ -409,8 +624,9 @@ func (r *fakeRepository) ListRules(ctx context.Context, tenantID uint64, paperID
 	return rules, nil
 }
 
-func (r *fakeRepository) GenerateFixedQuestionsAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, questions []SectionQuestion) error {
+func (r *fakeRepository) GenerateFixedQuestionsAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, buildMode string, questions []SectionQuestion) error {
 	r.generatedFixedInTransaction = true
+	r.generatedFixedBuildMode = buildMode
 	r.generatedQuestions = questions
 	return nil
 }
@@ -434,11 +650,38 @@ func (r *fakeRepository) FreezeLivePools(ctx context.Context, tenantID uint64, e
 	return nil
 }
 
+func (r *fakeRepository) HasPublishedRuleLiveExam(ctx context.Context, tenantID uint64, paperID uint64) (bool, error) {
+	return r.ruleChangeLocked, nil
+}
+
 func (r *fakeRepository) FrozenQuestionIDs() []uint64 {
 	return append([]uint64(nil), r.frozenQuestionIDs...)
 }
 
 func (r *fakeRepository) UpdateRule(ctx context.Context, input UpdateRuleInput) error {
+	return nil
+}
+
+func (r *fakeRepository) UpdateRuleAndRecalculate(ctx context.Context, input UpdateRuleInput, buildMode string) error {
+	if buildMode == BuildModeRuleLive {
+		r.recalculatedInTransaction = true
+	}
+	return nil
+}
+
+func (r *fakeRepository) DeleteRule(ctx context.Context, tenantID uint64, paperID uint64, ruleID uint64) error {
+	return nil
+}
+
+func (r *fakeRepository) DeleteRuleAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, ruleID uint64, buildMode string) error {
+	if buildMode == BuildModeRuleLive {
+		r.recalculatedInTransaction = true
+	}
+	return nil
+}
+
+func (r *fakeRepository) UpdateBuildMode(ctx context.Context, tenantID uint64, paperID uint64, buildMode string) error {
+	r.updatedBuildMode = true
 	return nil
 }
 

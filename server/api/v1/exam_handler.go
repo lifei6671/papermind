@@ -1088,6 +1088,7 @@ func writeExamServiceError(c *gin.Context, err error) {
 	if errors.Is(err, serviceexam.ErrDurationExceedsExamWindow) ||
 		errors.Is(err, serviceexam.ErrShortTextCannotRepeatAttempt) ||
 		errors.Is(err, serviceexam.ErrShortTextCannotImmediateScore) ||
+		errors.Is(err, serviceexam.ErrPaperNotEnabled) ||
 		errors.Is(err, serviceexam.ErrDuplicateExamTarget) ||
 		errors.Is(err, serviceexam.ErrRuleLiveQuestionPoolInsufficient) ||
 		errors.Is(err, serviceexam.ErrLoginRequiredForInvite) ||

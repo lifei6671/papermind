@@ -7,14 +7,15 @@ import (
 	"testing"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
+	"github.com/lifei6671/papermind/server/library/constant"
 )
 
 func TestCreateDraftAndPublishExamValidatesSettingsAndFreezesRuleLivePool(t *testing.T) {
 	repo := &fakeRepository{
 		inviteCodes: map[string]bool{"DUPLICATE": true},
 		papers: map[uint64]Paper{
-			100: {ID: 100, BuildMode: BuildModeRuleLive},
-			101: {ID: 101, BuildMode: BuildModeManual, ContainsShortText: true},
+			100: {ID: 100, BuildMode: BuildModeRuleLive, Status: constant.PaperStatusEnabled},
+			101: {ID: 101, BuildMode: BuildModeManual, ContainsShortText: true, Status: constant.PaperStatusEnabled},
 		},
 		liveCandidates: []LivePoolItem{
 			{SectionID: 10, RuleID: 1, QuestionID: 300},
@@ -109,6 +110,41 @@ func TestCreateDraftAndPublishExamValidatesSettingsAndFreezesRuleLivePool(t *tes
 	}
 	if !repo.frozeLivePool || len(repo.frozenPool) != 1 {
 		t.Fatalf("expected rule_live pool frozen, got %#v", repo.frozenPool)
+	}
+}
+
+func TestPublishRejectsPaperThatIsNotEnabled(t *testing.T) {
+	repo := &fakeRepository{
+		papers: map[uint64]Paper{
+			100: {ID: 100, BuildMode: BuildModeManual, Status: constant.PaperStatusDisabled},
+			101: {ID: 101, BuildMode: BuildModeManual, Status: constant.PaperStatusDraft},
+		},
+	}
+	svc := NewService(ServiceOptions{
+		Repo:          repo,
+		CodeGenerator: &fakeCodeGenerator{codes: []string{"INVITE001"}},
+		TokenIssuer:   fakeTokenIssuer{token: "exam-token"},
+		Now:           fixedNow,
+	})
+
+	for _, paperID := range []uint64{100, 101} {
+		_, err := svc.Publish(context.Background(), PublishInput{
+		TenantID:        10,
+		ExamID:          1,
+		PaperID:         paperID,
+		StartTime:       fixedUnixMilli,
+		EndTime:         fixedUnixMilli + 120*minuteMillis,
+		DurationMinutes: 60,
+		MaxAttempts:     1,
+		ResultStrategy:  ResultStrategyLatest,
+		PublishMode:     PublishModeManualPublish,
+	})
+		if !errors.Is(err, ErrPaperNotEnabled) {
+			t.Fatalf("paper %d: expected ErrPaperNotEnabled, got %v", paperID, err)
+		}
+	}
+	if repo.updatedExam.ID != 0 {
+		t.Fatalf("expected non-enabled paper to stop publish before persistence, got %#v", repo.updatedExam)
 	}
 }
 

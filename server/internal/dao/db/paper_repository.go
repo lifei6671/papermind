@@ -8,6 +8,7 @@ import (
 	"time"
 
 	servicepaper "github.com/lifei6671/papermind/server/internal/service/paper"
+	"github.com/lifei6671/papermind/server/library/constant"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/plugin/soft_delete"
@@ -22,6 +23,11 @@ type PaperRepositoryOptions struct {
 	Now func() int64
 }
 
+type paperListRow struct {
+	PaperDO
+	CreatorName string `gorm:"column:creator_name"`
+}
+
 func NewPaperRepository(gormDB *gorm.DB, options PaperRepositoryOptions) *PaperRepository {
 	now := options.Now
 	if now == nil {
@@ -31,23 +37,50 @@ func NewPaperRepository(gormDB *gorm.DB, options PaperRepositoryOptions) *PaperR
 }
 
 func (r *PaperRepository) ListPapers(ctx context.Context, input servicepaper.ListPapersInput) ([]servicepaper.Paper, error) {
-	var rows []PaperDO
-	query := r.db.WithContext(ctx).
-		Where(PaperColumns.TenantID+" = ?", input.TenantID).
-		Where(PaperColumns.DeletedAt+" = ?", 0)
+	query := r.db.WithContext(ctx).Table(PaperDO{}.TableName()+" AS papers").
+		Select(r.paperSelectColumns()).
+		Joins("LEFT JOIN users AS users ON users.id = papers."+BaseColumns.CreatedBy+" AND papers."+BaseColumns.CreatedByType+" = ? AND users.deleted_at = 0", AuditActorTenantUser).
+		Where("papers."+PaperColumns.TenantID+" = ?", input.TenantID).
+		Where("papers."+PaperColumns.DeletedAt+" = ?", 0)
 	if input.SpaceID != nil {
-		query = query.Where(r.db.Where(PaperColumns.SpaceID+" IS NULL").Or(PaperColumns.SpaceID+" = ?", *input.SpaceID))
+		query = query.Where(r.db.Where("papers."+PaperColumns.SpaceID+" IS NULL").Or("papers."+PaperColumns.SpaceID+" = ?", *input.SpaceID))
 	}
+	var rows []paperListRow
 	if err := query.
-		Order(PaperColumns.ID + " ASC").
+		Order("papers." + BaseColumns.CreatedAt + " DESC").
+		Order("papers." + PaperColumns.ID + " DESC").
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	items := make([]servicepaper.Paper, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, paperFromDO(row))
+		items = append(items, paperFromListRow(row))
 	}
 	return items, nil
+}
+
+func (r *PaperRepository) GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (servicepaper.Paper, error) {
+	row, err := r.findPaperRow(ctx, tenantID, paperID)
+	if err != nil {
+		return servicepaper.Paper{}, err
+	}
+	return paperFromListRow(row), nil
+}
+
+func (r *PaperRepository) HasPublishedRuleLiveExam(ctx context.Context, tenantID uint64, paperID uint64) (bool, error) {
+	var total int64
+	err := r.db.WithContext(ctx).
+		Table(ExamDO{}.TableName()+" AS exams").
+		Joins(
+			"JOIN "+ExamLiveQuestionPoolDO{}.TableName()+" AS pools ON pools."+ExamLiveQuestionPoolColumns.TenantID+
+				" = exams."+ExamColumns.TenantID+" AND pools."+ExamLiveQuestionPoolColumns.ExamID+" = exams."+ExamColumns.ID,
+		).
+		Where("exams."+ExamColumns.TenantID+" = ?", tenantID).
+		Where("exams."+ExamColumns.PaperID+" = ?", paperID).
+		Where("exams."+ExamColumns.Status+" = ?", constant.ExamStatusPublished).
+		Where("exams."+ExamColumns.DeletedAt+" = ?", 0).
+		Count(&total).Error
+	return total > 0, err
 }
 
 func (r *PaperRepository) GetPaperSpaceID(ctx context.Context, tenantID uint64, paperID uint64) (*uint64, error) {
@@ -121,14 +154,45 @@ func (r *PaperRepository) UpdateSection(ctx context.Context, input servicepaper.
 
 func (r *PaperRepository) ReorderSections(ctx context.Context, tenantID uint64, paperID uint64, orders []servicepaper.SectionOrder) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, order := range orders {
-			if err := tx.Model(&PaperSectionDO{}).
+		if len(orders) == 0 {
+			return nil
+		}
+		var maxSortOrder int
+		if err := tx.Model(&PaperSectionDO{}).
+			Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionColumns.PaperID+" = ?", paperID).
+			Where(PaperSectionColumns.DeletedAt+" = ?", 0).
+			Select("COALESCE(MAX(" + PaperSectionColumns.SortOrder + "), 0)").
+			Scan(&maxSortOrder).Error; err != nil {
+			return err
+		}
+		// 先把待重排大题搬到当前排序区间之外，避免唯一索引 `(tenant_id, paper_id, sort_order)` 在交换顺序时冲突。
+		for index, order := range orders {
+			result := tx.Model(&PaperSectionDO{}).
 				Where(PaperSectionColumns.TenantID+" = ?", tenantID).
 				Where(PaperSectionColumns.PaperID+" = ?", paperID).
 				Where(PaperSectionColumns.ID+" = ?", order.SectionID).
 				Where(PaperSectionColumns.DeletedAt+" = ?", 0).
-				Update(PaperSectionColumns.SortOrder, order.SortOrder).Error; err != nil {
-				return err
+				Update(PaperSectionColumns.SortOrder, maxSortOrder+index+1)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return servicepaper.ErrPaperNotFound
+			}
+		}
+		for _, order := range orders {
+			result := tx.Model(&PaperSectionDO{}).
+				Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+				Where(PaperSectionColumns.PaperID+" = ?", paperID).
+				Where(PaperSectionColumns.ID+" = ?", order.SectionID).
+				Where(PaperSectionColumns.DeletedAt+" = ?", 0).
+				Update(PaperSectionColumns.SortOrder, order.SortOrder)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return servicepaper.ErrPaperNotFound
 			}
 		}
 		return nil
@@ -177,8 +241,10 @@ func (r *PaperRepository) CreatePaper(ctx context.Context, paper servicepaper.Pa
 	row := PaperDO{
 		BaseFields: BaseFields{
 			CreatedAt:     now,
+			CreatedBy:     paper.CreatedBy,
 			CreatedByType: AuditActorTenantUser,
 			UpdatedAt:     now,
+			UpdatedBy:     paper.CreatedBy,
 			UpdatedByType: AuditActorTenantUser,
 			Version:       1,
 			ExtJSON:       datatypes.JSON("{}"),
@@ -187,6 +253,8 @@ func (r *PaperRepository) CreatePaper(ctx context.Context, paper servicepaper.Pa
 		SpaceID:          paper.SpaceID,
 		Name:             paper.Name,
 		Description:      paper.Description,
+		DurationMinutes:  paper.DurationMinutes,
+		GradeLevel:       paper.GradeLevel,
 		TotalScore:       paper.TotalScore,
 		BuildMode:        paper.BuildMode,
 		ShuffleQuestions: paper.ShuffleQuestions,
@@ -196,7 +264,55 @@ func (r *PaperRepository) CreatePaper(ctx context.Context, paper servicepaper.Pa
 	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return servicepaper.Paper{}, err
 	}
-	return paperFromDO(row), nil
+	return r.GetPaper(ctx, paper.TenantID, row.ID)
+}
+
+func (r *PaperRepository) UpdatePaper(ctx context.Context, input servicepaper.UpdatePaperInput) (servicepaper.Paper, error) {
+	updates := map[string]any{
+		PaperColumns.Name:         input.Name,
+		PaperColumns.Description:  input.Description,
+		PaperColumns.GradeLevel:   input.GradeLevel,
+		BaseColumns.UpdatedAt:     r.now(),
+		BaseColumns.UpdatedBy:     input.ActorID,
+		BaseColumns.UpdatedByType: AuditActorTenantUser,
+		BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+	}
+	if input.DurationMinutes != nil {
+		updates[PaperColumns.DurationMinutes] = *input.DurationMinutes
+	}
+	result := r.db.WithContext(ctx).Model(&PaperDO{}).
+		Where(PaperColumns.TenantID+" = ?", input.TenantID).
+		Where(PaperColumns.ID+" = ?", input.PaperID).
+		Where(PaperColumns.DeletedAt+" = ?", 0).
+		Updates(updates)
+	if result.Error != nil {
+		return servicepaper.Paper{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicepaper.Paper{}, servicepaper.ErrPaperNotFound
+	}
+	return r.GetPaper(ctx, input.TenantID, input.PaperID)
+}
+
+func (r *PaperRepository) UpdatePaperStatus(ctx context.Context, tenantID uint64, paperID uint64, status string, actorID uint64) (servicepaper.Paper, error) {
+	result := r.db.WithContext(ctx).Model(&PaperDO{}).
+		Where(PaperColumns.TenantID+" = ?", tenantID).
+		Where(PaperColumns.ID+" = ?", paperID).
+		Where(PaperColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			PaperColumns.Status:       status,
+			BaseColumns.UpdatedAt:     r.now(),
+			BaseColumns.UpdatedBy:     actorID,
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if result.Error != nil {
+		return servicepaper.Paper{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicepaper.Paper{}, servicepaper.ErrPaperNotFound
+	}
+	return r.GetPaper(ctx, tenantID, paperID)
 }
 
 func (r *PaperRepository) DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error {
@@ -346,8 +462,135 @@ func (r *PaperRepository) AddSectionQuestionAndRecalculate(ctx context.Context, 
 	})
 }
 
+func (r *PaperRepository) UpdateSectionQuestionAndRecalculate(ctx context.Context, input servicepaper.UpdateSectionQuestionInput) error {
+	now := r.now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var rows []PaperSectionQuestionDO
+		if err := tx.Where(PaperSectionQuestionColumns.TenantID+" = ?", input.TenantID).
+			Where(PaperSectionQuestionColumns.PaperID+" = ?", input.PaperID).
+			Where(PaperSectionQuestionColumns.SectionID+" = ?", input.SectionID).
+			Order(PaperSectionQuestionColumns.SortOrder + " ASC").
+			Find(&rows).Error; err != nil {
+			return err
+		}
+		targetIndex := -1
+		for index := range rows {
+			if rows[index].QuestionID == input.QuestionID {
+				targetIndex = index
+				rows[index].Score = input.Score
+				break
+			}
+		}
+		if targetIndex < 0 {
+			return servicepaper.ErrPaperNotFound
+		}
+		target := rows[targetIndex]
+		reordered := make([]PaperSectionQuestionDO, 0, len(rows))
+		reordered = append(reordered, rows[:targetIndex]...)
+		reordered = append(reordered, rows[targetIndex+1:]...)
+		insertIndex := input.SortOrder - 1
+		if insertIndex < 0 {
+			insertIndex = 0
+		}
+		if insertIndex > len(reordered) {
+			insertIndex = len(reordered)
+		}
+		reordered = append(reordered, PaperSectionQuestionDO{})
+		copy(reordered[insertIndex+1:], reordered[insertIndex:])
+		reordered[insertIndex] = target
+		maxSortOrder := 0
+		for _, row := range rows {
+			if row.SortOrder > maxSortOrder {
+				maxSortOrder = row.SortOrder
+			}
+		}
+		for index, row := range reordered {
+			result := tx.Model(&PaperSectionQuestionDO{}).
+				Where(PaperSectionQuestionColumns.TenantID+" = ?", input.TenantID).
+				Where(PaperSectionQuestionColumns.PaperID+" = ?", input.PaperID).
+				Where(PaperSectionQuestionColumns.SectionID+" = ?", input.SectionID).
+				Where(PaperSectionQuestionColumns.QuestionID+" = ?", row.QuestionID).
+				Updates(map[string]any{
+					PaperSectionQuestionColumns.SortOrder: maxSortOrder + index + 1,
+					BaseColumns.UpdatedAt:                 now,
+					BaseColumns.UpdatedByType:             AuditActorTenantUser,
+					BaseColumns.Version:                   gorm.Expr(BaseColumns.Version + " + 1"),
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return servicepaper.ErrPaperNotFound
+			}
+		}
+		for index, row := range reordered {
+			updates := map[string]any{
+				PaperSectionQuestionColumns.SortOrder: index + 1,
+				BaseColumns.UpdatedAt:                 now,
+				BaseColumns.UpdatedByType:             AuditActorTenantUser,
+				BaseColumns.Version:                   gorm.Expr(BaseColumns.Version + " + 1"),
+			}
+			if row.QuestionID == input.QuestionID {
+				updates[PaperSectionQuestionColumns.Score] = input.Score
+			}
+			result := tx.Model(&PaperSectionQuestionDO{}).
+				Where(PaperSectionQuestionColumns.TenantID+" = ?", input.TenantID).
+				Where(PaperSectionQuestionColumns.PaperID+" = ?", input.PaperID).
+				Where(PaperSectionQuestionColumns.SectionID+" = ?", input.SectionID).
+				Where(PaperSectionQuestionColumns.QuestionID+" = ?", row.QuestionID).
+				Updates(updates)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return servicepaper.ErrPaperNotFound
+			}
+		}
+		return r.recalculateQuestionAggregates(tx, input.TenantID, input.PaperID, now)
+	})
+}
+
+func (r *PaperRepository) DeleteSectionQuestionAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, sectionID uint64, questionID uint64) error {
+	now := r.now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Where(PaperSectionQuestionColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionQuestionColumns.PaperID+" = ?", paperID).
+			Where(PaperSectionQuestionColumns.SectionID+" = ?", sectionID).
+			Where(PaperSectionQuestionColumns.QuestionID+" = ?", questionID).
+			Delete(&PaperSectionQuestionDO{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicepaper.ErrPaperNotFound
+		}
+		return r.recalculateQuestionAggregates(tx, tenantID, paperID, now)
+	})
+}
+
 func (r *PaperRepository) CreateRule(ctx context.Context, rule servicepaper.Rule) (servicepaper.Rule, error) {
 	now := r.now()
+	return r.createRule(r.db.WithContext(ctx), rule, now)
+}
+
+func (r *PaperRepository) CreateRuleAndRecalculate(ctx context.Context, rule servicepaper.Rule, buildMode string) (servicepaper.Rule, error) {
+	now := r.now()
+	var created servicepaper.Rule
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		next, err := r.createRule(tx, rule, now)
+		if err != nil {
+			return err
+		}
+		created = next
+		return r.recalculateRuleAggregates(tx, rule.TenantID, rule.PaperID, buildMode, now)
+	})
+	if err != nil {
+		return servicepaper.Rule{}, err
+	}
+	return created, nil
+}
+
+func (r *PaperRepository) createRule(tx *gorm.DB, rule servicepaper.Rule, now int64) (servicepaper.Rule, error) {
 	row := PaperSectionRuleDO{
 		BaseFields: BaseFields{
 			CreatedAt:     now,
@@ -367,7 +610,7 @@ func (r *PaperRepository) CreateRule(ctx context.Context, rule servicepaper.Rule
 		ScorePerQuestion: rule.ScorePerQuestion,
 		ShuffleOptions:   rule.ShuffleOptions,
 	}
-	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+	if err := tx.Create(&row).Error; err != nil {
 		return servicepaper.Rule{}, err
 	}
 	return ruleFromDO(row), nil
@@ -427,7 +670,7 @@ func (r *PaperRepository) ListRules(ctx context.Context, tenantID uint64, paperI
 	return items, nil
 }
 
-func (r *PaperRepository) GenerateFixedQuestionsAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, questions []servicepaper.SectionQuestion) error {
+func (r *PaperRepository) GenerateFixedQuestionsAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, buildMode string, questions []servicepaper.SectionQuestion) error {
 	now := r.now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where(PaperSectionQuestionColumns.TenantID+" = ?", tenantID).
@@ -458,16 +701,64 @@ func (r *PaperRepository) GenerateFixedQuestionsAndRecalculate(ctx context.Conte
 				return err
 			}
 		}
-		return r.recalculateQuestionAggregates(tx, tenantID, paperID, now)
+		if err := r.recalculateQuestionAggregates(tx, tenantID, paperID, now); err != nil {
+			return err
+		}
+		result := tx.Model(&PaperDO{}).
+			Where(PaperColumns.TenantID+" = ?", tenantID).
+			Where(PaperColumns.ID+" = ?", paperID).
+			Where(PaperColumns.DeletedAt+" = ?", 0).
+			Updates(map[string]any{
+				PaperColumns.BuildMode:    buildMode,
+				BaseColumns.UpdatedAt:     now,
+				BaseColumns.UpdatedByType: AuditActorTenantUser,
+				BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicepaper.ErrPaperNotFound
+		}
+		return nil
 	})
 }
 
 func (r *PaperRepository) ReplaceGeneratedQuestionAndRecalculate(ctx context.Context, input servicepaper.ReplaceGeneratedQuestionInput) error {
-	return errors.New("rule_fixed review is not connected to HTTP yet")
+	now := r.now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&PaperSectionQuestionDO{}).
+			Where(PaperSectionQuestionColumns.TenantID+" = ?", input.TenantID).
+			Where(PaperSectionQuestionColumns.PaperID+" = ?", input.PaperID).
+			Where(PaperSectionQuestionColumns.SectionID+" = ?", input.SectionID).
+			Where(PaperSectionQuestionColumns.QuestionID+" = ?", input.OldQuestionID).
+			Updates(map[string]any{
+				PaperSectionQuestionColumns.QuestionID: input.NewQuestionID,
+				PaperSectionQuestionColumns.SortOrder:  input.SortOrder,
+				PaperSectionQuestionColumns.Score:      input.Score,
+				BaseColumns.UpdatedAt:                  now,
+				BaseColumns.UpdatedByType:              AuditActorTenantUser,
+				BaseColumns.Version:                    gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicepaper.ErrPaperNotFound
+		}
+		return r.recalculateQuestionAggregates(tx, input.TenantID, input.PaperID, now)
+	})
 }
 
 func (r *PaperRepository) AdjustGeneratedQuestionAndRecalculate(ctx context.Context, input servicepaper.AdjustGeneratedQuestionInput) error {
-	return errors.New("rule_fixed review is not connected to HTTP yet")
+	return r.UpdateSectionQuestionAndRecalculate(ctx, servicepaper.UpdateSectionQuestionInput{
+		TenantID:   input.TenantID,
+		PaperID:    input.PaperID,
+		SectionID:  input.SectionID,
+		QuestionID: input.QuestionID,
+		SortOrder:  input.SortOrder,
+		Score:      input.Score,
+	})
 }
 
 func (r *PaperRepository) FreezeLivePools(ctx context.Context, tenantID uint64, examID uint64, questionIDs []uint64) error {
@@ -475,7 +766,94 @@ func (r *PaperRepository) FreezeLivePools(ctx context.Context, tenantID uint64, 
 }
 
 func (r *PaperRepository) UpdateRule(ctx context.Context, input servicepaper.UpdateRuleInput) error {
-	return errors.New("rule_live update is not connected to HTTP yet")
+	now := r.now()
+	return r.updateRule(r.db.WithContext(ctx), input, now)
+}
+
+func (r *PaperRepository) UpdateRuleAndRecalculate(ctx context.Context, input servicepaper.UpdateRuleInput, buildMode string) error {
+	now := r.now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := r.updateRule(tx, input, now); err != nil {
+			return err
+		}
+		return r.recalculateRuleAggregates(tx, input.TenantID, input.PaperID, buildMode, now)
+	})
+}
+
+func (r *PaperRepository) updateRule(tx *gorm.DB, input servicepaper.UpdateRuleInput, now int64) error {
+	result := tx.Model(&PaperSectionRuleDO{}).
+		Where(PaperSectionRuleColumns.TenantID+" = ?", input.TenantID).
+		Where(PaperSectionRuleColumns.PaperID+" = ?", input.PaperID).
+		Where(PaperSectionRuleColumns.ID+" = ?", input.RuleID).
+		Updates(map[string]any{
+			PaperSectionRuleColumns.SectionID:        input.SectionID,
+			PaperSectionRuleColumns.SortOrder:        input.SortOrder,
+			PaperSectionRuleColumns.Difficulty:       input.Difficulty,
+			PaperSectionRuleColumns.TagFilter:        mustTagFilterJSON(input.TagIDs),
+			PaperSectionRuleColumns.QuestionCount:    input.QuestionCount,
+			PaperSectionRuleColumns.ScorePerQuestion: input.ScorePerQuestion,
+			PaperSectionRuleColumns.ShuffleOptions:   input.ShuffleOptions,
+			BaseColumns.UpdatedAt:                    now,
+			BaseColumns.UpdatedByType:                AuditActorTenantUser,
+			BaseColumns.Version:                      gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicepaper.ErrPaperNotFound
+	}
+	return nil
+}
+
+func (r *PaperRepository) DeleteRule(ctx context.Context, tenantID uint64, paperID uint64, ruleID uint64) error {
+	return r.deleteRule(r.db.WithContext(ctx), tenantID, paperID, ruleID)
+}
+
+func (r *PaperRepository) DeleteRuleAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, ruleID uint64, buildMode string) error {
+	now := r.now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := r.deleteRule(tx, tenantID, paperID, ruleID); err != nil {
+			return err
+		}
+		return r.recalculateRuleAggregates(tx, tenantID, paperID, buildMode, now)
+	})
+}
+
+func (r *PaperRepository) deleteRule(tx *gorm.DB, tenantID uint64, paperID uint64, ruleID uint64) error {
+	result := tx.
+		Where(PaperSectionRuleColumns.TenantID+" = ?", tenantID).
+		Where(PaperSectionRuleColumns.PaperID+" = ?", paperID).
+		Where(PaperSectionRuleColumns.ID+" = ?", ruleID).
+		Delete(&PaperSectionRuleDO{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicepaper.ErrPaperNotFound
+	}
+	return nil
+}
+
+func (r *PaperRepository) UpdateBuildMode(ctx context.Context, tenantID uint64, paperID uint64, buildMode string) error {
+	now := r.now()
+	result := r.db.WithContext(ctx).Model(&PaperDO{}).
+		Where(PaperColumns.TenantID+" = ?", tenantID).
+		Where(PaperColumns.ID+" = ?", paperID).
+		Where(PaperColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			PaperColumns.BuildMode:    buildMode,
+			BaseColumns.UpdatedAt:     now,
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicepaper.ErrPaperNotFound
+	}
+	return nil
 }
 
 func (r *PaperRepository) ListSectionQuestions(ctx context.Context, tenantID uint64, paperID uint64) ([]servicepaper.SectionQuestion, error) {
@@ -501,44 +879,7 @@ func (r *PaperRepository) ListRuleLiveRules(ctx context.Context, tenantID uint64
 func (r *PaperRepository) SaveAggregates(ctx context.Context, tenantID uint64, paperID uint64, sections []servicepaper.SectionAggregate, paperTotalScore string) error {
 	now := r.now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&PaperSectionDO{}).
-			Where(PaperSectionColumns.TenantID+" = ?", tenantID).
-			Where(PaperSectionColumns.PaperID+" = ?", paperID).
-			Where(PaperSectionColumns.DeletedAt+" = ?", 0).
-			Updates(map[string]any{
-				PaperSectionColumns.TotalScore:    "0",
-				PaperSectionColumns.QuestionCount: 0,
-				BaseColumns.UpdatedAt:             now,
-				BaseColumns.UpdatedByType:         AuditActorTenantUser,
-				BaseColumns.Version:               gorm.Expr(BaseColumns.Version + " + 1"),
-			}).Error; err != nil {
-			return err
-		}
-		for _, section := range sections {
-			if err := tx.Model(&PaperSectionDO{}).
-				Where(PaperSectionColumns.TenantID+" = ?", tenantID).
-				Where(PaperSectionColumns.PaperID+" = ?", paperID).
-				Where(PaperSectionColumns.ID+" = ?", section.SectionID).
-				Updates(map[string]any{
-					PaperSectionColumns.TotalScore:    section.TotalScore,
-					PaperSectionColumns.QuestionCount: section.QuestionCount,
-					BaseColumns.UpdatedAt:             now,
-					BaseColumns.UpdatedByType:         AuditActorTenantUser,
-					BaseColumns.Version:               gorm.Expr(BaseColumns.Version + " + 1"),
-				}).Error; err != nil {
-				return err
-			}
-		}
-		return tx.Model(&PaperDO{}).
-			Where(PaperColumns.TenantID+" = ?", tenantID).
-			Where(PaperColumns.ID+" = ?", paperID).
-			Where(PaperColumns.DeletedAt+" = ?", 0).
-			Updates(map[string]any{
-				PaperColumns.TotalScore:   paperTotalScore,
-				BaseColumns.UpdatedAt:     now,
-				BaseColumns.UpdatedByType: AuditActorTenantUser,
-				BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
-			}).Error
+		return r.saveAggregates(tx, tenantID, paperID, sections, paperTotalScore, now)
 	})
 }
 
@@ -549,12 +890,44 @@ func paperFromDO(row PaperDO) servicepaper.Paper {
 		SpaceID:          row.SpaceID,
 		Name:             row.Name,
 		Description:      row.Description,
+		DurationMinutes:  row.DurationMinutes,
+		GradeLevel:       row.GradeLevel,
 		TotalScore:       row.TotalScore,
 		BuildMode:        row.BuildMode,
 		ShuffleQuestions: row.ShuffleQuestions,
 		ShowAnalysis:     row.ShowAnalysis,
 		Status:           row.Status,
+		CreatedAt:        row.CreatedAt,
+		CreatedBy:        row.CreatedBy,
 	}
+}
+
+func paperFromListRow(row paperListRow) servicepaper.Paper {
+	item := paperFromDO(row.PaperDO)
+	item.CreatorName = row.CreatorName
+	return item
+}
+
+func (r *PaperRepository) findPaperRow(ctx context.Context, tenantID uint64, paperID uint64) (paperListRow, error) {
+	var row paperListRow
+	err := r.db.WithContext(ctx).Table(PaperDO{}.TableName()+" AS papers").
+		Select(r.paperSelectColumns()).
+		Joins("LEFT JOIN users AS users ON users.id = papers."+BaseColumns.CreatedBy+" AND papers."+BaseColumns.CreatedByType+" = ? AND users.deleted_at = 0", AuditActorTenantUser).
+		Where("papers."+PaperColumns.TenantID+" = ?", tenantID).
+		Where("papers."+PaperColumns.ID+" = ?", paperID).
+		Where("papers."+PaperColumns.DeletedAt+" = ?", 0).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return paperListRow{}, servicepaper.ErrPaperNotFound
+	}
+	if err != nil {
+		return paperListRow{}, err
+	}
+	return row, nil
+}
+
+func (r *PaperRepository) paperSelectColumns() string {
+	return "papers.*, users.username AS creator_name"
 }
 
 func sectionFromDO(row PaperSectionDO) servicepaper.Section {
@@ -663,12 +1036,107 @@ func (r *PaperRepository) recalculateQuestionAggregates(tx *gorm.DB, tenantID ui
 		}).Error
 }
 
+func (r *PaperRepository) recalculateRuleAggregates(tx *gorm.DB, tenantID uint64, paperID uint64, buildMode string, now int64) error {
+	if buildMode != servicepaper.BuildModeRuleLive {
+		return nil
+	}
+	var aggregates []struct {
+		SectionID     uint64
+		TotalScore    float64
+		QuestionCount int
+	}
+	if err := tx.Model(&PaperSectionRuleDO{}).
+		Select("section_id AS section_id, COALESCE(SUM(question_count * score_per_question), 0) AS total_score, COALESCE(SUM(question_count), 0) AS question_count").
+		Where(PaperSectionRuleColumns.TenantID+" = ?", tenantID).
+		Where(PaperSectionRuleColumns.PaperID+" = ?", paperID).
+		Group(PaperSectionRuleColumns.SectionID).
+		Scan(&aggregates).Error; err != nil {
+		return err
+	}
+	sections := make([]servicepaper.SectionAggregate, 0, len(aggregates))
+	totalScore := 0.0
+	for _, aggregate := range aggregates {
+		totalScore += aggregate.TotalScore
+		sections = append(sections, servicepaper.SectionAggregate{
+			SectionID:     aggregate.SectionID,
+			TotalScore:    formatRepositoryScore(aggregate.TotalScore),
+			QuestionCount: aggregate.QuestionCount,
+		})
+	}
+	return r.saveAggregates(tx, tenantID, paperID, sections, formatRepositoryScore(totalScore), now)
+}
+
+func (r *PaperRepository) saveAggregates(tx *gorm.DB, tenantID uint64, paperID uint64, sections []servicepaper.SectionAggregate, paperTotalScore string, now int64) error {
+	if err := tx.Model(&PaperSectionDO{}).
+		Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+		Where(PaperSectionColumns.PaperID+" = ?", paperID).
+		Where(PaperSectionColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			PaperSectionColumns.TotalScore:    "0",
+			PaperSectionColumns.QuestionCount: 0,
+			BaseColumns.UpdatedAt:             now,
+			BaseColumns.UpdatedByType:         AuditActorTenantUser,
+			BaseColumns.Version:               gorm.Expr(BaseColumns.Version + " + 1"),
+		}).Error; err != nil {
+		return err
+	}
+	for _, section := range sections {
+		result := tx.Model(&PaperSectionDO{}).
+			Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionColumns.PaperID+" = ?", paperID).
+			Where(PaperSectionColumns.ID+" = ?", section.SectionID).
+			Updates(map[string]any{
+				PaperSectionColumns.TotalScore:    section.TotalScore,
+				PaperSectionColumns.QuestionCount: section.QuestionCount,
+				BaseColumns.UpdatedAt:             now,
+				BaseColumns.UpdatedByType:         AuditActorTenantUser,
+				BaseColumns.Version:               gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicepaper.ErrPaperNotFound
+		}
+	}
+	result := tx.Model(&PaperDO{}).
+		Where(PaperColumns.TenantID+" = ?", tenantID).
+		Where(PaperColumns.ID+" = ?", paperID).
+		Where(PaperColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			PaperColumns.TotalScore:   paperTotalScore,
+			BaseColumns.UpdatedAt:     now,
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicepaper.ErrPaperNotFound
+	}
+	return nil
+}
+
 func tagIDsFromFilter(tagFilter string) []uint64 {
 	var tagIDs []uint64
 	if err := json.Unmarshal([]byte(tagFilter), &tagIDs); err != nil {
 		return []uint64{}
 	}
 	return tagIDs
+}
+
+func mustTagFilterJSON(tagIDs []uint64) string {
+	sorted := append([]uint64(nil), tagIDs...)
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j] < sorted[i] {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	data, _ := json.Marshal(sorted)
+	return string(data)
 }
 
 func formatRepositoryScore(value float64) string {

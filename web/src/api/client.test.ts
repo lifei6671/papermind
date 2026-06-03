@@ -95,6 +95,24 @@ describe("api client", () => {
     });
   });
 
+  test("非 JSON 错误响应直接透出后端文本", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response("404 page not found", {
+        headers: { "Content-Type": "text/plain" },
+        status: 404,
+      }),
+    );
+
+    const client = createApiClient({ baseUrl: "", fetcher });
+
+    await expect(client.get("/api/v1/papers/101")).rejects.toMatchObject({
+      code: 404,
+      message: "404 page not found",
+      status: 404,
+      body: "404 page not found",
+    });
+  });
+
   test("统一错误提示在后端文案缺失时按错误码兜底", () => {
     const error = new ApiError("", 50000, 500, { code: 50000 });
 

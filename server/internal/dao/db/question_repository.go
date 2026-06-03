@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
@@ -116,6 +117,8 @@ func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input ser
 	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
 	query := r.db.WithContext(ctx).
 		Table(QuestionDO{}.TableName()+" AS questions").
+		Joins("LEFT JOIN users AS users ON users.id = questions."+BaseColumns.CreatedBy+" AND questions."+BaseColumns.CreatedByType+" = ? AND users.deleted_at = 0", AuditActorTenantUser).
+		Joins("LEFT JOIN tenant_user_memberships AS tum ON tum.tenant_id = questions.tenant_id AND tum.user_id = questions."+BaseColumns.CreatedBy).
 		Where("questions."+QuestionColumns.TenantID+" = ?", input.TenantID).
 		Where("questions."+QuestionColumns.DeletedAt+" = ?", 0)
 	if input.SpaceID == nil {
@@ -123,14 +126,13 @@ func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input ser
 	} else {
 		query = query.Where(r.db.Where("questions."+QuestionColumns.SpaceID+" IS NULL").Or("questions."+QuestionColumns.SpaceID+" = ?", *input.SpaceID))
 	}
+	query = r.applyQuestionSearch(query, input.Search)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return pagination.Result[servicequestion.Question]{}, err
 	}
 	var rows []questionListRow
 	if err := query.Select(r.questionSelectColumns()).
-		Joins("LEFT JOIN users AS users ON users.id = questions."+BaseColumns.CreatedBy+" AND questions."+BaseColumns.CreatedByType+" = ? AND users.deleted_at = 0", AuditActorTenantUser).
-		Joins("LEFT JOIN tenant_user_memberships AS tum ON tum.tenant_id = questions.tenant_id AND tum.user_id = questions." + BaseColumns.CreatedBy).
 		Order("questions." + BaseColumns.CreatedAt + " DESC").
 		Order("questions." + QuestionColumns.ID + " DESC").
 		Limit(page.PageSize).
@@ -159,6 +161,43 @@ func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input ser
 		PageSize: page.PageSize,
 		Total:    total,
 	}, nil
+}
+
+func (r *QuestionRepository) applyQuestionSearch(query *gorm.DB, search string) *gorm.DB {
+	keyword := strings.TrimSpace(search)
+	if keyword == "" {
+		return query
+	}
+	pattern := "%" + strings.ToLower(keyword) + "%"
+	condition := r.db.Where("LOWER(questions."+QuestionColumns.Title+") LIKE ?", pattern).
+		Or("LOWER(questions."+QuestionColumns.Analysis+") LIKE ?", pattern).
+		Or("LOWER(questions."+QuestionColumns.Difficulty+") LIKE ?", pattern).
+		Or("LOWER(questions."+QuestionColumns.Type+") LIKE ?", pattern).
+		Or("LOWER(questions."+QuestionColumns.Status+") LIKE ?", pattern).
+		Or("LOWER(users.username) LIKE ?", pattern).
+		Or("LOWER(tum.role) LIKE ?", pattern).
+		Or(
+			`EXISTS (
+					SELECT 1
+					FROM question_options AS qo
+					WHERE qo.tenant_id = questions.tenant_id
+						AND qo.question_id = questions.id
+						AND LOWER(qo.content) LIKE ?
+				)`,
+			pattern,
+		).
+		Or(
+			`EXISTS (
+					SELECT 1
+					FROM question_tags AS qt
+					JOIN tags AS tags ON tags.tenant_id = qt.tenant_id AND tags.id = qt.tag_id AND tags.deleted_at = 0
+					WHERE qt.tenant_id = questions.tenant_id
+						AND qt.question_id = questions.id
+						AND LOWER(tags.name) LIKE ?
+				)`,
+			pattern,
+		)
+	return query.Where(condition)
 }
 
 func (r *QuestionRepository) UpdateQuestion(ctx context.Context, item servicequestion.Question, options []servicequestion.QuestionOption, tags []string) (servicequestion.Question, error) {

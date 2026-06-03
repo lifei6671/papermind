@@ -35,11 +35,15 @@ type paperResponse struct {
 	SpaceID          *uint64 `json:"space_id,omitempty"`
 	Name             string  `json:"name"`
 	Description      string  `json:"description"`
+	DurationMinutes  int     `json:"duration_minutes"`
+	GradeLevel       string  `json:"grade_level"`
 	TotalScore       string  `json:"total_score"`
 	BuildMode        string  `json:"build_mode"`
 	ShuffleQuestions bool    `json:"shuffle_questions"`
 	ShowAnalysis     bool    `json:"show_analysis"`
 	Status           string  `json:"status"`
+	CreatedAt        int64   `json:"created_at"`
+	CreatorName      string  `json:"creator_name"`
 }
 
 type paperListResponse struct {
@@ -69,6 +73,10 @@ type paperSectionQuestionResponse struct {
 	QuestionID uint64 `json:"question_id"`
 	SortOrder  int    `json:"sort_order"`
 	Score      string `json:"score"`
+}
+
+type paperSectionQuestionListResponse struct {
+	Items []paperSectionQuestionResponse `json:"items"`
 }
 
 type paperRuleResponse struct {
@@ -105,13 +113,37 @@ type createPaperSectionRequest struct {
 	Instructions string `json:"instructions"`
 }
 
+type paperSectionOrderRequest struct {
+	SectionID uint64 `json:"section_id"`
+	SortOrder int    `json:"sort_order"`
+}
+
+type reorderPaperSectionsRequest struct {
+	TenantID uint64                     `json:"tenant_id"`
+	Orders   []paperSectionOrderRequest `json:"orders"`
+}
+
 type createPaperRequest struct {
 	TenantID         uint64  `json:"tenant_id"`
 	SpaceID          *uint64 `json:"space_id"`
 	Name             string  `json:"name"`
 	Description      string  `json:"description"`
+	DurationMinutes  *int    `json:"duration_minutes"`
+	GradeLevel       string  `json:"grade_level"`
 	ShuffleQuestions bool    `json:"shuffle_questions"`
 	ShowAnalysis     bool    `json:"show_analysis"`
+}
+
+type updatePaperRequest struct {
+	TenantID        uint64 `json:"tenant_id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	DurationMinutes *int   `json:"duration_minutes"`
+	GradeLevel      string `json:"grade_level"`
+}
+
+type paperTenantRequest struct {
+	TenantID uint64 `json:"tenant_id"`
 }
 
 type addPaperSectionQuestionRequest struct {
@@ -132,6 +164,35 @@ type createPaperRuleRequest struct {
 
 type paperRuleActionRequest struct {
 	TenantID uint64 `json:"tenant_id"`
+}
+
+type updatePaperSectionQuestionRequest struct {
+	TenantID  uint64 `json:"tenant_id"`
+	SortOrder int    `json:"sort_order"`
+	Score     string `json:"score"`
+}
+
+type replacePaperSectionQuestionRequest struct {
+	TenantID      uint64 `json:"tenant_id"`
+	NewQuestionID uint64 `json:"new_question_id"`
+	SortOrder     int    `json:"sort_order"`
+	Score         string `json:"score"`
+}
+
+type updatePaperRuleRequest struct {
+	TenantID         uint64   `json:"tenant_id"`
+	SectionID        uint64   `json:"section_id"`
+	SortOrder        int      `json:"sort_order"`
+	Difficulty       *string  `json:"difficulty"`
+	TagIDs           []uint64 `json:"tag_ids"`
+	QuestionCount    int      `json:"question_count"`
+	ScorePerQuestion string   `json:"score_per_question"`
+	ShuffleOptions   *bool    `json:"shuffle_options"`
+}
+
+type updatePaperBuildModeRequest struct {
+	TenantID  uint64 `json:"tenant_id"`
+	BuildMode string `json:"build_mode"`
 }
 
 func (h paperHandler) list(c *gin.Context) {
@@ -180,14 +241,68 @@ func (h paperHandler) create(c *gin.Context) {
 	if !h.authorizePaperCreate(c, request.TenantID, request.SpaceID) {
 		return
 	}
+	principal, err := liveTenantPrincipalFromSession(c, request.TenantID, h.users)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建试卷写权限上下文失败")
+		return
+	}
 	// 创建接口只生成草稿试卷壳；大题、选题和规则仍由后续组卷接口维护。
+	durationMinutes := 120
+	if request.DurationMinutes != nil {
+		durationMinutes = *request.DurationMinutes
+	}
 	paper, err := h.service.CreateManualPaper(c.Request.Context(), servicepaper.CreatePaperInput{
 		TenantID:         request.TenantID,
 		SpaceID:          request.SpaceID,
 		Name:             request.Name,
 		Description:      request.Description,
+		DurationMinutes:  durationMinutes,
+		GradeLevel:       request.GradeLevel,
 		ShuffleQuestions: request.ShuffleQuestions,
 		ShowAnalysis:     request.ShowAnalysis,
+		ActorID:          principal.UserID,
+	})
+	if err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(paperToResponse(paper)))
+}
+
+func (h paperHandler) update(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	var request updatePaperRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
+	principal, err := liveTenantPrincipalFromSession(c, request.TenantID, h.users)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建试卷写权限上下文失败")
+		return
+	}
+	paper, err := h.service.UpdatePaper(c.Request.Context(), servicepaper.UpdatePaperInput{
+		TenantID:        request.TenantID,
+		PaperID:         paperID,
+		Name:            request.Name,
+		Description:     request.Description,
+		DurationMinutes: request.DurationMinutes,
+		GradeLevel:      request.GradeLevel,
+		ActorID:         principal.UserID,
 	})
 	if err != nil {
 		writePaperServiceError(c, err)
@@ -218,6 +333,53 @@ func (h paperHandler) delete(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(gin.H{"deleted": true}))
+}
+
+func (h paperHandler) disable(c *gin.Context) {
+	h.updateStatus(c, servicepaper.StatusDisabled)
+}
+
+func (h paperHandler) enable(c *gin.Context) {
+	h.updateStatus(c, servicepaper.StatusEnabled)
+}
+
+func (h paperHandler) updateStatus(c *gin.Context, status string) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	var request paperTenantRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
+	principal, err := liveTenantPrincipalFromSession(c, request.TenantID, h.users)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建试卷写权限上下文失败")
+		return
+	}
+	paper, err := h.service.UpdatePaperStatus(c.Request.Context(), servicepaper.UpdatePaperStatusInput{
+		TenantID: request.TenantID,
+		PaperID:  paperID,
+		Status:   status,
+		ActorID:  principal.UserID,
+	})
+	if err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(paperToResponse(paper)))
 }
 
 func (h paperHandler) listSections(c *gin.Context) {
@@ -285,10 +447,53 @@ func (h paperHandler) createSection(c *gin.Context) {
 		Instructions: request.Instructions,
 	})
 	if err != nil {
+		if errors.Is(err, servicepaper.ErrExamMustBeWithdrawnBeforeRuleChange) {
+			c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+			return
+		}
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "创建试卷大题失败"))
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(sectionToResponse(section)))
+}
+
+func (h paperHandler) reorderSections(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	var request reorderPaperSectionsRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
+	orders := make([]servicepaper.SectionOrder, 0, len(request.Orders))
+	for _, item := range request.Orders {
+		orders = append(orders, servicepaper.SectionOrder{
+			SectionID: item.SectionID,
+			SortOrder: item.SortOrder,
+		})
+	}
+	if err := h.service.ReorderSections(c.Request.Context(), request.TenantID, paperID, orders); err != nil {
+		if errors.Is(err, servicepaper.ErrExamMustBeWithdrawnBeforeRuleChange) {
+			c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "重排试卷大题失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(nil))
 }
 
 func (h paperHandler) addManualQuestion(c *gin.Context) {
@@ -343,6 +548,174 @@ func (h paperHandler) addManualQuestion(c *gin.Context) {
 		SortOrder:  question.SortOrder,
 		Score:      question.Score,
 	})))
+}
+
+func (h paperHandler) listSectionQuestions(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperRead(c, tenantID, paperID) {
+		return
+	}
+	questions, err := h.service.ListSectionQuestions(c.Request.Context(), tenantID, paperID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷题目失败"))
+		return
+	}
+	items := make([]paperSectionQuestionResponse, 0, len(questions))
+	for _, question := range questions {
+		items = append(items, sectionQuestionToResponse(question))
+	}
+	c.JSON(http.StatusOK, response.OK(paperSectionQuestionListResponse{Items: items}))
+}
+
+func (h paperHandler) updateSectionQuestion(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	sectionID, err := readUintParam(c, "section_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "大题 ID 必须是正整数"))
+		return
+	}
+	questionID, err := readUintParam(c, "question_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "题目 ID 必须是正整数"))
+		return
+	}
+	var request updatePaperSectionQuestionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
+	if err := h.service.UpdateSectionQuestion(c.Request.Context(), servicepaper.UpdateSectionQuestionInput{
+		TenantID:   request.TenantID,
+		PaperID:    paperID,
+		SectionID:  sectionID,
+		QuestionID: questionID,
+		SortOrder:  request.SortOrder,
+		Score:      request.Score,
+	}); err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(sectionQuestionToResponse(servicepaper.SectionQuestion{
+		TenantID:   request.TenantID,
+		PaperID:    paperID,
+		SectionID:  sectionID,
+		QuestionID: questionID,
+		SortOrder:  request.SortOrder,
+		Score:      request.Score,
+	})))
+}
+
+func (h paperHandler) replaceSectionQuestion(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	sectionID, err := readUintParam(c, "section_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "大题 ID 必须是正整数"))
+		return
+	}
+	questionID, err := readUintParam(c, "question_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "题目 ID 必须是正整数"))
+		return
+	}
+	var request replacePaperSectionQuestionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
+	if err := h.service.ReplaceGeneratedQuestion(c.Request.Context(), servicepaper.ReplaceGeneratedQuestionInput{
+		TenantID:      request.TenantID,
+		PaperID:       paperID,
+		SectionID:     sectionID,
+		OldQuestionID: questionID,
+		NewQuestionID: request.NewQuestionID,
+		SortOrder:     request.SortOrder,
+		Score:         request.Score,
+	}); err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(sectionQuestionToResponse(servicepaper.SectionQuestion{
+		TenantID:   request.TenantID,
+		PaperID:    paperID,
+		SectionID:  sectionID,
+		QuestionID: request.NewQuestionID,
+		SortOrder:  request.SortOrder,
+		Score:      request.Score,
+	})))
+}
+
+func (h paperHandler) deleteSectionQuestion(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	sectionID, err := readUintParam(c, "section_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "大题 ID 必须是正整数"))
+		return
+	}
+	questionID, err := readUintParam(c, "question_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "题目 ID 必须是正整数"))
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, tenantID, paperID) {
+		return
+	}
+	if err := h.service.DeleteSectionQuestion(c.Request.Context(), tenantID, paperID, sectionID, questionID); err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(gin.H{"deleted": true}))
 }
 
 func (h paperHandler) listRules(c *gin.Context) {
@@ -413,7 +786,7 @@ func (h paperHandler) createRule(c *gin.Context) {
 		ShuffleOptions:   request.ShuffleOptions,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "保存组卷规则失败"))
+		writePaperServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(ruleToResponse(rule)))
@@ -484,6 +857,123 @@ func (h paperHandler) precheckRuleLive(c *gin.Context) {
 	}))
 }
 
+func (h paperHandler) updateRule(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	ruleID, err := readUintParam(c, "rule_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "规则 ID 必须是正整数"))
+		return
+	}
+	var request updatePaperRuleRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
+	if err := h.service.UpdateRuleLiveRule(c.Request.Context(), servicepaper.UpdateRuleInput{
+		TenantID:         request.TenantID,
+		PaperID:          paperID,
+		RuleID:           ruleID,
+		SectionID:        request.SectionID,
+		SortOrder:        request.SortOrder,
+		Difficulty:       request.Difficulty,
+		TagIDs:           request.TagIDs,
+		QuestionCount:    request.QuestionCount,
+		ScorePerQuestion: request.ScorePerQuestion,
+		ShuffleOptions:   request.ShuffleOptions,
+	}); err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(ruleToResponse(servicepaper.Rule{
+		ID:               ruleID,
+		TenantID:         request.TenantID,
+		PaperID:          paperID,
+		SectionID:        request.SectionID,
+		SortOrder:        request.SortOrder,
+		Difficulty:       request.Difficulty,
+		TagFilter:        servicepaperTagFilterJSON(request.TagIDs),
+		QuestionCount:    request.QuestionCount,
+		ScorePerQuestion: request.ScorePerQuestion,
+		ShuffleOptions:   request.ShuffleOptions,
+	})))
+}
+
+func (h paperHandler) deleteRule(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	ruleID, err := readUintParam(c, "rule_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "规则 ID 必须是正整数"))
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, tenantID, paperID) {
+		return
+	}
+	if err := h.service.DeleteRule(c.Request.Context(), tenantID, paperID, ruleID); err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(gin.H{"deleted": true}))
+}
+
+func (h paperHandler) updateBuildMode(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	var request updatePaperBuildModeRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+		return
+	}
+	paper, err := h.service.UpdateBuildMode(c.Request.Context(), servicepaper.UpdateBuildModeInput{
+		TenantID:  request.TenantID,
+		PaperID:   paperID,
+		BuildMode: request.BuildMode,
+	})
+	if err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(paperToResponse(paper)))
+}
+
 func (r createPaperSectionRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -497,6 +987,24 @@ func (r createPaperSectionRequest) validate() error {
 	return nil
 }
 
+func (r reorderPaperSectionsRequest) validate() error {
+	if r.TenantID == 0 {
+		return errors.New("tenant_id 必须是正整数")
+	}
+	if len(r.Orders) == 0 {
+		return errors.New("orders 不能为空")
+	}
+	for _, item := range r.Orders {
+		if item.SectionID == 0 {
+			return errors.New("section_id 必须是正整数")
+		}
+		if item.SortOrder <= 0 {
+			return errors.New("sort_order 必须是正整数")
+		}
+	}
+	return nil
+}
+
 func (r createPaperRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -506,6 +1014,22 @@ func (r createPaperRequest) validate() error {
 	}
 	if r.Name == "" {
 		return errors.New("name 不能为空")
+	}
+	if r.DurationMinutes != nil && *r.DurationMinutes <= 0 {
+		return errors.New("duration_minutes 必须是正整数")
+	}
+	return nil
+}
+
+func (r updatePaperRequest) validate() error {
+	if r.TenantID == 0 {
+		return errors.New("tenant_id 必须是正整数")
+	}
+	if r.Name == "" {
+		return errors.New("name 不能为空")
+	}
+	if r.DurationMinutes != nil && *r.DurationMinutes <= 0 {
+		return errors.New("duration_minutes 必须是正整数")
 	}
 	return nil
 }
@@ -558,6 +1082,73 @@ func (r paperRuleActionRequest) validate() error {
 		return errors.New("tenant_id 必须是正整数")
 	}
 	return nil
+}
+
+func (r paperTenantRequest) validate() error {
+	if r.TenantID == 0 {
+		return errors.New("tenant_id 必须是正整数")
+	}
+	return nil
+}
+
+func (r updatePaperSectionQuestionRequest) validate() error {
+	if r.TenantID == 0 {
+		return errors.New("tenant_id 必须是正整数")
+	}
+	if r.SortOrder <= 0 {
+		return errors.New("sort_order 必须是正整数")
+	}
+	if r.Score == "" {
+		return errors.New("score 不能为空")
+	}
+	return validateNonNegativeScore("score", r.Score)
+}
+
+func (r replacePaperSectionQuestionRequest) validate() error {
+	if r.TenantID == 0 {
+		return errors.New("tenant_id 必须是正整数")
+	}
+	if r.NewQuestionID == 0 {
+		return errors.New("new_question_id 必须是正整数")
+	}
+	if r.SortOrder <= 0 {
+		return errors.New("sort_order 必须是正整数")
+	}
+	if r.Score == "" {
+		return errors.New("score 不能为空")
+	}
+	return validateNonNegativeScore("score", r.Score)
+}
+
+func (r updatePaperRuleRequest) validate() error {
+	if r.TenantID == 0 {
+		return errors.New("tenant_id 必须是正整数")
+	}
+	if r.SectionID == 0 {
+		return errors.New("section_id 必须是正整数")
+	}
+	if r.SortOrder <= 0 {
+		return errors.New("sort_order 必须是正整数")
+	}
+	if r.QuestionCount <= 0 {
+		return errors.New("question_count 必须是正整数")
+	}
+	if r.ScorePerQuestion == "" {
+		return errors.New("score_per_question 不能为空")
+	}
+	return validateNonNegativeScore("score_per_question", r.ScorePerQuestion)
+}
+
+func (r updatePaperBuildModeRequest) validate() error {
+	if r.TenantID == 0 {
+		return errors.New("tenant_id 必须是正整数")
+	}
+	switch r.BuildMode {
+	case servicepaper.BuildModeManual, servicepaper.BuildModeRuleFixed, servicepaper.BuildModeRuleLive:
+		return nil
+	default:
+		return errors.New("build_mode 不合法")
+	}
 }
 
 func (h paperHandler) authorizePaperRead(c *gin.Context, tenantID uint64, paperID uint64) bool {
@@ -680,6 +1271,14 @@ func writePaperServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return
 	}
+	if errors.Is(err, servicepaper.ErrExamMustBeWithdrawnBeforeRuleChange) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if errors.Is(err, servicepaper.ErrRuleLiveManualQuestionChange) {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
 	c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "试卷操作失败"))
 }
 
@@ -700,11 +1299,15 @@ func paperToResponse(paper servicepaper.Paper) paperResponse {
 		SpaceID:          paper.SpaceID,
 		Name:             paper.Name,
 		Description:      paper.Description,
+		DurationMinutes:  paper.DurationMinutes,
+		GradeLevel:       paper.GradeLevel,
 		TotalScore:       paper.TotalScore,
 		BuildMode:        paper.BuildMode,
 		ShuffleQuestions: paper.ShuffleQuestions,
 		ShowAnalysis:     paper.ShowAnalysis,
 		Status:           paper.Status,
+		CreatedAt:        paper.CreatedAt,
+		CreatorName:      paper.CreatorName,
 	}
 }
 
@@ -754,4 +1357,17 @@ func tagIDsFromRule(rule servicepaper.Rule) []uint64 {
 		return []uint64{}
 	}
 	return tagIDs
+}
+
+func servicepaperTagFilterJSON(tagIDs []uint64) string {
+	sorted := append([]uint64(nil), tagIDs...)
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j] < sorted[i] {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	data, _ := json.Marshal(sorted)
+	return string(data)
 }

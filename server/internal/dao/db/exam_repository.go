@@ -164,6 +164,7 @@ func (r *ExamRepository) GetPaper(ctx context.Context, tenantID uint64, paperID 
 	return serviceexam.Paper{
 		ID:                row.ID,
 		BuildMode:         row.BuildMode,
+		Status:            row.Status,
 		ContainsShortText: shortTextCount > 0,
 	}, nil
 }

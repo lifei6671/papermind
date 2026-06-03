@@ -33,11 +33,15 @@ describe("paperApi", () => {
             tenant_id: 10,
             name: "高一语文月考试卷",
             description: "月考",
+            duration_minutes: 120,
+            grade_level: "高一",
             total_score: "30",
             build_mode: "manual",
             shuffle_questions: false,
             show_analysis: true,
             status: "draft",
+            created_at: 1717291800000,
+            creator_name: "teacher.exam",
           }],
         },
       }));
@@ -50,9 +54,13 @@ describe("paperApi", () => {
         tenantID: 10,
         name: "高一语文月考试卷",
         description: "月考",
+        durationMinutes: 120,
+        gradeLevel: "高一",
         buildMode: "manual",
         status: "draft",
         totalScore: "30",
+        createdAt: 1717291800000,
+        creatorName: "teacher.exam",
       }],
     });
     await expect(api.listSections({ tenantID: 10, paperID: 100 })).resolves.toEqual({
@@ -139,6 +147,8 @@ describe("paperApi", () => {
         tenant_id: 10,
         name: "租户公共试卷",
         description: "公共资源",
+        duration_minutes: 150,
+        grade_level: "高一",
         shuffle_questions: true,
         show_analysis: true,
       });
@@ -151,11 +161,15 @@ describe("paperApi", () => {
           space_id: null,
           name: "租户公共试卷",
           description: "公共资源",
+          duration_minutes: 150,
+          grade_level: "高一",
           total_score: "0",
           build_mode: "manual",
           shuffle_questions: true,
           show_analysis: true,
           status: "draft",
+          created_at: 1717291800000,
+          creator_name: "tenant.admin",
         },
       }));
     });
@@ -165,6 +179,8 @@ describe("paperApi", () => {
       tenantID: 10,
       name: "租户公共试卷",
       description: "公共资源",
+      durationMinutes: 150,
+      gradeLevel: "高一",
       shuffleQuestions: true,
       showAnalysis: true,
     })).resolves.toEqual({
@@ -172,11 +188,141 @@ describe("paperApi", () => {
       tenantID: 10,
       name: "租户公共试卷",
       description: "公共资源",
+      durationMinutes: 150,
+      gradeLevel: "高一",
       buildMode: "manual",
       status: "draft",
       totalScore: "0",
+      createdAt: 1717291800000,
+      creatorName: "tenant.admin",
     });
     await expect(api.deletePaper({ tenantID: 10, paperID: 100 })).resolves.toBeUndefined();
+  });
+
+  test("编辑、启用和禁用试卷时调用对应主资源接口", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/papers/100/enable")) {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(init?.body as string)).toEqual({ tenant_id: 10 });
+        return new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: {
+            id: 100,
+            tenant_id: 10,
+            name: "高一语文月考试卷",
+            description: "月考",
+            duration_minutes: 120,
+            total_score: "30",
+            build_mode: "manual",
+            shuffle_questions: false,
+            show_analysis: true,
+            status: "enabled",
+            created_at: 1717291800000,
+            creator_name: "teacher.exam",
+          },
+        }));
+      }
+      if (url.endsWith("/api/v1/papers/100/disable")) {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(init?.body as string)).toEqual({ tenant_id: 10 });
+        return new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: {
+            id: 100,
+            tenant_id: 10,
+            name: "高一语文月考试卷",
+            description: "月考",
+            duration_minutes: 120,
+            total_score: "30",
+            build_mode: "manual",
+            shuffle_questions: false,
+            show_analysis: true,
+            status: "disabled",
+            created_at: 1717291800000,
+            creator_name: "teacher.exam",
+          },
+        }));
+      }
+      expect(url).toBe("/api/v1/papers/100");
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        name: "高一语文期末试卷",
+        description: "文学阅读与语言基础",
+        duration_minutes: 135,
+        grade_level: "高二",
+      });
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          id: 100,
+          tenant_id: 10,
+          name: "高一语文期末试卷",
+          description: "文学阅读与语言基础",
+          duration_minutes: 135,
+          grade_level: "高二",
+          total_score: "30",
+          build_mode: "manual",
+          shuffle_questions: false,
+          show_analysis: true,
+          status: "draft",
+          created_at: 1717291800000,
+          creator_name: "teacher.exam",
+        },
+      }));
+    });
+    const api = createPaperAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.updatePaper({
+      tenantID: 10,
+      paperID: 100,
+      name: "高一语文期末试卷",
+      description: "文学阅读与语言基础",
+      durationMinutes: 135,
+      gradeLevel: "高二",
+    })).resolves.toEqual({
+      id: 100,
+      tenantID: 10,
+      name: "高一语文期末试卷",
+      description: "文学阅读与语言基础",
+      durationMinutes: 135,
+      gradeLevel: "高二",
+      buildMode: "manual",
+      status: "draft",
+      totalScore: "30",
+      createdAt: 1717291800000,
+      creatorName: "teacher.exam",
+    });
+
+    await expect(api.enablePaper({ tenantID: 10, paperID: 100 })).resolves.toEqual({
+      id: 100,
+      tenantID: 10,
+      name: "高一语文月考试卷",
+      description: "月考",
+      durationMinutes: 120,
+      buildMode: "manual",
+      status: "enabled",
+      totalScore: "30",
+      createdAt: 1717291800000,
+      creatorName: "teacher.exam",
+    });
+
+    await expect(api.disablePaper({ tenantID: 10, paperID: 100 })).resolves.toEqual({
+      id: 100,
+      tenantID: 10,
+      name: "高一语文月考试卷",
+      description: "月考",
+      durationMinutes: 120,
+      buildMode: "manual",
+      status: "disabled",
+      totalScore: "30",
+      createdAt: 1717291800000,
+      creatorName: "teacher.exam",
+    });
   });
 
   test("手动选题时提交大题、题目和分值", async () => {
@@ -339,5 +485,247 @@ describe("paperApi", () => {
       candidateQuestionIDs: [101, 102],
       candidateCount: 2,
     });
+  });
+
+  test("试卷工作台接口支持切换模式、管理已选题和编辑规则", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/papers/100/questions?tenant_id=10")) {
+        return new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: {
+            items: [{
+              tenant_id: 10,
+              paper_id: 100,
+              section_id: 1,
+              question_id: 101,
+              sort_order: 1,
+              score: "6",
+            }],
+          },
+        }));
+      }
+      if (url.endsWith("/api/v1/papers/100/sections/1/questions/101/replace")) {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(init?.body as string)).toEqual({
+          tenant_id: 10,
+          new_question_id: 103,
+          sort_order: 1,
+          score: "8",
+        });
+        return new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: {
+            tenant_id: 10,
+            paper_id: 100,
+            section_id: 1,
+            question_id: 103,
+            sort_order: 1,
+            score: "8",
+          },
+        }));
+      }
+      if (url.endsWith("/api/v1/papers/100/sections/1/questions/101")) {
+        if (init?.method === "PUT") {
+          expect(JSON.parse(init?.body as string)).toEqual({
+            tenant_id: 10,
+            sort_order: 2,
+            score: "7",
+          });
+          return new Response(JSON.stringify({
+            code: 0,
+            message: "ok",
+            data: {
+              tenant_id: 10,
+              paper_id: 100,
+              section_id: 1,
+              question_id: 101,
+              sort_order: 2,
+              score: "7",
+            },
+          }));
+        }
+      }
+      if (url.endsWith("/api/v1/papers/100/sections/1/questions/103?tenant_id=10")) {
+        expect(init?.method).toBe("DELETE");
+        return new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: { deleted: true },
+        }));
+      }
+      if (url.endsWith("/api/v1/papers/100/rules/301?tenant_id=10")) {
+        expect(init?.method).toBe("DELETE");
+        return new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: { deleted: true },
+        }));
+      }
+      if (url.endsWith("/api/v1/papers/100/rules/301")) {
+        expect(init?.method).toBe("PUT");
+        expect(JSON.parse(init?.body as string)).toEqual({
+          tenant_id: 10,
+          section_id: 1,
+          sort_order: 2,
+          difficulty: "medium",
+          tag_ids: [1],
+          question_count: 3,
+          score_per_question: "5",
+        });
+        return new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: {
+            id: 301,
+            tenant_id: 10,
+            paper_id: 100,
+            section_id: 1,
+            sort_order: 2,
+            difficulty: "medium",
+            tag_ids: [1],
+            question_count: 3,
+            score_per_question: "5",
+          },
+        }));
+      }
+      expect(url).toBe("/api/v1/papers/100/mode");
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        build_mode: "rule_live",
+      });
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          id: 100,
+          tenant_id: 10,
+          name: "高一语文月考试卷",
+          description: "月考",
+          total_score: "15",
+          build_mode: "rule_live",
+          shuffle_questions: false,
+          show_analysis: true,
+          status: "draft",
+          created_at: 1717291800000,
+          creator_name: "teacher.exam",
+        },
+      }));
+    });
+    const api = createPaperAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.listSectionQuestions({ tenantID: 10, paperID: 100 })).resolves.toEqual({
+      items: [{
+        tenantID: 10,
+        paperID: 100,
+        sectionID: 1,
+        questionID: 101,
+        sortOrder: 1,
+        score: "6",
+      }],
+    });
+    await expect(api.updateSectionQuestion({
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 1,
+      questionID: 101,
+      sortOrder: 2,
+      score: "7",
+    })).resolves.toEqual({
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 1,
+      questionID: 101,
+      sortOrder: 2,
+      score: "7",
+    });
+    await expect(api.replaceSectionQuestion({
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 1,
+      questionID: 101,
+      newQuestionID: 103,
+      sortOrder: 1,
+      score: "8",
+    })).resolves.toEqual({
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 1,
+      questionID: 103,
+      sortOrder: 1,
+      score: "8",
+    });
+    await expect(api.deleteSectionQuestion({
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 1,
+      questionID: 103,
+    })).resolves.toBeUndefined();
+    await expect(api.updateRule({
+      tenantID: 10,
+      paperID: 100,
+      ruleID: 301,
+      sectionID: 1,
+      sortOrder: 2,
+      difficulty: "medium",
+      tagIDs: [1],
+      questionCount: 3,
+      scorePerQuestion: "5",
+    })).resolves.toEqual({
+      id: 301,
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 1,
+      sortOrder: 2,
+      difficulty: "medium",
+      tagIDs: [1],
+      questionCount: 3,
+      scorePerQuestion: "5",
+    });
+    await expect(api.deleteRule({ tenantID: 10, paperID: 100, ruleID: 301 })).resolves.toBeUndefined();
+    await expect(api.updateBuildMode({ tenantID: 10, paperID: 100, buildMode: "rule_live" })).resolves.toEqual({
+      id: 100,
+      tenantID: 10,
+      name: "高一语文月考试卷",
+      description: "月考",
+      durationMinutes: 120,
+      buildMode: "rule_live",
+      status: "draft",
+      totalScore: "15",
+      createdAt: 1717291800000,
+      creatorName: "teacher.exam",
+    });
+  });
+
+  test("大题重排接口会提交新的排序顺序", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/v1/papers/100/sections/reorder");
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        orders: [
+          { section_id: 12, sort_order: 1 },
+          { section_id: 11, sort_order: 2 },
+        ],
+      });
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: null,
+      }));
+    });
+    const api = createPaperAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.reorderSections({
+      tenantID: 10,
+      paperID: 100,
+      orders: [
+        { sectionID: 12, sortOrder: 1 },
+        { sectionID: 11, sortOrder: 2 },
+      ],
+    })).resolves.toBeUndefined();
   });
 });

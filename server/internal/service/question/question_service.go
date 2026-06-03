@@ -110,6 +110,7 @@ type ListQuestionsInput struct {
 	SpaceID  *uint64
 	Page     int
 	PageSize int
+	Search   string
 }
 
 type GetQuestionInput struct {
@@ -541,8 +542,8 @@ func (row ImportRow) toCreateQuestionInput(tenantID uint64, spaceID *uint64) Cre
 		SpaceID:         spaceID,
 		Type:            questionType,
 		Difficulty:      normalizeImportDifficulty(row.Difficulty),
-		Title:           strings.TrimSpace(row.Title),
-		Analysis:        strings.TrimSpace(row.Analysis),
+		Title:           row.Title,
+		Analysis:        row.Analysis,
 		ScoreDefault:    "1",
 		Options:         options,
 		StandardAnswer:  normalizeImportStandardAnswer(questionType, row.StandardAnswer, row.CorrectAnswer),
@@ -678,7 +679,8 @@ func splitCSV(value string) []string {
 	if strings.TrimSpace(value) == "" {
 		return nil
 	}
-	parts := strings.Split(value, ",")
+	normalized := strings.NewReplacer("；", ",", ";", ",").Replace(value)
+	parts := strings.Split(normalized, ",")
 	items := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)

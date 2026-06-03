@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -61,6 +61,30 @@ test("租户业务导航保留当前目标租户 ID", () => {
   );
 
   expect(screen.getByRole("link", { name: /用户管理/ })).toHaveAttribute("href", "/users?tenant_id=10");
+});
+
+test("租户管理员导航不保留 URL 中陈旧的空间 ID", () => {
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/papers?space_id=301"]}>
+        <Routes>
+          <Route element={<AdminShell routes={adminRoutes} />}>
+            <Route path="/papers" element={<div>试卷页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  expect(screen.getByRole("link", { name: /概览/ })).toHaveAttribute("href", "/");
+  expect(screen.getByRole("link", { name: /试卷/ })).toHaveAttribute("href", "/papers");
 });
 
 test("阅卷和成绩导航保留当前考试 ID", () => {
@@ -217,6 +241,151 @@ test("小屏幕菜单按钮以抽屉方式展开后台导航", async () => {
     "data-placement",
     "drawer-right",
   );
+});
+
+test("移动抽屉打开时不继承桌面图标栏状态", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "明德学校",
+        spaceID: 0,
+        role: "tenant_admin",
+        status: "enabled",
+      }],
+      user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/papers"]}>
+        <Routes>
+          <Route element={<AdminShell routes={adminRoutes} />}>
+            <Route path="/papers" element={<div>试卷页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  const sidebar = screen.getByLabelText("后台导航");
+  await user.click(within(sidebar).getByRole("button", { name: "收起后台导航" }));
+
+  expect(sidebar).toHaveClass("sidebar--collapsed");
+  expect(sidebar).toHaveClass("sidebar--icon-only");
+
+  await user.click(screen.getByRole("button", { name: "展开后台导航", expanded: false }));
+
+  expect(sidebar).toHaveClass("sidebar--mobile-open");
+  expect(sidebar).not.toHaveClass("sidebar--collapsed");
+  expect(sidebar).not.toHaveClass("sidebar--icon-only");
+  expect(sidebar.querySelector(".brand-rail")).not.toHaveClass("brand-rail--icon-only");
+  expect(sidebar.querySelector(".menu-link--icon-only")).toBeNull();
+  expect(sidebar.querySelector(".sidebar__home")).not.toHaveClass("sidebar__home--icon-only");
+  expect(sidebar.querySelector(".sidebar__logout")).not.toHaveClass("sidebar__logout--icon-only");
+});
+
+test("桌面侧边栏支持收起为图标栏并可再次展开", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "明德学校",
+        spaceID: 0,
+        role: "tenant_admin",
+        status: "enabled",
+      }],
+      user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
+    }),
+  );
+
+  const { container } = render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/papers"]}>
+        <Routes>
+          <Route element={<AdminShell routes={adminRoutes} />}>
+            <Route path="/papers" element={<div>试卷页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  const shell = container.querySelector(".admin-shell");
+  const sidebar = screen.getByLabelText("后台导航");
+  const collapseButton = within(sidebar).getByRole("button", { name: "收起后台导航" });
+  expect(shell).not.toHaveClass("admin-shell--sidebar-collapsed");
+  expect(sidebar).not.toHaveClass("sidebar--collapsed");
+
+  await user.click(collapseButton);
+
+  expect(shell).toHaveClass("admin-shell--sidebar-collapsed");
+  expect(sidebar).toHaveClass("sidebar--collapsed");
+  expect(within(sidebar).getByRole("button", { name: "展开后台导航" })).toBeInTheDocument();
+
+  await user.click(within(sidebar).getByRole("button", { name: "展开后台导航" }));
+
+  expect(shell).not.toHaveClass("admin-shell--sidebar-collapsed");
+  expect(sidebar).not.toHaveClass("sidebar--collapsed");
+});
+
+test("桌面侧边栏收起后需要重新移入才临时展开", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "明德学校",
+        spaceID: 0,
+        role: "tenant_admin",
+        status: "enabled",
+      }],
+      user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/papers"]}>
+        <Routes>
+          <Route element={<AdminShell routes={adminRoutes} />}>
+            <Route path="/papers" element={<div>试卷页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  const sidebar = screen.getByLabelText("后台导航");
+  await user.hover(sidebar);
+  await user.click(within(sidebar).getByRole("button", { name: "收起后台导航" }));
+
+  expect(sidebar).toHaveClass("sidebar--collapsed");
+  expect(sidebar).toHaveClass("sidebar--icon-only");
+  expect(sidebar.querySelector(".brand-rail")).toHaveClass("brand-rail--icon-only");
+  expect(sidebar.querySelector(".menu-link--icon-only")).not.toBeNull();
+  expect(sidebar.querySelector(".sidebar__home")).toHaveClass("sidebar__home--icon-only");
+  expect(sidebar.querySelector(".sidebar__logout")).toHaveClass("sidebar__logout--icon-only");
+  expect(sidebar).not.toHaveClass("sidebar--hover-open");
+
+  await user.unhover(sidebar);
+  await user.hover(sidebar);
+
+  expect(sidebar).not.toHaveClass("sidebar--icon-only");
+  expect(sidebar.querySelector(".brand-rail")).not.toHaveClass("brand-rail--icon-only");
+  expect(sidebar.querySelector(".menu-link--icon-only")).toBeNull();
+  expect(sidebar.querySelector(".sidebar__home")).not.toHaveClass("sidebar__home--icon-only");
+  expect(sidebar.querySelector(".sidebar__logout")).not.toHaveClass("sidebar__logout--icon-only");
+  expect(sidebar).toHaveClass("sidebar--hover-open");
 });
 
 test("租户用户点击切换租户进入租户空间选择页", async () => {

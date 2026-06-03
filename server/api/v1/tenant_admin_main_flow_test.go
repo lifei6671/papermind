@@ -207,13 +207,25 @@ func TestTenantAdminMainFlowCreatesSpaceAndAssignsTeacherWithSQLite(t *testing.T
 	if shortTextQuestionBody.Data.SpaceID == nil || *shortTextQuestionBody.Data.SpaceID != createSpaceBody.Data.ID {
 		t.Fatalf("expected short text question to stay in authorized space, got %#v", shortTextQuestionBody.Data)
 	}
+	for _, questionID := range []uint64{spaceQuestionBody.Data.ID, shortTextQuestionBody.Data.ID} {
+		enableQuestionRecorder := httptest.NewRecorder()
+		router.ServeHTTP(enableQuestionRecorder, authorizedRequest(
+			http.MethodPost,
+			fmt.Sprintf("/api/v1/questions/%d/enable", questionID),
+			[]byte(fmt.Sprintf(`{"tenant_id": %d}`, tenantID)),
+			teacherHeader,
+		))
+		if enableQuestionRecorder.Code != http.StatusOK {
+			t.Fatalf("enable question %d status = %d, body = %s", questionID, enableQuestionRecorder.Code, enableQuestionRecorder.Body.String())
+		}
+	}
 
 	paperID := uint64(8801)
 	if err := gormDB.Exec(`
 		INSERT INTO papers (
 			id, tenant_id, space_id, name, description, total_score, build_mode, status,
 			created_at, updated_at, ext_json
-		) VALUES (?, ?, ?, '主链路空间试卷', '', 0, ?, 'draft', ?, ?, '{}')
+		) VALUES (?, ?, ?, '主链路空间试卷', '', 0, ?, 'enabled', ?, ?, '{}')
 	`, paperID, tenantID, createSpaceBody.Data.ID, constant.BuildModeManual, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed main flow paper: %v", err)
 	}

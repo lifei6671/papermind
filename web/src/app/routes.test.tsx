@@ -131,6 +131,8 @@ test("考试业务路由会收到当前选择的空间范围", () => {
 
   expect(routeSpaceID(routes, "/questions")).toBe(301);
   expect(routeSpaceID(routes, "/questions/new")).toBe(301);
+  expect(routeSpaceID(routes, "/papers/new")).toBe(301);
+  expect(routeSpaceID(routes, "/papers/:paperID/edit")).toBe(301);
   expect(routeSpaceID(routes, "/grading")).toBe(301);
   expect(routeSpaceID(routes, "/results")).toBe(301);
   expect(routeExamID(routes, "/grading")).toBe(42);

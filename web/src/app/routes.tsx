@@ -17,6 +17,8 @@ import { DashboardPage } from "../pages/Dashboard/DashboardPage";
 import { ExamEntryPage } from "../pages/Exam/ExamEntryPage";
 import { ExamManagementPage } from "../pages/Exam/ExamManagementPage";
 import { PaperAssemblyPage } from "../pages/Exam/PaperAssemblyPage";
+import { PaperEditRoute } from "../pages/Exam/PaperEditRoute";
+import { PaperEditorPage } from "../pages/Exam/PaperEditorPage";
 import { QuestionBankPage } from "../pages/Exam/QuestionBankPage";
 import { QuestionCreatePage } from "../pages/Exam/QuestionCreatePage";
 import { QuestionEditRoute } from "../pages/Exam/QuestionEditRoute";
@@ -199,6 +201,26 @@ export function buildAdminRoutes(
     icon: FileStack,
     element: examNeedsSpace ? renderExamSpaceRequiredPage("试卷") : <PaperAssemblyPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
+    menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
+  },
+  {
+    path: "/papers/new",
+    label: "新建试卷",
+    description: "创建试卷草稿并进入组卷管理工作台",
+    icon: FileStack,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("新建试卷") : <PaperEditorPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    group: "hidden",
+    menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
+  },
+  {
+    path: "/papers/:paperID/edit",
+    label: "编辑试卷",
+    description: "编辑试卷摘要、题库筛选和已选试题排序",
+    icon: FileStack,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("编辑试卷") : <PaperEditRoute tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    group: "hidden",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
   },

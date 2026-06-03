@@ -45,8 +45,10 @@ test("考试页支持配置发布范围、邀请码和发布考试", async () =>
         name: "联调语文试卷",
         description: "从试卷接口加载",
         buildMode: "manual",
-        status: "ready",
+        status: "enabled",
         totalScore: "12",
+        createdAt: new Date("2026-06-02T09:00:00+08:00").getTime(),
+        creatorName: "teacher.exam",
       }],
     }),
   };
@@ -144,8 +146,10 @@ test("空间教师发布考试时只使用当前空间作为发布范围", async
         name: "空间语文试卷",
         description: "空间教师可发布",
         buildMode: "manual",
-        status: "ready",
+        status: "enabled",
         totalScore: "12",
+        createdAt: new Date("2026-06-02T09:00:00+08:00").getTime(),
+        creatorName: "teacher.exam",
       }],
     }),
   };
@@ -180,4 +184,77 @@ test("空间教师发布考试时只使用当前空间作为发布范围", async
     targetID: 301,
     targetType: "space",
   }));
+});
+
+test("发布考试时只保留 enabled 试卷并重置默认选择", async () => {
+  const user = userEvent.setup();
+  const api = {
+    listExams: vi.fn().mockResolvedValue({ items: [] }),
+    publishExam: vi.fn(),
+  };
+  const paperApi = {
+    listPapers: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 100,
+          tenantID: 10,
+          name: "已禁用试卷",
+          description: "不应出现在发布候选里",
+          buildMode: "manual",
+          status: "disabled",
+          totalScore: "60",
+          createdAt: new Date("2026-06-02T09:00:00+08:00").getTime(),
+          creatorName: "teacher.disabled",
+        },
+        {
+          id: 150,
+          tenantID: 10,
+          name: "草稿试卷",
+          description: "未启用前不应出现在发布候选里",
+          buildMode: "manual",
+          status: "draft",
+          totalScore: "40",
+          createdAt: new Date("2026-06-02T09:05:00+08:00").getTime(),
+          creatorName: "teacher.draft",
+        },
+        {
+          id: 200,
+          tenantID: 10,
+          name: "可发布试卷",
+          description: "应作为默认选项",
+          buildMode: "manual",
+          status: "enabled",
+          totalScore: "80",
+          createdAt: new Date("2026-06-02T09:10:00+08:00").getTime(),
+          creatorName: "teacher.enabled",
+        },
+      ],
+    }),
+  };
+  const spaceApi = {
+    listSpaces: vi.fn().mockResolvedValue({
+      items: [{
+        id: 444,
+        tenantID: 10,
+        name: "联调班级",
+        description: "从空间接口加载",
+        logoFileName: "未上传",
+        members: [],
+      }],
+    }),
+  };
+  const userApi = { listUsers: vi.fn().mockResolvedValue({ items: [] }) };
+
+  render(<ExamManagementPage api={api} paperApi={paperApi} spaceApi={spaceApi} userApi={userApi} tenantID={10} />);
+
+  await waitFor(() => expect(paperApi.listPapers).toHaveBeenCalledWith({ tenantID: 10 }));
+  await user.click(screen.getByRole("button", { name: "发布考试" }));
+
+  const dialog = screen.getByRole("dialog", { name: "发布考试弹窗" });
+  const paperSelect = within(dialog).getByLabelText("发布试卷");
+
+  expect(within(paperSelect).queryByRole("option", { name: "已禁用试卷" })).not.toBeInTheDocument();
+  expect(within(paperSelect).queryByRole("option", { name: "草稿试卷" })).not.toBeInTheDocument();
+  expect(within(paperSelect).getByRole("option", { name: "可发布试卷" })).toBeInTheDocument();
+  expect(paperSelect).toHaveValue("200");
 });

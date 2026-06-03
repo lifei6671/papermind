@@ -136,16 +136,23 @@ function serializeBody(body: unknown, headers: Record<string, string>) {
   return JSON.stringify(body);
 }
 
-async function parseBody<T>(response: Response): Promise<T> {
+async function parseBody<T>(response: Response): Promise<T | string> {
   const text = await response.text();
   if (!text) {
     return null as T;
   }
 
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text;
+  }
 }
 
 function readMessage(body: unknown) {
+  if (typeof body === "string" && body.trim()) {
+    return body.trim();
+  }
   if (body && typeof body === "object" && "message" in body && typeof body.message === "string") {
     return body.message;
   }

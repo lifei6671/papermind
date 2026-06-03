@@ -394,6 +394,78 @@ func TestImportTemplateAndImportRows(t *testing.T) {
 	}
 }
 
+func TestImportQuestionsPreservesMarkdownTitleAndAnalysis(t *testing.T) {
+	repo := &fakeQuestionRepository{}
+	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
+	markdownTitle := "    SELECT * FROM users;\n    WHERE id = 1;"
+	markdownAnalysis := "    - 先观察 SQL\n    - 再回答"
+
+	result, err := svc.ImportQuestions(context.Background(), ImportQuestionsInput{
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Rows: []ImportRow{
+			{
+				RowNumber:       2,
+				Type:            "简答题",
+				Title:           markdownTitle,
+				ReferenceAnswer: "说明 SQL 语义。",
+				Analysis:        markdownAnalysis,
+				Difficulty:      "中等",
+				Tags:            "数据库",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportQuestions returned error: %v", err)
+	}
+	if result.SuccessCount != 1 {
+		t.Fatalf("expected one imported question, got %d", result.SuccessCount)
+	}
+	if len(repo.importedQuestions) != 1 {
+		t.Fatalf("expected one persisted question, got %#v", repo.importedQuestions)
+	}
+	if repo.importedQuestions[0].Title != markdownTitle {
+		t.Fatalf("expected markdown title preserved, got %q", repo.importedQuestions[0].Title)
+	}
+	if repo.importedQuestions[0].Analysis != markdownAnalysis {
+		t.Fatalf("expected markdown analysis preserved, got %q", repo.importedQuestions[0].Analysis)
+	}
+}
+
+func TestImportQuestionsSplitsSemicolonSeparatedTags(t *testing.T) {
+	repo := &fakeQuestionRepository{}
+	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
+
+	result, err := svc.ImportQuestions(context.Background(), ImportQuestionsInput{
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Rows: []ImportRow{
+			{
+				RowNumber:     2,
+				Type:          "单选题",
+				Title:         "最小二乘法的主要用途是（ ）",
+				Options:       "A.求极值|B.拟合数据|C.解方程|D.积分",
+				CorrectAnswer: "B",
+				Analysis:      "用于根据样本点拟合函数。",
+				Difficulty:    "中等",
+				Tags:          "数值计算;最小二乘;多项式拟合",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportQuestions returned error: %v", err)
+	}
+	if result.SuccessCount != 1 {
+		t.Fatalf("expected one imported question, got %d", result.SuccessCount)
+	}
+	if len(repo.importedTags) != 1 {
+		t.Fatalf("expected one imported tag batch, got %#v", repo.importedTags)
+	}
+	if len(repo.importedTags[0]) != 3 {
+		t.Fatalf("expected semicolon-separated tags split into three items, got %#v", repo.importedTags[0])
+	}
+}
+
 func TestQuestionPublicWritesRequireTenantAdmin(t *testing.T) {
 	svc := NewQuestionService(QuestionServiceOptions{Repo: &fakeQuestionRepository{}})
 

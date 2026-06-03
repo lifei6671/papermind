@@ -798,6 +798,7 @@ papers
 ├── space_id              # 所属空间 ID；为空表示租户公共试卷
 ├── name                  # 试卷名称
 ├── description           # 试卷说明
+├── duration_minutes      # 试卷默认考试时长，单位分钟
 ├── total_score           # 试卷总分，由系统按大题题目聚合计算
 ├── build_mode            # 组卷方式：manual / rule_fixed / rule_live
 ├── shuffle_questions     # 是否对每个考生随机题目顺序
@@ -872,6 +873,7 @@ paper_section_rules
 - `papers.space_id` 可为空；为空表示租户级公共试卷，非空表示空间内试卷。
 - 首版公共试卷只允许 `tenant_admin` 创建、修改和删除；`space_admin` / `teacher` 只能管理自己已加入且启用空间内的试卷。
 - `space_admin` / `teacher` 可以在发布考试等流程中读取公共试卷，但是否允许引用公共试卷必须由对应业务 service 显式校验，不能把公共试卷视为任意教师可写资源。
+- `papers.duration_minutes` 保存试卷草稿的默认考试时长；创建、编辑和草稿保存都必须走真实试卷 API 持久化该字段，后续发布考试时可复用为默认值。
 - `papers.shuffle_questions` 控制整张试卷的题目顺序是否对每个考生随机。
 - `papers.show_analysis` 控制成绩可见后是否展示题目解析；未公布成绩前不展示解析。
 - `paper_sections` 承载大题结构、题型边界、作答说明、小计分和题号连续编排锚点。
@@ -896,6 +898,7 @@ paper_section_rules
 - `papers.total_score`、`paper_sections.total_score` 和 `paper_sections.question_count` 是落库聚合字段，只能由统一重算逻辑更新，API 和业务代码不得手工写入。
 - `manual` / `rule_fixed` 模式下，重算来源是 `paper_section_questions.score` 和题目数量。
 - `rule_live` 模式下，重算来源是 `paper_section_rules.question_count × score_per_question` 和规则题数。
+- `rule_live` 模式下，题池、题量和分值只能通过 `paper_section_rules` 维护；手动选题、调分、调序、移除和替题接口必须在 service 层拒绝写入 `paper_section_questions`。
 - `paper_section_rules.difficulty` 允许为空，空值表示不限难度。
 - 每次保存大题、增删题目、调整分值、生成固化试卷、修改规则后，必须在同一事务内重算大题小计和试卷总分。
 - `manual` 和 `rule_fixed` 模式下，每个考生拿到同一套题目集合，题目顺序和选项顺序仍可随机。
@@ -1324,12 +1327,22 @@ API 分组：
 /api/v1/papers
 ├── 创建试卷
 ├── 删除试卷
+├── 切换组卷模式
 ├── 大题管理
 ├── 手动组卷
+├── 已选题审题 / 调分 / 调序 / 删除
 ├── 规则配置
+├── 规则编辑 / 删除
 ├── rule_fixed 生成固化试卷
+├── rule_fixed 审题替题
 ├── 组卷规则预检查
 └── 试卷预览
+
+前端 `/papers` 页面必须提供统一的试卷工作台，而不是拆成彼此割裂的 demo
+操作区。工作台至少包含三块：试卷与模式切换、大题与已选题工作区、规则工作区。`manual`
+模式下教师需要直接查看已选题并执行移除；`rule_fixed` 模式下需要在生成后查看固化题、
+发起替题并回写新的题目分值与排序；`rule_live` 模式下需要查看当前规则列表、编辑或删除
+规则，并在工作台中直接触发预检查查看候选题池数量。
 
 /api/v1/exams
 ├── 发布考试
@@ -1432,7 +1445,7 @@ POST /api/v1/uploads
      response: key, url, file_name, content_type, size
 
 GET  /api/v1/questions
-     query: tenant_id, space_id?, page?, page_size?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
+     query: tenant_id, space_id?, page?, page_size?, search?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
      response: 题目列表按 `created_at DESC, id DESC` 返回，保证新创建题目优先展示，同创建时间下顺序稳定；返回题干、难度、题型、状态、出题人账号、角色、出题时间、标签和选项。
 POST /api/v1/questions
      body: tenant_id, space_id?, type, difficulty, title, analysis?, score_default?, tags[], options[], standard_answer?, reference_answer?, blank_count?
@@ -1450,6 +1463,24 @@ DELETE /api/v1/questions/:id
      body: tenant_id；已被试卷、实时候选池或作答快照引用的题目返回 409，未引用题目使用软删除。
 GET  /api/v1/papers
      query: tenant_id, space_id?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
+POST /api/v1/papers
+     body: tenant_id, space_id?, name, description, duration_minutes?, shuffle_questions?, show_analysis?；`duration_minutes` 为空时后端默认写入 120。
+PUT  /api/v1/papers/:id
+     body: tenant_id, name, description, duration_minutes?；编辑试卷基础信息时允许同时更新默认考试时长。
+PUT  /api/v1/papers/:id/mode
+     body: tenant_id, build_mode；切换为 `rule_live` 后必须按规则重算试卷总分，切换为 `rule_fixed` 后生成接口会同时回写该模式。
+GET  /api/v1/papers/:id/questions
+     query: tenant_id；返回当前试卷已固化题目列表，供手动组卷和 rule_fixed 审题共用。
+PUT  /api/v1/papers/:id/sections/:section_id/questions/:question_id
+     body: tenant_id, sort_order, score；更新已选题排序和分值，并同事务重算大题与试卷总分。
+DELETE /api/v1/papers/:id/sections/:section_id/questions/:question_id
+     query: tenant_id；移除已选题，并同事务重算聚合字段。
+POST /api/v1/papers/:id/sections/:section_id/questions/:question_id/replace
+     body: tenant_id, new_question_id, sort_order, score；用于 rule_fixed 生成后的替题审题。
+PUT  /api/v1/papers/:id/rules/:rule_id
+     body: tenant_id, section_id, sort_order, difficulty?, tag_ids, question_count, score_per_question, shuffle_options?；rule_live 当前模式下保存后立即重算。
+DELETE /api/v1/papers/:id/rules/:rule_id
+     query: tenant_id；rule_live 当前模式下删除后立即重算。
 GET  /api/v1/exams
      query: tenant_id, space_id?, page?, page_size?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
 

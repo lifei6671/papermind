@@ -3,6 +3,51 @@ import { createApiClient } from "./client";
 import { createQuestionAPI } from "./questions";
 
 describe("questionApi", () => {
+  test("题库列表请求携带分页参数并返回分页信息", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/v1/questions?tenant_id=10&space_id=301&page=2&page_size=30&search=%E5%87%BD%E6%95%B0");
+
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [
+            {
+              id: 100,
+              tenant_id: 10,
+              type: "single",
+              difficulty: "medium",
+              title: "题干",
+              analysis: "解析",
+              score_default: "2",
+              status: "enabled",
+              author_name: "teacher01",
+              author_role: "teacher",
+              created_at: 1700000000000,
+              tag: "函数",
+              tags: ["函数"],
+              options: [
+                { option_key: "A", content: "A", is_correct: true, is_distractor: false },
+              ],
+            },
+          ],
+          page: 2,
+          page_size: 30,
+          total: 87,
+        },
+      }));
+    });
+    const api = createQuestionAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.listQuestions({ tenantID: 10, spaceID: 301, page: 2, pageSize: 30, search: " 函数 " });
+
+    expect(result.page).toBe(2);
+    expect(result.pageSize).toBe(30);
+    expect(result.total).toBe(87);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].id).toBe(100);
+  });
+
   test("导入题目时使用 multipart 表单提交文件和租户信息", async () => {
     const file = new File(["type,title"], "questions.csv", { type: "text/csv" });
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

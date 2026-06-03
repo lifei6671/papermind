@@ -91,9 +91,14 @@ export function ExamManagementPage({
         if (ignore) {
           return;
         }
-        setPapers(paperData.items);
+        const availablePapers = paperData.items.filter((paper) => paper.status === "enabled");
+        setPapers(availablePapers);
         setTargetOptions(nextTargets);
-        setPaperID((current) => current || String(paperData.items[0]?.id ?? ""));
+        setPaperID((current) =>
+          current && availablePapers.some((paper) => String(paper.id) === current)
+            ? current
+            : String(availablePapers[0]?.id ?? ""),
+        );
         setTargetValue((current) => current || (nextTargets[0]?.value ?? ""));
       })
       .catch(() => {

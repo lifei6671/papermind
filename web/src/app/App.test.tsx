@@ -440,7 +440,7 @@ test("考试端支持全局题号切换和五类题型作答", async () => {
 
   await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "36" }));
   expect(screen.getByRole("heading", { name: "三、填空题" })).toBeInTheDocument();
-  await user.type(screen.getByLabelText("填空题答案"), "先天下之忧而忧");
+  await user.type(screen.getByLabelText("第 1 空答案"), "先天下之忧而忧");
 
   await user.click(within(screen.getByLabelText("题目列表")).getByRole("button", { name: "41" }));
   expect(screen.getByRole("heading", { name: "四、简答题" })).toBeInTheDocument();
@@ -708,6 +708,70 @@ test("真实路由渲染空间管理时从 session 派生租户并请求后端 A
   expect(requestedURLs).not.toContain("/api/v1/tenant/spaces?tenant_id=0");
 });
 
+test("租户管理员新建试卷时忽略 URL 中陈旧的空间 ID", async () => {
+  storeTenantAdminSession();
+  const requestedURLs: string[] = [];
+  let createBody = "";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    requestedURLs.push(url);
+    if (url === "/api/v1/questions?tenant_id=77&page=1&page_size=100") {
+      return okJSON({ items: [], page: 1, page_size: 20, total: 0 });
+    }
+    if (url === "/api/v1/papers" && init?.method === "POST") {
+      createBody = String(init.body);
+      return okJSON({
+        id: 501,
+        tenant_id: 77,
+        name: "租户公共试卷",
+        description: "",
+        total_score: "0",
+        build_mode: "manual",
+        status: "draft",
+        created_at: 1780373000000,
+        creator_name: "tenant.admin",
+      });
+    }
+    if (url === "/api/v1/papers?tenant_id=77") {
+      return okJSON({
+        items: [{
+          id: 501,
+          tenant_id: 77,
+          name: "租户公共试卷",
+          description: "",
+          total_score: "0",
+          build_mode: "manual",
+          status: "draft",
+          created_at: 1780373000000,
+          creator_name: "tenant.admin",
+        }],
+        page: 1,
+        page_size: 20,
+        total: 1,
+      });
+    }
+    if (url === "/api/v1/papers/501/sections?tenant_id=77" || url === "/api/v1/papers/501/questions?tenant_id=77") {
+      return okJSON({ items: [], page: 1, page_size: 20, total: 0 });
+    }
+    return new Response(JSON.stringify({ code: 50000, message: `unexpected request: ${url}`, data: null }), { status: 500 });
+  });
+
+  renderApp(["/papers/new?space_id=301"]);
+
+  await screen.findByRole("tab", { name: "组卷管理" });
+  await userEvent.type(screen.getByLabelText("试卷名称"), "租户公共试卷");
+  await userEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  await waitFor(() => expect(createBody).not.toBe(""));
+  expect(JSON.parse(createBody)).toMatchObject({
+    tenant_id: 77,
+    name: "租户公共试卷",
+  });
+  expect(JSON.parse(createBody)).not.toHaveProperty("space_id");
+  expect(requestedURLs).toContain("/api/v1/questions?tenant_id=77&page=1&page_size=100");
+  expect(requestedURLs.some((url) => url.startsWith("/api/v1/questions?") && url.includes("space_id=301"))).toBe(false);
+});
+
 test("真实空间成员入口由授权空间列表渲染并读取成员", async () => {
   storeSpaceAdminTeacherSession();
   const requestedURLs: string[] = [];
@@ -891,3 +955,7 @@ test("成绩页支持发布配置和成绩导出", async () => {
   expect(screen.getByRole("status", { name: "result-export" })).toHaveTextContent("已导出 1 行");
   expect(screen.getByRole("link", { name: "下载导出文件" })).toHaveAttribute("download", "papermind-results.csv");
 });
+
+function okJSON(data: unknown) {
+  return new Response(JSON.stringify({ code: 0, message: "ok", data }));
+}

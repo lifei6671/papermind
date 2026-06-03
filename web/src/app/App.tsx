@@ -12,7 +12,7 @@ export function App() {
   const { session } = useSession();
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
-  const scopedSpaceID = session?.selectedSpaceID ?? positiveID(searchParams.get("space_id"));
+  const scopedSpaceID = scopedSpaceIDFromSession(session, searchParams);
   const scopedExamID = positiveID(searchParams.get("exam_id"));
   const adminRoutes = buildAdminRoutes(session?.user, scopedSpaceID, session?.profileSpaces ?? [], scopedExamID);
 
@@ -47,6 +47,16 @@ export function App() {
 function positiveID(value: string | null) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function scopedSpaceIDFromSession(
+  session: ReturnType<typeof useSession>["session"],
+  searchParams: URLSearchParams,
+) {
+  if (!session || session.user.role === "platform_admin" || session.user.role === "tenant_admin") {
+    return undefined;
+  }
+  return session.selectedSpaceID ?? positiveID(searchParams.get("space_id"));
 }
 
 function routeRequiresRouteGuard(route: { group: string; menuRoles?: string[]; spaceMemberRoles?: unknown[] }) {

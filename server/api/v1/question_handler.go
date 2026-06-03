@@ -111,6 +111,7 @@ func (h questionHandler) list(c *gin.Context) {
 		SpaceID:  spaceID,
 		Page:     page,
 		PageSize: pageSize,
+		Search:   c.Query("search"),
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取题目列表失败"))

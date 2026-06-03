@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -13,6 +13,9 @@ function renderWithFeedback(page: ReactElement) {
 function createQuestionAPI() {
   return {
     listQuestions: vi.fn().mockResolvedValue({
+      page: 1,
+      pageSize: 20,
+      total: 1,
       items: [
         {
           id: 100,
@@ -141,6 +144,20 @@ test("新增题目使用独立页面并通过插件渲染 Markdown 预览", asyn
   expect(stemPreview.getByText("单调递增")).toBeInTheDocument();
   expect(analysisPreview.getByText("看斜率")).toBeInTheDocument();
   expect(analysisPreview.getByText("排除反例")).toBeInTheDocument();
+});
+
+test("题干 Markdown 预览支持渲染 LaTeX 公式", async () => {
+  renderCreatePage();
+
+  fireEvent.change(screen.getByLabelText("题干"), {
+    target: { value: "行内公式 $a^2+b^2=c^2$\n\n$$\\sum_{i=1}^{n} i$$" },
+  });
+
+  const previewPanels = document.querySelectorAll(".w-md-editor-preview");
+  expect(previewPanels.length).toBeGreaterThanOrEqual(1);
+  await waitFor(() => {
+    expect(previewPanels[0]?.querySelector(".katex")).not.toBeNull();
+  });
 });
 
 test("教师可以在新增题目页面创建选择题并编辑选项和标签", async () => {

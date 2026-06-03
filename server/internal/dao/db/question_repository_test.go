@@ -84,6 +84,66 @@ func TestQuestionRepositoryListsVisibleQuestionsByCreatedAtDesc(t *testing.T) {
 	}
 }
 
+func TestQuestionRepositorySearchesVisibleQuestionsAcrossTagsAndOptions(t *testing.T) {
+	gormDB := openQuestionRepositoryTestDB(t)
+	now := int64(1000)
+	repo := NewQuestionRepository(gormDB, QuestionRepositoryOptions{Now: func() int64 { return now }})
+
+	for _, item := range []struct {
+		title   string
+		options []servicequestion.QuestionOption
+		tags    []string
+		now     int64
+	}{
+		{
+			title: "常规函数题",
+			options: []servicequestion.QuestionOption{
+				{OptionKey: "A", SortOrder: 1, Content: "一次函数", IsCorrect: true},
+				{OptionKey: "B", SortOrder: 2, Content: "二次函数", IsDistractor: true},
+			},
+			tags: []string{"函数"},
+			now:  1000,
+		},
+		{
+			title: "阅读理解题",
+			options: []servicequestion.QuestionOption{
+				{OptionKey: "A", SortOrder: 1, Content: "普通段落", IsCorrect: true},
+				{OptionKey: "B", SortOrder: 2, Content: "压轴选项", IsDistractor: true},
+			},
+			tags: []string{"阅读理解", "压轴题"},
+			now:  2000,
+		},
+	} {
+		now = item.now
+		if _, err := repo.CreateQuestion(t.Context(), servicequestion.Question{
+			TenantID:     10,
+			Type:         servicequestion.QuestionTypeSingle,
+			Difficulty:   servicequestion.DifficultyMedium,
+			Title:        item.title,
+			ScoreDefault: "2",
+			Status:       servicequestion.QuestionStatusEnabled,
+		}, item.options, item.tags); err != nil {
+			t.Fatalf("CreateQuestion(%s) returned error: %v", item.title, err)
+		}
+	}
+
+	result, err := repo.ListVisibleQuestions(t.Context(), servicequestion.ListQuestionsInput{
+		TenantID: 10,
+		Page:     1,
+		PageSize: 10,
+		Search:   "压轴",
+	})
+	if err != nil {
+		t.Fatalf("ListVisibleQuestions returned error: %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("expected one search result, got total=%d items=%#v", result.Total, result.Items)
+	}
+	if result.Items[0].Title != "阅读理解题" {
+		t.Fatalf("expected search to match tag or option content, got %#v", result.Items[0])
+	}
+}
+
 func openQuestionRepositoryTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

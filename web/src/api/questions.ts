@@ -30,6 +30,9 @@ export type QuestionRow = {
 export type ListQuestionsInput = {
   tenantID: number;
   spaceID?: number;
+  page?: number;
+  pageSize?: number;
+  search?: string;
 };
 
 export type CreateQuestionInput = {
@@ -80,6 +83,9 @@ export type ImportQuestionsResult = {
 
 export type QuestionListResult = {
   items: QuestionRow[];
+  page: number;
+  pageSize: number;
+  total: number;
 };
 
 export type QuestionBankAPI = {
@@ -147,8 +153,19 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
       if (input.spaceID !== undefined) {
         params.set("space_id", String(input.spaceID));
       }
+      params.set("page", String(input.page ?? 1));
+      params.set("page_size", String(input.pageSize ?? 20));
+      const search = input.search?.trim();
+      if (search) {
+        params.set("search", search);
+      }
       const data = await apiClient.get<PageData<QuestionAPIResponse>>(`/api/v1/questions?${params.toString()}`);
-      return { items: data.items.map(mapQuestionResponse) };
+      return {
+        items: data.items.map(mapQuestionResponse),
+        page: data.page,
+        pageSize: data.page_size,
+        total: data.total,
+      };
     },
     async getQuestion(input) {
       const params = new URLSearchParams({ tenant_id: String(input.tenantID) });

@@ -21,6 +21,10 @@ const (
 
 	// StatusDraft 表示试卷草稿状态。
 	StatusDraft = constant.PaperStatusDraft
+	// StatusEnabled 表示试卷可用状态。
+	StatusEnabled = constant.PaperStatusEnabled
+	// StatusDisabled 表示试卷禁用状态。
+	StatusDisabled = constant.PaperStatusDisabled
 )
 
 var (
@@ -30,6 +34,7 @@ var (
 	ErrQuestionOutOfScope                  = errors.New("question out of paper scope")
 	ErrPaperNotFound                       = errors.New("paper not found")
 	ErrPaperInUse                          = errors.New("paper is referenced by exam")
+	ErrRuleLiveManualQuestionChange        = errors.New("rule_live paper question changes must be managed by rules")
 )
 
 type Paper struct {
@@ -38,11 +43,16 @@ type Paper struct {
 	SpaceID          *uint64 // 所属空间 ID，nil 表示租户公共试卷。
 	Name             string  // 试卷名称。
 	Description      string  // 试卷说明。
+	DurationMinutes  int     // 默认考试时长，单位分钟。
+	GradeLevel       string  // 适用年级，例如高一 / 高二。
 	TotalScore       string  // 试卷总分。
 	BuildMode        string  // 组卷方式：manual / rule_fixed / rule_live。
 	ShuffleQuestions bool    // 是否对每个考生随机题目顺序。
 	ShowAnalysis     bool    // 成绩可见后是否向考生展示题目解析。
 	Status           string  // 试卷状态。
+	CreatedAt        int64   // 创建时间，Unix 毫秒时间戳。
+	CreatedBy        uint64  // 创建人租户账号 ID。
+	CreatorName      string  // 创建人账号。
 }
 
 type Section struct {
@@ -107,8 +117,28 @@ type CreatePaperInput struct {
 	SpaceID          *uint64 // 所属空间 ID。
 	Name             string  // 试卷名称。
 	Description      string  // 试卷说明。
+	DurationMinutes  int     // 默认考试时长，单位分钟。
+	GradeLevel       string  // 适用年级，例如高一 / 高二。
 	ShuffleQuestions bool    // 是否随机题目顺序。
 	ShowAnalysis     bool    // 是否展示解析。
+	ActorID          uint64  // 当前操作人用户 ID。
+}
+
+type UpdatePaperInput struct {
+	TenantID        uint64 // 所属租户 ID。
+	PaperID         uint64 // 试卷 ID。
+	Name            string // 试卷名称。
+	Description     string // 试卷说明。
+	DurationMinutes *int   // 默认考试时长，单位分钟；nil 表示保持不变。
+	GradeLevel      string // 适用年级。
+	ActorID         uint64 // 当前操作人用户 ID。
+}
+
+type UpdatePaperStatusInput struct {
+	TenantID uint64 // 所属租户 ID。
+	PaperID  uint64 // 试卷 ID。
+	Status   string // 目标状态。
+	ActorID  uint64 // 当前操作人用户 ID。
 }
 
 type AddSectionQuestionInput struct {
@@ -119,6 +149,15 @@ type AddSectionQuestionInput struct {
 	SortOrder      int    // 题目在大题中的排序。
 	Score          string // 分值覆盖。
 	ShuffleOptions *bool  // 可空选项随机设置。
+}
+
+type UpdateSectionQuestionInput struct {
+	TenantID   uint64 // 所属租户 ID。
+	PaperID    uint64 // 试卷 ID。
+	SectionID  uint64 // 大题 ID。
+	QuestionID uint64 // 题目 ID。
+	SortOrder  int    // 新排序。
+	Score      string // 新分值。
 }
 
 type ConfigureRuleInput struct {
@@ -157,11 +196,24 @@ type LivePrecheckResult struct {
 }
 
 type UpdateRuleInput struct {
-	TenantID   uint64 // 所属租户 ID。
-	PaperID    uint64 // 试卷 ID。
-	ExamID     uint64 // 考试 ID。
-	RuleID     uint64 // 规则 ID。
-	ExamFrozen bool   // 考试是否已冻结题池。
+	TenantID         uint64   // 所属租户 ID。
+	PaperID          uint64   // 试卷 ID。
+	ExamID           uint64   // 考试 ID。
+	RuleID           uint64   // 规则 ID。
+	ExamFrozen       bool     // 考试是否已冻结题池。
+	SectionID        uint64   // 大题 ID。
+	SortOrder        int      // 规则排序。
+	Difficulty       *string  // 抽题难度，nil 表示不限。
+	TagIDs           []uint64 // 标签过滤条件。
+	QuestionCount    int      // 抽题数量。
+	ScorePerQuestion string   // 每题分值。
+	ShuffleOptions   *bool    // 可空选项随机设置。
+}
+
+type UpdateBuildModeInput struct {
+	TenantID  uint64 // 所属租户 ID。
+	PaperID   uint64 // 试卷 ID。
+	BuildMode string // 新组卷模式。
 }
 
 type SectionAggregate struct {
@@ -177,6 +229,8 @@ type ListPapersInput struct {
 
 type Repository interface {
 	ListPapers(ctx context.Context, input ListPapersInput) ([]Paper, error)
+	GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (Paper, error)
+	HasPublishedRuleLiveExam(ctx context.Context, tenantID uint64, paperID uint64) (bool, error)
 	SectionSortOrderExists(ctx context.Context, tenantID uint64, paperID uint64, sortOrder int) (bool, error)
 	CreateSection(ctx context.Context, section Section) (Section, error)
 	UpdateSection(ctx context.Context, input UpdateSectionInput) error
@@ -184,18 +238,27 @@ type Repository interface {
 	DeleteSectionCascade(ctx context.Context, tenantID uint64, sectionID uint64) error
 	ListActiveSections(ctx context.Context, tenantID uint64, paperID uint64) ([]Section, error)
 	CreatePaper(ctx context.Context, paper Paper) (Paper, error)
+	UpdatePaper(ctx context.Context, input UpdatePaperInput) (Paper, error)
+	UpdatePaperStatus(ctx context.Context, tenantID uint64, paperID uint64, status string, actorID uint64) (Paper, error)
 	DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error
 	PaperQuestionExists(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error)
 	QuestionUsableForPaper(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error)
 	AddSectionQuestionAndRecalculate(ctx context.Context, question SectionQuestion) error
+	UpdateSectionQuestionAndRecalculate(ctx context.Context, input UpdateSectionQuestionInput) error
+	DeleteSectionQuestionAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, sectionID uint64, questionID uint64) error
 	CreateRule(ctx context.Context, rule Rule) (Rule, error)
+	CreateRuleAndRecalculate(ctx context.Context, rule Rule, buildMode string) (Rule, error)
 	MatchQuestionsForRule(ctx context.Context, tenantID uint64, paperID uint64, rule Rule) ([]uint64, error)
 	ListRules(ctx context.Context, tenantID uint64, paperID uint64) ([]Rule, error)
-	GenerateFixedQuestionsAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, questions []SectionQuestion) error
+	GenerateFixedQuestionsAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, buildMode string, questions []SectionQuestion) error
 	ReplaceGeneratedQuestionAndRecalculate(ctx context.Context, input ReplaceGeneratedQuestionInput) error
 	AdjustGeneratedQuestionAndRecalculate(ctx context.Context, input AdjustGeneratedQuestionInput) error
 	FreezeLivePools(ctx context.Context, tenantID uint64, examID uint64, questionIDs []uint64) error
 	UpdateRule(ctx context.Context, input UpdateRuleInput) error
+	UpdateRuleAndRecalculate(ctx context.Context, input UpdateRuleInput, buildMode string) error
+	DeleteRule(ctx context.Context, tenantID uint64, paperID uint64, ruleID uint64) error
+	DeleteRuleAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, ruleID uint64, buildMode string) error
+	UpdateBuildMode(ctx context.Context, tenantID uint64, paperID uint64, buildMode string) error
 	ListSectionQuestions(ctx context.Context, tenantID uint64, paperID uint64) ([]SectionQuestion, error)
 	ListRuleLiveRules(ctx context.Context, tenantID uint64, paperID uint64) ([]Rule, error)
 	SaveAggregates(ctx context.Context, tenantID uint64, paperID uint64, sections []SectionAggregate, paperTotalScore string) error
@@ -217,7 +280,14 @@ func (s *Service) ListPapers(ctx context.Context, input ListPapersInput) ([]Pape
 	return s.repo.ListPapers(ctx, input)
 }
 
+func (s *Service) GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (Paper, error) {
+	return s.repo.GetPaper(ctx, tenantID, paperID)
+}
+
 func (s *Service) CreateSection(ctx context.Context, input CreateSectionInput) (Section, error) {
+	if err := s.ensureRuleChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
+		return Section{}, err
+	}
 	if _, err := s.repo.SectionSortOrderExists(ctx, input.TenantID, input.PaperID, input.SortOrder); err != nil {
 		return Section{}, err
 	}
@@ -237,6 +307,9 @@ func (s *Service) UpdateSection(ctx context.Context, input UpdateSectionInput) e
 }
 
 func (s *Service) ReorderSections(ctx context.Context, tenantID uint64, paperID uint64, orders []SectionOrder) error {
+	if err := s.ensureRuleChangesAllowed(ctx, tenantID, paperID); err != nil {
+		return err
+	}
 	return s.repo.ReorderSections(ctx, tenantID, paperID, orders)
 }
 
@@ -262,12 +335,23 @@ func (s *Service) CreateManualPaper(ctx context.Context, input CreatePaperInput)
 		SpaceID:          input.SpaceID,
 		Name:             input.Name,
 		Description:      input.Description,
+		DurationMinutes:  input.DurationMinutes,
+		GradeLevel:       input.GradeLevel,
 		TotalScore:       "0",
 		BuildMode:        BuildModeManual,
 		ShuffleQuestions: input.ShuffleQuestions,
 		ShowAnalysis:     input.ShowAnalysis,
 		Status:           StatusDraft,
+		CreatedBy:        input.ActorID,
 	})
+}
+
+func (s *Service) UpdatePaper(ctx context.Context, input UpdatePaperInput) (Paper, error) {
+	return s.repo.UpdatePaper(ctx, input)
+}
+
+func (s *Service) UpdatePaperStatus(ctx context.Context, input UpdatePaperStatusInput) (Paper, error) {
+	return s.repo.UpdatePaperStatus(ctx, input.TenantID, input.PaperID, input.Status, input.ActorID)
 }
 
 func (s *Service) DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error {
@@ -275,6 +359,9 @@ func (s *Service) DeletePaper(ctx context.Context, tenantID uint64, paperID uint
 }
 
 func (s *Service) AddManualQuestion(ctx context.Context, input AddSectionQuestionInput) error {
+	if err := s.ensureManualQuestionChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
+		return err
+	}
 	exists, err := s.repo.PaperQuestionExists(ctx, input.TenantID, input.PaperID, input.QuestionID)
 	if err != nil {
 		return err
@@ -300,8 +387,25 @@ func (s *Service) AddManualQuestion(ctx context.Context, input AddSectionQuestio
 	})
 }
 
+func (s *Service) UpdateSectionQuestion(ctx context.Context, input UpdateSectionQuestionInput) error {
+	if err := s.ensureManualQuestionChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
+		return err
+	}
+	return s.repo.UpdateSectionQuestionAndRecalculate(ctx, input)
+}
+
+func (s *Service) DeleteSectionQuestion(ctx context.Context, tenantID uint64, paperID uint64, sectionID uint64, questionID uint64) error {
+	if err := s.ensureManualQuestionChangesAllowed(ctx, tenantID, paperID); err != nil {
+		return err
+	}
+	return s.repo.DeleteSectionQuestionAndRecalculate(ctx, tenantID, paperID, sectionID, questionID)
+}
+
 func (s *Service) ConfigureRule(ctx context.Context, input ConfigureRuleInput) (Rule, error) {
-	return s.repo.CreateRule(ctx, Rule{
+	if err := s.ensureRuleChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
+		return Rule{}, err
+	}
+	rule := Rule{
 		TenantID:         input.TenantID,
 		PaperID:          input.PaperID,
 		SectionID:        input.SectionID,
@@ -311,10 +415,21 @@ func (s *Service) ConfigureRule(ctx context.Context, input ConfigureRuleInput) (
 		QuestionCount:    input.QuestionCount,
 		ScorePerQuestion: input.ScorePerQuestion,
 		ShuffleOptions:   input.ShuffleOptions,
-	})
+	}
+	paper, err := s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
+	if err != nil {
+		return Rule{}, err
+	}
+	if paper.BuildMode == BuildModeRuleLive {
+		return s.repo.CreateRuleAndRecalculate(ctx, rule, paper.BuildMode)
+	}
+	return s.repo.CreateRule(ctx, rule)
 }
 
 func (s *Service) GenerateRuleFixed(ctx context.Context, tenantID uint64, paperID uint64) error {
+	if err := s.ensureRuleChangesAllowed(ctx, tenantID, paperID); err != nil {
+		return err
+	}
 	rules, err := s.repo.ListRules(ctx, tenantID, paperID)
 	if err != nil {
 		return err
@@ -343,14 +458,34 @@ func (s *Service) GenerateRuleFixed(ctx context.Context, tenantID uint64, paperI
 			})
 		}
 	}
-	return s.repo.GenerateFixedQuestionsAndRecalculate(ctx, tenantID, paperID, questions)
+	return s.repo.GenerateFixedQuestionsAndRecalculate(ctx, tenantID, paperID, BuildModeRuleFixed, questions)
 }
 
 func (s *Service) ReplaceGeneratedQuestion(ctx context.Context, input ReplaceGeneratedQuestionInput) error {
+	if err := s.ensureManualQuestionChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
+		return err
+	}
+	exists, err := s.repo.PaperQuestionExists(ctx, input.TenantID, input.PaperID, input.NewQuestionID)
+	if err != nil {
+		return err
+	}
+	if exists && input.NewQuestionID != input.OldQuestionID {
+		return ErrDuplicatePaperQuestion
+	}
+	usable, err := s.repo.QuestionUsableForPaper(ctx, input.TenantID, input.PaperID, input.NewQuestionID)
+	if err != nil {
+		return err
+	}
+	if !usable {
+		return ErrQuestionOutOfScope
+	}
 	return s.repo.ReplaceGeneratedQuestionAndRecalculate(ctx, input)
 }
 
 func (s *Service) AdjustGeneratedQuestion(ctx context.Context, input AdjustGeneratedQuestionInput) error {
+	if err := s.ensureManualQuestionChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
+		return err
+	}
 	return s.repo.AdjustGeneratedQuestionAndRecalculate(ctx, input)
 }
 
@@ -386,7 +521,44 @@ func (s *Service) UpdateRuleLiveRule(ctx context.Context, input UpdateRuleInput)
 	if input.ExamFrozen {
 		return ErrExamMustBeWithdrawnBeforeRuleChange
 	}
+	if err := s.ensureRuleChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
+		return err
+	}
+	paper, err := s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
+	if err != nil {
+		return err
+	}
+	if paper.BuildMode == BuildModeRuleLive {
+		return s.repo.UpdateRuleAndRecalculate(ctx, input, paper.BuildMode)
+	}
 	return s.repo.UpdateRule(ctx, input)
+}
+
+func (s *Service) DeleteRule(ctx context.Context, tenantID uint64, paperID uint64, ruleID uint64) error {
+	if err := s.ensureRuleChangesAllowed(ctx, tenantID, paperID); err != nil {
+		return err
+	}
+	paper, err := s.repo.GetPaper(ctx, tenantID, paperID)
+	if err != nil {
+		return err
+	}
+	if paper.BuildMode == BuildModeRuleLive {
+		return s.repo.DeleteRuleAndRecalculate(ctx, tenantID, paperID, ruleID, paper.BuildMode)
+	}
+	return s.repo.DeleteRule(ctx, tenantID, paperID, ruleID)
+}
+
+func (s *Service) UpdateBuildMode(ctx context.Context, input UpdateBuildModeInput) (Paper, error) {
+	if err := s.ensureRuleChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
+		return Paper{}, err
+	}
+	if err := s.repo.UpdateBuildMode(ctx, input.TenantID, input.PaperID, input.BuildMode); err != nil {
+		return Paper{}, err
+	}
+	if err := s.RecalculatePaper(ctx, input.TenantID, input.PaperID, input.BuildMode); err != nil {
+		return Paper{}, err
+	}
+	return s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
 }
 
 func (s *Service) RecalculatePaper(ctx context.Context, tenantID uint64, paperID uint64, buildMode string) error {
@@ -456,6 +628,28 @@ func sortedAggregates(items map[uint64]SectionAggregate) []SectionAggregate {
 		return sections[i].SectionID < sections[j].SectionID
 	})
 	return sections
+}
+
+func (s *Service) ensureRuleChangesAllowed(ctx context.Context, tenantID uint64, paperID uint64) error {
+	locked, err := s.repo.HasPublishedRuleLiveExam(ctx, tenantID, paperID)
+	if err != nil {
+		return err
+	}
+	if locked {
+		return ErrExamMustBeWithdrawnBeforeRuleChange
+	}
+	return nil
+}
+
+func (s *Service) ensureManualQuestionChangesAllowed(ctx context.Context, tenantID uint64, paperID uint64) error {
+	paper, err := s.repo.GetPaper(ctx, tenantID, paperID)
+	if err != nil {
+		return err
+	}
+	if paper.BuildMode == BuildModeRuleLive {
+		return ErrRuleLiveManualQuestionChange
+	}
+	return nil
 }
 
 func mustScore(value string) float64 {

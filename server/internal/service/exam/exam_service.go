@@ -53,6 +53,7 @@ var (
 	ErrDurationExceedsExamWindow        = errors.New("duration exceeds exam window")
 	ErrShortTextCannotRepeatAttempt     = errors.New("short text exam cannot repeat attempt")
 	ErrShortTextCannotImmediateScore    = errors.New("short text exam cannot immediate score")
+	ErrPaperNotEnabled                  = errors.New("paper not enabled")
 	ErrDuplicateExamTarget              = errors.New("duplicate exam target")
 	ErrLoginRequiredForInvite           = errors.New("login or register required for invite")
 	ErrExamNotEligible                  = errors.New("exam not eligible")
@@ -94,6 +95,7 @@ type Exam struct {
 type Paper struct {
 	ID                uint64 // 试卷主键 ID。
 	BuildMode         string // 组卷方式。
+	Status            string // 试卷状态。
 	ContainsShortText bool   // 是否包含简答题。
 }
 
@@ -389,6 +391,9 @@ func (s *Service) buildPublishedExam(ctx context.Context, input publishSettingsI
 	paper, err := s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
 	if err != nil {
 		return Exam{}, nil, err
+	}
+	if paper.Status != constant.PaperStatusEnabled {
+		return Exam{}, nil, ErrPaperNotEnabled
 	}
 	if paper.ContainsShortText && input.MaxAttempts > 1 {
 		return Exam{}, nil, ErrShortTextCannotRepeatAttempt

@@ -1,9 +1,50 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { expect, test, vi } from "vitest";
 import { ApiError } from "../../api/client";
+import { FeedbackProvider } from "../../app/feedback";
 import type { QuestionAPI } from "../../api/questions";
 import { QuestionBankPage } from "./QuestionBankPage";
+
+const longQuestionTitle = "【资料】根据下列文字资料回答：2005年10月份，我国煤炭出口605万吨，同比增长25.9%，煤炭进口453万吨，同比下降28.7%。";
+
+function renderWithFeedback(page: ReactElement, initialEntry = "/questions") {
+  return render(
+    <FeedbackProvider>
+      <MemoryRouter initialEntries={[initialEntry]}>{page}</MemoryRouter>
+    </FeedbackProvider>,
+  );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+
+  return <output aria-label="当前路由">{`${location.pathname}${location.search}`}</output>;
+}
+
+function renderQuestionBankRoutes(api: ReturnType<typeof createQuestionAPI>) {
+  return render(
+    <FeedbackProvider>
+      <MemoryRouter initialEntries={["/questions?space_id=301"]}>
+        <Routes>
+          <Route
+            path="/questions"
+            element={(
+              <>
+                <QuestionBankPage api={api} tenantID={10} spaceID={301} />
+                <LocationProbe />
+              </>
+            )}
+          />
+          <Route path="/questions/new" element={<LocationProbe />} />
+          <Route path="/questions/:questionID/edit" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </FeedbackProvider>,
+  );
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -17,12 +58,15 @@ function deferred<T>() {
 function createQuestionAPI() {
   return {
     listQuestions: vi.fn().mockResolvedValue({
+      page: 1,
+      pageSize: 20,
+      total: 43,
       items: [
         {
           id: 100,
           tenantID: 10,
           type: "single",
-          title: "现代文阅读主旨题",
+          title: longQuestionTitle,
           stem: "下列选项最能概括文章中心的是哪一项？",
           options: ["把握中心句", "复述细节"],
           analysis: "定位中心句并排除以偏概全选项。",
@@ -34,6 +78,40 @@ function createQuestionAPI() {
           authorRole: "teacher",
           createdAt: 1700000000000,
           status: "ready",
+        },
+        {
+          id: 101,
+          tenantID: 10,
+          type: "short_text",
+          title: "已禁用的阅读分析题",
+          stem: "请分析文本结构。",
+          options: [],
+          analysis: "围绕结构层次作答。",
+          difficulty: "hard",
+          tag: "阅读理解",
+          tags: ["阅读理解"],
+          scoreDefault: "8",
+          authorName: "admin01",
+          authorRole: "space_admin",
+          createdAt: 1700000060000,
+          status: "disabled",
+        },
+        {
+          id: 102,
+          tenantID: 10,
+          type: "fill_blank",
+          title: "草稿状态题目",
+          stem: "草稿状态题目",
+          options: [],
+          analysis: "草稿题需要手动启用。",
+          difficulty: "easy",
+          tag: "草稿",
+          tags: ["草稿"],
+          scoreDefault: "2",
+          authorName: "teacher02",
+          authorRole: "tenant_admin",
+          createdAt: 1700000120000,
+          status: "draft",
         },
       ],
     }),
@@ -61,7 +139,7 @@ function createQuestionAPI() {
       id: 100,
       tenantID: 10,
       type: "single",
-      title: "现代文阅读主旨题",
+      title: longQuestionTitle,
       stem: "下列选项最能概括文章中心的是哪一项？",
       options: ["把握中心句", "复述细节"],
       analysis: "定位中心句并排除以偏概全选项。",
@@ -84,7 +162,7 @@ function createQuestionAPI() {
 
 test("题库页展示题目列表并隐藏本地标签管理入口", async () => {
   const api = createQuestionAPI();
-  render(<QuestionBankPage api={api} tenantID={10} />);
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} />);
 
   expect(screen.getAllByRole("tab")).toHaveLength(1);
   expect(screen.getByRole("tab", { name: "题库" })).toHaveAttribute("aria-selected", "true");
@@ -96,50 +174,89 @@ test("题库页展示题目列表并隐藏本地标签管理入口", async () =>
   expect(screen.getByLabelText("搜索题目")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "刷新题目列表" })).toBeInTheDocument();
   expect(screen.queryByLabelText("题目导入文件")).not.toBeInTheDocument();
-  expect(await screen.findByText("现代文阅读主旨题")).toBeInTheDocument();
+  expect(await screen.findByText((content) => content.endsWith("..."))).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "ID" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "题干" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "难度" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "题目类型" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "题目状态" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "出题人" })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "出题人身份角色" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "角色" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "出题时间" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "操作区" })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "100" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "中等" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "单选题" })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "可用" })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "已禁用" })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "草稿" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "teacher01" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "教师" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "2023-11-15 06:13" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "编辑 现代文阅读主旨题" })).toHaveAttribute("href", "/questions/100/edit");
-  expect(screen.getByRole("button", { name: "删除 现代文阅读主旨题" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "禁用 现代文阅读主旨题" })).toBeInTheDocument();
-  expect(api.listQuestions).toHaveBeenCalledWith({ tenantID: 10 });
+  expect(screen.getByRole("link", { name: `编辑 ${longQuestionTitle}` })).toHaveAttribute("href", "/questions/100/edit");
+  expect(screen.getByRole("button", { name: `删除 ${longQuestionTitle}` })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: `禁用 ${longQuestionTitle}` })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "启用 草稿状态题目" })).toBeInTheDocument();
+  expect(screen.getByText("共 43 条")).toBeInTheDocument();
+  expect(screen.getByText("第 1 / 3 页")).toBeInTheDocument();
+  expect(api.listQuestions).toHaveBeenCalledWith({ tenantID: 10, page: 1, pageSize: 20, search: "" });
 });
 
 test("教师可以搜索和刷新题目列表", async () => {
   const user = userEvent.setup();
   const api = createQuestionAPI();
-  render(<QuestionBankPage api={api} tenantID={10} />);
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} />);
 
-  await screen.findByText("现代文阅读主旨题");
-  const refreshResult = deferred<Awaited<ReturnType<QuestionAPI["listQuestions"]>>>();
-  vi.mocked(api.listQuestions).mockReturnValueOnce(refreshResult.promise);
+  await screen.findByText((content) => content.endsWith("..."));
+  vi.mocked(api.listQuestions).mockResolvedValueOnce({
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    items: [{
+      id: 103,
+      tenantID: 10,
+      type: "short_text",
+      title: "语言文字运用题",
+      stem: "语言文字运用题",
+      options: [],
+      analysis: "考查语病修改。",
+      difficulty: "medium",
+      tag: "语言文字",
+      tags: ["语言文字"],
+      scoreDefault: "6",
+      authorName: "teacher01",
+      authorRole: "teacher",
+      createdAt: 1700000180000,
+      status: "ready",
+    }],
+  });
 
   await user.type(screen.getByLabelText("搜索题目"), "语言文字");
   await user.click(screen.getByRole("button", { name: "搜索" }));
 
-  expect(screen.queryByText("现代文阅读主旨题")).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(api.listQuestions).toHaveBeenLastCalledWith({ tenantID: 10, page: 1, pageSize: 20, search: "语言文字" });
+  });
+  expect(await screen.findByText("语言文字运用题")).toBeInTheDocument();
+
+  const refreshResult = deferred<Awaited<ReturnType<QuestionAPI["listQuestions"]>>>();
+  vi.mocked(api.listQuestions).mockReturnValueOnce(refreshResult.promise);
 
   await user.click(screen.getByRole("button", { name: "刷新题目列表" }));
   expect(screen.getByRole("button", { name: "刷新题目列表" }).querySelector("svg")).toHaveClass(
     "tenant-refresh-icon--spinning",
   );
+  expect(api.listQuestions).toHaveBeenLastCalledWith({ tenantID: 10, page: 1, pageSize: 20, search: "" });
 
   refreshResult.resolve({
+    page: 1,
+    pageSize: 20,
+    total: 43,
     items: [{
       id: 100,
       tenantID: 10,
       type: "single",
-      title: "现代文阅读主旨题",
+      title: longQuestionTitle,
       stem: "下列选项最能概括文章中心的是哪一项？",
       options: ["把握中心句", "复述细节"],
       analysis: "定位中心句并排除以偏概全选项。",
@@ -154,7 +271,143 @@ test("教师可以搜索和刷新题目列表", async () => {
     }],
   });
 
-  expect(await screen.findByText("现代文阅读主旨题")).toBeInTheDocument();
+  expect(await screen.findByText((content) => content.endsWith("..."))).toBeInTheDocument();
+});
+
+test("刷新题库列表会清空搜索并回到第一页", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} />);
+
+  await screen.findByText((content) => content.endsWith("..."));
+  vi.mocked(api.listQuestions).mockResolvedValueOnce({
+    page: 2,
+    pageSize: 20,
+    total: 43,
+    items: [{
+      id: 201,
+      tenantID: 10,
+      type: "single",
+      title: "第二页题目",
+      stem: "第二页题目",
+      options: ["A", "B"],
+      analysis: "用于验证分页刷新。",
+      difficulty: "medium",
+      tag: "阅读理解",
+      tags: ["阅读理解"],
+      scoreDefault: "4",
+      authorName: "teacher01",
+      authorRole: "teacher",
+      createdAt: 1700000000000,
+      status: "ready",
+    }],
+  });
+  await user.click(screen.getByRole("button", { name: "下一页" }));
+  await waitFor(() => {
+    expect(api.listQuestions).toHaveBeenLastCalledWith({ tenantID: 10, page: 2, pageSize: 20, search: "" });
+  });
+
+  await user.type(screen.getByLabelText("搜索题目"), "teacher01");
+  const refreshResult = deferred<Awaited<ReturnType<QuestionAPI["listQuestions"]>>>();
+  vi.mocked(api.listQuestions).mockReturnValueOnce(refreshResult.promise);
+  await user.click(screen.getByRole("button", { name: "刷新题目列表" }));
+
+  expect(api.listQuestions).toHaveBeenLastCalledWith({ tenantID: 10, page: 1, pageSize: 20, search: "" });
+  expect(screen.getByLabelText("搜索题目")).toHaveValue("");
+  refreshResult.resolve({
+    page: 1,
+    pageSize: 20,
+    total: 43,
+    items: [],
+  });
+});
+
+test("题库搜索结果会重置分页显示为当前过滤结果", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} />);
+
+  await screen.findByText((content) => content.endsWith("..."));
+  vi.mocked(api.listQuestions).mockResolvedValueOnce({
+    page: 1,
+    pageSize: 20,
+    total: 21,
+    items: [{
+      id: 200,
+      tenantID: 10,
+      type: "single",
+      title: "teacher01 后页题目",
+      stem: "teacher01 后页题目",
+      options: ["A", "B"],
+      analysis: "用于验证搜索由服务端分页返回。",
+      difficulty: "medium",
+      tag: "阅读理解",
+      tags: ["阅读理解"],
+      scoreDefault: "4",
+      authorName: "teacher01",
+      authorRole: "teacher",
+      createdAt: 1700000000000,
+      status: "ready",
+    }],
+  });
+  await user.type(screen.getByLabelText("搜索题目"), "teacher01");
+  await user.click(screen.getByRole("button", { name: "搜索" }));
+
+  await waitFor(() => {
+    expect(api.listQuestions).toHaveBeenLastCalledWith({ tenantID: 10, page: 1, pageSize: 20, search: "teacher01" });
+  });
+  expect(screen.getByText("共 21 条")).toBeInTheDocument();
+  expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "下一页" })).not.toBeDisabled();
+});
+
+test("题库分页支持切换页码和每页条数", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} />);
+
+  await screen.findByText((content) => content.endsWith("..."));
+  expect(screen.getByText("第 1 / 3 页")).toBeInTheDocument();
+
+  vi.mocked(api.listQuestions).mockResolvedValueOnce({
+    page: 2,
+    pageSize: 20,
+    total: 43,
+    items: [],
+  });
+  await user.click(screen.getByRole("button", { name: "下一页" }));
+
+  expect(api.listQuestions).toHaveBeenLastCalledWith({ tenantID: 10, page: 2, pageSize: 20, search: "" });
+
+  vi.mocked(api.listQuestions).mockResolvedValueOnce({
+    page: 1,
+    pageSize: 50,
+    total: 43,
+    items: [],
+  });
+  await user.click(screen.getByRole("combobox", { name: "每页条数" }));
+  await user.click(screen.getByRole("option", { name: "50 条 / 页" }));
+
+  expect(api.listQuestions).toHaveBeenLastCalledWith({ tenantID: 10, page: 1, pageSize: 50, search: "" });
+});
+
+test("新增和编辑题目使用前端路由跳转", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  const { unmount } = renderQuestionBankRoutes(api);
+
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("link", { name: "新增题目" }));
+
+  expect(screen.getByLabelText("当前路由")).toHaveTextContent("/questions/new?space_id=301");
+
+  unmount();
+  renderQuestionBankRoutes(createQuestionAPI());
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("link", { name: `编辑 ${longQuestionTitle}` }));
+
+  expect(screen.getByLabelText("当前路由")).toHaveTextContent("/questions/100/edit?space_id=301");
 });
 
 test("教师可以在题库列表禁用和删除题目，并展示引用校验失败", async () => {
@@ -163,38 +416,166 @@ test("教师可以在题库列表禁用和删除题目，并展示引用校验�
   vi.mocked(api.deleteQuestion).mockRejectedValueOnce(
     new ApiError("题目已被试卷或考试引用，不能删除", 40001, 409, {}),
   );
-  render(<QuestionBankPage api={api} tenantID={10} />);
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} />);
 
-  await screen.findByText("现代文阅读主旨题");
-  await user.click(screen.getByRole("button", { name: "禁用 现代文阅读主旨题" }));
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("button", { name: `禁用 ${longQuestionTitle}` }));
 
   expect(api.disableQuestion).toHaveBeenCalledWith({ tenantID: 10, questionID: 100 });
-  expect(await screen.findByRole("status")).toHaveTextContent("题目已禁用");
-  expect(screen.getByRole("button", { name: "启用 现代文阅读主旨题" })).toBeInTheDocument();
+  const successAlert = await screen.findByRole("alert");
+  expect(successAlert).toHaveTextContent("题目已禁用");
+  expect(successAlert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(screen.getByRole("button", { name: `启用 ${longQuestionTitle}` })).toBeInTheDocument();
 
-  await user.click(screen.getByRole("button", { name: "删除 现代文阅读主旨题" }));
+  await user.click(screen.getByRole("button", { name: `删除 ${longQuestionTitle}` }));
 
   expect(api.deleteQuestion).toHaveBeenCalledWith({ tenantID: 10, questionID: 100 });
-  expect(await screen.findByRole("alert")).toHaveTextContent("题目已被试卷或考试引用，不能删除");
+  const errorText = await screen.findByText("题目已被试卷或考试引用，不能删除");
+  expect(errorText.closest(".feedback-toast-stack")).toBeInTheDocument();
+  expect(document.querySelector(".tenant-admin-warning")).not.toBeInTheDocument();
+  expect(document.querySelector(".tenant-admin-success")).not.toBeInTheDocument();
 });
 
 test("教师可以在题库右侧抽屉导入题目", async () => {
   const user = userEvent.setup();
   const api = createQuestionAPI();
-  render(<QuestionBankPage api={api} tenantID={10} spaceID={301} />);
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} spaceID={301} />);
 
-  await screen.findByText("现代文阅读主旨题");
+  await screen.findByText((content) => content.endsWith("..."));
 
   await user.click(screen.getByRole("button", { name: "导入题目" }));
 
   const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
   expect(drawer).toHaveClass("tenant-resource-drawer--open");
+  expect(within(drawer).queryByLabelText("题目导入文件预览")).not.toBeInTheDocument();
+  const templateLink = within(drawer).getByRole("link", { name: "下载 CSV 模板" });
+  expect(templateLink).toHaveAttribute("download", "question-import-template.csv");
+  expect(templateLink).toHaveAttribute("href", expect.stringContaining("data:text/csv"));
+  expect(within(drawer).getByLabelText("题目导入文件")).toHaveAttribute("accept", "text/csv");
 
   const file = new File(["type,title"], "questions.csv", { type: "text/csv" });
   await user.upload(within(drawer).getByLabelText("题目导入文件"), file);
+  expect(within(drawer).getByText("questions.csv")).toBeInTheDocument();
+  expect(api.importQuestions).not.toHaveBeenCalled();
+
   await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
 
   expect(api.importQuestions).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, file });
-  expect(await within(drawer).findByRole("status")).toHaveTextContent("导入成功 2 条");
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("导入成功 2 条");
+  expect(alert.parentElement).toHaveClass("feedback-toast-stack");
   expect(within(drawer).getAllByText("questions.csv").length).toBeGreaterThan(0);
+});
+
+test("搜索后导入题目会按当前搜索条件刷新列表", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} spaceID={301} />);
+
+  await screen.findByText((content) => content.endsWith("..."));
+  vi.mocked(api.listQuestions).mockResolvedValueOnce({
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    items: [{
+      id: 103,
+      tenantID: 10,
+      type: "short_text",
+      title: "语言文字运用题",
+      stem: "语言文字运用题",
+      options: [],
+      analysis: "考查语病修改。",
+      difficulty: "medium",
+      tag: "语言文字",
+      tags: ["语言文字"],
+      scoreDefault: "6",
+      authorName: "teacher01",
+      authorRole: "teacher",
+      createdAt: 1700000180000,
+      status: "ready",
+    }],
+  });
+
+  await user.type(screen.getByLabelText("搜索题目"), "语言文字");
+  await user.click(screen.getByRole("button", { name: "搜索" }));
+  await waitFor(() => {
+    expect(api.listQuestions).toHaveBeenLastCalledWith({
+      tenantID: 10,
+      spaceID: 301,
+      page: 1,
+      pageSize: 20,
+      search: "语言文字",
+    });
+  });
+
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+  const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
+  const file = new File(["type,title"], "questions.csv", { type: "text/csv" });
+  await user.upload(within(drawer).getByLabelText("题目导入文件"), file);
+
+  vi.mocked(api.listQuestions).mockResolvedValueOnce({
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    items: [{
+      id: 104,
+      tenantID: 10,
+      type: "short_text",
+      title: "新导入的语言文字题",
+      stem: "新导入的语言文字题",
+      options: [],
+      analysis: "导入后仍按当前搜索展示。",
+      difficulty: "medium",
+      tag: "语言文字",
+      tags: ["语言文字"],
+      scoreDefault: "6",
+      authorName: "teacher01",
+      authorRole: "teacher",
+      createdAt: 1700000240000,
+      status: "ready",
+    }],
+  });
+  await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
+
+  await waitFor(() => {
+    expect(api.listQuestions).toHaveBeenLastCalledWith({
+      tenantID: 10,
+      spaceID: 301,
+      page: 1,
+      pageSize: 20,
+      search: "语言文字",
+    });
+  });
+  expect(screen.getByLabelText("搜索题目")).toHaveValue("语言文字");
+});
+
+test("长题干在悬停时通过 tooltip 展示完整内容", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} />);
+
+  const truncatedTitle = await screen.findByText((content) => content.endsWith("..."));
+  await user.hover(truncatedTitle);
+
+  const tooltip = await screen.findByRole("tooltip");
+  expect(tooltip).toHaveTextContent(longQuestionTitle);
+  expect(tooltip.firstElementChild).toHaveClass("ui-tooltip-content__inner", "ui-tooltip-content__inner--plain");
+});
+
+test("题库列表加载和导入校验失败时使用 toast 提示", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  api.listQuestions.mockRejectedValueOnce(new Error("load failed"));
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} />);
+
+  const loadAlert = await screen.findByRole("alert");
+  expect(loadAlert).toHaveTextContent("题目列表加载失败");
+  expect(loadAlert.parentElement).toHaveClass("feedback-toast-stack");
+
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+  await user.click(screen.getByRole("button", { name: "确认导入" }));
+
+  expect(await screen.findByText("请选择题目导入文件")).toBeInTheDocument();
+  expect(document.querySelector(".tenant-admin-warning")).not.toBeInTheDocument();
+  expect(document.querySelector(".tenant-admin-success")).not.toBeInTheDocument();
 });

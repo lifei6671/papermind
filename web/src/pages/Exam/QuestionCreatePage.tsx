@@ -1,8 +1,11 @@
 import MDEditor from "@uiw/react-md-editor";
 import "@uiw/react-md-editor/markdown-editor.css";
 import "@uiw/react-markdown-preview/markdown.css";
+import "katex/dist/katex.min.css";
 import { ArrowLeft, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import rehypeKatex from "rehype-katex";
+import remarkMath from "remark-math";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
 import { useFeedback } from "../../app/feedback-context";
@@ -490,6 +493,11 @@ function MarkdownEditor({
         height="auto"
         onChange={(nextValue) => onChange(nextValue ?? "")}
         preview="live"
+        previewOptions={{
+          // 题干和解析都按 Markdown 原文存储，预览阶段补公式渲染。
+          rehypePlugins: [rehypeKatex],
+          remarkPlugins: [remarkMath],
+        }}
         textareaProps={{
           "aria-label": label,
           required,

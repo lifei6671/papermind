@@ -51,6 +51,12 @@ const (
 	ExamStatusPublished = "published"
 	// PaperStatusDraft 表示试卷草稿状态。
 	PaperStatusDraft = "draft"
+	// PaperStatusEnabled 表示试卷可用。
+	PaperStatusEnabled = "enabled"
+	// PaperStatusDisabled 表示试卷已禁用。
+	PaperStatusDisabled = "disabled"
+	// QuestionStatusDraft 表示题目草稿状态。
+	QuestionStatusDraft = "draft"
 	// QuestionStatusEnabled 表示题目可用。
 	QuestionStatusEnabled = "enabled"
 )

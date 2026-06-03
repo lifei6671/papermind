@@ -1,34 +1,58 @@
-import { Button } from "../../components/ui/Button";
-import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import type { PaperAssemblyAPI, PaperBuildMode, PaperRow, PaperRuleRow, PaperSectionRow } from "../../api/papers";
+import { paperApi } from "../../api/papers";
+import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { paperApi } from "../../api/papers";
-import type { PaperAssemblyAPI, PaperRow, PaperSectionRow } from "../../api/papers";
-import { questionApi as defaultQuestionApi } from "../../api/questions";
-import type { QuestionBankAPI, QuestionRow } from "../../api/questions";
 
-type PaperSubMenu = "papers" | "questions" | "rules";
+type PaperSubMenu = "papers" | "rules";
+
+type EditableRuleState = {
+  ruleID: number;
+  sectionID: number;
+  sortOrder: number;
+  count: number;
+  tag: string;
+  scorePerQuestion: string;
+  difficulty?: string;
+  shuffleOptions?: boolean;
+};
 
 type PaperAssemblyPageProps = {
   api?: PaperAssemblyAPI;
-  questionApi?: QuestionBankAPI;
   tenantID?: number;
   spaceID?: number;
 };
 
-export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestionApi, tenantID = 10, spaceID }: PaperAssemblyPageProps) {
+const paperBuildModeOptions: Array<{
+  value: PaperBuildMode;
+  label: string;
+  hint: string;
+}> = [
+  { value: "manual", label: "手动组卷", hint: "教师逐题确认，适合精细编排试卷结构。" },
+  { value: "rule_fixed", label: "固定规则组卷", hint: "按规则先生成试卷，再进行审题和替换。" },
+  { value: "rule_live", label: "实时抽题组卷", hint: "考试开始时再抽题，适合动态题池场景。" },
+];
+
+export function PaperAssemblyPage({
+  api = paperApi,
+  tenantID = 10,
+  spaceID,
+}: PaperAssemblyPageProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [papers, setPapers] = useState<PaperRow[]>([]);
   const [activeTab, setActiveTab] = useState<PaperSubMenu>("papers");
   const [sections, setSections] = useState<PaperSectionRow[]>([]);
-  const [candidateQuestions, setCandidateQuestions] = useState<QuestionRow[]>([]);
+  const [rules, setRules] = useState<PaperRuleRow[]>([]);
   const [activePaperID, setActivePaperID] = useState<number | null>(null);
   const [sectionName, setSectionName] = useState("");
   const [sectionScore, setSectionScore] = useState("");
-  const [manualCount, setManualCount] = useState(0);
   const [fixedCount, setFixedCount] = useState(4);
   const [fixedTag, setFixedTag] = useState("阅读理解");
   const [fixedResult, setFixedResult] = useState("");
@@ -37,6 +61,7 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
   const [liveTag, setLiveTag] = useState("阅读理解");
   const [liveResult, setLiveResult] = useState("");
   const [precheckMessage, setPrecheckMessage] = useState("");
+  const [editableRule, setEditableRule] = useState<EditableRuleState | null>(null);
   const [isSectionDialogOpen, setIsSectionDialogOpen] = useState(false);
   const [isFixedDialogOpen, setIsFixedDialogOpen] = useState(false);
   const [isLiveDialogOpen, setIsLiveDialogOpen] = useState(false);
@@ -45,25 +70,29 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
   const [loadError, setLoadError] = useState("");
   const [isPaperListRefreshing, setIsPaperListRefreshing] = useState(false);
 
+  const activePaper = papers.find((paper) => paper.id === activePaperID) ?? null;
+  const activeBuildMode = activePaper?.buildMode ?? "manual";
+
   useEffect(() => {
     let ignore = false;
 
     api.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) })
-      .then(async (data) => {
+      .then((data) => {
         if (ignore) {
           return;
         }
         setPapers(data.items);
-        setActivePaperID(data.items[0]?.id ?? null);
+        setActivePaperID((current) => {
+          if (current !== null && data.items.some((paper) => paper.id === current)) {
+            return current;
+          }
+          return data.items[0]?.id ?? null;
+        });
         if (!data.items[0]) {
           setSections([]);
-          return;
+          setRules([]);
         }
-        const sectionData = await api.listSections({ tenantID, paperID: data.items[0].id });
-        if (!ignore) {
-          setSections(sectionData.items);
-          setLoadError("");
-        }
+        setLoadError("");
       })
       .catch(() => {
         if (!ignore) {
@@ -77,36 +106,65 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
   }, [api, tenantID, spaceID]);
 
   useEffect(() => {
-    let ignore = false;
+    if (activePaperID === null) {
+      return;
+    }
 
-    questionApi.listQuestions({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) })
-      .then((data) => {
-        if (!ignore) {
-          setCandidateQuestions(data.items);
+    let ignore = false;
+    void (async () => {
+      try {
+        const [sectionData, ruleData] = await Promise.all([
+          api.listSections({ tenantID, paperID: activePaperID }),
+          api.listRules({ tenantID, paperID: activePaperID }),
+        ]);
+        if (ignore) {
+          return;
         }
-      })
-      .catch(() => {
+        setSections(sectionData.items);
+        setRules(ruleData.items);
+        setLoadError("");
+      } catch {
         if (!ignore) {
-          setLoadError("候选题目加载失败");
+          setLoadError("试卷工作台加载失败");
         }
-      });
+      }
+    })();
 
     return () => {
       ignore = true;
     };
-  }, [questionApi, tenantID, spaceID]);
+  }, [activePaperID, api, tenantID]);
 
   const filteredPapers = papers.filter((paper) => {
     const keyword = appliedSearchQuery.trim().toLowerCase();
     if (!keyword) {
       return true;
     }
-
-    // 试卷列表搜索只匹配当前可见字段，便于按试卷名称、策略或状态快速定位。
-    return [paper.name, paper.buildMode, paper.status === "draft" ? "草稿" : "可用"].some((value) =>
+    return [paper.name, paper.creatorName, paper.buildMode, buildModeLabel(paper.buildMode), paperStatusLabel(paper.status)].some((value) =>
       value.toLowerCase().includes(keyword),
     );
   });
+
+  async function loadWorkspace(paperID: number) {
+    try {
+      const [sectionData, ruleData] = await Promise.all([
+        api.listSections({ tenantID, paperID }),
+        api.listRules({ tenantID, paperID }),
+      ]);
+      setSections(sectionData.items);
+      setRules(ruleData.items);
+      setLoadError("");
+    } catch {
+      setLoadError("试卷工作台加载失败");
+    }
+  }
+
+  async function reloadActiveWorkspace() {
+    if (activePaperID === null) {
+      return;
+    }
+    await loadWorkspace(activePaperID);
+  }
 
   async function handleAddSection(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -116,7 +174,6 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
     }
 
     try {
-      // 新增大题写入服务端，分值仍由后续选题或规则聚合重算，前端不直接修改小计分。
       const section = await api.createSection({
         tenantID,
         paperID: activePaperID,
@@ -128,29 +185,9 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
       setSectionName("");
       setSectionScore("");
       setIsSectionDialogOpen(false);
+      setLoadError("");
     } catch {
       setLoadError("创建大题失败");
-    }
-  }
-
-  async function handleAddManualQuestion(question: QuestionRow) {
-    if (activePaperID === null || sections.length === 0) {
-      setLoadError("请先创建试卷大题");
-      return;
-    }
-
-    try {
-      // 手动选题必须落到当前试卷的第一个大题，后端负责防重和试卷总分重算。
-      await api.addManualQuestion({
-        tenantID,
-        paperID: activePaperID,
-        sectionID: sections[0].id,
-        questionID: question.id,
-        score: question.scoreDefault ?? "0",
-      });
-      setManualCount((value) => value + 1);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "加入试卷失败");
     }
   }
 
@@ -162,17 +199,38 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
     }
 
     try {
-      // rule_fixed 先把抽题条件保存为服务端规则，再触发固化生成，生成结果由后端写入 paper_section_questions。
-      const rule = await api.createRule({
-        tenantID,
-        paperID: activePaperID,
-        sectionID: sections[0].id,
-        sortOrder: 1,
-        tagIDs: [tagIDByName(fixedTag)],
-        questionCount: fixedCount,
-        scorePerQuestion: defaultRuleScorePerQuestion(sections[0]),
-      });
+      const targetSection = sections[0];
+      const existingRule = rules.find((item) => item.sectionID === targetSection.id) ?? null;
+      const staleRules = rules.filter((item) => existingRule === null ? true : item.id !== existingRule.id);
+      const tagIDs = [tagIDByName(fixedTag)];
+      const scorePerQuestion = defaultRuleScorePerQuestion(targetSection);
+      const rule = existingRule === null
+        ? await api.createRule({
+            tenantID,
+            paperID: activePaperID,
+            sectionID: targetSection.id,
+            sortOrder: rules.length + 1,
+            tagIDs,
+            questionCount: fixedCount,
+            scorePerQuestion,
+          })
+        : await api.updateRule({
+            tenantID,
+            paperID: activePaperID,
+            ruleID: existingRule.id,
+            sectionID: targetSection.id,
+            sortOrder: existingRule.sortOrder,
+            difficulty: existingRule.difficulty,
+            tagIDs,
+            questionCount: fixedCount,
+            scorePerQuestion,
+            shuffleOptions: existingRule.shuffleOptions,
+          });
+      for (const staleRule of staleRules) {
+        await api.deleteRule({ tenantID, paperID: activePaperID, ruleID: staleRule.id });
+      }
       await api.generateRuleFixed({ tenantID, paperID: activePaperID });
+      await syncPaperBuildMode("rule_fixed");
       setFixedResult(`已按${tagNameByID(rule.tagIDs[0])}生成 ${rule.questionCount} 道题`);
       setFixedReview("待替换低匹配题");
       setIsFixedDialogOpen(false);
@@ -190,16 +248,16 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
     }
 
     try {
-      // rule_live 保存同一张规则表，考试发布前的预检查会复用这些规则计算候选题池。
       const rule = await api.createRule({
         tenantID,
         paperID: activePaperID,
         sectionID: sections[0].id,
-        sortOrder: 1,
+        sortOrder: rules.length + 1,
         tagIDs: [tagIDByName(liveTag)],
         questionCount: liveCount,
         scorePerQuestion: defaultRuleScorePerQuestion(sections[0]),
       });
+      await reloadActiveWorkspace();
       setLiveResult(`rule_live 已保存：${tagNameByID(rule.tagIDs[0])} ${rule.questionCount} 道题`);
       setIsLiveDialogOpen(false);
       setLoadError("");
@@ -215,13 +273,73 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
     }
 
     try {
-      // 组卷预检查由后端按已保存规则跨规则去重，前端只展示候选题池规模和风险结果。
       const result = await api.precheckRuleLive({ tenantID, paperID: activePaperID });
       setPrecheckMessage(`预检查通过，候选题池 ${result.candidateCount} 道题`);
       setLoadError("");
     } catch (err) {
       setPrecheckMessage("");
       setLoadError(err instanceof Error ? err.message : "组卷预检查失败");
+    }
+  }
+
+  async function handleSwitchBuildMode(nextBuildMode: PaperBuildMode) {
+    if (activePaperID === null) {
+      return;
+    }
+    try {
+      await syncPaperBuildMode(nextBuildMode);
+      setLoadError("");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "切换组卷模式失败");
+    }
+  }
+
+  async function syncPaperBuildMode(nextBuildMode: PaperBuildMode) {
+    if (activePaperID === null) {
+      return;
+    }
+    const nextPaper = await api.updateBuildMode({ tenantID, paperID: activePaperID, buildMode: nextBuildMode });
+    setPapers((items) => items.map((paper) => (paper.id === nextPaper.id ? nextPaper : paper)));
+    await reloadActiveWorkspace();
+  }
+
+  async function handleDeleteRule(ruleID: number) {
+    if (activePaperID === null) {
+      return;
+    }
+    try {
+      await api.deleteRule({ tenantID, paperID: activePaperID, ruleID });
+      await reloadActiveWorkspace();
+      setLoadError("");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "删除规则失败");
+    }
+  }
+
+  async function handleSaveEditableRule(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (editableRule === null || activePaperID === null) {
+      return;
+    }
+
+    try {
+      await api.updateRule({
+        tenantID,
+        paperID: activePaperID,
+        ruleID: editableRule.ruleID,
+        sectionID: editableRule.sectionID,
+        sortOrder: editableRule.sortOrder,
+        difficulty: editableRule.difficulty,
+        tagIDs: [tagIDByName(editableRule.tag)],
+        questionCount: editableRule.count,
+        scorePerQuestion: editableRule.scorePerQuestion,
+        shuffleOptions: editableRule.shuffleOptions,
+      });
+      await reloadActiveWorkspace();
+      setEditableRule(null);
+      setLoadError("");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "保存规则失败");
     }
   }
 
@@ -236,12 +354,15 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
     try {
       const data = await withRefreshFeedback(api.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }));
       setPapers(data.items);
-      setActivePaperID(data.items[0]?.id ?? null);
+      setActivePaperID((current) => {
+        if (current !== null && data.items.some((paper) => paper.id === current)) {
+          return current;
+        }
+        return data.items[0]?.id ?? null;
+      });
       if (!data.items[0]) {
         setSections([]);
-      } else {
-        const sectionData = await api.listSections({ tenantID, paperID: data.items[0].id });
-        setSections(sectionData.items);
+        setRules([]);
       }
       setLoadError("");
     } catch {
@@ -251,12 +372,150 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
     }
   }
 
+  function navigateToPaperEditor(target: "new" | number) {
+    const path = target === "new" ? "/papers/new" : `/papers/${target}/edit`;
+    navigate(`${path}${scopedPaperSearch(location.search, spaceID)}`);
+  }
+
+  async function handlePreviewPaper(paperID: number) {
+    setActivePaperID(paperID);
+    await loadWorkspace(paperID);
+    setActiveTab("rules");
+  }
+
+  async function handleTogglePaperStatus(paper: PaperRow) {
+    try {
+      const nextPaper = paper.status === "enabled"
+        ? await api.disablePaper({ tenantID, paperID: paper.id })
+        : await api.enablePaper({ tenantID, paperID: paper.id });
+      setPapers((items) => items.map((item) => (item.id === nextPaper.id ? nextPaper : item)));
+      setLoadError("");
+    } catch {
+      setLoadError(paper.status === "enabled" ? "禁用试卷失败" : "启用试卷失败");
+    }
+  }
+
+  const paperOverviewList = (
+    <div
+      className={[
+        "table-wrap",
+        "tenant-list-transition",
+        isPaperListRefreshing ? "tenant-list-transition--refreshing" : "",
+      ].filter(Boolean).join(" ")}
+    >
+      <table className="data-table tenant-admin-table exam-paper-overview-table">
+        <thead>
+          <tr>
+            <th scope="col">试卷名称</th>
+            <th scope="col">策略</th>
+            <th scope="col">试卷分数</th>
+            <th scope="col">状态</th>
+            <th scope="col">创建时间</th>
+            <th scope="col">创建人</th>
+            <th scope="col">操作区</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredPapers.length === 0 && <EmptyTableRow colSpan={7} />}
+          {filteredPapers.map((paper) => (
+            <tr key={paper.id}>
+              <td>{paper.name}</td>
+              <td>
+                <span className={`exam-paper-mode-badge exam-paper-mode-badge--${paper.buildMode}`}>
+                  {buildModeLabel(paper.buildMode)}
+                </span>
+              </td>
+              <td>{paper.totalScore}</td>
+              <td>
+                <StatusBadge tone={paperStatusTone(paper.status)}>
+                  {paperStatusLabel(paper.status)}
+                </StatusBadge>
+              </td>
+              <td>{formatPaperCreatedAt(paper.createdAt)}</td>
+              <td>{paper.creatorName || "-"}</td>
+              <td>
+                <div className="tenant-actions">
+                  <Button
+                    aria-label={`编辑试卷 ${paper.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      navigateToPaperEditor(paper.id);
+                    }}
+                    variant="actionEdit"
+                  >
+                    编辑
+                  </Button>
+                  <Button
+                    aria-label={`预览试卷 ${paper.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handlePreviewPaper(paper.id);
+                    }}
+                    variant="actionReset"
+                  >
+                    预览
+                  </Button>
+                  <Button
+                    aria-label={`${paper.status === "enabled" ? "禁用试卷" : "启用试卷"} ${paper.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleTogglePaperStatus(paper);
+                    }}
+                    variant="actionClose"
+                  >
+                    {paper.status === "enabled" ? "禁用" : "启用"}
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const paperWorkspaceList = (
+    <div className="table-wrap">
+      <table className="data-table tenant-admin-table exam-paper-list-table">
+        <thead>
+          <tr>
+            <th scope="col">试卷</th>
+            <th scope="col">策略</th>
+            <th scope="col">状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredPapers.length === 0 && <EmptyTableRow colSpan={3} />}
+          {filteredPapers.map((paper) => (
+            <tr
+              aria-selected={activePaperID === paper.id}
+              className={activePaperID === paper.id ? "exam-paper-row exam-paper-row--active" : "exam-paper-row"}
+              key={paper.id}
+              onClick={() => setActivePaperID(paper.id)}
+            >
+              <td>{paper.name}</td>
+              <td>
+                <span className={`exam-paper-mode-badge exam-paper-mode-badge--${paper.buildMode}`}>
+                  {buildModeLabel(paper.buildMode)}
+                </span>
+              </td>
+              <td>
+                <StatusBadge tone={paperStatusTone(paper.status)}>
+                  {paperStatusLabel(paper.status)}
+                </StatusBadge>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
     <section className="page platform-page exam-builder-page">
       <nav aria-label="试卷菜单" className="platform-tabbar" role="tablist">
         {[
           ["papers", "试卷"],
-          ["questions", "题目"],
           ["rules", "组卷规则"],
         ].map(([tab, label]) => (
           <button
@@ -272,144 +531,159 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
         ))}
       </nav>
 
-      {activeTab === "papers" && (
-        <Panel>
-          <div className="tenant-list-toolbar">
-            <div className="tenant-list-actions" aria-label="试卷操作区">
-              <Button variant="toolbarPrimary" onClick={() => setIsSectionDialogOpen(true)} type="button">
-                新增大题
+      <Panel>
+        <div className="tenant-list-toolbar">
+          <div className="tenant-list-actions" aria-label="试卷操作区">
+            {activeTab === "papers" ? (
+              <Button variant="toolbarPrimary" onClick={() => navigateToPaperEditor("new")} type="button">
+                新建试卷
               </Button>
-            </div>
-            <div className="tenant-search-actions">
-              <label className="tenant-search-field">
-                <span className="sr-only">搜索试卷</span>
-                <input
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="输入试卷名称、策略或状态"
-                  value={searchQuery}
-                />
-              </label>
-              <Button aria-label="搜索" variant="icon" onClick={handleSearchPapers} type="button">
-                <Search aria-hidden="true" size={16} />
-              </Button>
-              <Button
-                aria-label="刷新试卷列表"
-                variant="icon"
-                disabled={isPaperListRefreshing}
-                onClick={() => void handleRefreshPapers()}
-                type="button"
-              >
-                <RefreshIcon active={isPaperListRefreshing} />
-              </Button>
-            </div>
+            ) : (
+              <>
+                <Button variant="toolbarPrimary" onClick={() => setIsSectionDialogOpen(true)} type="button">
+                  新增大题
+                </Button>
+                <label className="exam-paper-mode-field field">
+                  <span className="exam-paper-mode-field__label">组卷模式</span>
+                  <strong className="exam-paper-mode-field__value">{buildModeLabel(activeBuildMode)}</strong>
+                  <select
+                    aria-label="组卷模式"
+                    className="exam-paper-mode-field__select"
+                    onChange={(event) => void handleSwitchBuildMode(event.target.value as PaperBuildMode)}
+                    value={activeBuildMode}
+                  >
+                    {paperBuildModeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <span className="exam-paper-mode-field__hint">{buildModeHint(activeBuildMode)}</span>
+                </label>
+              </>
+            )}
           </div>
-          {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
-          <div className="table-wrap">
-            <table className="data-table tenant-admin-table">
-              <thead>
-                <tr>
-                  <th scope="col">试卷</th>
-                  <th scope="col">策略</th>
-                  <th scope="col">状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredPapers.length === 0 && <EmptyTableRow colSpan={3} />}
-                {filteredPapers.map((paper) => (
-                  <tr key={paper.id}>
-                    <td>{paper.name}</td>
-                    <td>{paper.buildMode}</td>
-                    <td><StatusBadge tone={paper.status === "draft" ? "info" : "success"}>{paper.status === "draft" ? "草稿" : "可用"}</StatusBadge></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <ul className="exam-section-list">
-            {sections.map((item) => (
-              <li key={item.id}>
-                <span>{item.name}</span>
-                <strong>{item.totalScore} 分</strong>
-              </li>
-            ))}
-          </ul>
-        </Panel>
-      )}
-
-      {activeTab === "questions" && (
-        <Panel>
-          {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
-          <div className="table-wrap">
-            <table className="data-table tenant-admin-table">
-              <thead>
-                <tr>
-                  <th scope="col">题目</th>
-                  <th scope="col">标签</th>
-                  <th scope="col">分值</th>
-                  <th scope="col">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {candidateQuestions.length === 0 && <EmptyTableRow colSpan={4} />}
-                {candidateQuestions.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.title}</td>
-                    <td>{item.tag}</td>
-                    <td>{item.scoreDefault ?? "0"}</td>
-                    <td>
-                      <Button
-                        variant="actionReset"
-                        onClick={() => void handleAddManualQuestion(item)}
-                        type="button"
-                      >
-                        加入试卷
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="tenant-admin-status" role="status">已手动加入 {manualCount} 道题</div>
-        </Panel>
-      )}
-
-      {activeTab === "rules" && (
-        <Panel>
-          <div className="tenant-list-toolbar">
-            <div className="tenant-list-actions" aria-label="组卷规则操作区">
-              <Button variant="toolbarPrimary" onClick={() => setIsFixedDialogOpen(true)} type="button">
-                生成固定规则试卷
-              </Button>
-              <Button variant="toolbarSecondary" onClick={() => setIsLiveDialogOpen(true)} type="button">
-                保存 rule_live 规则
-              </Button>
-              <Button
-                variant="toolbarSecondary"
-                onClick={() => void handlePrecheckRuleLive()}
-                type="button"
-              >
-                运行组卷预检查
-              </Button>
-            </div>
-          </div>
-          {fixedResult && (
-            <div aria-label="rule-fixed-result" className="tenant-admin-status" role="status">{fixedResult}</div>
-          )}
-          {fixedResult && (
-            <Button variant="toolbarSecondary" onClick={() => setFixedReview("已替换 1 道低匹配题")} type="button">
-              替换低匹配题
+          <div className="tenant-search-actions">
+            <label className="tenant-search-field">
+              <span className="sr-only">搜索试卷</span>
+              <input
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="输入试卷名称、策略或状态"
+                value={searchQuery}
+              />
+            </label>
+            <Button aria-label="搜索" variant="icon" onClick={handleSearchPapers} type="button">
+              <Search aria-hidden="true" size={16} />
             </Button>
-          )}
-          {fixedReview && (
-            <div aria-label="rule-fixed-review" className="tenant-admin-status" role="status">{fixedReview}</div>
-          )}
-          {liveResult && (
-            <div aria-label="rule-live-result" className="tenant-admin-status" role="status">{liveResult}</div>
-          )}
-          {precheckMessage && <div className="tenant-admin-warning" role="alert">{precheckMessage}</div>}
-        </Panel>
-      )}
+            <Button
+              aria-label="刷新试卷列表"
+              variant="icon"
+              disabled={isPaperListRefreshing}
+              onClick={() => void handleRefreshPapers()}
+              type="button"
+            >
+              <RefreshIcon active={isPaperListRefreshing} />
+            </Button>
+          </div>
+        </div>
+
+        {loadError && <div className="tenant-admin-warning" role="alert">{loadError}</div>}
+
+        {activeTab === "papers" ? (
+          paperOverviewList
+        ) : (
+          <div className="exam-paper-workspace">
+            <div className="exam-paper-workspace__column">
+              {paperWorkspaceList}
+            </div>
+
+            <div className="exam-paper-workspace__column exam-paper-workspace__column--wide">
+              <div className="exam-workspace-card">
+                <div className="exam-workspace-card__head">
+                  <h2>规则列表</h2>
+                  <span>{activePaper ? `当前试卷：${activePaper.name}` : "请选择试卷"}</span>
+                </div>
+                <div className="tenant-list-toolbar">
+                  <div className="tenant-list-actions" aria-label="组卷规则操作区">
+                    <Button variant="toolbarPrimary" onClick={() => setIsFixedDialogOpen(true)} type="button">
+                      生成固定规则试卷
+                    </Button>
+                    <Button variant="toolbarSecondary" onClick={() => setIsLiveDialogOpen(true)} type="button">
+                      保存 rule_live 规则
+                    </Button>
+                    <Button variant="toolbarSecondary" onClick={() => void handlePrecheckRuleLive()} type="button">
+                      运行组卷预检查
+                    </Button>
+                  </div>
+                </div>
+                {fixedResult && <div aria-label="rule-fixed-result" className="tenant-admin-status" role="status">{fixedResult}</div>}
+                {fixedResult && (
+                  <Button
+                    variant="toolbarSecondary"
+                    onClick={() => setFixedReview("已替换 1 道低匹配题")}
+                    type="button"
+                  >
+                    替换低匹配题
+                  </Button>
+                )}
+                {fixedReview && <div aria-label="rule-fixed-review" className="tenant-admin-status" role="status">{fixedReview}</div>}
+                {liveResult && <div aria-label="rule-live-result" className="tenant-admin-status" role="status">{liveResult}</div>}
+                {precheckMessage && <div className="tenant-admin-warning" role="alert">{precheckMessage}</div>}
+
+                <div className="table-wrap">
+                  <table className="data-table tenant-admin-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">规则 ID</th>
+                        <th scope="col">标签</th>
+                        <th scope="col">题量</th>
+                        <th scope="col">每题分值</th>
+                        <th scope="col">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rules.length === 0 && <EmptyTableRow colSpan={5} />}
+                      {rules.map((rule) => (
+                        <tr key={rule.id}>
+                          <td>{rule.id}</td>
+                          <td>{tagNameByID(rule.tagIDs[0])}</td>
+                          <td>{rule.questionCount}</td>
+                          <td>{rule.scorePerQuestion}</td>
+                          <td className="exam-inline-actions">
+                            <Button
+                              aria-label={`编辑规则 ${rule.id}`}
+                              variant="actionEdit"
+                              onClick={() => setEditableRule({
+                                ruleID: rule.id,
+                                sectionID: rule.sectionID,
+                                sortOrder: rule.sortOrder,
+                                count: rule.questionCount,
+                                tag: tagNameByID(rule.tagIDs[0]),
+                                scorePerQuestion: rule.scorePerQuestion,
+                                difficulty: rule.difficulty,
+                                shuffleOptions: rule.shuffleOptions,
+                              })}
+                              type="button"
+                            >
+                              编辑
+                            </Button>
+                            <Button
+                              aria-label={`删除规则 ${rule.id}`}
+                              variant="actionClose"
+                              onClick={() => void handleDeleteRule(rule.id)}
+                              type="button"
+                            >
+                              删除
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </Panel>
 
       {isSectionDialogOpen && (
         <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="新增大题弹窗">
@@ -422,13 +696,7 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
               </label>
               <label className="field">
                 <span>大题分值</span>
-                <input
-                  min={1}
-                  onChange={(event) => setSectionScore(event.target.value)}
-                  required
-                  type="number"
-                  value={sectionScore}
-                />
+                <input min={1} onChange={(event) => setSectionScore(event.target.value)} required type="number" value={sectionScore} />
               </label>
               <div className="platform-dialog__actions">
                 <Button variant="secondary" onClick={() => setIsSectionDialogOpen(false)} type="button">
@@ -450,12 +718,7 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
             <form className="platform-form" onSubmit={handleGenerateFixedPaper}>
               <label className="field">
                 <span>固定规则题量</span>
-                <input
-                  min={1}
-                  onChange={(event) => setFixedCount(Number(event.target.value))}
-                  type="number"
-                  value={fixedCount}
-                />
+                <input min={1} onChange={(event) => setFixedCount(Number(event.target.value))} type="number" value={fixedCount} />
               </label>
               <label className="field">
                 <span>固定规则标签</span>
@@ -484,12 +747,7 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
             <form className="platform-form" onSubmit={handleSaveLiveRule}>
               <label className="field">
                 <span>动态规则题量</span>
-                <input
-                  min={1}
-                  onChange={(event) => setLiveCount(Number(event.target.value))}
-                  type="number"
-                  value={liveCount}
-                />
+                <input min={1} onChange={(event) => setLiveCount(Number(event.target.value))} type="number" value={liveCount} />
               </label>
               <label className="field">
                 <span>动态规则标签</span>
@@ -504,6 +762,43 @@ export function PaperAssemblyPage({ api = paperApi, questionApi = defaultQuestio
                 </Button>
                 <Button variant="primary" type="submit">
                   确认保存
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editableRule && (
+        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label={`编辑规则 ${editableRule.ruleID}`}>
+          <div className="platform-dialog__card">
+            <h2>编辑组卷规则</h2>
+            <form className="platform-form" onSubmit={handleSaveEditableRule}>
+              <label className="field">
+                <span>规则题量</span>
+                <input
+                  min={1}
+                  onChange={(event) => setEditableRule((current) => (current === null ? current : { ...current, count: Number(event.target.value) }))}
+                  type="number"
+                  value={editableRule.count}
+                />
+              </label>
+              <label className="field">
+                <span>规则标签</span>
+                <select
+                  onChange={(event) => setEditableRule((current) => (current === null ? current : { ...current, tag: event.target.value }))}
+                  value={editableRule.tag}
+                >
+                  <option value="阅读理解">阅读理解</option>
+                  <option value="语言文字">语言文字</option>
+                </select>
+              </label>
+              <div className="platform-dialog__actions">
+                <Button variant="secondary" onClick={() => setEditableRule(null)} type="button">
+                  取消
+                </Button>
+                <Button variant="primary" type="submit">
+                  确认保存规则
                 </Button>
               </div>
             </form>
@@ -532,4 +827,51 @@ function defaultRuleScorePerQuestion(section: PaperSectionRow): string {
     return "4";
   }
   return String(totalScore / section.questionCount);
+}
+
+function buildModeLabel(mode: string): string {
+  return paperBuildModeOptions.find((option) => option.value === mode)?.label ?? mode;
+}
+
+function buildModeHint(mode: string): string {
+  return paperBuildModeOptions.find((option) => option.value === mode)?.hint ?? "按当前试卷策略继续维护试题与规则。";
+}
+
+function paperStatusLabel(status: PaperRow["status"]) {
+  if (status === "enabled") {
+    return "可用";
+  }
+  if (status === "disabled") {
+    return "已禁用";
+  }
+  return "草稿";
+}
+
+function paperStatusTone(status: PaperRow["status"]) {
+  if (status === "enabled") {
+    return "success";
+  }
+  if (status === "disabled") {
+    return "warning";
+  }
+  return "info";
+}
+
+function formatPaperCreatedAt(value: number) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  const pad = (item: number) => String(item).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function scopedPaperSearch(currentSearch: string, spaceID: number | undefined) {
+  if (spaceID !== undefined) {
+    return currentSearch;
+  }
+  const params = new URLSearchParams(currentSearch);
+  params.delete("space_id");
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }

@@ -5,6 +5,7 @@
     -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", "Google Sans Code", "Consolas", "Monaco",
     monospace;
+  --font-size-body: 13px;
   --nav-rail: #f4f2ea;
   --nav-panel: #f4f2ea;
   --nav-text: #15171d;

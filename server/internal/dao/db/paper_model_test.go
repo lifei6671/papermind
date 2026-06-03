@@ -32,7 +32,7 @@ func TestPaperBusinessFieldsUseColumnMappings(t *testing.T) {
 		model any
 		names []string
 	}{
-		{model: PaperDO{}, names: []string{"TenantID", "SpaceID", "Name", "Description", "TotalScore", "BuildMode", "ShuffleQuestions", "ShowAnalysis", "Status"}},
+		{model: PaperDO{}, names: []string{"TenantID", "SpaceID", "Name", "Description", "DurationMinutes", "GradeLevel", "TotalScore", "BuildMode", "ShuffleQuestions", "ShowAnalysis", "Status"}},
 		{model: PaperSectionDO{}, names: []string{"TenantID", "PaperID", "SortOrder", "Name", "QuestionType", "Instructions", "TotalScore", "QuestionCount"}},
 		{model: PaperSectionQuestionDO{}, names: []string{"TenantID", "SectionID", "PaperID", "QuestionID", "SortOrder", "Score", "ShuffleOptions"}},
 		{model: PaperSectionRuleDO{}, names: []string{"TenantID", "SectionID", "PaperID", "SortOrder", "Difficulty", "TagFilter", "QuestionCount", "ScorePerQuestion", "ShuffleOptions"}},
@@ -58,6 +58,12 @@ func TestPaperColumnMappings(t *testing.T) {
 	}
 	if PaperColumns.ShowAnalysis != "show_analysis" {
 		t.Fatalf("PaperColumns.ShowAnalysis = %q", PaperColumns.ShowAnalysis)
+	}
+	if PaperColumns.DurationMinutes != "duration_minutes" {
+		t.Fatalf("PaperColumns.DurationMinutes = %q", PaperColumns.DurationMinutes)
+	}
+	if PaperColumns.GradeLevel != "grade_level" {
+		t.Fatalf("PaperColumns.GradeLevel = %q", PaperColumns.GradeLevel)
 	}
 	if PaperSectionColumns.QuestionType != "question_type" {
 		t.Fatalf("PaperSectionColumns.QuestionType = %q", PaperSectionColumns.QuestionType)
