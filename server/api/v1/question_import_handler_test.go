@@ -1,9 +1,11 @@
 package v1
 
 import (
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestParseQuestionImportCSVSupportsQuotedMarkdownTitle(t *testing.T) {
@@ -34,5 +36,34 @@ func TestParseQuestionImportCSVSupportsQuotedMarkdownTitle(t *testing.T) {
 	wantTitle := "### 材料\n\n    SELECT * FROM users;\n    WHERE id = 1;"
 	if rows[0].Title != wantTitle {
 		t.Fatalf("expected markdown title preserved, got %q", rows[0].Title)
+	}
+}
+
+func TestQuestionImportJobStoreEvictsCompletedJobsAfterRetention(t *testing.T) {
+	store := newQuestionImportJobStore()
+	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	store.nowFunc = func() time.Time {
+		return now
+	}
+
+	jobID := store.Create("questions.csv", 1, nil)
+	store.Append(jobID, questionImportJobEvent{status: "completed", fileName: "questions.csv"})
+
+	now = now.Add(time.Hour)
+	store.Create("next.csv", 1, nil)
+
+	if _, _, ok := store.Scope(jobID); ok {
+		t.Fatalf("expected completed import job to be evicted after retention")
+	}
+}
+
+func TestReadQuestionImportFileRejectsFilesOverDefaultLimit(t *testing.T) {
+	_, err := readQuestionImportFile(&multipart.FileHeader{
+		Filename: "too-large.csv",
+		Size:     100*1024*1024 + 1,
+	})
+
+	if err == nil || err.Error() != "导入文件不能超过 100MB" {
+		t.Fatalf("expected file too large error, got %v", err)
 	}
 }

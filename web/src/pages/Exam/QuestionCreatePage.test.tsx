@@ -93,6 +93,8 @@ function createQuestionAPI() {
     disableQuestion: vi.fn(),
     enableQuestion: vi.fn(),
     importQuestions: vi.fn(),
+    startQuestionImportJob: vi.fn(),
+    subscribeQuestionImportJob: vi.fn(),
   };
 }
 

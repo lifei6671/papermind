@@ -46,11 +46,14 @@ const apiErrorMessageByCode: Record<number, string> = {
   50000: "服务暂时不可用，请稍后重试",
 };
 
+const questionPoolInsufficientMessage = "题库题量不足，请调整题型题量、知识点范围或难度分布后重试";
+
 export type ApiClient = {
   get<T>(path: string, options?: RequestOptions): Promise<T>;
   post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>;
   upload<T>(path: string, formData: FormData, options?: RequestOptions): Promise<T>;
   request<T>(path: string, options?: RequestOptions): Promise<T>;
+  url(path: string): string;
 };
 
 export function createApiClient(options: ApiClientOptions): ApiClient {
@@ -90,16 +93,17 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     upload: (path, formData, requestOptions) =>
       request(path, { ...requestOptions, body: formData, method: "POST" }),
     request,
+    url: (path) => buildUrl(options.baseUrl, path),
   };
 }
 
 export function formatApiErrorMessage(error: unknown, fallback = "操作失败") {
   if (error instanceof ApiError) {
     // 后端有明确业务文案时优先展示文案；无文案时按错误码映射统一提示。
-    return error.message || apiErrorMessageByCode[error.code] || fallback;
+    return normalizeApiMessage(error.message) || apiErrorMessageByCode[error.code] || fallback;
   }
   if (error instanceof Error && error.message) {
-    return error.message;
+    return normalizeApiMessage(error.message) || error.message;
   }
   return fallback;
 }
@@ -151,12 +155,42 @@ async function parseBody<T>(response: Response): Promise<T | string> {
 
 function readMessage(body: unknown) {
   if (typeof body === "string" && body.trim()) {
-    return body.trim();
+    return normalizeApiMessage(body.trim()) || body.trim();
   }
   if (body && typeof body === "object" && "message" in body && typeof body.message === "string") {
-    return body.message;
+    return normalizeApiMessage(body.message) || body.message;
   }
 
+  return null;
+}
+
+function normalizeApiMessage(message: string) {
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const parsedMessage = readMessageFromJSONText(trimmed);
+  if (parsedMessage !== null) {
+    return normalizeApiMessage(parsedMessage);
+  }
+  if (trimmed === "question pool insufficient") {
+    return questionPoolInsufficientMessage;
+  }
+  return trimmed;
+}
+
+function readMessageFromJSONText(text: string) {
+  if (!text.startsWith("{")) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === "object" && "message" in parsed && typeof parsed.message === "string") {
+      return parsed.message;
+    }
+  } catch {
+    return null;
+  }
   return null;
 }
 

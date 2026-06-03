@@ -18,6 +18,7 @@ test("题目导入页可以上传文件并展示解析结果", async () => {
       expect(input.file.name).toBe("questions.csv");
       return {
         successCount: 1,
+        duplicateCount: 0,
         errors: [{ rowNumber: 3, reason: "choice question needs correct answer" }],
       };
     },
@@ -56,7 +57,7 @@ test("题目导入页可以上传文件并展示解析结果", async () => {
 test("题目导入页可以搜索和刷新导入记录", async () => {
   const user = userEvent.setup();
   const api: QuestionImportAPI = {
-    importQuestions: async () => ({ successCount: 1, errors: [] }),
+    importQuestions: async () => ({ successCount: 1, duplicateCount: 0, errors: [] }),
   };
   renderWithFeedback(<QuestionImportPage api={api} />);
 

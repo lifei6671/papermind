@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { FeedbackProvider } from "../../app/feedback";
-import type { ManualQuestionRow, PaperAPI, PaperRow, PaperSectionRow } from "../../api/papers";
+import type { ManualQuestionRow, PaperAPI, PaperRow, PaperRuleRow, PaperSectionRow } from "../../api/papers";
 import type { QuestionAPI } from "../../api/questions";
 import { PaperEditRoute } from "./PaperEditRoute";
 import { PaperEditorPage } from "./PaperEditorPage";
@@ -23,10 +23,62 @@ test("新建试卷工作台先展示完整骨架，并要求先保存草稿再�
   expect(screen.getByRole("heading", { name: "题库筛选" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "已选试题" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "刷新组卷数据" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "新建组卷" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "从模板创建" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "预览试卷" })).toHaveClass("exam-paper-editor__toolbar-button--icon-center");
   expect(screen.queryByRole("textbox", { name: "搜索试卷名称、题库或题型" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "加入试卷 题目 201" })).toBeInTheDocument();
   expect(screen.getByText("请先保存试卷基础信息后再开始组卷")).toBeInTheDocument();
   expect(container.querySelector("select:not([aria-hidden='true'])")).not.toBeInTheDocument();
+});
+
+test("试卷摘要栏允许换行展示发布状态", async () => {
+  const { container } = renderPaperEditorRoutes();
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+
+  const summarybar = container.querySelector(".exam-paper-editor__summarybar");
+  expect(summarybar).toBeInTheDocument();
+  expect(summarybar).toHaveClass("exam-paper-editor__summarybar--responsive");
+});
+
+test("试卷摘要栏在宽屏优先紧凑单行展示", async () => {
+  const { container } = renderPaperEditorRoutes();
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+
+  expect(screen.getByLabelText("考试时长")).toHaveClass("exam-paper-editor__summary-input--compact");
+  expect(screen.getByLabelText("适用年级")).toHaveClass("exam-paper-editor__summary-input--compact");
+  expect(container.querySelector(".exam-paper-editor__summary-item--status")).toHaveClass("exam-paper-editor__summary-item--inline");
+  expect(screen.getByLabelText("组卷方式")).toHaveClass("exam-paper-editor__summary-chip--compact");
+  expect(screen.getByText("未发布")).toHaveClass("exam-paper-editor__summary-chip--compact");
+});
+
+test("智能组卷规则和结果区域使用横线分割内部区块", async () => {
+  const { container } = renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi: createPaperApiDouble({
+      papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+      sectionQuestions: [
+        { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      ],
+    }),
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await screen.findByRole("group", { name: "难度分布滑块" });
+
+  const rulePanel = container.querySelector(".exam-paper-editor__smart-rules");
+  expect(rulePanel).toHaveClass("exam-paper-editor__panel--separated");
+  const ruleSections = Array.from(rulePanel?.querySelectorAll(".exam-paper-editor__smart-rule-section") ?? []);
+  expect(ruleSections).toHaveLength(4);
+  expect(ruleSections.every((section) => section.classList.contains("exam-paper-editor__smart-rule-section"))).toBe(true);
+  expect(rulePanel?.querySelector(".exam-paper-editor__rule-rows")).toHaveClass("exam-paper-editor__rule-rows--separated");
+
+  const resultPanel = container.querySelector(".exam-paper-editor__smart-results");
+  expect(resultPanel).toHaveClass("exam-paper-editor__panel--separated");
+  expect(resultPanel?.querySelector(".exam-paper-editor__smart-metrics")).toHaveClass("exam-paper-editor__smart-metrics--separated");
+  expect(resultPanel?.querySelector(".exam-paper-editor__selected-section")).toHaveClass("exam-paper-editor__selected-section--separated");
 });
 
 test("题库筛选使用自定义下拉控件过滤候选题", async () => {
@@ -299,6 +351,9 @@ test("智能组卷知识点使用下拉输入选择并保存标签", async () =>
   const user = userEvent.setup();
   const paperApi = createPaperApiDouble({
     papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+    sectionQuestions: [
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+    ],
   });
   paperApi.createRule = vi.fn(async (input) => ({
     id: 501,
@@ -326,7 +381,11 @@ test("智能组卷知识点使用下拉输入选择并保存标签", async () =>
   });
 
   await screen.findByRole("group", { name: "难度分布滑块" });
+  expect(screen.getByLabelText("组卷方式")).toHaveTextContent("策略组卷");
+  expect(screen.queryByRole("heading", { name: "知识点覆盖" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "搜索知识点标签" })).not.toBeInTheDocument();
   await user.click(screen.getByLabelText("根据知识点筛选"));
+  expect(screen.getByRole("heading", { name: "知识点覆盖" })).toBeInTheDocument();
   await user.type(screen.getByRole("textbox", { name: "搜索知识点标签" }), "阅读");
   await user.click(screen.getByRole("option", { name: "阅读理解" }));
 
@@ -349,6 +408,9 @@ test("智能组卷难度分布使用分段滑块并保存百分比", async () =>
   const user = userEvent.setup();
   const paperApi = createPaperApiDouble({
     papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+    sectionQuestions: [
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+    ],
   });
   paperApi.createRule = vi.fn(async (input) => ({
     id: 501,
@@ -400,6 +462,714 @@ test("智能组卷难度分布使用分段滑块并保存百分比", async () =>
   });
 });
 
+test("智能组卷题数保存后按规则题数回填而不是已生成题目数量", async () => {
+  const user = userEvent.setup();
+  let rules: PaperRuleRow[] = [
+    {
+      id: 601,
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 11,
+      sortOrder: 1,
+      tagIDs: [],
+      tagNames: [],
+      questionScope: "space_all",
+      difficultyPercentages: { easy: 30, medium: 50, hard: 20 },
+      questionCount: 2,
+      scorePerQuestion: "2",
+    },
+  ];
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+    sections: [
+      {
+        id: 11,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 1,
+        name: "一、单项选择题",
+        questionType: "single",
+        instructions: "每题 2 分",
+        totalScore: "4",
+        questionCount: 2,
+      },
+    ],
+    sectionQuestions: [
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 202, sortOrder: 2, score: "2" },
+    ],
+  });
+  paperApi.listRules = vi.fn(async () => ({ items: rules }));
+  paperApi.updateRule = vi.fn(async (input) => {
+    const saved: PaperRuleRow = {
+      id: input.ruleID,
+      tenantID: input.tenantID,
+      paperID: input.paperID,
+      sectionID: input.sectionID,
+      sortOrder: input.sortOrder,
+      tagIDs: input.tagIDs,
+      tagNames: input.tagNames,
+      questionScope: input.questionScope,
+      difficultyPercentages: input.difficultyPercentages,
+      questionCount: input.questionCount,
+      scorePerQuestion: input.scorePerQuestion,
+      prioritizeQuality: input.prioritizeQuality,
+      excludeRecentExamQuestions: input.excludeRecentExamQuestions,
+      excludeUsedQuestions: input.excludeUsedQuestions,
+    };
+    rules = [saved];
+    return saved;
+  });
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  const countInput = await screen.findByRole("spinbutton", { name: "一、单项选择题题数" });
+  expect(countInput).toHaveValue(2);
+
+  await user.clear(countInput);
+  await user.type(countInput, "5");
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  await waitFor(() => {
+    expect(paperApi.updateRule).toHaveBeenCalledWith(expect.objectContaining({
+      ruleID: 601,
+      sectionID: 11,
+      questionCount: 5,
+    }));
+  });
+  expect(countInput).toHaveValue(5);
+});
+
+test("智能组卷题型区支持重编号、添加删除和拖拽排序", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+    sections: [
+      {
+        id: 11,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 1,
+        name: "一、单项选择题",
+        questionType: "single",
+        instructions: "每题 2 分",
+        totalScore: "18",
+        questionCount: 9,
+      },
+      {
+        id: 12,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 2,
+        name: "二、多项选择题",
+        questionType: "multiple",
+        instructions: "每题 1 分",
+        totalScore: "3",
+        questionCount: 3,
+      },
+      {
+        id: 13,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 3,
+        name: "二、简答题",
+        questionType: "short_text",
+        instructions: "每题 11 分",
+        totalScore: "33",
+        questionCount: 3,
+      },
+    ],
+    sectionQuestions: [
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      { tenantID: 10, paperID: 100, sectionID: 12, questionID: 202, sortOrder: 1, score: "1" },
+      { tenantID: 10, paperID: 100, sectionID: 13, questionID: 203, sortOrder: 1, score: "11" },
+    ],
+  });
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await screen.findByRole("group", { name: "难度分布滑块" });
+  const ruleBlock = screen.getByRole("heading", { name: "题型数量与分值" }).closest<HTMLElement>("section");
+  if (ruleBlock === null) {
+    throw new Error("missing smart rule type block");
+  }
+  expect(within(ruleBlock).getByText("三、简答题")).toBeInTheDocument();
+  expect(within(ruleBlock).queryByText("二、简答题")).not.toBeInTheDocument();
+  expect(screen.queryByRole("spinbutton", { name: "一、单项选择题每题分值" })).not.toBeInTheDocument();
+
+  const shortTextDragHandle = screen.getByRole("button", { name: "拖拽排序题型 13" });
+  const singleRuleRow = within(ruleBlock).getByText("一、单项选择题").closest<HTMLElement>(".exam-paper-editor__rule-row");
+  if (singleRuleRow === null) {
+    throw new Error("missing rule row drop target");
+  }
+  expect(singleRuleRow).not.toHaveTextContent("每题分值");
+  expect(singleRuleRow.querySelector(".exam-paper-editor__rule-score-source")).toBeNull();
+  fireEvent.dragStart(shortTextDragHandle);
+  fireEvent.dragOver(singleRuleRow);
+  fireEvent.drop(singleRuleRow);
+  fireEvent.dragEnd(shortTextDragHandle);
+
+  expect(within(ruleBlock).getByText("一、简答题")).toBeInTheDocument();
+  expect(within(ruleBlock).getByText("二、单项选择题")).toBeInTheDocument();
+  const resultHeadings = Array.from(document.querySelectorAll(".exam-paper-editor__smart-results .exam-paper-editor__selected-section-head h3"))
+    .map((node) => node.textContent);
+  expect(resultHeadings).toEqual(["一、简答题", "二、单项选择题", "三、多项选择题"]);
+
+  await user.click(screen.getByRole("button", { name: "添加题型" }));
+  await user.selectOptions(screen.getByLabelText("新增题型类型"), "judge");
+  await user.clear(screen.getByLabelText("新增题型名称"));
+  await user.type(screen.getByLabelText("新增题型名称"), "判断题");
+  await user.click(screen.getByRole("button", { name: "保存题型" }));
+
+  await waitFor(() => {
+    expect(paperApi.createSection).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 100,
+      name: "判断题",
+      questionType: "judge",
+      instructions: "每题 2 分",
+    });
+  });
+  expect(within(ruleBlock).getByText("四、判断题")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "删除题型 12" }));
+  await waitFor(() => {
+    expect(paperApi.deleteSection).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 12,
+    });
+  });
+  await waitFor(() => {
+    expect(within(ruleBlock).queryByText("三、多项选择题")).not.toBeInTheDocument();
+  });
+
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+  await waitFor(() => {
+    expect(paperApi.reorderSections).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 100,
+      orders: [
+        { sectionID: 13, sortOrder: 1 },
+        { sectionID: 11, sortOrder: 2 },
+        { sectionID: 14, sortOrder: 3 },
+      ],
+    });
+  });
+});
+
+test("智能组卷结果支持屏蔽题目并在重新生成时排除", async () => {
+  const user = userEvent.setup();
+  const sectionQuestions: ManualQuestionRow[] = [
+    { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+    { tenantID: 10, paperID: 100, sectionID: 11, questionID: 202, sortOrder: 2, score: "2" },
+  ];
+  let persistedQuestions = [...sectionQuestions];
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+    sections: [{
+      id: 11,
+      tenantID: 10,
+      paperID: 100,
+      sortOrder: 1,
+      name: "一、单项选择题",
+      questionType: "single",
+      instructions: "每题 2 分",
+      totalScore: "4",
+      questionCount: 2,
+    }],
+    sectionQuestions,
+  });
+  paperApi.listSectionQuestions = vi.fn(async () => ({ items: persistedQuestions }));
+  paperApi.deleteSectionQuestion = vi.fn(async (input) => {
+    persistedQuestions = persistedQuestions.filter((item) => item.questionID !== input.questionID);
+  });
+  paperApi.createRule = vi.fn(async (input) => ({
+    id: 501,
+    tenantID: input.tenantID,
+    paperID: input.paperID,
+    sectionID: input.sectionID,
+    sortOrder: input.sortOrder,
+    questionCount: input.questionCount,
+    scorePerQuestion: input.scorePerQuestion,
+    difficulty: input.difficulty,
+    tagIDs: input.tagIDs,
+    tagNames: input.tagNames,
+    questionScope: input.questionScope,
+    difficultyPercentages: input.difficultyPercentages,
+    prioritizeQuality: input.prioritizeQuality,
+    excludeRecentExamQuestions: input.excludeRecentExamQuestions,
+    excludeUsedQuestions: input.excludeUsedQuestions,
+  }));
+  paperApi.generateRuleFixed = vi.fn(async (input) => {
+    expect(input.blockedQuestionIDs).toEqual([201]);
+    return { paperID: 100, generated: true };
+  });
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  const blockButton = await screen.findByRole("button", { name: "屏蔽题目 201" });
+  expect(blockButton).toHaveClass("exam-paper-editor__action-button--regular");
+  expect(screen.queryByRole("button", { name: "替换" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "屏蔽题目 201" }));
+  await waitFor(() => {
+    expect(paperApi.deleteSectionQuestion).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 11,
+      questionID: 201,
+    });
+  });
+  expect(screen.queryByRole("button", { name: "屏蔽题目 201" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "一键智能组卷" }));
+  await waitFor(() => {
+    expect(paperApi.generateRuleFixed).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 100,
+      blockedQuestionIDs: [201],
+    });
+  });
+});
+
+test("已屏蔽题目可在规则面板移除并重新参与组卷", async () => {
+  const user = userEvent.setup();
+  const sectionQuestions: ManualQuestionRow[] = [
+    { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+    { tenantID: 10, paperID: 100, sectionID: 11, questionID: 202, sortOrder: 2, score: "2" },
+  ];
+  let persistedQuestions = [...sectionQuestions];
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+    sections: [{
+      id: 11,
+      tenantID: 10,
+      paperID: 100,
+      sortOrder: 1,
+      name: "一、单项选择题",
+      questionType: "single",
+      instructions: "每题 2 分",
+      totalScore: "4",
+      questionCount: 2,
+    }],
+    sectionQuestions,
+  });
+  paperApi.listSectionQuestions = vi.fn(async () => ({ items: persistedQuestions }));
+  paperApi.deleteSectionQuestion = vi.fn(async (input) => {
+    persistedQuestions = persistedQuestions.filter((item) => item.questionID !== input.questionID);
+  });
+  paperApi.createRule = vi.fn(async (input) => ({
+    id: 501,
+    tenantID: input.tenantID,
+    paperID: input.paperID,
+    sectionID: input.sectionID,
+    sortOrder: input.sortOrder,
+    questionCount: input.questionCount,
+    scorePerQuestion: input.scorePerQuestion,
+    difficulty: input.difficulty,
+    tagIDs: input.tagIDs,
+    tagNames: input.tagNames,
+    questionScope: input.questionScope,
+    difficultyPercentages: input.difficultyPercentages,
+    prioritizeQuality: input.prioritizeQuality,
+    excludeRecentExamQuestions: input.excludeRecentExamQuestions,
+    excludeUsedQuestions: input.excludeUsedQuestions,
+  }));
+  paperApi.generateRuleFixed = vi.fn(async () => ({ paperID: 100, generated: true }));
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await user.click(await screen.findByRole("button", { name: "屏蔽题目 201" }));
+  expect(await screen.findByRole("heading", { name: "已屏蔽题目" })).toBeInTheDocument();
+  const blockedTitle = screen.getByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+  expect(blockedTitle).toBeInTheDocument();
+  expect(blockedTitle.closest(".exam-paper-editor__question-meta")).toBeInTheDocument();
+  expect(blockedTitle).toHaveClass("exam-paper-editor__blocked-title--regular");
+  expect(screen.getByRole("button", { name: "移除屏蔽题目 201" })).toHaveClass("exam-paper-editor__action-button--regular");
+
+  await user.click(screen.getByRole("button", { name: "移除屏蔽题目 201" }));
+  expect(screen.queryByRole("heading", { name: "已屏蔽题目" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "一键智能组卷" }));
+  await waitFor(() => {
+    expect(paperApi.generateRuleFixed).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 100,
+      blockedQuestionIDs: [],
+    });
+  });
+});
+
+test("切换到另一张策略试卷时清空上一张试卷的屏蔽题目", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble({
+    papers: [
+      createPaperRowForTest({ id: 100, buildMode: "rule_fixed" }),
+      createPaperRowForTest({ id: 101, name: "高一数学月考试卷", buildMode: "rule_fixed" }),
+    ],
+  });
+  const sectionByPaper: Record<number, PaperSectionRow[]> = {
+    100: [{
+      id: 11,
+      tenantID: 10,
+      paperID: 100,
+      sortOrder: 1,
+      name: "一、单项选择题",
+      questionType: "single",
+      instructions: "每题 2 分",
+      totalScore: "4",
+      questionCount: 2,
+    }],
+    101: [{
+      id: 21,
+      tenantID: 10,
+      paperID: 101,
+      sortOrder: 1,
+      name: "一、单项选择题",
+      questionType: "single",
+      instructions: "每题 2 分",
+      totalScore: "2",
+      questionCount: 1,
+    }],
+  };
+  let questionsByPaper: Record<number, ManualQuestionRow[]> = {
+    100: [
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 202, sortOrder: 2, score: "2" },
+    ],
+    101: [
+      { tenantID: 10, paperID: 101, sectionID: 21, questionID: 202, sortOrder: 1, score: "2" },
+    ],
+  };
+  paperApi.listSections = vi.fn(async (input) => ({ items: sectionByPaper[input.paperID] ?? [] }));
+  paperApi.listSectionQuestions = vi.fn(async (input) => ({ items: questionsByPaper[input.paperID] ?? [] }));
+  paperApi.deleteSectionQuestion = vi.fn(async (input) => {
+    questionsByPaper = {
+      ...questionsByPaper,
+      [input.paperID]: (questionsByPaper[input.paperID] ?? []).filter((item) => item.questionID !== input.questionID),
+    };
+  });
+  paperApi.createRule = vi.fn(async (input) => ({
+    id: input.paperID === 100 ? 501 : 601,
+    tenantID: input.tenantID,
+    paperID: input.paperID,
+    sectionID: input.sectionID,
+    sortOrder: input.sortOrder,
+    questionCount: input.questionCount,
+    scorePerQuestion: input.scorePerQuestion,
+    difficulty: input.difficulty,
+    tagIDs: input.tagIDs,
+    tagNames: input.tagNames,
+    questionScope: input.questionScope,
+    difficultyPercentages: input.difficultyPercentages,
+    prioritizeQuality: input.prioritizeQuality,
+    excludeRecentExamQuestions: input.excludeRecentExamQuestions,
+    excludeUsedQuestions: input.excludeUsedQuestions,
+  }));
+  paperApi.generateRuleFixed = vi.fn(async (input) => ({ paperID: input.paperID, generated: true }));
+
+  render(
+    <FeedbackProvider>
+      <MemoryRouter initialEntries={["/papers/100/edit?space_id=301"]}>
+        <Link to="/papers/101/edit?space_id=301">切换到另一张试卷</Link>
+        <Routes>
+          <Route
+            path="/papers/:paperID/edit"
+            element={<PaperEditRoute paperApi={paperApi} questionApi={createQuestionApiDouble()} tenantID={10} spaceID={301} />}
+          />
+        </Routes>
+        <LocationProbe />
+      </MemoryRouter>
+    </FeedbackProvider>,
+  );
+
+  await user.click(await screen.findByRole("button", { name: "屏蔽题目 201" }));
+  expect(await screen.findByRole("heading", { name: "已屏蔽题目" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("link", { name: "切换到另一张试卷" }));
+  await screen.findByText("/papers/101/edit");
+  await user.click(await screen.findByRole("button", { name: "一键智能组卷" }));
+
+  await waitFor(() => {
+    expect(paperApi.generateRuleFixed).toHaveBeenLastCalledWith({
+      tenantID: 10,
+      paperID: 101,
+      blockedQuestionIDs: [],
+    });
+  });
+});
+
+test("智能组卷结果题干使用 tooltip 展示完整题干", async () => {
+  const user = userEvent.setup();
+  const { container } = renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi: createPaperApiDouble({
+      papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+      sectionQuestions: [
+        { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      ],
+    }),
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await screen.findByRole("button", { name: "屏蔽题目 201" });
+  const smartQuestionCell = container.querySelector(".exam-paper-editor__smart-table tbody td:first-child");
+  const smartQuestionTitle = within(smartQuestionCell as HTMLElement).getByText("1. 关于函数 y = 1/x，下列说法正确的是（ ）");
+
+  await user.hover(smartQuestionTitle);
+
+  const tooltip = await screen.findByRole("tooltip");
+  expect(tooltip).toHaveTextContent("1. 关于函数 y = 1/x，下列说法正确的是（ ）");
+  expect(tooltip.firstElementChild).toHaveClass("ui-tooltip-content__inner", "ui-tooltip-content__inner--plain");
+});
+
+test("已选题题干使用 tooltip 展示完整题干", async () => {
+  const user = userEvent.setup();
+  const { container } = renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi: createPaperApiDouble({
+      sectionQuestions: [
+        { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      ],
+    }),
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await screen.findByLabelText("拖拽排序题目 201");
+  const selectedTitle = container.querySelector(".exam-paper-editor__selected-title");
+
+  expect(selectedTitle).toHaveTextContent("1. 关于函数 y = 1/x，下列说法正确的是（ ）");
+  await user.hover(selectedTitle as HTMLElement);
+
+  const tooltip = await screen.findByRole("tooltip");
+  expect(tooltip).toHaveTextContent("1. 关于函数 y = 1/x，下列说法正确的是（ ）");
+  expect(tooltip.firstElementChild).toHaveClass("ui-tooltip-content__inner", "ui-tooltip-content__inner--plain");
+});
+
+test("智能组卷保存规则时按规则题数回填并跳过未配置空题型", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+    sections: [
+      {
+        id: 11,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 1,
+        name: "一、单项选择题",
+        questionType: "single",
+        instructions: "每题 2 分",
+        totalScore: "4",
+        questionCount: 2,
+      },
+      {
+        id: 12,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 2,
+        name: "二、填空题",
+        questionType: "fill_blank",
+        instructions: "每题 5 分",
+        totalScore: "0",
+        questionCount: 0,
+      },
+    ],
+    sectionQuestions: [
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 202, sortOrder: 2, score: "2" },
+    ],
+  });
+  let rules: PaperRuleRow[] = [
+    {
+      id: 601,
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 11,
+      sortOrder: 1,
+      tagIDs: [],
+      tagNames: [],
+      questionScope: "space_all",
+      difficultyPercentages: { easy: 30, medium: 50, hard: 20 },
+      questionCount: 9,
+      scorePerQuestion: "2",
+    },
+  ];
+  paperApi.listRules = vi.fn(async () => ({ items: rules }));
+  paperApi.updateRule = vi.fn(async (input) => {
+    const saved: PaperRuleRow = {
+      id: input.ruleID,
+      tenantID: input.tenantID,
+      paperID: input.paperID,
+      sectionID: input.sectionID,
+      sortOrder: input.sortOrder,
+      tagIDs: input.tagIDs,
+      tagNames: input.tagNames,
+      questionScope: input.questionScope,
+      difficultyPercentages: input.difficultyPercentages,
+      questionCount: input.questionCount,
+      scorePerQuestion: input.scorePerQuestion,
+      prioritizeQuality: input.prioritizeQuality,
+      excludeRecentExamQuestions: input.excludeRecentExamQuestions,
+      excludeUsedQuestions: input.excludeUsedQuestions,
+    };
+    rules = rules.map((rule) => (rule.id === input.ruleID ? saved : rule));
+    return saved;
+  });
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await screen.findByRole("group", { name: "难度分布滑块" });
+  await user.click(screen.getByRole("button", { name: "一键智能组卷" }));
+
+  await waitFor(() => {
+    expect(paperApi.updateRule).toHaveBeenCalledWith(expect.objectContaining({
+      ruleID: 601,
+      sectionID: 11,
+      questionCount: 9,
+    }));
+  });
+  expect(paperApi.createRule).not.toHaveBeenCalled();
+  expect(paperApi.generateRuleFixed).toHaveBeenCalledWith({
+    tenantID: 10,
+    paperID: 100,
+    blockedQuestionIDs: [],
+  });
+});
+
+test("智能组卷题数清空时不会把已有规则删除", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+  });
+  paperApi.listRules = vi.fn(async () => ({
+    items: [{
+      id: 601,
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 11,
+      sortOrder: 1,
+      tagIDs: [],
+      tagNames: [],
+      questionScope: "space_all",
+      difficultyPercentages: { easy: 30, medium: 50, hard: 20 },
+      questionCount: 2,
+      scorePerQuestion: "2",
+      prioritizeQuality: true,
+      excludeRecentExamQuestions: true,
+      excludeUsedQuestions: true,
+    } satisfies PaperRuleRow],
+  }));
+  paperApi.updateRule = vi.fn(async () => {
+    throw new Error("updateRule should not be called");
+  });
+  paperApi.deleteRule = vi.fn(async () => undefined);
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  const countInput = await screen.findByRole("spinbutton", { name: "一、单项选择题题数" });
+  await user.clear(countInput);
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  expect(await screen.findByText("一、单项选择题 的题量不能为空")).toBeInTheDocument();
+  expect(paperApi.deleteRule).not.toHaveBeenCalled();
+  expect(paperApi.updateRule).not.toHaveBeenCalled();
+});
+
+test("智能组卷题数保存为 0 后不会从已生成题目回填并重建规则", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+    sectionQuestions: [
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 202, sortOrder: 2, score: "2" },
+    ],
+  });
+  paperApi.listRules = vi.fn(async () => ({
+    items: [{
+      id: 601,
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 11,
+      sortOrder: 1,
+      tagIDs: [],
+      tagNames: [],
+      questionScope: "space_all",
+      difficultyPercentages: { easy: 30, medium: 50, hard: 20 },
+      questionCount: 2,
+      scorePerQuestion: "2",
+      prioritizeQuality: true,
+      excludeRecentExamQuestions: true,
+      excludeUsedQuestions: true,
+    } satisfies PaperRuleRow],
+  }));
+  paperApi.deleteRule = vi.fn(async () => undefined);
+  paperApi.createRule = vi.fn(async (input) => ({
+    id: 602,
+    tenantID: input.tenantID,
+    paperID: input.paperID,
+    sectionID: input.sectionID,
+    sortOrder: input.sortOrder,
+    tagIDs: input.tagIDs,
+    tagNames: input.tagNames,
+    questionScope: input.questionScope,
+    difficultyPercentages: input.difficultyPercentages,
+    questionCount: input.questionCount,
+    scorePerQuestion: input.scorePerQuestion,
+    prioritizeQuality: input.prioritizeQuality,
+    excludeRecentExamQuestions: input.excludeRecentExamQuestions,
+    excludeUsedQuestions: input.excludeUsedQuestions,
+  }));
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  const countInput = await screen.findByRole("spinbutton", { name: "一、单项选择题题数" });
+  await user.clear(countInput);
+  await user.type(countInput, "0");
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  await waitFor(() => {
+    expect(paperApi.deleteRule).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 100,
+      ruleID: 601,
+    });
+  });
+  expect(countInput).toHaveValue(0);
+
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  expect(paperApi.createRule).not.toHaveBeenCalled();
+});
+
 test("编辑基础信息后底部草稿状态会联动切换", async () => {
   const user = userEvent.setup();
   const paperApi = createPaperApiDouble();
@@ -427,6 +1197,101 @@ test("编辑基础信息后底部草稿状态会联动切换", async () => {
       durationMinutes: 120,
       gradeLevel: "高一",
     });
+  });
+  expect(screen.getByText("草稿已保存")).toBeInTheDocument();
+});
+
+test("编辑智能组卷规则后底部草稿状态会联动切换", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+    sections: [
+      {
+        id: 11,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 1,
+        name: "一、单项选择题",
+        questionType: "single",
+        instructions: "每题 2 分",
+        totalScore: "4",
+        questionCount: 2,
+      },
+    ],
+    sectionQuestions: [
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 202, sortOrder: 2, score: "2" },
+    ],
+  });
+  const rules: PaperRuleRow[] = [
+    {
+      id: 601,
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 11,
+      sortOrder: 1,
+      tagIDs: [],
+      tagNames: [],
+      questionScope: "space_all",
+      difficultyPercentages: { easy: 30, medium: 50, hard: 20 },
+      questionCount: 2,
+      scorePerQuestion: "2",
+      prioritizeQuality: true,
+      excludeRecentExamQuestions: true,
+      excludeUsedQuestions: true,
+    },
+  ];
+  paperApi.listRules = vi.fn(async () => ({
+    items: rules,
+  }));
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  const countInput = await screen.findByRole("spinbutton", { name: "一、单项选择题题数" });
+  expect(screen.getByText("草稿已保存")).toBeInTheDocument();
+
+  await user.clear(countInput);
+  await user.type(countInput, "5");
+
+  expect(screen.getByText("草稿有未保存调整")).toBeInTheDocument();
+});
+
+test("编辑已有试卷后会定时自动保存草稿", async () => {
+  const paperApi = createPaperApiDouble();
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+  });
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+
+  vi.useFakeTimers();
+  fireEvent.change(screen.getByLabelText("试卷名称"), {
+    target: { value: "高三期末考试（自动保存）" },
+  });
+
+  expect(screen.getByText("草稿有未保存调整")).toBeInTheDocument();
+  expect(paperApi.updatePaper).not.toHaveBeenCalled();
+
+  await act(async () => {
+    vi.advanceTimersByTime(30_000);
+    await Promise.resolve();
+  });
+
+  expect(paperApi.updatePaper).toHaveBeenCalledWith({
+    tenantID: 10,
+    paperID: 100,
+    name: "高三期末考试（自动保存）",
+    description: "文学阅读与语言基础",
+    durationMinutes: 120,
+    gradeLevel: "高一",
+  });
+  await act(async () => {
+    await Promise.resolve();
   });
   expect(screen.getByText("草稿已保存")).toBeInTheDocument();
 });
@@ -543,7 +1408,7 @@ test("已存在试卷支持加入试卷、移除试题和调整顺序", async ()
   });
   expect(await screen.findByText("一、单项选择题")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "移除试卷 题目 201" })).toBeInTheDocument();
-  expect(screen.getByTitle("1. 关于函数 y = 1/x，下列说法正确的是（ ）")).toBeInTheDocument();
+  expect(screen.getByText("1. 关于函数 y = 1/x，下列说法正确的是（ ）")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "移除题目 201" })).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "加入试卷 题目 202" }));
@@ -558,7 +1423,7 @@ test("已存在试卷支持加入试卷、移除试题和调整顺序", async ()
   });
 
   const draggedQuestion = screen.getByRole("button", { name: "拖拽排序题目 202" });
-  const questionDropTarget = screen.getByTitle("1. 关于函数 y = 1/x，下列说法正确的是（ ）").closest<HTMLElement>("tr");
+  const questionDropTarget = screen.getByText("1. 关于函数 y = 1/x，下列说法正确的是（ ）").closest<HTMLElement>("tr");
   if (questionDropTarget === null) {
     throw new Error("missing question row drop target");
   }
@@ -568,7 +1433,7 @@ test("已存在试卷支持加入试卷、移除试题和调整顺序", async ()
   fireEvent.dragEnd(draggedQuestion);
 
   expect(paperApi.updateSectionQuestion).not.toHaveBeenCalled();
-  expect(screen.getByTitle("1. 已知函数 f(x)=x²+1，则 f(-1) 的值为（ ）")).toBeInTheDocument();
+  expect(screen.getByText("1. 已知函数 f(x)=x²+1，则 f(-1) 的值为（ ）")).toBeInTheDocument();
   expect(screen.getByText("草稿有未保存调整")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "移除题目 201" }));
@@ -828,7 +1693,7 @@ test("题目前方提供拖拽句柄，并支持同一大题内拖拽排序", as
   expect(rowsBefore[2]).toHaveTextContent("2. 已知函数 f(x)=x²+1，则 f(-1) 的值为（ ）");
 
   const dragHandle = screen.getByRole("button", { name: "拖拽排序题目 202" });
-  const targetRow = screen.getByTitle("1. 关于函数 y = 1/x，下列说法正确的是（ ）").closest<HTMLElement>("tr");
+  const targetRow = screen.getByText("1. 关于函数 y = 1/x，下列说法正确的是（ ）").closest<HTMLElement>("tr");
   if (targetRow === null) {
     throw new Error("missing target row");
   }
@@ -992,7 +1857,7 @@ test("保存草稿会持久化题目排序且不修改已有试卷组卷方式",
   fireEvent.dragEnd(sectionDragHandle);
 
   const dragHandle = screen.getByRole("button", { name: "拖拽排序题目 202" });
-  const targetRow = screen.getByTitle("1. 关于函数 y = 1/x，下列说法正确的是（ ）").closest<HTMLElement>("tr");
+  const targetRow = screen.getByText("1. 关于函数 y = 1/x，下列说法正确的是（ ）").closest<HTMLElement>("tr");
   if (targetRow === null) {
     throw new Error("missing target row");
   }
@@ -1046,7 +1911,7 @@ test("保存草稿会持久化题目排序且不修改已有试卷组卷方式",
 
   const refreshedHeadings = screen.getAllByRole("heading", { level: 3 }).map((node) => node.textContent);
   expect(refreshedHeadings).toEqual(expect.arrayContaining(["一、解答题", "二、单项选择题"]));
-  expect(screen.getByTitle("1. 已知函数 f(x)=x²+1，则 f(-1) 的值为（ ）")).toBeInTheDocument();
+  expect(screen.getByText("1. 已知函数 f(x)=x²+1，则 f(-1) 的值为（ ）")).toBeInTheDocument();
   expect(screen.getByText("草稿已保存")).toBeInTheDocument();
   expect(screen.queryByText("草稿已部分保存，当前版本暂不支持持久化大题顺序。")).not.toBeInTheDocument();
 });
@@ -1228,10 +2093,10 @@ function createPaperApiDouble({
       items: input.paperID === 100 ? currentSections : [],
     })),
     createSection: vi.fn(async (input) => ({
-      id: 11,
+      id: Math.max(0, ...currentSections.map((section) => section.id)) + 1,
       tenantID: input.tenantID,
       paperID: input.paperID,
-      sortOrder: 1,
+      sortOrder: currentSections.length + 1,
       name: input.name,
       questionType: input.questionType,
       instructions: input.instructions,
@@ -1239,6 +2104,7 @@ function createPaperApiDouble({
       questionCount: 0,
     })),
     reorderSections: vi.fn(async () => undefined),
+    deleteSection: vi.fn(async () => undefined),
     addManualQuestion: vi.fn(async (input) => ({
       tenantID: input.tenantID,
       paperID: input.paperID,
@@ -1371,6 +2237,8 @@ function createQuestionApiDouble(): QuestionAPI {
       throw new Error("not used");
     }),
     deleteQuestion: vi.fn(async () => undefined),
-    importQuestions: vi.fn(async () => ({ successCount: 0, errors: [] })),
+    importQuestions: vi.fn(async () => ({ successCount: 0, duplicateCount: 0, errors: [] })),
+    startQuestionImportJob: vi.fn(async () => ({ jobID: "job-1" })),
+    subscribeQuestionImportJob: vi.fn(() => () => undefined),
   };
 }

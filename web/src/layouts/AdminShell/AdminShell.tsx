@@ -16,13 +16,14 @@ const groupLabels: Record<Exclude<AdminRouteGroup, "hidden">, string> = {
   tenant: "租户空间",
   exam: "考试业务",
 };
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "papermind:admin-sidebar-collapsed";
 
 export function AdminShell({ routes }: AdminShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { session, signOut } = useSession();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsedPreference);
   const [sidebarHovered, setSidebarHovered] = useState(false);
   const visibleGroups = Object.keys(groupLabels) as Array<Exclude<AdminRouteGroup, "hidden">>;
   const scopedSpaceID = scopedSpaceIDFromSession(session, new URLSearchParams(location.search));
@@ -105,7 +106,11 @@ export function AdminShell({ routes }: AdminShellProps) {
             aria-label={sidebarCollapsed ? "展开后台导航" : "收起后台导航"}
             className="sidebar-desktop-toggle"
             onClick={() => {
-              setSidebarCollapsed((current) => !current);
+              setSidebarCollapsed((current) => {
+                const next = !current;
+                writeSidebarCollapsedPreference(next);
+                return next;
+              });
               setSidebarHovered(false);
             }}
             type="button"
@@ -198,6 +203,22 @@ function buildSidebarClassName(sidebarOpen: boolean, sidebarCollapsed: boolean, 
     classes.push("sidebar--hover-open");
   }
   return classes.join(" ");
+}
+
+function readSidebarCollapsedPreference() {
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeSidebarCollapsedPreference(collapsed: boolean) {
+  try {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(collapsed));
+  } catch {
+    // 侧边栏状态只是偏好设置，本地存储不可用时不阻断导航。
+  }
 }
 
 function positiveID(value: string | null) {

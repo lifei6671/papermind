@@ -164,6 +164,24 @@ func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input ser
 	}, nil
 }
 
+func (r *QuestionRepository) QuestionTitleExists(ctx context.Context, tenantID uint64, spaceID *uint64, title string) (bool, error) {
+	query := r.db.WithContext(ctx).
+		Table(QuestionDO{}.TableName()).
+		Where(QuestionColumns.TenantID+" = ?", tenantID).
+		Where(QuestionColumns.DeletedAt+" = ?", 0).
+		Where(QuestionColumns.Title+" = ?", title)
+	if spaceID == nil {
+		query = query.Where(QuestionColumns.SpaceID + " IS NULL")
+	} else {
+		query = query.Where(r.db.Where(QuestionColumns.SpaceID+" IS NULL").Or(QuestionColumns.SpaceID+" = ?", *spaceID))
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (r *QuestionRepository) applyQuestionSearch(query *gorm.DB, search string) *gorm.DB {
 	keyword := strings.TrimSpace(search)
 	if keyword == "" {

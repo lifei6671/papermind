@@ -119,4 +119,27 @@ describe("api client", () => {
     expect(formatApiErrorMessage(error, "默认失败")).toBe("服务暂时不可用，请稍后重试");
     expect(formatApiErrorMessage("unknown", "默认失败")).toBe("默认失败");
   });
+
+  test("题库不足内部错误统一转换为中文提示", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ code: 40001, message: "question pool insufficient", data: null }), {
+        headers: { "Content-Type": "application/json" },
+        status: 400,
+      }),
+    );
+
+    const client = createApiClient({ baseUrl: "", fetcher });
+
+    await expect(client.post("/api/v1/papers/100/rule-fixed/generate", { tenant_id: 10 })).rejects.toMatchObject({
+      code: 40001,
+      message: "题库题量不足，请调整题型题量、知识点范围或难度分布后重试",
+      status: 400,
+    });
+  });
+
+  test("完整 JSON 字符串错误先提取 message 再格式化", () => {
+    const error = new Error(JSON.stringify({ code: 40001, message: "question pool insufficient", data: null }));
+
+    expect(formatApiErrorMessage(error, "智能组卷生成失败")).toBe("题库题量不足，请调整题型题量、知识点范围或难度分布后重试");
+  });
 });

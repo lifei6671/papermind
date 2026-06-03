@@ -162,7 +162,7 @@ test("rule_fixed 生成会复用现有规则而不是重复追加", async () => 
 
   await user.click(screen.getByRole("tab", { name: "组卷规则" }));
   expect(screen.getByRole("button", { name: "新增大题" })).toBeInTheDocument();
-  expect(screen.getByLabelText("当前组卷方式")).toHaveTextContent("固定规则组卷");
+  expect(screen.getByLabelText("当前组卷方式")).toHaveTextContent("策略组卷");
 
   await user.click(screen.getByRole("button", { name: "生成固定规则试卷" }));
 
@@ -308,7 +308,7 @@ test("规则列表锁定已有试卷组卷模式但仍支持编辑规则", async
   renderPaperAssemblyRoutes(api);
 
   await user.click(screen.getByRole("tab", { name: "组卷规则" }));
-  expect(screen.getByLabelText("当前组卷方式")).toHaveTextContent("固定规则组卷");
+  expect(screen.getByLabelText("当前组卷方式")).toHaveTextContent("策略组卷");
   expect(screen.queryByRole("combobox", { name: "组卷模式" })).not.toBeInTheDocument();
   expect(api.updateBuildMode).not.toHaveBeenCalled();
 
@@ -441,6 +441,7 @@ function createPaperApiDouble(): PaperAssemblyAPI {
       questionCount: 0,
     })),
     reorderSections: vi.fn(async () => undefined),
+    deleteSection: vi.fn(async () => undefined),
     addManualQuestion: vi.fn(async (input) => ({
       tenantID: input.tenantID,
       paperID: input.paperID,

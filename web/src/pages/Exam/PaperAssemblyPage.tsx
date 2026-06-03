@@ -35,7 +35,7 @@ const paperBuildModeOptions: Array<{
   hint: string;
 }> = [
   { value: "manual", label: "手动组卷", hint: "教师逐题确认，适合精细编排试卷结构。" },
-  { value: "rule_fixed", label: "固定规则组卷", hint: "按规则先生成试卷，再进行审题和替换。" },
+  { value: "rule_fixed", label: "策略组卷", hint: "按策略先生成试卷，再进行审题和屏蔽。" },
   { value: "rule_live", label: "实时抽题组卷", hint: "考试开始时再抽题，适合动态题池场景。" },
 ];
 

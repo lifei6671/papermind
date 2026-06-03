@@ -881,11 +881,13 @@ paper_section_rules
 - `paper_section_rules.tag_filter` 使用 JSON 数组字符串保存标签 ID，例如 `[1001,1002]`，避免依赖不同数据库的 JSON 方言。
 - `paper_section_rules.ext_json` 保存智能组卷的非主键配置，包括 `question_scope`、`tag_names`、`difficulty_percentages`、`prioritize_quality`、`exclude_recent_exam_questions` 和 `exclude_used_questions`。
 - `question_scope = space_all` 表示从当前试卷所属空间可见题库抽题；`question_scope = tag_filter` 表示先按知识点标签筛选题库。
-- `difficulty_percentages` 使用 `{easy, medium, hard}` 保存难度占比，总和为 100；生成时按最大余数法分配各难度题量。
+- `difficulty_percentages` 使用 `{easy, medium, hard}` 保存难度占比，总和为 100；生成时按最大余数法优先分配各难度题量，某个难度候选不足时使用同规则剩余候选补齐，避免可用题池充足时因为局部难度桶不足而失败。
 - `prioritize_quality = true` 时，候选题按 `questions.quality_score DESC, questions.id ASC` 排序。
 - `exclude_recent_exam_questions = true` 时，生成前查询同租户同空间最近三次已发布考试，排除这些考试试卷已使用题目。
 - `exclude_used_questions = true` 时，当前生成结果内已选题目不会再次进入后续规则，保证同一张固化试卷题目不重复。
+- `rule_fixed` 生成接口可接收本次组卷的 `blocked_question_ids`，教师在智能推荐结果里屏蔽的题目会从当前生成候选中排除。
 - `paper_section_rules.shuffle_options` 控制该规则抽中的选择题是否随机选项。
+- `rule_fixed` 生成固化题目时，`paper_section_questions.score` 来自 `questions.score_default`，不允许规则配置覆盖题目原始分值；`score_per_question` 仅保留为实时规则组卷和历史规则回填字段。
 - 手动组卷和规则固化后，`paper_section_questions.shuffle_options` 控制该题在这张试卷中是否随机选项。
 - `paper_section_questions.shuffle_options` 和 `paper_section_rules.shuffle_options` 使用可空布尔值：`TRUE` 表示显式开启，`FALSE` 表示显式关闭，`NULL` 表示未设置并回退到题库默认值。
 - 选项随机优先级：固化题目使用 `paper_section_questions.shuffle_options`；实时规则组卷使用 `paper_section_rules.shuffle_options`；字段为 `NULL` 时才使用 `questions.shuffle_options` 作为题库默认值。
@@ -920,7 +922,7 @@ paper_section_rules
 ```text
 教师配置 paper_sections 和 paper_section_rules
   → 点击生成试卷
-  → 系统按大题规则抽题并写入 paper_section_questions
+  → 系统按大题规则抽题，并按 questions.score_default 写入 paper_section_questions.score
   → 教师审题、替换、调整顺序和分值
   → 发布考试
 ```
@@ -1331,6 +1333,8 @@ API 分组：
 
 前端题库页通过独立的新增题目页面承载在线出题，避免长表单挤在抽屉内。新增题目必须提交题型、难度、默认分值、题干、解析和标签；题干和解析使用 `@uiw/react-md-editor` 编辑器内置预览渲染阅读格式，后端按 Markdown 原始字符串存储；选择题选项数量由出题人动态增减，单选和多选都通过选项正确答案标记写入 `options[].is_correct`；题目标签支持从当前题库返回的标签集合中多选，也支持输入新标签后随题目创建绑定。题目新建和导入后默认进入 `draft` 草稿状态，必须由操作区手动启用后才变为可用题目。题库列表展示题干摘要、难度、题型、题目状态、出题人账号、角色、出题时间和操作区；编辑复用题目表单，保存时后端必须检查题目是否已被试卷、实时候选池或作答快照引用；删除同样必须做引用校验，禁用/启用只改变题目状态，不影响已冻结的考试快照。草稿和禁用题目不参与新试卷组卷，手动选题候选和规则组卷候选都必须只使用启用题目。
 
+题目导入支持同步兼容接口和异步任务接口。题库页右侧抽屉允许一次选择多个 CSV 文件，前端按文件队列依次提交，展示每个文件的导入进度、成功数、失败数和重复数。导入前可选择导入后题目状态，只允许草稿 `draft` 或已启用 `enabled`；未传入时默认草稿，已启用题目可直接参与后续组卷候选。单个导入 CSV 文件默认最大 100MB，前端控件和后端接口都必须执行同一上限。`POST /api/v1/questions/import/jobs` 接收单个 CSV 文件后创建内存导入任务并返回 `job_id`；前端通过 `GET /api/v1/questions/import/jobs/:job_id/events` 订阅 SSE 进度事件。SSE 事件必须回推 `queued`、`running`、`completed` 或 `failed` 状态，并带上总行数、已处理行数、成功数、失败数和重复数；运行中事件只保留计数，终态事件再带完整行级错误，避免大文件失败时把累计错误列表重复保存在内存任务历史中。完成或失败的内存任务只保留 30 分钟，保留窗口后再次查询或订阅会按任务不存在处理。事件流读取时要根据任务记录的 tenant/space 范围重新校验当前会话题库权限，不能只依赖随机任务 ID。导入服务按题干做去重：空间题库导入时检查租户公共题和当前空间题，公共题库导入时只检查公共题；同一批文件内重复题干也跳过。重复行计入 `duplicate_count`，不计入失败，也不写入题库。当前版本不新增数据库唯一约束，因此并发导入下仍以服务层检查为主。
+
 /api/v1/papers
 ├── 创建试卷
 ├── 删除试卷
@@ -1346,7 +1350,7 @@ API 分组：
 └── 试卷预览
 
 前端 `/papers` 页面必须提供统一的试卷工作台，而不是拆成彼此割裂的 demo
-操作区。新建试卷必须先填写试卷名称、组卷方式、考试时长和适用年级，保存基础信息后再进入组卷页；已创建试卷的组卷方式在前端只读展示，不允许在编辑或规则管理过程中二次切换。工作台至少包含三块：试卷列表与模式展示、大题与已选题工作区、规则工作区。`manual`
+操作区。新建试卷必须先填写试卷名称、组卷方式、考试时长和适用年级，保存基础信息后再进入组卷页；已创建试卷的组卷方式在前端只读展示，不允许在编辑或规则管理过程中二次切换。工作台至少包含三块：试卷列表与模式展示、大题与已选题工作区、规则工作区。智能组卷的题型数量与分值区必须复用真实大题结构，支持新增题型、删除题型和拖拽排序；左侧题型序号与右侧已生成试卷分组都按当前大题顺序即时重算。`manual`
 模式下教师需要直接查看已选题并执行移除；`rule_fixed` 模式下需要在生成后查看固化题、
 发起替题并回写新的题目分值与排序；`rule_live` 模式下需要查看当前规则列表、编辑或删除
 规则，并在工作台中直接触发预检查查看候选题池数量。
@@ -1466,6 +1470,14 @@ POST /api/v1/questions/:id/disable
      body: tenant_id
 POST /api/v1/questions/:id/enable
      body: tenant_id
+POST /api/v1/questions/import
+     form-data: tenant_id, space_id?, status?, file
+     response: success_count, duplicate_count, errors[]
+POST /api/v1/questions/import/jobs
+     form-data: tenant_id, space_id?, status?, file
+     response: job_id
+GET  /api/v1/questions/import/jobs/:job_id/events
+     response: text/event-stream；事件名 `import_progress`，data 包含 job_id、status、file_name、total_rows、processed_rows、success_count、error_count、duplicate_count、errors[]、message?
 DELETE /api/v1/questions/:id
      body: tenant_id；已被试卷、实时候选池或作答快照引用的题目返回 409，未引用题目使用软删除。
 GET  /api/v1/papers

@@ -62,6 +62,12 @@ export type DeletePaperInput = {
   paperID: number;
 };
 
+export type DeletePaperSectionInput = {
+  tenantID: number;
+  paperID: number;
+  sectionID: number;
+};
+
 export type UpdatePaperInput = {
   tenantID: number;
   paperID: number;
@@ -198,6 +204,7 @@ export type UpdatePaperBuildModeInput = {
 export type RuleFixedGenerateInput = {
   tenantID: number;
   paperID: number;
+  blockedQuestionIDs?: number[];
 };
 
 export type RuleFixedGenerateResult = {
@@ -237,6 +244,7 @@ export type PaperAPI = {
   listSections(input: ListPaperSectionsInput): Promise<PaperSectionListResult>;
   createSection(input: CreatePaperSectionInput): Promise<PaperSectionRow>;
   reorderSections(input: ReorderPaperSectionsInput): Promise<void>;
+  deleteSection(input: DeletePaperSectionInput): Promise<void>;
   addManualQuestion(input: AddManualQuestionInput): Promise<ManualQuestionRow>;
   listSectionQuestions(input: ListPaperSectionsInput): Promise<SectionQuestionListResult>;
   updateSectionQuestion(input: UpdateSectionQuestionInput): Promise<ManualQuestionRow>;
@@ -402,6 +410,12 @@ export function createPaperAPI(apiClient: ApiClient): PaperAPI {
         },
       });
     },
+    async deleteSection(input) {
+      await apiClient.request(
+        `/api/v1/papers/${input.paperID}/sections/${input.sectionID}?tenant_id=${input.tenantID}`,
+        { method: "DELETE" },
+      );
+    },
     async addManualQuestion(input) {
       const data = await apiClient.post<ManualQuestionAPIResponse>(
         `/api/v1/papers/${input.paperID}/sections/${input.sectionID}/questions`,
@@ -508,7 +522,12 @@ export function createPaperAPI(apiClient: ApiClient): PaperAPI {
     async generateRuleFixed(input) {
       const data = await apiClient.post<RuleFixedGenerateAPIResponse>(
         `/api/v1/papers/${input.paperID}/rule-fixed/generate`,
-        { tenant_id: input.tenantID },
+        {
+          tenant_id: input.tenantID,
+          ...(input.blockedQuestionIDs === undefined || input.blockedQuestionIDs.length === 0
+            ? {}
+            : { blocked_question_ids: input.blockedQuestionIDs }),
+        },
       );
       return {
         paperID: data.paper_id,

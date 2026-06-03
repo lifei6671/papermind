@@ -466,6 +466,90 @@ func TestImportQuestionsSplitsSemicolonSeparatedTags(t *testing.T) {
 	}
 }
 
+func TestImportQuestionsSkipsDuplicateTitles(t *testing.T) {
+	repo := &fakeQuestionRepository{
+		existingTitles: map[string]bool{
+			"库内已有题": true,
+		},
+	}
+	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
+
+	result, err := svc.ImportQuestions(context.Background(), ImportQuestionsInput{
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Rows: []ImportRow{
+			{RowNumber: 2, Type: "简答题", Title: "库内已有题", ReferenceAnswer: "参考答案", Difficulty: "中等"},
+			{RowNumber: 3, Type: "简答题", Title: "同批重复题", ReferenceAnswer: "参考答案", Difficulty: "中等"},
+			{RowNumber: 4, Type: "简答题", Title: "同批重复题", ReferenceAnswer: "参考答案", Difficulty: "中等"},
+			{RowNumber: 5, Type: "简答题", Title: "新题", ReferenceAnswer: "参考答案", Difficulty: "中等"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportQuestions returned error: %v", err)
+	}
+	if result.SuccessCount != 2 || result.DuplicateCount != 2 {
+		t.Fatalf("expected two imported and two duplicated rows, got %#v", result)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected duplicate rows not counted as failures, got %#v", result.Errors)
+	}
+	if len(repo.importedQuestions) != 2 {
+		t.Fatalf("expected only non-duplicate questions persisted, got %#v", repo.importedQuestions)
+	}
+	if repo.importedQuestions[0].Title != "同批重复题" || repo.importedQuestions[1].Title != "新题" {
+		t.Fatalf("unexpected persisted questions: %#v", repo.importedQuestions)
+	}
+}
+
+func TestImportQuestionsDoesNotReserveDuplicateTitleAfterValidationFailure(t *testing.T) {
+	repo := &fakeQuestionRepository{}
+	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
+
+	result, err := svc.ImportQuestions(context.Background(), ImportQuestionsInput{
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Rows: []ImportRow{
+			{RowNumber: 2, Type: "单选题", Title: "同题干可修复", Options: "A.对|B.错", Difficulty: "简单"},
+			{RowNumber: 3, Type: "简答题", Title: "同题干可修复", ReferenceAnswer: "参考答案", Difficulty: "中等"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportQuestions returned error: %v", err)
+	}
+	if result.SuccessCount != 1 || result.DuplicateCount != 0 {
+		t.Fatalf("expected later valid row imported instead of skipped, got %#v", result)
+	}
+	if len(result.Errors) != 1 || result.Errors[0].RowNumber != 2 {
+		t.Fatalf("expected first row validation error only, got %#v", result.Errors)
+	}
+	if len(repo.importedQuestions) != 1 || repo.importedQuestions[0].Title != "同题干可修复" {
+		t.Fatalf("expected valid row persisted, got %#v", repo.importedQuestions)
+	}
+}
+
+func TestImportQuestionsUsesRequestedStatus(t *testing.T) {
+	repo := &fakeQuestionRepository{}
+	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
+
+	result, err := svc.ImportQuestions(context.Background(), ImportQuestionsInput{
+		Permission: tenantAdminQuestionPermission(),
+		TenantID:   10,
+		Status:     QuestionStatusEnabled,
+		Rows: []ImportRow{
+			{RowNumber: 2, Type: "简答题", Title: "导入后直接启用", ReferenceAnswer: "参考答案", Difficulty: "中等"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportQuestions returned error: %v", err)
+	}
+	if result.SuccessCount != 1 {
+		t.Fatalf("expected one imported question, got %#v", result)
+	}
+	if len(repo.importedQuestions) != 1 || repo.importedQuestions[0].Status != QuestionStatusEnabled {
+		t.Fatalf("expected imported question enabled, got %#v", repo.importedQuestions)
+	}
+}
+
 func TestQuestionPublicWritesRequireTenantAdmin(t *testing.T) {
 	svc := NewQuestionService(QuestionServiceOptions{Repo: &fakeQuestionRepository{}})
 
@@ -526,6 +610,7 @@ type fakeQuestionRepository struct {
 	createdOptions  []QuestionOption
 
 	currentQuestion Question
+	existingTitles  map[string]bool
 	referenced      bool
 	deletedQuestion uint64
 	updatedQuestion Question
@@ -568,6 +653,10 @@ func (r *fakeQuestionRepository) ListVisibleQuestions(ctx context.Context, input
 		PageSize: page.PageSize,
 		Total:    int64(len(r.visibleQuestions)),
 	}, nil
+}
+
+func (r *fakeQuestionRepository) QuestionTitleExists(ctx context.Context, tenantID uint64, spaceID *uint64, title string) (bool, error) {
+	return r.existingTitles[title], nil
 }
 
 func (r *fakeQuestionRepository) UpdateQuestion(ctx context.Context, item Question, options []QuestionOption, tags []string) (Question, error) {

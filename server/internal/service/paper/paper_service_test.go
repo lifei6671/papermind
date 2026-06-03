@@ -53,10 +53,10 @@ func TestSectionLifecycleUsesStableOrderAndCascadingDelete(t *testing.T) {
 		t.Fatalf("expected section order update, got %#v", repo.sectionOrders)
 	}
 
-	if err := svc.DeleteSection(context.Background(), 10, 1); err != nil {
+	if err := svc.DeleteSection(context.Background(), 10, 100, 1); err != nil {
 		t.Fatalf("DeleteSection returned error: %v", err)
 	}
-	if !repo.deletedSectionInTransaction || repo.deletedSectionID != 1 {
+	if !repo.deletedSectionInTransaction || repo.deletedSectionPaperID != 100 || repo.deletedSectionID != 1 {
 		t.Fatalf("expected section soft delete with child hard delete in one transaction")
 	}
 
@@ -83,6 +83,9 @@ func TestSectionWritesRejectPublishedRuleLiveExam(t *testing.T) {
 	}
 	if err := svc.ReorderSections(context.Background(), 10, 100, []SectionOrder{{SectionID: 1, SortOrder: 2}}); !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
 		t.Fatalf("ReorderSections expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
+	}
+	if err := svc.DeleteSection(context.Background(), 10, 100, 1); !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
+		t.Fatalf("DeleteSection expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
 	}
 	if repo.checkedSectionSortOrder || len(repo.sectionOrders) > 0 || repo.deletedSectionInTransaction {
 		t.Fatalf("expected published rule_live section writes to stop before repository writes, repo=%#v", repo)
@@ -215,8 +218,11 @@ func TestRuleLivePaperRejectsManualQuestionWrites(t *testing.T) {
 func TestRuleFixedGenerateAndReviewBehavesLikeManualAfterGeneration(t *testing.T) {
 	repo := &fakeRepository{
 		questionUsableForPaper: true,
-		ruleMatches: map[uint64][]uint64{
-			1: {300, 301},
+		ruleMatches: map[uint64][]MatchedQuestion{
+			1: matchedQuestionsWithScores(
+				MatchedQuestion{ID: 300, ScoreDefault: "2"},
+				MatchedQuestion{ID: 301, ScoreDefault: "9"},
+			),
 		},
 	}
 	svc := NewService(ServiceOptions{Repo: repo})
@@ -258,7 +264,7 @@ func TestRuleFixedGenerateAndReviewBehavesLikeManualAfterGeneration(t *testing.T
 		t.Fatalf("expected nil difficulty and stable tag filter, got %#v", noDifficultyRule)
 	}
 
-	if err := svc.GenerateRuleFixed(context.Background(), 10, 100); err != nil {
+	if err := svc.GenerateRuleFixed(context.Background(), 10, 100, nil); err != nil {
 		t.Fatalf("GenerateRuleFixed returned error: %v", err)
 	}
 	if !repo.generatedFixedInTransaction || len(repo.generatedQuestions) != 2 {
@@ -266,6 +272,9 @@ func TestRuleFixedGenerateAndReviewBehavesLikeManualAfterGeneration(t *testing.T
 	}
 	if repo.generatedFixedBuildMode != BuildModeRuleFixed {
 		t.Fatalf("expected generated fixed build mode %q, got %q", BuildModeRuleFixed, repo.generatedFixedBuildMode)
+	}
+	if repo.generatedQuestions[0].Score != "2" || repo.generatedQuestions[1].Score != "9" {
+		t.Fatalf("expected generated scores from original question score_default, got %#v", repo.generatedQuestions)
 	}
 
 	if err := svc.ReplaceGeneratedQuestion(context.Background(), ReplaceGeneratedQuestionInput{
@@ -301,13 +310,13 @@ func TestRuleFixedGenerateAndReviewBehavesLikeManualAfterGeneration(t *testing.T
 func TestGenerateRuleFixedRejectsPublishedRuleLiveExam(t *testing.T) {
 	repo := &fakeRepository{
 		ruleChangeLocked: true,
-		ruleMatches: map[uint64][]uint64{
-			1: {300, 301},
+		ruleMatches: map[uint64][]MatchedQuestion{
+			1: matchedQuestions(300, 301),
 		},
 	}
 	svc := NewService(ServiceOptions{Repo: repo})
 
-	err := svc.GenerateRuleFixed(context.Background(), 10, 100)
+	err := svc.GenerateRuleFixed(context.Background(), 10, 100, nil)
 	if !errors.Is(err, ErrExamMustBeWithdrawnBeforeRuleChange) {
 		t.Fatalf("expected ErrExamMustBeWithdrawnBeforeRuleChange, got %v", err)
 	}
@@ -318,9 +327,9 @@ func TestGenerateRuleFixedRejectsPublishedRuleLiveExam(t *testing.T) {
 
 func TestGenerateRuleFixedExcludesRecentExamAndDuplicateQuestions(t *testing.T) {
 	repo := &fakeRepository{
-		ruleMatches: map[uint64][]uint64{
-			1: {101, 102, 103},
-			2: {102, 104},
+		ruleMatches: map[uint64][]MatchedQuestion{
+			1: matchedQuestions(101, 102, 103),
+			2: matchedQuestions(102, 104),
 		},
 		rules: []Rule{
 			{
@@ -343,7 +352,7 @@ func TestGenerateRuleFixedExcludesRecentExamAndDuplicateQuestions(t *testing.T) 
 	}
 	svc := NewService(ServiceOptions{Repo: repo})
 
-	if err := svc.GenerateRuleFixed(context.Background(), 10, 100); err != nil {
+	if err := svc.GenerateRuleFixed(context.Background(), 10, 100, nil); err != nil {
 		t.Fatalf("GenerateRuleFixed returned error: %v", err)
 	}
 	got := make([]uint64, 0, len(repo.generatedQuestions))
@@ -358,12 +367,84 @@ func TestGenerateRuleFixedExcludesRecentExamAndDuplicateQuestions(t *testing.T) 
 	}
 }
 
+func TestGenerateRuleFixedExcludesBlockedQuestions(t *testing.T) {
+	repo := &fakeRepository{
+		ruleMatches: map[uint64][]MatchedQuestion{
+			1: matchedQuestions(101, 102, 103),
+		},
+		rules: []Rule{
+			{
+				ID:               1,
+				SectionID:        200,
+				QuestionCount:    2,
+				ScorePerQuestion: "3",
+			},
+		},
+	}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	if err := svc.GenerateRuleFixed(context.Background(), 10, 100, []uint64{101}); err != nil {
+		t.Fatalf("GenerateRuleFixed returned error: %v", err)
+	}
+	got := make([]uint64, 0, len(repo.generatedQuestions))
+	for _, question := range repo.generatedQuestions {
+		got = append(got, question.QuestionID)
+	}
+	want := []uint64{102, 103}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("expected blocked question 101 to be excluded, got %v", got)
+		}
+	}
+}
+
+func TestGenerateRuleFixedFallsBackWhenDifficultyBucketIsInsufficient(t *testing.T) {
+	repo := &fakeRepository{
+		ruleMatches: map[uint64][]MatchedQuestion{
+			1: matchedQuestions(101, 102, 103),
+		},
+		ruleDifficultyMatches: map[string][]MatchedQuestion{
+			"easy":   matchedQuestions(101),
+			"medium": matchedQuestions(102),
+			"hard":   {},
+		},
+		rules: []Rule{
+			{
+				ID:               1,
+				SectionID:        200,
+				QuestionCount:    3,
+				ScorePerQuestion: "3",
+				DifficultyPercentages: DifficultyPercentages{
+					Easy:   30,
+					Medium: 50,
+					Hard:   20,
+				},
+			},
+		},
+	}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	if err := svc.GenerateRuleFixed(context.Background(), 10, 100, nil); err != nil {
+		t.Fatalf("GenerateRuleFixed returned error: %v", err)
+	}
+	got := make([]uint64, 0, len(repo.generatedQuestions))
+	for _, question := range repo.generatedQuestions {
+		got = append(got, question.QuestionID)
+	}
+	want := []uint64{101, 102, 103}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("expected difficulty shortage to fall back to remaining candidates %v, got %v", want, got)
+		}
+	}
+}
+
 func TestRuleLivePrecheckDedupeAndFreezePool(t *testing.T) {
 	repo := &fakeRepository{
-		ruleMatches: map[uint64][]uint64{
-			1: {300, 301},
-			2: {301, 302},
-			3: {400},
+		ruleMatches: map[uint64][]MatchedQuestion{
+			1: matchedQuestions(300, 301),
+			2: matchedQuestions(301, 302),
+			3: matchedQuestions(400),
 		},
 	}
 	svc := NewService(ServiceOptions{Repo: repo})
@@ -393,7 +474,7 @@ func TestRuleLivePrecheckDedupeAndFreezePool(t *testing.T) {
 		t.Fatalf("expected frozen live question pool, got %#v", repo.frozenQuestionIDs)
 	}
 
-	repo.ruleMatches[1] = []uint64{999}
+	repo.ruleMatches[1] = matchedQuestions(999)
 	if got := repo.FrozenQuestionIDs(); len(got) != 3 || got[0] != 300 {
 		t.Fatalf("expected frozen pool unaffected by later question bank changes, got %#v", got)
 	}
@@ -500,6 +581,7 @@ type fakeRepository struct {
 	updatedInstructions         string
 	sectionOrders               []SectionOrder
 	deletedSectionInTransaction bool
+	deletedSectionPaperID       uint64
 	deletedSectionID            uint64
 	listActiveSectionsCalled    bool
 	currentBuildMode            string
@@ -515,7 +597,8 @@ type fakeRepository struct {
 	addedQuestion                          SectionQuestion
 	deletedSectionQuestionID               uint64
 
-	ruleMatches                 map[uint64][]uint64
+	ruleMatches                 map[uint64][]MatchedQuestion
+	ruleDifficultyMatches       map[string][]MatchedQuestion
 	rules                       []Rule
 	recentExamQuestionIDs       map[uint64]bool
 	configuredRule              Rule
@@ -576,8 +659,9 @@ func (r *fakeRepository) ReorderSections(ctx context.Context, tenantID uint64, p
 	return nil
 }
 
-func (r *fakeRepository) DeleteSectionCascade(ctx context.Context, tenantID uint64, sectionID uint64) error {
+func (r *fakeRepository) DeleteSectionCascade(ctx context.Context, tenantID uint64, paperID uint64, sectionID uint64) error {
 	r.deletedSectionInTransaction = true
+	r.deletedSectionPaperID = paperID
 	r.deletedSectionID = sectionID
 	return nil
 }
@@ -656,12 +740,27 @@ func (r *fakeRepository) CreateRuleAndRecalculate(ctx context.Context, rule Rule
 	return rule, nil
 }
 
-func (r *fakeRepository) MatchQuestionsForRule(ctx context.Context, tenantID uint64, paperID uint64, rule Rule) ([]uint64, error) {
+func (r *fakeRepository) MatchQuestionsForRule(ctx context.Context, tenantID uint64, paperID uint64, rule Rule) ([]MatchedQuestion, error) {
+	if rule.Difficulty != nil && r.ruleDifficultyMatches != nil {
+		return r.ruleDifficultyMatches[*rule.Difficulty], nil
+	}
 	return r.ruleMatches[rule.ID], nil
 }
 
 func (r *fakeRepository) RecentExamQuestionIDs(ctx context.Context, tenantID uint64, paperID uint64, limit int) (map[uint64]bool, error) {
 	return r.recentExamQuestionIDs, nil
+}
+
+func matchedQuestions(ids ...uint64) []MatchedQuestion {
+	questions := make([]MatchedQuestion, 0, len(ids))
+	for _, id := range ids {
+		questions = append(questions, MatchedQuestion{ID: id, ScoreDefault: "3"})
+	}
+	return questions
+}
+
+func matchedQuestionsWithScores(questions ...MatchedQuestion) []MatchedQuestion {
+	return questions
 }
 
 func (r *fakeRepository) TagIDsByNames(ctx context.Context, tenantID uint64, names []string) ([]uint64, error) {

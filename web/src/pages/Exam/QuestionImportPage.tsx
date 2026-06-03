@@ -24,6 +24,8 @@ type QuestionImportPageProps = {
   spaceID?: number;
 };
 
+const questionImportFileMaxBytes = 100 * 1024 * 1024;
+
 export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }: QuestionImportPageProps) {
   const { showError, showSuccess } = useFeedback();
   const [importRecords, setImportRecords] = useState<ImportRecord[]>([]);
@@ -178,7 +180,7 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
                   </a>
                 }
                 label="题目导入文件"
-                maxSizeBytes={2 * 1024 * 1024}
+                maxSizeBytes={questionImportFileMaxBytes}
                 onFileAccepted={(file) => {
                   setImportFile(file);
                 }}

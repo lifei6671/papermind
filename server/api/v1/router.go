@@ -40,7 +40,7 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	tenantHandler := tenantHandler{service: deps.Tenants, spaces: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository, passwordMinLength: deps.PasswordMinLength}
 	spaceHandler := spaceHandler{service: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
 	userHandler := userHandler{service: deps.TenantUsers, passwordMinLength: deps.PasswordMinLength}
-	questionHandler := questionHandler{service: deps.Questions, members: deps.SpaceRepository, users: deps.TenantUsers}
+	questionHandler := questionHandler{service: deps.Questions, members: deps.SpaceRepository, users: deps.TenantUsers, importJobs: newQuestionImportJobStore()}
 	paperHandler := paperHandler{service: deps.Papers, papers: deps.PaperRepository, members: deps.SpaceRepository, users: deps.TenantUsers}
 	authHandler := authHandler{platformUsers: deps.PlatformUsers, tenantUsers: deps.TenantUsers, spaces: deps.Spaces, sessionMaxAgeSeconds: deps.AuthSessionTTL, passwordMinLength: deps.PasswordMinLength}
 	uploadHandler := uploadHandler{store: deps.UploadStore, now: time.Now}
@@ -119,6 +119,8 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	api.POST("/questions/:id/enable", apimiddleware.RequireExamBusinessPrincipal(), questionHandler.enable)
 	api.DELETE("/questions/:id", apimiddleware.RequireExamBusinessPrincipal(), questionHandler.delete)
 	api.POST("/questions/import", apimiddleware.RequireExamBusinessPrincipal(), questionHandler.importQuestions)
+	api.POST("/questions/import/jobs", apimiddleware.RequireExamBusinessPrincipal(), questionHandler.startImportQuestionsJob)
+	api.GET("/questions/import/jobs/:job_id/events", apimiddleware.RequireExamBusinessPrincipal(), questionHandler.streamImportQuestionJobEvents)
 	api.GET("/papers", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.list)
 	api.POST("/papers", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.create)
 	api.PUT("/papers/:id", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.update)
@@ -135,6 +137,7 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	api.GET("/papers/:id/questions", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.listSectionQuestions)
 	api.POST("/papers/:id/sections", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.createSection)
 	api.PUT("/papers/:id/sections/reorder", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.reorderSections)
+	api.DELETE("/papers/:id/sections/:section_id", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.deleteSection)
 	api.POST("/papers/:id/sections/:section_id/questions", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.addManualQuestion)
 	api.PUT("/papers/:id/sections/:section_id/questions/:question_id", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.updateSectionQuestion)
 	api.DELETE("/papers/:id/sections/:section_id/questions/:question_id", apimiddleware.RequireExamBusinessPrincipal(), paperHandler.deleteSectionQuestion)

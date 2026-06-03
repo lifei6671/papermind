@@ -75,8 +75,66 @@ describe("questionApi", () => {
     );
     expect(result).toEqual({
       successCount: 1,
+      duplicateCount: 0,
       errors: [{ rowNumber: 3, reason: "choice question needs correct answer" }],
     });
+  });
+
+  test("启动异步导入任务时提交文件并返回任务 ID", async () => {
+    const file = new File(["type,title"], "questions.csv", { type: "text/csv" });
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      const body = init?.body as FormData;
+      expect(body.get("tenant_id")).toBe("10");
+      expect(body.get("space_id")).toBe("301");
+      expect(body.get("status")).toBe("enabled");
+      expect(body.get("file")).toBe(file);
+
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { job_id: "job-1" },
+      }));
+    });
+    const api = createQuestionAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.startQuestionImportJob({ tenantID: 10, spaceID: 301, file, status: "enabled" });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/questions/import/jobs",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(result).toEqual({ jobID: "job-1" });
+  });
+
+  test("订阅异步导入任务时沿用 API baseUrl", () => {
+    const createdSources: Array<{ url: string; init?: EventSourceInit }> = [];
+    class FakeEventSource {
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(url: string | URL, init?: EventSourceInit) {
+        createdSources.push({ url: String(url), init });
+      }
+
+      addEventListener() {
+        return undefined;
+      }
+
+      close() {
+        return undefined;
+      }
+    }
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const api = createQuestionAPI(createApiClient({ baseUrl: "http://api.test", fetcher: vi.fn() }));
+
+    const unsubscribe = api.subscribeQuestionImportJob({ jobID: "job-1" }, vi.fn(), vi.fn());
+    unsubscribe();
+
+    expect(createdSources).toEqual([{
+      url: "http://api.test/api/v1/questions/import/jobs/job-1/events",
+      init: { withCredentials: true },
+    }]);
+    vi.unstubAllGlobals();
   });
 
   test("创建题目时提交空间范围并使用响应字段", async () => {

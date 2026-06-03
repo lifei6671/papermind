@@ -6,6 +6,7 @@ import { Link, useLocation } from "react-router-dom";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { Pagination } from "../../components/ui/Pagination";
+import { RadioGroup, RadioGroupItem } from "../../components/ui/RadioGroup";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { Select } from "../../components/ui/Select";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
@@ -14,7 +15,7 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { formatApiErrorMessage } from "../../api/client";
 import { useFeedback } from "../../app/feedback-context";
 import { questionApi } from "../../api/questions";
-import type { QuestionAPI, QuestionListResult, QuestionRow, QuestionType } from "../../api/questions";
+import type { QuestionAPI, QuestionImportJobEvent, QuestionListResult, QuestionRow, QuestionType } from "../../api/questions";
 import { questionImportTemplateFileName, questionImportTemplateHref } from "./questionImportTemplate";
 
 type QuestionBankPageProps = {
@@ -25,9 +26,14 @@ type QuestionBankPageProps = {
 
 type ImportRecord = {
   id: number;
+  file: File;
   fileName: string;
+  status: "pending" | "uploading" | "processing" | "completed" | "failed";
+  progress: number;
   successCount: number;
   errorCount: number;
+  duplicateCount: number;
+  message: string;
 };
 
 const questionDifficultyLabels = {
@@ -35,6 +41,8 @@ const questionDifficultyLabels = {
   medium: "中等",
   hard: "困难",
 };
+
+const questionImportFileMaxBytes = 100 * 1024 * 1024;
 
 const questionTypeLabels: Record<QuestionType, string> = {
   single: "单选题",
@@ -67,8 +75,8 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [isImportDrawerOpen, setIsImportDrawerOpen] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
   const [importRecords, setImportRecords] = useState<ImportRecord[]>([]);
+  const [importTargetStatus, setImportTargetStatus] = useState<"draft" | "enabled">("draft");
   const [isImporting, setIsImporting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
@@ -133,28 +141,17 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
   }
 
   async function handleImportQuestions() {
-    if (!importFile) {
+    const pendingRecords = importRecords.filter((record) => record.status === "pending" || record.status === "failed");
+    if (pendingRecords.length === 0) {
       showError("请选择题目导入文件");
       return;
     }
 
     setIsImporting(true);
     try {
-      const result = await api.importQuestions({
-        tenantID,
-        ...(spaceID === undefined ? {} : { spaceID }),
-        file: importFile,
-      });
-      setImportRecords((items) => [
-        {
-          id: Date.now(),
-          fileName: importFile.name,
-          successCount: result.successCount,
-          errorCount: result.errors.length,
-        },
-        ...items,
-      ]);
-      showSuccess(`${importFile.name} 导入成功 ${result.successCount} 条，失败 ${result.errors.length} 条`);
+      for (const record of pendingRecords) {
+        await runImportRecord(record);
+      }
       const data = await api.listQuestions({
         tenantID,
         ...(spaceID === undefined ? {} : { spaceID }),
@@ -163,12 +160,87 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
         search: appliedSearchQuery,
       });
       applyQuestionPageData(data);
-      setImportFile(null);
     } catch (error) {
       showError(formatApiErrorMessage(error, "题目导入失败"));
     } finally {
       setIsImporting(false);
     }
+  }
+
+  async function runImportRecord(record: ImportRecord) {
+    try {
+      updateImportRecord(record.id, { status: "uploading", progress: Math.max(record.progress, 8), message: "上传中" });
+      const job = await api.startQuestionImportJob({
+        tenantID,
+        ...(spaceID === undefined ? {} : { spaceID }),
+        file: record.file,
+        status: importTargetStatus,
+      });
+      updateImportRecord(record.id, { status: "processing", progress: Math.max(record.progress, 15), message: "解析中" });
+      await waitForImportJob(record.id, job.jobID);
+    } catch (error) {
+      updateImportRecord(record.id, {
+        status: "failed",
+        progress: 100,
+        message: formatApiErrorMessage(error, "题目导入失败"),
+      });
+      throw error;
+    }
+  }
+
+  function waitForImportJob(recordID: number, jobID: string) {
+    return new Promise<void>((resolve, reject) => {
+      let unsubscribe: () => void = () => undefined;
+      unsubscribe = api.subscribeQuestionImportJob(
+        { jobID },
+        (event) => {
+          const progress = importEventProgress(event);
+          updateImportRecord(recordID, {
+            status: event.status === "completed" ? "completed" : event.status === "failed" ? "failed" : "processing",
+            progress,
+            successCount: event.successCount,
+            errorCount: event.errorCount,
+            duplicateCount: event.duplicateCount,
+            message: event.message || importEventMessage(event),
+          });
+          if (event.status === "completed") {
+            showSuccess(`${event.fileName} 导入完成 ${event.successCount} 条，失败 ${event.errorCount} 条，重复 ${event.duplicateCount} 条`);
+            unsubscribe();
+            resolve();
+          }
+          if (event.status === "failed") {
+            unsubscribe();
+            reject(new Error(event.message || "题目导入失败"));
+          }
+        },
+        (error) => {
+          updateImportRecord(recordID, { status: "failed", message: error.message });
+          reject(error);
+        },
+      );
+    });
+  }
+
+  function updateImportRecord(recordID: number, patch: Partial<ImportRecord>) {
+    setImportRecords((items) => items.map((item) => item.id === recordID ? { ...item, ...patch } : item));
+  }
+
+  function addImportFiles(files: File[]) {
+    const now = Date.now();
+    setImportRecords((items) => [
+      ...items,
+      ...files.map((file, index) => ({
+        id: now + index,
+        file,
+        fileName: file.name,
+        status: "pending" as const,
+        progress: 0,
+        successCount: 0,
+        errorCount: 0,
+        duplicateCount: 0,
+        message: "等待导入",
+      })),
+    ]);
   }
 
   async function runQuestionAction(question: QuestionRow, action: "delete" | "disable" | "enable") {
@@ -377,13 +449,33 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
                   </a>
                 }
                 label="题目导入文件"
-                maxSizeBytes={2 * 1024 * 1024}
-                onFileAccepted={(file) => {
-                  setImportFile(file);
+                maxSizeBytes={questionImportFileMaxBytes}
+                onFileAccepted={() => undefined}
+                onFilesAccepted={(files) => {
+                  addImportFiles(files);
                 }}
+                multiple
                 showPreview={false}
                 uploadPrompt="选择 CSV 文件或拖动文件到此处"
               />
+              <div className="question-import-status-field">
+                <span>导入后题目状态</span>
+                <RadioGroup
+                  ariaLabel="导入后题目状态"
+                  className="question-import-status-options"
+                  onValueChange={(value) => setImportTargetStatus(value as "draft" | "enabled")}
+                  value={importTargetStatus}
+                >
+                  <label className="question-import-status-option" htmlFor="question-import-status-draft">
+                    <RadioGroupItem id="question-import-status-draft" value="draft" />
+                    <span>草稿</span>
+                  </label>
+                  <label className="question-import-status-option" htmlFor="question-import-status-enabled">
+                    <RadioGroupItem id="question-import-status-enabled" value="enabled" />
+                    <span>已启用</span>
+                  </label>
+                </RadioGroup>
+              </div>
               <div className="platform-dialog__actions">
                 <Button disabled={isImporting} variant="primary" onClick={() => void handleImportQuestions()} type="button">
                   确认导入
@@ -394,8 +486,8 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
                   <thead>
                     <tr>
                       <th scope="col">文件</th>
-                      <th scope="col">成功</th>
-                      <th scope="col">失败</th>
+                      <th scope="col">进度</th>
+                      <th scope="col">结果</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -403,8 +495,13 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
                     {importRecords.map((record) => (
                       <tr key={record.id}>
                         <td>{record.fileName}</td>
-                        <td>{record.successCount}</td>
-                        <td>{record.errorCount}</td>
+                        <td>
+                          <div className="question-import-progress">
+                            <progress aria-label={`${record.fileName} 导入进度`} max={100} value={record.progress} />
+                            <span>{record.progress}%</span>
+                          </div>
+                        </td>
+                        <td>{formatImportRecordResult(record)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -425,6 +522,39 @@ function truncateQuestionTitle(title: string) {
     return normalized;
   }
   return `${normalized.slice(0, 32)}...`;
+}
+
+function importEventProgress(event: QuestionImportJobEvent) {
+  if (event.status === "completed") {
+    return 100;
+  }
+  if (event.status === "failed") {
+    return 100;
+  }
+  if (event.totalRows <= 0) {
+    return 15;
+  }
+  return Math.max(15, Math.min(99, Math.round((event.processedRows / event.totalRows) * 100)));
+}
+
+function importEventMessage(event: QuestionImportJobEvent) {
+  if (event.status === "completed") {
+    return "导入完成";
+  }
+  if (event.status === "failed") {
+    return "导入失败";
+  }
+  return "导入中";
+}
+
+function formatImportRecordResult(record: ImportRecord) {
+  if (record.status === "pending" || record.status === "uploading" || record.status === "processing") {
+    return record.message;
+  }
+  if (record.status === "failed") {
+    return record.message || "导入失败";
+  }
+  return `成功 ${record.successCount} / 失败 ${record.errorCount} / 重复 ${record.duplicateCount}`;
 }
 
 function renderQuestionTitleCell(title: string) {

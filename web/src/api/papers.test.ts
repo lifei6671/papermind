@@ -395,7 +395,7 @@ describe("paperApi", () => {
       }
       if (url.endsWith("/api/v1/papers/100/rule-fixed/generate")) {
         expect(init?.method).toBe("POST");
-        expect(JSON.parse(init?.body as string)).toEqual({ tenant_id: 10 });
+        expect(JSON.parse(init?.body as string)).toEqual({ tenant_id: 10, blocked_question_ids: [201] });
         return new Response(JSON.stringify({
           code: 0,
           message: "ok",
@@ -477,7 +477,7 @@ describe("paperApi", () => {
         shuffleOptions: true,
       }],
     });
-    await expect(api.generateRuleFixed({ tenantID: 10, paperID: 100 })).resolves.toEqual({
+    await expect(api.generateRuleFixed({ tenantID: 10, paperID: 100, blockedQuestionIDs: [201] })).resolves.toEqual({
       paperID: 100,
       generated: true,
     });
@@ -726,6 +726,25 @@ describe("paperApi", () => {
         { sectionID: 12, sortOrder: 1 },
         { sectionID: 11, sortOrder: 2 },
       ],
+    })).resolves.toBeUndefined();
+  });
+
+  test("删除大题接口会提交租户和大题范围", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/v1/papers/100/sections/12?tenant_id=10");
+      expect(init?.method).toBe("DELETE");
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { deleted: true },
+      }));
+    });
+    const api = createPaperAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.deleteSection({
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 12,
     })).resolves.toBeUndefined();
   });
 });

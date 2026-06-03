@@ -71,6 +71,7 @@ export type ImportQuestionsInput = {
   tenantID: number;
   spaceID?: number;
   file: File;
+  status?: "draft" | "enabled";
 };
 
 export type ImportQuestionError = {
@@ -80,7 +81,29 @@ export type ImportQuestionError = {
 
 export type ImportQuestionsResult = {
   successCount: number;
+  duplicateCount: number;
   errors: ImportQuestionError[];
+};
+
+export type StartQuestionImportJobResult = {
+  jobID: string;
+};
+
+export type QuestionImportJobEvent = {
+  jobID: string;
+  status: "queued" | "running" | "completed" | "failed";
+  fileName: string;
+  totalRows: number;
+  processedRows: number;
+  successCount: number;
+  errorCount: number;
+  duplicateCount: number;
+  errors: ImportQuestionError[];
+  message?: string;
+};
+
+export type QuestionImportJobInput = {
+  jobID: string;
 };
 
 export type QuestionListResult = {
@@ -107,7 +130,16 @@ export type QuestionImportAPI = {
   importQuestions(input: ImportQuestionsInput): Promise<ImportQuestionsResult>;
 };
 
-export type QuestionAPI = QuestionBankAPI & QuestionManagementAPI & QuestionImportAPI;
+export type QuestionImportJobAPI = {
+  startQuestionImportJob(input: ImportQuestionsInput): Promise<StartQuestionImportJobResult>;
+  subscribeQuestionImportJob(
+    input: QuestionImportJobInput,
+    onEvent: (event: QuestionImportJobEvent) => void,
+    onError: (error: Error) => void,
+  ): () => void;
+};
+
+export type QuestionAPI = QuestionBankAPI & QuestionManagementAPI & QuestionImportAPI & QuestionImportJobAPI;
 
 type QuestionAPIResponse = {
   id: number;
@@ -137,10 +169,31 @@ type QuestionAPIResponse = {
 
 type ImportQuestionsAPIResponse = {
   success_count: number;
+  duplicate_count?: number;
   errors: Array<{
     row_number: number;
     reason: string;
   }>;
+};
+
+type StartQuestionImportJobAPIResponse = {
+  job_id: string;
+};
+
+type QuestionImportJobEventAPIResponse = {
+  job_id: string;
+  status: QuestionImportJobEvent["status"];
+  file_name: string;
+  total_rows: number;
+  processed_rows: number;
+  success_count: number;
+  error_count: number;
+  duplicate_count: number;
+  errors: Array<{
+    row_number: number;
+    reason: string;
+  }>;
+  message?: string;
 };
 
 const defaultApiClient = createApiClient({
@@ -229,9 +282,36 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
       if (input.spaceID !== undefined) {
         formData.append("space_id", String(input.spaceID));
       }
+      if (input.status !== undefined) {
+        formData.append("status", input.status);
+      }
       formData.append("file", input.file);
       const data = await apiClient.upload<ImportQuestionsAPIResponse>("/api/v1/questions/import", formData);
       return mapImportQuestionsResponse(data);
+    },
+    async startQuestionImportJob(input) {
+      const formData = new FormData();
+      formData.append("tenant_id", String(input.tenantID));
+      if (input.spaceID !== undefined) {
+        formData.append("space_id", String(input.spaceID));
+      }
+      if (input.status !== undefined) {
+        formData.append("status", input.status);
+      }
+      formData.append("file", input.file);
+      const data = await apiClient.upload<StartQuestionImportJobAPIResponse>("/api/v1/questions/import/jobs", formData);
+      return { jobID: data.job_id };
+    },
+    subscribeQuestionImportJob(input, onEvent, onError) {
+      const source = new EventSource(apiClient.url(`/api/v1/questions/import/jobs/${input.jobID}/events`), { withCredentials: true });
+      source.addEventListener("import_progress", (message) => {
+        onEvent(mapQuestionImportJobEventResponse(JSON.parse((message as MessageEvent).data) as QuestionImportJobEventAPIResponse));
+      });
+      source.onerror = () => {
+        onError(new Error("题目导入进度连接失败"));
+        source.close();
+      };
+      return () => source.close();
     },
   };
 }
@@ -304,10 +384,29 @@ function optionKeyByIndex(index: number) {
 function mapImportQuestionsResponse(response: ImportQuestionsAPIResponse): ImportQuestionsResult {
   return {
     successCount: response.success_count,
+    duplicateCount: response.duplicate_count ?? 0,
     errors: response.errors.map((item) => ({
       rowNumber: item.row_number,
       reason: item.reason,
     })),
+  };
+}
+
+function mapQuestionImportJobEventResponse(response: QuestionImportJobEventAPIResponse): QuestionImportJobEvent {
+  return {
+    jobID: response.job_id,
+    status: response.status,
+    fileName: response.file_name,
+    totalRows: response.total_rows,
+    processedRows: response.processed_rows,
+    successCount: response.success_count,
+    errorCount: response.error_count,
+    duplicateCount: response.duplicate_count,
+    errors: response.errors.map((item) => ({
+      rowNumber: item.row_number,
+      reason: item.reason,
+    })),
+    message: response.message,
   };
 }
 

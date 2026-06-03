@@ -2,11 +2,14 @@ package v1
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -123,6 +126,233 @@ func TestQuestionImportAPIRouteParsesCSVAndReturnsRowErrors(t *testing.T) {
 	}
 	if importedCount != 3 {
 		t.Fatalf("expected imported questions persisted, got %d", importedCount)
+	}
+}
+
+func TestQuestionImportJobAPIRouteStartsAsyncImport(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	requestBody, contentType := buildQuestionImportMultipart(t, `题型,题干,选项,正确答案,标准答案,参考答案,题目解析,难度,标签
+简答题,异步导入题,,,,参考答案,异步导入解析,中等,导入
+`)
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/questions/import/jobs", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("start import job status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	body := decodeExamAPIResponse[startQuestionImportJobResponse](t, recorder.Body.Bytes())
+	if body.Data.JobID == "" {
+		t.Fatalf("expected import job id, got %#v", body.Data)
+	}
+
+	streamRecorder := httptest.NewRecorder()
+	router.ServeHTTP(streamRecorder, authorizedRequest(http.MethodGet, "/api/v1/questions/import/jobs/"+body.Data.JobID+"/events?tenant_id=10", nil, authHeader))
+	if streamRecorder.Code != http.StatusOK {
+		t.Fatalf("stream import job status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
+	}
+	streamBody := streamRecorder.Body.String()
+	if !strings.Contains(streamBody, "event: import_progress") || !strings.Contains(streamBody, `"status":"completed"`) || !strings.Contains(streamBody, `"success_count":1`) {
+		t.Fatalf("expected completed import progress stream, got %s", streamBody)
+	}
+}
+
+func TestQuestionImportJobRunningEventsDoNotRetainCumulativeErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	requestBody, contentType := buildQuestionImportMultipart(t, `题型,题干,选项,正确答案,标准答案,参考答案,题目解析,难度,标签
+单选题,缺少答案 1,A.正确|B.错误,,,,解析,中等,导入
+单选题,缺少答案 2,A.正确|B.错误,,,,解析,中等,导入
+`)
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/questions/import/jobs", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("start import job status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[startQuestionImportJobResponse](t, recorder.Body.Bytes())
+
+	streamRecorder := httptest.NewRecorder()
+	router.ServeHTTP(streamRecorder, authorizedRequest(http.MethodGet, "/api/v1/questions/import/jobs/"+body.Data.JobID+"/events?tenant_id=10", nil, authHeader))
+	if streamRecorder.Code != http.StatusOK {
+		t.Fatalf("stream import job status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
+	}
+
+	events := decodeQuestionImportSSEEvents(t, streamRecorder.Body.String())
+	var completedErrors int
+	for _, event := range events {
+		if event.Status == "running" && len(event.Errors) > 0 {
+			t.Fatalf("running progress event should not retain cumulative errors, got %#v", event.Errors)
+		}
+		if event.Status == "completed" {
+			completedErrors = len(event.Errors)
+		}
+	}
+	if completedErrors != 2 {
+		t.Fatalf("expected completed event to carry final row errors, got %d", completedErrors)
+	}
+}
+
+func TestQuestionImportJobAPIRouteRejectsOversizedBodyBeforeParsingForm(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	body, contentType := buildOversizedQuestionImportMultipart(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/questions/import/jobs", body)
+	request.Header.Set("Authorization", authHeader)
+	request.Header.Set("Content-Type", contentType)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected oversized import body to return 413, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestQuestionImportAPIRouteRejectsFileOverDefaultLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	body, contentType := buildQuestionImportMultipartWithLargeFile(t, defaultQuestionImportFileMaxBytes+1)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/questions/import", body)
+	request.Header.Set("Authorization", authHeader)
+	request.Header.Set("Content-Type", contentType)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected oversized import file to return 400, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "导入文件不能超过 100MB") {
+		t.Fatalf("expected file size limit message, got %s", recorder.Body.String())
+	}
+}
+
+func decodeQuestionImportSSEEvents(t *testing.T, streamBody string) []questionImportJobEventResponse {
+	t.Helper()
+	events := []questionImportJobEventResponse{}
+	for _, line := range strings.Split(streamBody, "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var event questionImportJobEventResponse
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
+			t.Fatalf("decode import progress event: %v", err)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func TestQuestionImportJobStoreKeepsTerminalEventWhenSubscriberBacklogged(t *testing.T) {
+	store := newQuestionImportJobStore()
+	jobID := store.Create("questions.csv", 10, nil)
+	_, updates, unsubscribe, ok := store.Subscribe(jobID)
+	if !ok {
+		t.Fatalf("expected import job subscription")
+	}
+	defer unsubscribe()
+
+	for index := 0; index < 8; index++ {
+		store.Append(jobID, questionImportJobEvent{
+			status:        "running",
+			fileName:      "questions.csv",
+			totalRows:     10,
+			processedRows: index + 1,
+		})
+	}
+	store.Append(jobID, questionImportJobEvent{
+		status:        "completed",
+		fileName:      "questions.csv",
+		totalRows:     10,
+		processedRows: 10,
+		successCount:  10,
+	})
+
+	receivedCompleted := false
+	for {
+		select {
+		case event := <-updates:
+			if event.status == "completed" {
+				receivedCompleted = true
+			}
+		default:
+			if !receivedCompleted {
+				t.Fatalf("expected completed event to remain deliverable when subscriber backlog is full")
+			}
+			return
+		}
+	}
+}
+
+func TestQuestionImportJobAPIRouteSupportsEnabledStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	requestBody, contentType := buildQuestionImportMultipartWithFields(t, map[string]string{"status": "enabled"}, `题型,题干,选项,正确答案,标准答案,参考答案,题目解析,难度,标签
+简答题,导入后启用题,,,,参考答案,启用解析,中等,导入
+`)
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/questions/import/jobs", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("start import job status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[startQuestionImportJobResponse](t, recorder.Body.Bytes())
+
+	streamRecorder := httptest.NewRecorder()
+	router.ServeHTTP(streamRecorder, authorizedRequest(http.MethodGet, "/api/v1/questions/import/jobs/"+body.Data.JobID+"/events?tenant_id=10", nil, authHeader))
+	if streamRecorder.Code != http.StatusOK {
+		t.Fatalf("stream import job status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
+	}
+
+	var status string
+	if err := gormDB.Table("questions").
+		Where("tenant_id = ?", 10).
+		Where("title = ?", "导入后启用题").
+		Pluck("status", &status).Error; err != nil {
+		t.Fatalf("read imported question status: %v", err)
+	}
+	if status != constant.QuestionStatusEnabled {
+		t.Fatalf("expected imported question enabled, got %q", status)
 	}
 }
 
@@ -517,10 +747,21 @@ func seedQuestionPaperReferenceAPITestData(t *testing.T, gormDB *gorm.DB) {
 func buildQuestionImportMultipart(t *testing.T, csvContent string) (*bytes.Buffer, string) {
 	t.Helper()
 
+	return buildQuestionImportMultipartWithFields(t, nil, csvContent)
+}
+
+func buildQuestionImportMultipartWithFields(t *testing.T, fields map[string]string, csvContent string) (*bytes.Buffer, string) {
+	t.Helper()
+
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	if err := writer.WriteField("tenant_id", "10"); err != nil {
 		t.Fatalf("write tenant field: %v", err)
+	}
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatalf("write %s field: %v", key, err)
+		}
 	}
 	part, err := writer.CreateFormFile("file", "questions.csv")
 	if err != nil {
@@ -533,4 +774,41 @@ func buildQuestionImportMultipart(t *testing.T, csvContent string) (*bytes.Buffe
 		t.Fatalf("close multipart writer: %v", err)
 	}
 	return body, writer.FormDataContentType()
+}
+
+func buildOversizedQuestionImportMultipart(t *testing.T) (io.Reader, string) {
+	t.Helper()
+
+	return buildQuestionImportMultipartWithLargeFile(t, defaultQuestionImportRequestMaxBytes)
+}
+
+func buildQuestionImportMultipartWithLargeFile(t *testing.T, fileBytes int64) (io.Reader, string) {
+	t.Helper()
+
+	prefix := &bytes.Buffer{}
+	writer := multipart.NewWriter(prefix)
+	if err := writer.WriteField("tenant_id", "10"); err != nil {
+		t.Fatalf("write tenant field: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "too-large.csv")
+	if err != nil {
+		t.Fatalf("create import file field: %v", err)
+	}
+	if _, err := part.Write([]byte("题型,题干,选项,正确答案,标准答案,参考答案,题目解析,难度,标签\n")); err != nil {
+		t.Fatalf("write import file header: %v", err)
+	}
+	suffix := fmt.Sprintf("\r\n--%s--\r\n", writer.Boundary())
+	body := io.MultiReader(
+		prefix,
+		io.LimitReader(zeroReader{}, fileBytes),
+		strings.NewReader(suffix),
+	)
+	return body, writer.FormDataContentType()
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }

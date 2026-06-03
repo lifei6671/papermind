@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -236,6 +237,46 @@ func TestPaperRuleAPIRoutesConfigureGenerateAndPrecheckWithSQLite(t *testing.T) 
 	}
 }
 
+func TestPaperRuleFixedGenerateInsufficientPoolReturnsFriendlyMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPaperAPITestData(t, gormDB)
+	seedPaperRuleAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+
+	createRuleRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRuleRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/sections/1/rules", []byte(`{
+		"tenant_id": 10,
+		"sort_order": 1,
+		"difficulty": "easy",
+		"tag_ids": [1],
+		"question_count": 99,
+		"score_per_question": "4"
+	}`), authHeader))
+	if createRuleRecorder.Code != http.StatusOK {
+		t.Fatalf("create rule status = %d, body = %s", createRuleRecorder.Code, createRuleRecorder.Body.String())
+	}
+
+	generateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(generateRecorder, authorizedRequest(http.MethodPost, "/api/v1/papers/100/rule-fixed/generate", []byte(`{
+		"tenant_id": 10
+	}`), authHeader))
+	if generateRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("generate insufficient rule_fixed status = %d, body = %s", generateRecorder.Code, generateRecorder.Body.String())
+	}
+	body := generateRecorder.Body.String()
+	if !strings.Contains(body, "题库题量不足") || strings.Contains(body, "question pool insufficient") {
+		t.Fatalf("expected friendly insufficient pool message, body = %s", body)
+	}
+}
+
 func TestPaperAssemblyWorkspaceRoutesManageSectionQuestionsWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -424,6 +465,46 @@ func TestPaperAssemblyWorkspaceRoutesReorderSectionsWithSQLite(t *testing.T) {
 		t.Fatalf("expected original section ordered second, got %#v", listBody.Data.Items)
 	}
 
+	if err := gormDB.Exec(`
+		INSERT INTO paper_section_rules (
+			id, tenant_id, section_id, paper_id, sort_order, question_count, score_per_question,
+			created_at, created_by_type, updated_at, updated_by_type, ext_json
+		) VALUES (9901, 10, ?, 100, 1, 2, '5', ?, 'tenant_user', ?, 'tenant_user', '{}')
+	`, createSectionBody.Data.ID, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed section rule: %v", err)
+	}
+	deleteSectionRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteSectionRecorder, authorizedRequest(
+		http.MethodDelete,
+		fmt.Sprintf("/api/v1/papers/100/sections/%d?tenant_id=10", createSectionBody.Data.ID),
+		nil,
+		authHeader,
+	))
+	if deleteSectionRecorder.Code != http.StatusOK {
+		t.Fatalf("delete section status = %d, body = %s", deleteSectionRecorder.Code, deleteSectionRecorder.Body.String())
+	}
+	listAfterDeleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listAfterDeleteRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers/100/sections?tenant_id=10", nil, authHeader))
+	if listAfterDeleteRecorder.Code != http.StatusOK {
+		t.Fatalf("list sections after delete status = %d, body = %s", listAfterDeleteRecorder.Code, listAfterDeleteRecorder.Body.String())
+	}
+	listAfterDeleteBody := decodeExamAPIResponse[paperSectionListResponse](t, listAfterDeleteRecorder.Body.Bytes())
+	if len(listAfterDeleteBody.Data.Items) != 1 {
+		t.Fatalf("unexpected section count after delete: %#v", listAfterDeleteBody.Data.Items)
+	}
+	if listAfterDeleteBody.Data.Items[0].ID != 1 || listAfterDeleteBody.Data.Items[0].SortOrder != 1 {
+		t.Fatalf("expected remaining section compacted to first, got %#v", listAfterDeleteBody.Data.Items)
+	}
+	var deletedRuleCount int64
+	if err := gormDB.Table("paper_section_rules").
+		Where("tenant_id = ? AND section_id = ?", 10, createSectionBody.Data.ID).
+		Count(&deletedRuleCount).Error; err != nil {
+		t.Fatalf("count deleted rules: %v", err)
+	}
+	if deletedRuleCount != 0 {
+		t.Fatalf("expected deleted section rules to be removed, got %d", deletedRuleCount)
+	}
+
 	missingRecorder := httptest.NewRecorder()
 	router.ServeHTTP(missingRecorder, authorizedRequest(http.MethodPut, "/api/v1/papers/100/sections/reorder", []byte(`{
 		"tenant_id": 10,
@@ -433,6 +514,105 @@ func TestPaperAssemblyWorkspaceRoutesReorderSectionsWithSQLite(t *testing.T) {
 	}`), authHeader))
 	if missingRecorder.Code != http.StatusInternalServerError {
 		t.Fatalf("expected missing section reorder to fail, got status = %d, body = %s", missingRecorder.Code, missingRecorder.Body.String())
+	}
+}
+
+func TestPaperDeleteSectionCompactsWhenSoftDeletedSectionKeepsSortOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPaperAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+
+	if err := gormDB.Exec(`
+		UPDATE paper_sections
+		SET sort_order = 2
+		WHERE tenant_id = 10 AND paper_id = 100 AND id = 1
+	`).Error; err != nil {
+		t.Fatalf("move active section out of historical deleted slot: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_sections (
+			id, tenant_id, paper_id, sort_order, name, question_type, instructions,
+			total_score, question_count, created_at, updated_at, ext_json, deleted_at
+		) VALUES (?, 10, 100, 1, '历史删除大题', ?, '', 0, 0, ?, ?, '{}', ?)
+	`, 9902, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow, fixedAPINow+1).Error; err != nil {
+		t.Fatalf("seed historical deleted section: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_sections (
+			id, tenant_id, paper_id, sort_order, name, question_type, instructions,
+			total_score, question_count, created_at, updated_at, ext_json
+		) VALUES (?, 10, 100, 3, '待删除大题', ?, '', 0, 0, ?, ?, '{}')
+	`, 9903, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed active section to delete: %v", err)
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/papers/100/sections/9903?tenant_id=10", nil, authHeader))
+	if deleteRecorder.Code != http.StatusOK {
+		t.Fatalf("delete section with historical sort slot status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+
+	listRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers/100/sections?tenant_id=10", nil, authHeader))
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list sections after compact status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
+	}
+	body := decodeExamAPIResponse[paperSectionListResponse](t, listRecorder.Body.Bytes())
+	if len(body.Data.Items) != 1 || body.Data.Items[0].ID != 1 || body.Data.Items[0].SortOrder != 1 {
+		t.Fatalf("expected remaining active section compacted despite historical deleted slot, got %#v", body.Data.Items)
+	}
+}
+
+func TestPaperDeleteSectionAvoidsSoftDeletedSectionAtTemporarySortOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedPaperAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+
+	if err := gormDB.Exec(`
+		INSERT INTO paper_sections (
+			id, tenant_id, paper_id, sort_order, name, question_type, instructions,
+			total_score, question_count, created_at, updated_at, ext_json
+		) VALUES (?, 10, 100, 2, '待删除大题', ?, '', 0, 0, ?, ?, '{}')
+	`, 9904, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed active section to delete: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO paper_sections (
+			id, tenant_id, paper_id, sort_order, name, question_type, instructions,
+			total_score, question_count, created_at, updated_at, ext_json, deleted_at
+		) VALUES (?, 10, 100, 3, '历史删除大题', ?, '', 0, 0, ?, ?, '{}', ?)
+	`, 9905, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow, fixedAPINow+1).Error; err != nil {
+		t.Fatalf("seed historical deleted section at temporary sort order: %v", err)
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/papers/100/sections/9904?tenant_id=10", nil, authHeader))
+	if deleteRecorder.Code != http.StatusOK {
+		t.Fatalf("delete section with occupied temporary sort order status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+
+	listRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers/100/sections?tenant_id=10", nil, authHeader))
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list sections after delete status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
+	}
+	body := decodeExamAPIResponse[paperSectionListResponse](t, listRecorder.Body.Bytes())
+	if len(body.Data.Items) != 1 || body.Data.Items[0].ID != 1 || body.Data.Items[0].SortOrder != 1 {
+		t.Fatalf("expected active section compacted after avoiding occupied temporary slot, got %#v", body.Data.Items)
 	}
 }
 

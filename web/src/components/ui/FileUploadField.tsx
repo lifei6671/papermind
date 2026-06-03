@@ -7,10 +7,12 @@ type FileUploadFieldProps = {
   accept?: string[];
   maxSizeBytes?: number;
   onFileAccepted: (file: File) => void;
+  onFilesAccepted?: (files: File[]) => void;
   onReject?: (message: string) => void;
   previewSrc?: string;
   selectedLabel?: string;
   showPreview?: boolean;
+  multiple?: boolean;
   helperAction?: ReactNode;
   uploadPrompt?: string;
   emptyPreviewText?: string;
@@ -21,10 +23,12 @@ export function FileUploadField({
   accept = [],
   maxSizeBytes,
   onFileAccepted,
+  onFilesAccepted,
   onReject,
   previewSrc,
   selectedLabel,
   showPreview = true,
+  multiple = false,
   helperAction,
   uploadPrompt = "选择图片或拖动图片到此处",
   emptyPreviewText = "暂未选择图片",
@@ -42,47 +46,52 @@ export function FileUploadField({
   }, [previewURL]);
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
-    if (!file) {
+    const files = Array.from(event.currentTarget.files ?? []);
+    if (files.length === 0) {
       return;
     }
 
-    acceptFile(file, () => {
+    acceptFiles(files, () => {
       event.currentTarget.value = "";
     });
   }
 
   function handleDrop(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
-    const file = event.dataTransfer.files?.[0];
-    if (!file) {
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length === 0) {
       return;
     }
 
-    acceptFile(file);
+    acceptFiles(files);
   }
 
-  function acceptFile(file: File, resetInput?: () => void) {
-    if (maxSizeBytes !== undefined && file.size > maxSizeBytes) {
-      resetInput?.();
-      setSelectedName("");
-      setPreviewURL("");
-      onReject?.(`文件不能超过 ${formatBytes(maxSizeBytes)}`);
-      return;
+  function acceptFiles(files: File[], resetInput?: () => void) {
+    const acceptedFiles = multiple ? files : files.slice(0, 1);
+    for (const file of acceptedFiles) {
+      if (maxSizeBytes !== undefined && file.size > maxSizeBytes) {
+        resetInput?.();
+        setSelectedName("");
+        setPreviewURL("");
+        onReject?.(`文件不能超过 ${formatBytes(maxSizeBytes)}`);
+        return;
+      }
+
+      if (accept.length > 0 && !accept.includes(file.type)) {
+        resetInput?.();
+        setSelectedName("");
+        setPreviewURL("");
+        onReject?.("文件类型不符合要求");
+        return;
+      }
     }
 
-    if (accept.length > 0 && !accept.includes(file.type)) {
-      resetInput?.();
-      setSelectedName("");
-      setPreviewURL("");
-      onReject?.("文件类型不符合要求");
-      return;
-    }
-
-    setSelectedName(file.name);
-    const canPreviewImage = showPreview && file.type.startsWith("image/") && typeof URL.createObjectURL === "function";
-    setPreviewURL(canPreviewImage ? URL.createObjectURL(file) : "");
-    onFileAccepted(file);
+    const firstFile = acceptedFiles[0];
+    setSelectedName(acceptedFiles.length === 1 ? firstFile.name : `已选择 ${acceptedFiles.length} 个文件`);
+    const canPreviewImage = showPreview && firstFile.type.startsWith("image/") && typeof URL.createObjectURL === "function";
+    setPreviewURL(canPreviewImage ? URL.createObjectURL(firstFile) : "");
+    onFileAccepted(firstFile);
+    onFilesAccepted?.(acceptedFiles);
   }
 
   const layoutClassName = [
@@ -109,6 +118,7 @@ export function FileUploadField({
           <input
             accept={accept.join(",")}
             id={inputID}
+            multiple={multiple}
             onChange={handleFileChange}
             onDragOver={(event) => event.preventDefault()}
             onDrop={handleDrop}

@@ -17,9 +17,10 @@ import (
 // 公共题库和空间题库的写权限必须通过 permissionContextForResourceScope
 // 从真实资源范围重建，不能信任前端传入的空间范围。
 type questionHandler struct {
-	service *servicequestion.QuestionService
-	members spaceMemberFinder
-	users   *servicetenantuser.Service
+	service    *servicequestion.QuestionService
+	members    spaceMemberFinder
+	users      *servicetenantuser.Service
+	importJobs *questionImportJobStore
 }
 
 type createQuestionRequest struct {

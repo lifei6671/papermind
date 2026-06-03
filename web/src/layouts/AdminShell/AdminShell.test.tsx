@@ -336,6 +336,48 @@ test("桌面侧边栏支持收起为图标栏并可再次展开", async () => {
   expect(sidebar).not.toHaveClass("sidebar--collapsed");
 });
 
+test("桌面侧边栏折叠状态会保存到本地并在重新加载后恢复", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "明德学校",
+        spaceID: 0,
+        role: "tenant_admin",
+        status: "enabled",
+      }],
+      user: { displayName: "租户管理员", role: "tenant_admin", tenantID: 10, userID: 2 },
+    }),
+  );
+
+  const renderShell = () => render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/papers"]}>
+        <Routes>
+          <Route element={<AdminShell routes={adminRoutes} />}>
+            <Route path="/papers" element={<div>试卷页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  const firstRender = renderShell();
+  await user.click(within(screen.getByLabelText("后台导航")).getByRole("button", { name: "收起后台导航" }));
+  firstRender.unmount();
+
+  const { container } = renderShell();
+  const shell = container.querySelector(".admin-shell");
+  const sidebar = screen.getByLabelText("后台导航");
+
+  expect(shell).toHaveClass("admin-shell--sidebar-collapsed");
+  expect(sidebar).toHaveClass("sidebar--collapsed");
+  expect(sidebar).toHaveClass("sidebar--icon-only");
+});
+
 test("桌面侧边栏收起后需要重新移入才临时展开", async () => {
   const user = userEvent.setup();
   window.localStorage.setItem(

@@ -175,7 +175,8 @@ type createPaperRuleRequest struct {
 }
 
 type paperRuleActionRequest struct {
-	TenantID uint64 `json:"tenant_id"`
+	TenantID           uint64   `json:"tenant_id"`
+	BlockedQuestionIDs []uint64 `json:"blocked_question_ids"`
 }
 
 type updatePaperSectionQuestionRequest struct {
@@ -514,6 +515,35 @@ func (h paperHandler) reorderSections(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(nil))
 }
 
+func (h paperHandler) deleteSection(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	sectionID, err := readUintParam(c, "section_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "大题 ID 必须是正整数"))
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperWrite(c, tenantID, paperID) {
+		return
+	}
+	if err := h.service.DeleteSection(c.Request.Context(), tenantID, paperID, sectionID); err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(gin.H{"deleted": true}))
+}
+
 func (h paperHandler) addManualQuestion(c *gin.Context) {
 	paperID, err := readUintParam(c, "id")
 	if err != nil {
@@ -837,7 +867,7 @@ func (h paperHandler) generateRuleFixed(c *gin.Context) {
 	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
 		return
 	}
-	if err := h.service.GenerateRuleFixed(c.Request.Context(), request.TenantID, paperID); err != nil {
+	if err := h.service.GenerateRuleFixed(c.Request.Context(), request.TenantID, paperID, request.BlockedQuestionIDs); err != nil {
 		writePaperServiceError(c, err)
 		return
 	}
@@ -1318,7 +1348,7 @@ func writePaperServiceError(c *gin.Context, err error) {
 		return
 	}
 	if errors.Is(err, servicepaper.ErrQuestionPoolInsufficient) {
-		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "题库题量不足，请调整题型题量、知识点范围或难度分布后重试"))
 		return
 	}
 	if errors.Is(err, servicepaper.ErrExamMustBeWithdrawnBeforeRuleChange) {

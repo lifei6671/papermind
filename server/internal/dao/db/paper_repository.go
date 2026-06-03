@@ -208,23 +208,103 @@ func (r *PaperRepository) ReorderSections(ctx context.Context, tenantID uint64, 
 	})
 }
 
-func (r *PaperRepository) DeleteSectionCascade(ctx context.Context, tenantID uint64, sectionID uint64) error {
+func (r *PaperRepository) DeleteSectionCascade(ctx context.Context, tenantID uint64, paperID uint64, sectionID uint64) error {
 	now := r.now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&PaperSectionDO{}).
+		var maxSortOrder int
+		if err := tx.Unscoped().Model(&PaperSectionDO{}).
 			Where(PaperSectionColumns.TenantID+" = ?", tenantID).
-			Where(PaperSectionColumns.ID+" = ?", sectionID).
-			Update(PaperSectionColumns.DeletedAt, now).Error; err != nil {
+			Where(PaperSectionColumns.PaperID+" = ?", paperID).
+			Select("COALESCE(MAX(" + PaperSectionColumns.SortOrder + "), 0)").
+			Scan(&maxSortOrder).Error; err != nil {
 			return err
 		}
+		result := tx.Model(&PaperSectionDO{}).
+			Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionColumns.PaperID+" = ?", paperID).
+			Where(PaperSectionColumns.ID+" = ?", sectionID).
+			Where(PaperSectionColumns.DeletedAt+" = ?", 0).
+			Updates(map[string]any{
+				PaperSectionColumns.SortOrder: maxSortOrder + 1,
+				PaperSectionColumns.DeletedAt: now,
+				BaseColumns.UpdatedAt:         now,
+				BaseColumns.UpdatedByType:     AuditActorTenantUser,
+				BaseColumns.Version:           gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return servicepaper.ErrPaperNotFound
+		}
 		if err := tx.Where(PaperSectionQuestionColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionQuestionColumns.PaperID+" = ?", paperID).
 			Where(PaperSectionQuestionColumns.SectionID+" = ?", sectionID).
 			Delete(&PaperSectionQuestionDO{}).Error; err != nil {
 			return err
 		}
-		return tx.Where(PaperSectionRuleColumns.TenantID+" = ?", tenantID).
+		if err := tx.Where(PaperSectionRuleColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionRuleColumns.PaperID+" = ?", paperID).
 			Where(PaperSectionRuleColumns.SectionID+" = ?", sectionID).
-			Delete(&PaperSectionRuleDO{}).Error
+			Delete(&PaperSectionRuleDO{}).Error; err != nil {
+			return err
+		}
+
+		var remaining []PaperSectionDO
+		if err := tx.Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionColumns.PaperID+" = ?", paperID).
+			Where(PaperSectionColumns.DeletedAt+" = ?", 0).
+			Order(PaperSectionColumns.SortOrder + " ASC").
+			Find(&remaining).Error; err != nil {
+			return err
+		}
+		for index, section := range remaining {
+			if err := tx.Model(&PaperSectionDO{}).
+				Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+				Where(PaperSectionColumns.PaperID+" = ?", paperID).
+				Where(PaperSectionColumns.ID+" = ?", section.ID).
+				Update(PaperSectionColumns.SortOrder, maxSortOrder+index+2).Error; err != nil {
+				return err
+			}
+		}
+		var deletedSections []PaperSectionDO
+		if err := tx.Unscoped().
+			Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+			Where(PaperSectionColumns.PaperID+" = ?", paperID).
+			Where(PaperSectionColumns.DeletedAt+" <> ?", 0).
+			Order(PaperSectionColumns.SortOrder + " ASC").
+			Find(&deletedSections).Error; err != nil {
+			return err
+		}
+		for index, section := range deletedSections {
+			if err := tx.Unscoped().Model(&PaperSectionDO{}).
+				Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+				Where(PaperSectionColumns.PaperID+" = ?", paperID).
+				Where(PaperSectionColumns.ID+" = ?", section.ID).
+				Updates(map[string]any{
+					PaperSectionColumns.SortOrder: maxSortOrder + len(remaining) + index + 2,
+					BaseColumns.UpdatedAt:         now,
+					BaseColumns.UpdatedByType:     AuditActorTenantUser,
+					BaseColumns.Version:           gorm.Expr(BaseColumns.Version + " + 1"),
+				}).Error; err != nil {
+				return err
+			}
+		}
+		for index, section := range remaining {
+			if err := tx.Model(&PaperSectionDO{}).
+				Where(PaperSectionColumns.TenantID+" = ?", tenantID).
+				Where(PaperSectionColumns.PaperID+" = ?", paperID).
+				Where(PaperSectionColumns.ID+" = ?", section.ID).
+				Updates(map[string]any{
+					PaperSectionColumns.SortOrder: index + 1,
+					BaseColumns.UpdatedAt:         now,
+					BaseColumns.UpdatedByType:     AuditActorTenantUser,
+					BaseColumns.Version:           gorm.Expr(BaseColumns.Version + " + 1"),
+				}).Error; err != nil {
+				return err
+			}
+		}
+		return r.recalculateQuestionAggregates(tx, tenantID, paperID, now)
 	})
 }
 
@@ -625,7 +705,7 @@ func (r *PaperRepository) createRule(tx *gorm.DB, rule servicepaper.Rule, now in
 	return ruleFromDO(row), nil
 }
 
-func (r *PaperRepository) MatchQuestionsForRule(ctx context.Context, tenantID uint64, paperID uint64, rule servicepaper.Rule) ([]uint64, error) {
+func (r *PaperRepository) MatchQuestionsForRule(ctx context.Context, tenantID uint64, paperID uint64, rule servicepaper.Rule) ([]servicepaper.MatchedQuestion, error) {
 	var section PaperSectionDO
 	if err := r.db.WithContext(ctx).
 		Where(PaperSectionColumns.TenantID+" = ?", tenantID).
@@ -638,7 +718,7 @@ func (r *PaperRepository) MatchQuestionsForRule(ctx context.Context, tenantID ui
 
 	tagIDs := tagIDsFromFilter(rule.TagFilter)
 	query := r.db.WithContext(ctx).Table(QuestionDO{}.TableName()+" AS q").
-		Select("q."+QuestionColumns.ID).
+		Select("q."+QuestionColumns.ID+" AS id, q."+QuestionColumns.ScoreDefault+" AS score_default").
 		Joins("JOIN "+PaperDO{}.TableName()+" AS p ON p."+PaperColumns.TenantID+" = q."+QuestionColumns.TenantID+" AND p."+PaperColumns.ID+" = ? AND p."+PaperColumns.DeletedAt+" = 0", paperID).
 		Where("q."+QuestionColumns.TenantID+" = ?", tenantID).
 		Where("q."+QuestionColumns.Type+" = ?", section.QuestionType).
@@ -652,19 +732,19 @@ func (r *PaperRepository) MatchQuestionsForRule(ctx context.Context, tenantID ui
 		// 规则标签需要全部命中；这里按题目聚合后校验命中的不同 tag_id 数量，避免一题只命中部分标签也被抽中。
 		query = query.Joins("JOIN "+QuestionTagDO{}.TableName()+" AS qt ON qt."+QuestionTagColumns.TenantID+" = q."+QuestionColumns.TenantID+" AND qt."+QuestionTagColumns.QuestionID+" = q."+QuestionColumns.ID).
 			Where("qt."+QuestionTagColumns.TagID+" IN ?", tagIDs).
-			Group("q."+QuestionColumns.ID).
+			Group("q."+QuestionColumns.ID+", q."+QuestionColumns.ScoreDefault).
 			Having("COUNT(DISTINCT qt."+QuestionTagColumns.TagID+") = ?", len(tagIDs))
 	}
 
-	var ids []uint64
+	var questions []servicepaper.MatchedQuestion
 	orderExpr := "q." + QuestionColumns.ID + " ASC"
 	if rule.PrioritizeQuality {
 		orderExpr = "q." + QuestionColumns.QualityScore + " DESC, q." + QuestionColumns.ID + " ASC"
 	}
-	if err := query.Order(orderExpr).Scan(&ids).Error; err != nil {
+	if err := query.Order(orderExpr).Scan(&questions).Error; err != nil {
 		return nil, err
 	}
-	return ids, nil
+	return questions, nil
 }
 
 func (r *PaperRepository) RecentExamQuestionIDs(ctx context.Context, tenantID uint64, paperID uint64, limit int) (map[uint64]bool, error) {

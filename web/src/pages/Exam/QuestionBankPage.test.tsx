@@ -155,7 +155,23 @@ function createQuestionAPI() {
     enableQuestion: vi.fn(),
     importQuestions: vi.fn().mockResolvedValue({
       successCount: 2,
+      duplicateCount: 0,
       errors: [],
+    }),
+    startQuestionImportJob: vi.fn().mockResolvedValue({ jobID: "job-1" }),
+    subscribeQuestionImportJob: vi.fn((_input, onEvent) => {
+      onEvent({
+        jobID: "job-1",
+        status: "completed",
+        fileName: "questions.csv",
+        totalRows: 2,
+        processedRows: 2,
+        successCount: 2,
+        errorCount: 0,
+        duplicateCount: 0,
+        errors: [],
+      });
+      return () => undefined;
     }),
   };
 }
@@ -452,19 +468,123 @@ test("教师可以在题库右侧抽屉导入题目", async () => {
   expect(templateLink).toHaveAttribute("download", "question-import-template.csv");
   expect(templateLink).toHaveAttribute("href", expect.stringContaining("data:text/csv"));
   expect(within(drawer).getByLabelText("题目导入文件")).toHaveAttribute("accept", "text/csv");
+  expect(within(drawer).queryByRole("combobox", { name: "导入后题目状态" })).not.toBeInTheDocument();
+  expect(within(drawer).getByRole("radio", { name: "草稿" })).toBeChecked();
+  expect(within(drawer).getByRole("radio", { name: "已启用" })).not.toBeChecked();
 
   const file = new File(["type,title"], "questions.csv", { type: "text/csv" });
   await user.upload(within(drawer).getByLabelText("题目导入文件"), file);
-  expect(within(drawer).getByText("questions.csv")).toBeInTheDocument();
-  expect(api.importQuestions).not.toHaveBeenCalled();
+  expect(within(drawer).getAllByText("questions.csv").length).toBeGreaterThan(0);
+  expect(api.startQuestionImportJob).not.toHaveBeenCalled();
 
   await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
 
-  expect(api.importQuestions).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, file });
+  expect(api.startQuestionImportJob).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, file, status: "draft" });
+  expect(api.subscribeQuestionImportJob).toHaveBeenCalledWith({ jobID: "job-1" }, expect.any(Function), expect.any(Function));
   const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent("导入成功 2 条");
+  expect(alert).toHaveTextContent("导入完成 2 条");
   expect(alert.parentElement).toHaveClass("feedback-toast-stack");
   expect(within(drawer).getAllByText("questions.csv").length).toBeGreaterThan(0);
+});
+
+test("题目导入抽屉支持多文件队列并依次启动导入任务", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  vi.mocked(api.startQuestionImportJob)
+    .mockResolvedValueOnce({ jobID: "job-1" })
+    .mockResolvedValueOnce({ jobID: "job-2" });
+  vi.mocked(api.subscribeQuestionImportJob)
+    .mockImplementationOnce((_input, onEvent) => {
+      onEvent({
+        jobID: "job-1",
+        status: "completed",
+        fileName: "first.csv",
+        totalRows: 3,
+        processedRows: 3,
+        successCount: 2,
+        errorCount: 0,
+        duplicateCount: 1,
+        errors: [],
+      });
+      return () => undefined;
+    })
+    .mockImplementationOnce((_input, onEvent) => {
+      onEvent({
+        jobID: "job-2",
+        status: "completed",
+        fileName: "second.csv",
+        totalRows: 1,
+        processedRows: 1,
+        successCount: 1,
+        errorCount: 0,
+        duplicateCount: 0,
+        errors: [],
+      });
+      return () => undefined;
+    });
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} spaceID={301} />);
+
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+  const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
+  await user.click(within(drawer).getByRole("radio", { name: "已启用" }));
+  expect(within(drawer).getByRole("radio", { name: "已启用" })).toBeChecked();
+  const firstFile = new File(["type,title"], "first.csv", { type: "text/csv" });
+  const secondFile = new File(["type,title"], "second.csv", { type: "text/csv" });
+
+  await user.upload(within(drawer).getByLabelText("题目导入文件"), [firstFile, secondFile]);
+
+  expect(within(drawer).getByText("first.csv")).toBeInTheDocument();
+  expect(within(drawer).getByText("second.csv")).toBeInTheDocument();
+  expect(within(drawer).getAllByRole("progressbar")).toHaveLength(2);
+
+  await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
+
+  await waitFor(() => {
+    expect(api.startQuestionImportJob).toHaveBeenNthCalledWith(1, { tenantID: 10, spaceID: 301, file: firstFile, status: "enabled" });
+    expect(api.startQuestionImportJob).toHaveBeenNthCalledWith(2, { tenantID: 10, spaceID: 301, file: secondFile, status: "enabled" });
+  });
+  expect(within(drawer).getByText("成功 2 / 失败 0 / 重复 1")).toBeInTheDocument();
+  expect(within(drawer).getByText("成功 1 / 失败 0 / 重复 0")).toBeInTheDocument();
+});
+
+test("导入任务启动失败后保留失败状态并允许重试", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  vi.mocked(api.startQuestionImportJob)
+    .mockRejectedValueOnce(new Error("上传连接失败"))
+    .mockResolvedValueOnce({ jobID: "job-retry" });
+  vi.mocked(api.subscribeQuestionImportJob).mockImplementationOnce((_input, onEvent) => {
+    onEvent({
+      jobID: "job-retry",
+      status: "completed",
+      fileName: "questions.csv",
+      totalRows: 1,
+      processedRows: 1,
+      successCount: 1,
+      errorCount: 0,
+      duplicateCount: 0,
+      errors: [],
+    });
+    return () => undefined;
+  });
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} spaceID={301} />);
+
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+  const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
+  const file = new File(["type,title"], "questions.csv", { type: "text/csv" });
+  await user.upload(within(drawer).getByLabelText("题目导入文件"), file);
+
+  await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
+  expect(await within(drawer).findByText("上传连接失败")).toBeInTheDocument();
+
+  await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
+
+  await waitFor(() => {
+    expect(api.startQuestionImportJob).toHaveBeenCalledTimes(2);
+  });
+  expect(within(drawer).getByText("成功 1 / 失败 0 / 重复 0")).toBeInTheDocument();
 });
 
 test("搜索后导入题目会按当前搜索条件刷新列表", async () => {

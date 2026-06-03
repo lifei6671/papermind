@@ -106,6 +106,7 @@ type CreateQuestionInput struct {
 	ReferenceAnswer    string                       // 简答题参考答案。
 	BlankCount         int                          // 填空数量，仅用于前端/导入阶段表达题目有几个空。
 	Tags               []string                     // 题目标签名称。
+	Status             string                       // 新建后的题目状态，空值默认草稿。
 }
 
 type ListQuestionsInput struct {
@@ -186,7 +187,9 @@ type ImportQuestionsInput struct {
 	Permission permission.PermissionContext // 当前导入人权限上下文。
 	TenantID   uint64                       // 所属租户 ID。
 	SpaceID    *uint64                      // 所属空间 ID。
+	Status     string                       // 导入后题目状态，空值默认草稿。
 	Rows       []ImportRow                  // 导入数据行。
+	OnProgress func(ImportProgress)         // 行级导入进度回调，供异步导入任务推送。
 }
 
 type ImportRow struct {
@@ -203,8 +206,9 @@ type ImportRow struct {
 }
 
 type ImportResult struct {
-	SuccessCount int           // 成功导入行数。
-	Errors       []ImportError // 行级错误。
+	SuccessCount   int           // 成功导入行数。
+	DuplicateCount int           // 因题干重复跳过的行数。
+	Errors         []ImportError // 行级错误。
 }
 
 type ImportError struct {
@@ -212,10 +216,19 @@ type ImportError struct {
 	Reason    string // 失败原因。
 }
 
+type ImportProgress struct {
+	TotalRows      int
+	ProcessedRows  int
+	SuccessCount   int
+	DuplicateCount int
+	Errors         []ImportError
+}
+
 type QuestionRepository interface {
 	CreateQuestion(ctx context.Context, item Question, options []QuestionOption, tags []string) (Question, error)
 	GetQuestion(ctx context.Context, tenantID uint64, questionID uint64) (Question, error)
 	ListVisibleQuestions(ctx context.Context, input ListQuestionsInput) (pagination.Result[Question], error)
+	QuestionTitleExists(ctx context.Context, tenantID uint64, spaceID *uint64, title string) (bool, error)
 	UpdateQuestion(ctx context.Context, item Question, options []QuestionOption, tags []string) (Question, error)
 	UpdateQuestionStatus(ctx context.Context, tenantID uint64, questionID uint64, status string, actorID uint64) (Question, error)
 	DeleteQuestion(ctx context.Context, tenantID uint64, questionID uint64, actorID uint64) error
@@ -256,7 +269,7 @@ func (s *QuestionService) CreateQuestion(ctx context.Context, input CreateQuesti
 		ShuffleOptions:     input.ShuffleOptions,
 		StandardAnswer:     input.StandardAnswer,
 		ReferenceAnswer:    input.ReferenceAnswer,
-		Status:             QuestionStatusDraft,
+		Status:             normalizeCreateQuestionStatus(input.Status),
 		CreatedBy:          input.Permission.UserID,
 	}
 	if input.Type == QuestionTypeShortText {
@@ -413,19 +426,63 @@ func (s *QuestionService) ImportQuestions(ctx context.Context, input ImportQuest
 		return ImportResult{}, err
 	}
 	result := ImportResult{}
+	seenTitles := map[string]struct{}{}
 	for _, row := range input.Rows {
+		titleKey := normalizeImportDuplicateTitle(row.Title)
+		if titleKey != "" {
+			if _, ok := seenTitles[titleKey]; ok {
+				result.DuplicateCount++
+				reportImportProgress(input, len(input.Rows), result)
+				continue
+			}
+			exists, err := s.repo.QuestionTitleExists(ctx, input.TenantID, input.SpaceID, titleKey)
+			if err != nil {
+				result.Errors = append(result.Errors, ImportError{RowNumber: row.RowNumber, Reason: err.Error()})
+				reportImportProgress(input, len(input.Rows), result)
+				continue
+			}
+			if exists {
+				result.DuplicateCount++
+				seenTitles[titleKey] = struct{}{}
+				reportImportProgress(input, len(input.Rows), result)
+				continue
+			}
+		}
 		questionInput := row.toCreateQuestionInput(input.TenantID, input.SpaceID)
 		questionInput.Permission = input.Permission
+		questionInput.Status = normalizeImportTargetStatus(input.Status)
 		if _, err := s.CreateQuestion(ctx, questionInput); err != nil {
 			result.Errors = append(result.Errors, ImportError{
 				RowNumber: row.RowNumber,
 				Reason:    err.Error(),
 			})
+			reportImportProgress(input, len(input.Rows), result)
 			continue
 		}
+		if titleKey != "" {
+			seenTitles[titleKey] = struct{}{}
+		}
 		result.SuccessCount++
+		reportImportProgress(input, len(input.Rows), result)
 	}
 	return result, nil
+}
+
+func reportImportProgress(input ImportQuestionsInput, totalRows int, result ImportResult) {
+	if input.OnProgress == nil {
+		return
+	}
+	input.OnProgress(ImportProgress{
+		TotalRows:      totalRows,
+		ProcessedRows:  result.SuccessCount + result.DuplicateCount + len(result.Errors),
+		SuccessCount:   result.SuccessCount,
+		DuplicateCount: result.DuplicateCount,
+		Errors:         append([]ImportError(nil), result.Errors...),
+	})
+}
+
+func normalizeImportDuplicateTitle(title string) string {
+	return strings.TrimSpace(title)
 }
 
 func canWriteQuestionScope(ctx permission.PermissionContext, tenantID uint64, spaceID *uint64) error {
@@ -477,6 +534,20 @@ func normalizeQualityScore(score *int) int {
 		return 5
 	}
 	return *score
+}
+
+func normalizeCreateQuestionStatus(status string) string {
+	if status == QuestionStatusEnabled {
+		return QuestionStatusEnabled
+	}
+	return QuestionStatusDraft
+}
+
+func normalizeImportTargetStatus(status string) string {
+	if status == QuestionStatusEnabled {
+		return QuestionStatusEnabled
+	}
+	return QuestionStatusDraft
 }
 
 func supportedDifficulty(difficulty string) bool {

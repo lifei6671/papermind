@@ -1,4 +1,4 @@
-import { Eye, FilePlus2, GripVertical, Sparkles, Trash2 } from "lucide-react";
+import { Eye, FilePlus2, GripVertical, Trash2 } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -25,6 +25,7 @@ import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { Select } from "../../components/ui/Select";
 import { SegmentTabs } from "../../components/ui/SegmentTabs";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { Tooltip } from "../../components/ui/Tooltip";
 
 type PaperEditorPageProps = {
   paperApi?: PaperAPI;
@@ -78,6 +79,8 @@ const sectionTemplates: Record<QuestionType, { name: string; instructions: strin
   short_text: { name: "五、解答题", instructions: "按采分点给分" },
 };
 
+const AUTO_SAVE_DRAFT_DELAY_MS = 30_000;
+
 type DraggedQuestion = {
   sectionID: number;
   questionID: number;
@@ -114,7 +117,13 @@ export function PaperEditorPage({
   const [smartPrioritizeQuality, setSmartPrioritizeQuality] = useState(true);
   const [smartExcludeRecentExamQuestions, setSmartExcludeRecentExamQuestions] = useState(true);
   const [smartExcludeUsedQuestions, setSmartExcludeUsedQuestions] = useState(true);
+  const [blockedSmartQuestionIDs, setBlockedSmartQuestionIDs] = useState<number[]>([]);
   const [smartRuleDrafts, setSmartRuleDrafts] = useState<Record<number, SmartRuleDraft>>({});
+  const [persistedSmartRuleSnapshot, setPersistedSmartRuleSnapshot] = useState("");
+  const [isAddingSmartSection, setIsAddingSmartSection] = useState(false);
+  const [newSmartSectionType, setNewSmartSectionType] = useState<QuestionType>("single");
+  const [newSmartSectionName, setNewSmartSectionName] = useState(defaultSectionName("single"));
+  const [isCreatingSmartSection, setIsCreatingSmartSection] = useState(false);
   const [smartTagQuery, setSmartTagQuery] = useState("");
   const [isSmartTagPickerOpen, setIsSmartTagPickerOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<"all" | QuestionType>("all");
@@ -182,6 +191,41 @@ export function PaperEditorPage({
     };
   }, [paperID, providedPaperApi, spaceID, tenantID]);
 
+  const applySmartRuleState = useCallback((
+    nextSections: PaperSectionRow[],
+    nextSectionQuestions: ManualQuestionRow[],
+    nextRules: PaperRuleRow[],
+  ) => {
+    const firstRule = nextRules[0];
+    const nextQuestionScope = firstRule?.questionScope ?? "space_all";
+    const nextDifficultyPercentages = firstRule?.difficultyPercentages ?? defaultDifficultyPercentages;
+    const nextSelectedTags = firstRule?.tagNames ?? [];
+    const nextPrioritizeQuality = firstRule?.prioritizeQuality ?? true;
+    const nextExcludeRecentExamQuestions = firstRule?.excludeRecentExamQuestions ?? true;
+    const nextExcludeUsedQuestions = firstRule?.excludeUsedQuestions ?? true;
+    const nextRuleDrafts = buildSmartRuleDrafts(nextSections, nextSectionQuestions, nextRules);
+
+    setSmartQuestionScope(nextQuestionScope);
+    setSmartDifficultyPercentages(nextDifficultyPercentages);
+    setSmartSelectedTags(nextSelectedTags);
+    setSmartTagQuery("");
+    setIsSmartTagPickerOpen(false);
+    setSmartPrioritizeQuality(nextPrioritizeQuality);
+    setSmartExcludeRecentExamQuestions(nextExcludeRecentExamQuestions);
+    setSmartExcludeUsedQuestions(nextExcludeUsedQuestions);
+    setSmartRuleDrafts(nextRuleDrafts);
+    setPersistedSmartRuleSnapshot(serializeSmartRuleState({
+      sections: nextSections,
+      ruleDrafts: nextRuleDrafts,
+      questionScope: nextQuestionScope,
+      selectedTags: nextSelectedTags,
+      difficultyPercentages: nextDifficultyPercentages,
+      prioritizeQuality: nextPrioritizeQuality,
+      excludeRecentExamQuestions: nextExcludeRecentExamQuestions,
+      excludeUsedQuestions: nextExcludeUsedQuestions,
+    }));
+  }, []);
+
   const applyWorkspaceSnapshot = useCallback((
     currentPaper: PaperRow | null,
     nextSections: PaperSectionRow[],
@@ -202,7 +246,8 @@ export function PaperEditorPage({
     setSectionQuestions(nextSectionQuestions.map(cloneSectionQuestion));
     setPersistedSectionQuestions(nextSectionQuestions.map(cloneSectionQuestion));
     setEditingScores({});
-  }, []);
+    setBlockedSmartQuestionIDs([]);
+  }, [applySmartRuleState]);
 
   useEffect(() => {
     let ignore = false;
@@ -236,6 +281,16 @@ export function PaperEditorPage({
   }, [applyWorkspaceSnapshot, loadQuestionPool, loadWorkspaceSnapshot, paperID, showError]);
 
   const questionMap = useMemo(() => new Map(questionPool.map((item) => [item.id, item])), [questionPool]);
+  const blockedSmartQuestions = useMemo(() => blockedSmartQuestionIDs.map((questionID) => {
+    const question = questionMap.get(questionID);
+
+    return {
+      id: questionID,
+      title: question?.title ?? `题目 ${questionID}`,
+      tag: question?.tag ?? "",
+      tags: question?.tags ?? [],
+    };
+  }), [blockedSmartQuestionIDs, questionMap]);
   const tags = useMemo(() => {
     const values = Array.from(new Set(questionPool.flatMap((item) => item.tags.length > 0 ? item.tags : [item.tag]).filter(Boolean)));
     values.sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
@@ -245,23 +300,6 @@ export function PaperEditorPage({
     const query = smartTagQuery.trim().toLocaleLowerCase();
     return tags.filter((tag) => !smartSelectedTags.includes(tag) && (query.length === 0 || tag.toLocaleLowerCase().includes(query)));
   }, [smartSelectedTags, smartTagQuery, tags]);
-
-  function applySmartRuleState(
-    nextSections: PaperSectionRow[],
-    nextSectionQuestions: ManualQuestionRow[],
-    nextRules: PaperRuleRow[],
-  ) {
-    const firstRule = nextRules[0];
-    setSmartQuestionScope(firstRule?.questionScope ?? "space_all");
-    setSmartDifficultyPercentages(firstRule?.difficultyPercentages ?? defaultDifficultyPercentages);
-    setSmartSelectedTags(firstRule?.tagNames ?? []);
-    setSmartTagQuery("");
-    setIsSmartTagPickerOpen(false);
-    setSmartPrioritizeQuality(firstRule?.prioritizeQuality ?? true);
-    setSmartExcludeRecentExamQuestions(firstRule?.excludeRecentExamQuestions ?? true);
-    setSmartExcludeUsedQuestions(firstRule?.excludeUsedQuestions ?? true);
-    setSmartRuleDrafts(buildSmartRuleDrafts(nextSections, nextSectionQuestions, nextRules));
-  }
 
   function selectSmartTag(tag: string) {
     setSmartSelectedTags((items) => items.includes(tag) ? items : [...items, tag]);
@@ -297,6 +335,72 @@ export function PaperEditorPage({
     });
   }
 
+  function handleNewSmartSectionTypeChange(nextType: QuestionType) {
+    setNewSmartSectionType(nextType);
+    setNewSmartSectionName(defaultSectionName(nextType));
+  }
+
+  async function handleCreateSmartSection() {
+    if (paper === null) {
+      showError("请先保存试卷基础信息后再添加题型");
+      return;
+    }
+    const name = newSmartSectionName.trim();
+    if (!name) {
+      showError("题型名称不能为空");
+      return;
+    }
+    const template = sectionTemplates[newSmartSectionType];
+    setIsCreatingSmartSection(true);
+    try {
+      const created = await providedPaperApi.createSection({
+        tenantID,
+        paperID: paper.id,
+        name,
+        questionType: newSmartSectionType,
+        instructions: template.instructions,
+      });
+      setSections((items) => normalizeSectionOrders([...items, created]));
+      setPersistedSections((items) => [...items, cloneSection(created)]);
+      setSmartRuleDrafts((items) => ({
+        ...items,
+        [created.id]: defaultRuleDraftForSection(created, sectionQuestions),
+      }));
+      setIsAddingSmartSection(false);
+      setNewSmartSectionType("single");
+      setNewSmartSectionName(defaultSectionName("single"));
+    } catch (error) {
+      showError(formatApiErrorMessage(error, "新增题型失败"));
+    } finally {
+      setIsCreatingSmartSection(false);
+    }
+  }
+
+  async function handleDeleteSmartSection(section: PaperSectionRow) {
+    if (paper === null) {
+      return;
+    }
+    try {
+      await providedPaperApi.deleteSection({
+        tenantID,
+        paperID: paper.id,
+        sectionID: section.id,
+      });
+      const nextSections = normalizeSectionOrders(sections.filter((item) => item.id !== section.id));
+      setSections(nextSections);
+      setPersistedSections((items) => items.filter((item) => item.id !== section.id));
+      setSectionQuestions((items) => items.filter((item) => item.sectionID !== section.id));
+      setPersistedSectionQuestions((items) => items.filter((item) => item.sectionID !== section.id));
+      setSmartRuleDrafts((items) => {
+        const next = { ...items };
+        delete next[section.id];
+        return next;
+      });
+    } catch (error) {
+      showError(formatApiErrorMessage(error, "删除题型失败"));
+    }
+  }
+
   const filteredQuestions = questionPool.filter((item) => {
     if (selectedType !== "all" && item.type !== selectedType) {
       return false;
@@ -325,6 +429,26 @@ export function PaperEditorPage({
   const isSmartPaper = buildMode === "rule_fixed";
   const canChangeBuildMode = paper === null;
   const sectionOrderDirty = serializeSections(sections) !== serializeSections(persistedSections);
+  const currentSmartRuleSnapshot = useMemo(() => serializeSmartRuleState({
+    sections,
+    ruleDrafts: smartRuleDrafts,
+    questionScope: smartQuestionScope,
+    selectedTags: smartSelectedTags,
+    difficultyPercentages: smartDifficultyPercentages,
+    prioritizeQuality: smartPrioritizeQuality,
+    excludeRecentExamQuestions: smartExcludeRecentExamQuestions,
+    excludeUsedQuestions: smartExcludeUsedQuestions,
+  }), [
+    sections,
+    smartDifficultyPercentages,
+    smartExcludeRecentExamQuestions,
+    smartExcludeUsedQuestions,
+    smartPrioritizeQuality,
+    smartQuestionScope,
+    smartRuleDrafts,
+    smartSelectedTags,
+  ]);
+  const smartRulesDirty = isSmartPaper && currentSmartRuleSnapshot !== persistedSmartRuleSnapshot;
   const draftDirty = useMemo(() => {
     if (paper === null) {
       return paperName.trim().length > 0
@@ -337,14 +461,95 @@ export function PaperEditorPage({
       || gradeText !== (paper.gradeLevel?.trim() ? paper.gradeLevel.trim() : "高一")
       || durationText !== String(paper.durationMinutes ?? 120)
       || sectionOrderDirty
+      || smartRulesDirty
       || serializeSectionQuestions(sectionQuestions) !== serializeSectionQuestions(persistedSectionQuestions);
-  }, [durationText, gradeText, paper, paperDescription, paperName, persistedSectionQuestions, sectionOrderDirty, sectionQuestions]);
+  }, [durationText, gradeText, paper, paperDescription, paperName, persistedSectionQuestions, sectionOrderDirty, sectionQuestions, smartRulesDirty]);
   const lastSavedLabel = paper === null
     ? "草稿尚未保存"
     : draftDirty ? "草稿有未保存调整" : "草稿已保存";
 
-  async function handleSaveDraft(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const persistSmartRules = useCallback(async (targetPaperID: number) => {
+    const nextRules: PaperRuleRow[] = [];
+    const zeroRuleDrafts: Record<number, SmartRuleDraft> = {};
+    for (const section of sections) {
+      const draft = smartRuleDrafts[section.id] ?? defaultRuleDraftForSection(section, sectionQuestions);
+      const questionCountText = draft.questionCount.trim();
+      if (questionCountText === "") {
+        showError(`${section.name} 的题量不能为空`);
+        throw new Error("empty smart rule question count");
+      }
+      const questionCount = Number(questionCountText);
+      const scorePerQuestion = draft.scorePerQuestion.trim();
+      if (!Number.isInteger(questionCount) || questionCount < 0) {
+        showError(`${section.name} 的题量必须是非负整数`);
+        throw new Error("invalid smart rule question count");
+      }
+      if (questionCount === 0) {
+        if (draft.ruleID !== undefined) {
+          await providedPaperApi.deleteRule({
+            tenantID,
+            paperID: targetPaperID,
+            ruleID: draft.ruleID,
+          });
+        }
+        zeroRuleDrafts[section.id] = { ...draft, ruleID: undefined, questionCount: "0" };
+        continue;
+      }
+      if (!isNonNegativeScore(scorePerQuestion)) {
+        showError(`${section.name} 的每题分值必须是非负数字`);
+        throw new Error("invalid smart rule score");
+      }
+      const input = {
+        tenantID,
+        paperID: targetPaperID,
+        sectionID: section.id,
+        sortOrder: section.sortOrder,
+        tagIDs: [],
+        tagNames: smartQuestionScope === "tag_filter" ? smartSelectedTags : [],
+        questionScope: smartQuestionScope,
+        difficultyPercentages: smartDifficultyPercentages,
+        questionCount,
+        scorePerQuestion,
+        prioritizeQuality: smartPrioritizeQuality,
+        excludeRecentExamQuestions: smartExcludeRecentExamQuestions,
+        excludeUsedQuestions: smartExcludeUsedQuestions,
+      };
+      const saved = draft.ruleID === undefined
+        ? await providedPaperApi.createRule(input)
+        : await providedPaperApi.updateRule({ ...input, ruleID: draft.ruleID });
+      nextRules.push(saved);
+    }
+    const nextRuleDrafts = {
+      ...buildSmartRuleDrafts(sections, sectionQuestions, nextRules),
+      ...zeroRuleDrafts,
+    };
+    setSmartRuleDrafts(nextRuleDrafts);
+    setPersistedSmartRuleSnapshot(serializeSmartRuleState({
+      sections,
+      ruleDrafts: nextRuleDrafts,
+      questionScope: smartQuestionScope,
+      selectedTags: smartQuestionScope === "tag_filter" ? smartSelectedTags : [],
+      difficultyPercentages: smartDifficultyPercentages,
+      prioritizeQuality: smartPrioritizeQuality,
+      excludeRecentExamQuestions: smartExcludeRecentExamQuestions,
+      excludeUsedQuestions: smartExcludeUsedQuestions,
+    }));
+  }, [
+    providedPaperApi,
+    sectionQuestions,
+    sections,
+    showError,
+    smartDifficultyPercentages,
+    smartExcludeRecentExamQuestions,
+    smartExcludeUsedQuestions,
+    smartPrioritizeQuality,
+    smartQuestionScope,
+    smartRuleDrafts,
+    smartSelectedTags,
+    tenantID,
+  ]);
+
+  const saveDraft = useCallback(async ({ notifySuccess }: { notifySuccess: boolean }) => {
     if (!paperName.trim()) {
       showError("试卷名称不能为空");
       return;
@@ -386,7 +591,7 @@ export function PaperEditorPage({
         navigate(`/papers/${nextPaper.id}/edit${pageSearch}`, { replace: true });
         if (buildModeSyncError !== null) {
           showError(`试卷草稿已创建，${formatApiErrorMessage(buildModeSyncError, "切换组卷方式失败")}`);
-        } else {
+        } else if (notifySuccess) {
           showSuccess(buildMode === "manual" ? "试卷草稿已创建，可以继续手动组卷。" : "试卷草稿已创建，可以继续完善组卷。");
         }
       } else {
@@ -447,51 +652,52 @@ export function PaperEditorPage({
           await persistSmartRules(paper.id);
         }
         setPaper(nextPaper);
-        showSuccess("试卷草稿已保存。");
+        if (notifySuccess) {
+          showSuccess("试卷草稿已保存。");
+        }
       }
     } catch (error) {
       showError(formatApiErrorMessage(error, "试卷草稿保存失败"));
     } finally {
       setIsSavingDraft(false);
     }
+  }, [
+    buildMode,
+    durationText,
+    gradeText,
+    navigate,
+    pageSearch,
+    paper,
+    paperDescription,
+    paperName,
+    persistSmartRules,
+    persistedSectionQuestions,
+    persistedSections,
+    providedPaperApi,
+    sectionQuestions,
+    sections,
+    showError,
+    showSuccess,
+    spaceID,
+    tenantID,
+  ]);
+
+  async function handleSaveDraft(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await saveDraft({ notifySuccess: true });
   }
 
-  async function persistSmartRules(targetPaperID: number) {
-    const nextRules: PaperRuleRow[] = [];
-    for (const section of sections) {
-      const draft = smartRuleDrafts[section.id] ?? defaultRuleDraftForSection(section, sectionQuestions);
-      const questionCount = Number.parseInt(draft.questionCount, 10);
-      const scorePerQuestion = draft.scorePerQuestion.trim();
-      if (!Number.isInteger(questionCount) || questionCount <= 0) {
-        showError(`${section.name} 的题量必须是正整数`);
-        throw new Error("invalid smart rule question count");
-      }
-      if (!isNonNegativeScore(scorePerQuestion)) {
-        showError(`${section.name} 的每题分值必须是非负数字`);
-        throw new Error("invalid smart rule score");
-      }
-      const input = {
-        tenantID,
-        paperID: targetPaperID,
-        sectionID: section.id,
-        sortOrder: section.sortOrder,
-        tagIDs: [],
-        tagNames: smartQuestionScope === "tag_filter" ? smartSelectedTags : [],
-        questionScope: smartQuestionScope,
-        difficultyPercentages: smartDifficultyPercentages,
-        questionCount,
-        scorePerQuestion,
-        prioritizeQuality: smartPrioritizeQuality,
-        excludeRecentExamQuestions: smartExcludeRecentExamQuestions,
-        excludeUsedQuestions: smartExcludeUsedQuestions,
-      };
-      const saved = draft.ruleID === undefined
-        ? await providedPaperApi.createRule(input)
-        : await providedPaperApi.updateRule({ ...input, ruleID: draft.ruleID });
-      nextRules.push(saved);
+  useEffect(() => {
+    if (paper === null || !draftDirty || isSavingDraft || !paperName.trim()) {
+      return undefined;
     }
-    setSmartRuleDrafts(buildSmartRuleDrafts(sections, sectionQuestions, nextRules));
-  }
+
+    const timer = window.setTimeout(() => {
+      void saveDraft({ notifySuccess: false });
+    }, AUTO_SAVE_DRAFT_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [draftDirty, isSavingDraft, paper, paperName, saveDraft]);
 
   async function handleGenerateSmartPaper() {
     if (paper === null) {
@@ -500,7 +706,7 @@ export function PaperEditorPage({
     }
     try {
       await persistSmartRules(paper.id);
-      await providedPaperApi.generateRuleFixed({ tenantID, paperID: paper.id });
+      await providedPaperApi.generateRuleFixed({ tenantID, paperID: paper.id, blockedQuestionIDs: blockedSmartQuestionIDs });
       const [nextQuestionPool, snapshot] = await withRefreshFeedback(Promise.all([
         loadQuestionPool(),
         loadWorkspaceSnapshot(),
@@ -606,6 +812,35 @@ export function PaperEditorPage({
     }
   }
 
+  async function handleBlockSmartQuestion(item: ManualQuestionRow) {
+    if (paper === null) {
+      return;
+    }
+    try {
+      await providedPaperApi.deleteSectionQuestion({
+        tenantID,
+        paperID: paper.id,
+        sectionID: item.sectionID,
+        questionID: item.questionID,
+      });
+      setBlockedSmartQuestionIDs((ids) => (ids.includes(item.questionID) ? ids : [...ids, item.questionID]));
+      setSectionQuestions((items) => items.filter((current) => !(current.sectionID === item.sectionID && current.questionID === item.questionID)));
+      setPersistedSectionQuestions((items) => items.filter((current) => !(current.sectionID === item.sectionID && current.questionID === item.questionID)));
+      setEditingScores((items) => {
+        const next = { ...items };
+        delete next[toQuestionKey(item)];
+        return next;
+      });
+      showSuccess("已屏蔽该题，本次智能组卷会排除。");
+    } catch (error) {
+      showError(formatApiErrorMessage(error, "屏蔽题目失败"));
+    }
+  }
+
+  function handleUnblockSmartQuestion(questionID: number) {
+    setBlockedSmartQuestionIDs((ids) => ids.filter((id) => id !== questionID));
+  }
+
   async function handleScoreBlur(item: ManualQuestionRow) {
     if (paper === null) {
       return;
@@ -676,7 +911,7 @@ export function PaperEditorPage({
       return;
     }
     setDraggingSectionID(sectionID);
-    configureDragPreview(event, event.currentTarget.closest(".exam-paper-editor__selected-section"));
+    configureDragPreview(event, event.currentTarget.closest(".exam-paper-editor__selected-section, .exam-paper-editor__rule-row"));
   }
 
   function handleSectionDragOver(targetSectionID: number) {
@@ -797,15 +1032,8 @@ export function PaperEditorPage({
         <form className="exam-paper-editor" onSubmit={handleSaveDraft}>
           <div className="tenant-list-toolbar exam-paper-editor__toolbar">
             <div className="tenant-list-actions" aria-label="组卷操作区">
-              <Button variant="toolbarPrimary" type="button">
-                <FilePlus2 aria-hidden="true" size={16} />
-                <span>新建组卷</span>
-              </Button>
-              <Button disabled variant="toolbarSecondary" type="button">
-                <Sparkles aria-hidden="true" size={16} />
-                <span>从模板创建</span>
-              </Button>
               <Button
+                className="exam-paper-editor__toolbar-button--icon-center"
                 disabled={!canAssemble || selectedQuestionCount === 0}
                 onClick={() => setIsPreviewOpen(true)}
                 variant="toolbarSecondary"
@@ -829,7 +1057,7 @@ export function PaperEditorPage({
             </div>
           </div>
 
-          <div className="exam-paper-editor__summarybar">
+          <div className="exam-paper-editor__summarybar exam-paper-editor__summarybar--responsive">
             <label className="exam-paper-editor__summary-item exam-paper-editor__summary-item--name">
               <span>试卷名称：</span>
               <input
@@ -843,6 +1071,7 @@ export function PaperEditorPage({
               <span>考试时长：</span>
               <input
                 aria-label="考试时长"
+                className="exam-paper-editor__summary-input--compact exam-paper-editor__summary-input--duration"
                 onChange={(event) => setDurationText(event.target.value)}
                 placeholder="120"
                 value={durationText}
@@ -858,6 +1087,7 @@ export function PaperEditorPage({
               <span>适用年级：</span>
               <input
                 aria-label="适用年级"
+                className="exam-paper-editor__summary-input--compact exam-paper-editor__summary-input--grade"
                 onChange={(event) => setGradeText(event.target.value)}
                 placeholder="高一"
                 value={gradeText}
@@ -869,18 +1099,19 @@ export function PaperEditorPage({
                 <SegmentTabs
                   active={buildMode === "manual" ? "手动组卷" : "智能组卷"}
                   ariaLabel="组卷方式"
+                  className="exam-paper-editor__summary-chip--compact"
                   items={["手动组卷", "智能组卷"]}
                   onChange={(item) => setBuildMode(item === "手动组卷" ? "manual" : "rule_fixed")}
                 />
               ) : (
-                <strong aria-label="组卷方式" className="exam-paper-editor__mode-value">
+                <strong aria-label="组卷方式" className="exam-paper-editor__mode-value exam-paper-editor__summary-chip--compact">
                   {editorBuildModeLabel(buildMode)}
                 </strong>
               )}
             </div>
-            <div className="exam-paper-editor__summary-item exam-paper-editor__summary-item--status">
+            <div className="exam-paper-editor__summary-item exam-paper-editor__summary-item--status exam-paper-editor__summary-item--inline">
               <span className="exam-paper-editor__status">
-                <StatusBadge tone={paperStatusTone(paper?.status ?? "draft")}>
+                <StatusBadge className="exam-paper-editor__summary-chip--compact" tone={paperStatusTone(paper?.status ?? "draft")}>
                   {paperStatusLabel(paper?.status ?? "draft")}
                 </StatusBadge>
               </span>
@@ -1126,12 +1357,11 @@ export function PaperEditorPage({
                                       >
                                         <GripVertical aria-hidden="true" size={14} />
                                       </button>
-                                      <span
-                                        className="exam-paper-editor__selected-title"
-                                        title={`${index + 1}. ${selectedTitle}`}
-                                      >
-                                        {index + 1}. {selectedTitle}
-                                      </span>
+                                      <Tooltip content={`${index + 1}. ${selectedTitle}`}>
+                                        <button className="exam-paper-editor__selected-title" type="button">
+                                          {index + 1}. {selectedTitle}
+                                        </button>
+                                      </Tooltip>
                                     </div>
                                   </td>
                                   <td>{(item.question?.tags.length ?? 0) > 0 ? item.question?.tags.join(" / ") : item.question?.tag ?? "-"}</td>
@@ -1190,12 +1420,12 @@ export function PaperEditorPage({
           </div>
           ) : (
           <div className="exam-paper-editor__workspace exam-paper-editor__workspace--smart">
-            <section className="exam-paper-editor__panel exam-paper-editor__smart-rules">
+            <section className="exam-paper-editor__panel exam-paper-editor__panel--separated exam-paper-editor__smart-rules">
               <div className="exam-paper-editor__panel-head">
                 <h2>组卷规则</h2>
               </div>
 
-              <fieldset className="exam-paper-editor__smart-fieldset">
+              <fieldset className="exam-paper-editor__smart-fieldset exam-paper-editor__smart-rule-section">
                 <legend>题库范围</legend>
                 <label>
                   <input
@@ -1215,7 +1445,7 @@ export function PaperEditorPage({
                 </label>
               </fieldset>
 
-              <section className="exam-paper-editor__smart-block">
+              <section className="exam-paper-editor__smart-block exam-paper-editor__smart-rule-section">
                 <h3>难度分布</h3>
                 <div
                   aria-label="难度分布滑块"
@@ -1250,85 +1480,145 @@ export function PaperEditorPage({
                 </div>
               </section>
 
-              <section className="exam-paper-editor__smart-block">
-                <h3>知识点覆盖</h3>
-                <div
-                  className="exam-paper-editor__tag-combobox"
-                  onBlur={(event) => {
-                    const nextTarget = event.relatedTarget;
-                    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
-                      return;
-                    }
-                    setIsSmartTagPickerOpen(false);
-                  }}
-                >
-                  <label className="exam-paper-editor__tag-input">
-                    <span>选择知识点</span>
-                    <input
-                      aria-label="搜索知识点标签"
-                      disabled={smartQuestionScope !== "tag_filter" || tags.length === 0}
-                      onChange={(event) => {
-                        setSmartTagQuery(event.target.value);
-                        setIsSmartTagPickerOpen(true);
-                      }}
-                      onFocus={() => setIsSmartTagPickerOpen(true)}
-                      placeholder={tags.length === 0 ? "暂无可用标签" : "输入关键词选择标签"}
-                      value={smartTagQuery}
-                    />
-                  </label>
-                  {isSmartTagPickerOpen && smartQuestionScope === "tag_filter" && tags.length > 0 ? (
-                    <div className="exam-paper-editor__tag-options" role="listbox">
-                      {smartTagOptions.length === 0 ? (
-                        <span className="exam-paper-editor__tag-empty">没有匹配的标签</span>
-                      ) : smartTagOptions.map((tag) => (
+              {smartQuestionScope === "tag_filter" ? (
+                <section className="exam-paper-editor__smart-block exam-paper-editor__smart-rule-section">
+                  <h3>知识点覆盖</h3>
+                  <div
+                    className="exam-paper-editor__tag-combobox"
+                    onBlur={(event) => {
+                      const nextTarget = event.relatedTarget;
+                      if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+                        return;
+                      }
+                      setIsSmartTagPickerOpen(false);
+                    }}
+                  >
+                    <label className="exam-paper-editor__tag-input">
+                      <span>选择知识点</span>
+                      <input
+                        aria-label="搜索知识点标签"
+                        disabled={tags.length === 0}
+                        onChange={(event) => {
+                          setSmartTagQuery(event.target.value);
+                          setIsSmartTagPickerOpen(true);
+                        }}
+                        onFocus={() => setIsSmartTagPickerOpen(true)}
+                        placeholder={tags.length === 0 ? "暂无可用标签" : "输入关键词选择标签"}
+                        value={smartTagQuery}
+                      />
+                    </label>
+                    {isSmartTagPickerOpen && tags.length > 0 ? (
+                      <div className="exam-paper-editor__tag-options" role="listbox">
+                        {smartTagOptions.length === 0 ? (
+                          <span className="exam-paper-editor__tag-empty">没有匹配的标签</span>
+                        ) : smartTagOptions.map((tag) => (
+                          <button
+                            key={tag}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => selectSmartTag(tag)}
+                            role="option"
+                            type="button"
+                          >
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="exam-paper-editor__selected-tags" aria-label="已选知识点标签">
+                    {smartSelectedTags.length === 0 ? (
+                      <span className="exam-paper-editor__muted">未选择知识点时，将按当前题库范围生成。</span>
+                    ) : smartSelectedTags.map((tag) => (
+                      <span className="exam-paper-editor__selected-tag" key={tag}>
+                        {tag}
                         <button
-                          key={tag}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => selectSmartTag(tag)}
-                          role="option"
+                          aria-label={`移除知识点 ${tag}`}
+                          onClick={() => removeSmartTag(tag)}
                           type="button"
                         >
-                          {tag}
+                          ×
                         </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="exam-paper-editor__selected-tags" aria-label="已选知识点标签">
-                  {smartSelectedTags.length === 0 ? (
-                    <span className="exam-paper-editor__muted">未选择知识点时，将按当前题库范围生成。</span>
-                  ) : smartSelectedTags.map((tag) => (
-                    <span className="exam-paper-editor__selected-tag" key={tag}>
-                      {tag}
-                      <button
-                        aria-label={`移除知识点 ${tag}`}
-                        disabled={smartQuestionScope !== "tag_filter"}
-                        onClick={() => removeSmartTag(tag)}
-                        type="button"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </section>
+                      </span>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
-              <section className="exam-paper-editor__smart-block">
-                <h3>题型数量与分值</h3>
-                <div className="exam-paper-editor__rule-rows">
-                  {sections.map((section) => {
+              <section className="exam-paper-editor__smart-block exam-paper-editor__smart-rule-section">
+                <div className="exam-paper-editor__smart-block-head">
+                  <h3>题型数量与分值</h3>
+                  <Button
+                    onClick={() => setIsAddingSmartSection((value) => !value)}
+                    type="button"
+                    variant="toolbarSecondary"
+                  >
+                    <FilePlus2 aria-hidden="true" size={14} />
+                    <span>添加题型</span>
+                  </Button>
+                </div>
+                {isAddingSmartSection ? (
+                  <div className="exam-paper-editor__section-form">
+                    <label>
+                      <span>题型</span>
+                      <select
+                        aria-label="新增题型类型"
+                        onChange={(event) => handleNewSmartSectionTypeChange(event.target.value as QuestionType)}
+                        value={newSmartSectionType}
+                      >
+                        {Object.entries(sectionTemplates).map(([value, template]) => (
+                          <option key={value} value={value}>{defaultSectionName(value as QuestionType) || template.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>名称</span>
+                      <input
+                        aria-label="新增题型名称"
+                        onChange={(event) => setNewSmartSectionName(event.target.value)}
+                        value={newSmartSectionName}
+                      />
+                    </label>
+                    <Button
+                      disabled={isCreatingSmartSection}
+                      onClick={() => void handleCreateSmartSection()}
+                      type="button"
+                      variant="primary"
+                    >
+                      保存题型
+                    </Button>
+                  </div>
+                ) : null}
+                <div className="exam-paper-editor__rule-rows exam-paper-editor__rule-rows--separated">
+                  {sections.map((section, sectionIndex) => {
                     const draft = smartRuleDrafts[section.id] ?? defaultRuleDraftForSection(section, sectionQuestions);
-                    const subtotal = Number(draft.questionCount || "0") * Number(draft.scorePerQuestion || "0");
+                    const sectionTitle = formatSectionTitle(section, sectionIndex);
                     return (
-                      <div className="exam-paper-editor__rule-row" key={section.id}>
-                        <span className="exam-paper-editor__rule-title">{section.name}</span>
-                        <strong>{Number.isFinite(subtotal) ? subtotal : 0} 分</strong>
+                      <div
+                        className={buildRuleRowClassName(section.id, draggingSectionID, sectionDropTargetID, sectionDropDirection)}
+                        key={section.id}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          handleSectionDragOver(section.id);
+                        }}
+                        onDrop={() => handleSectionDrop(section.id)}
+                      >
+                        <button
+                          aria-label={`拖拽排序题型 ${section.id}`}
+                          className="exam-paper-editor__drag-handle"
+                          draggable
+                          onDragEnd={handleSectionDragEnd}
+                          onDragStart={(event) => handleSectionDragStart(event, section.id)}
+                          type="button"
+                        >
+                          <GripVertical aria-hidden="true" size={14} />
+                        </button>
+                        <span className="exam-paper-editor__rule-title">{sectionTitle}</span>
                         <div className="exam-paper-editor__rule-controls">
                           <label>
                             <span>题数</span>
                             <input
-                              aria-label={`${section.name}题数`}
-                              min={1}
+                              aria-label={`${sectionTitle}题数`}
+                              min={0}
                               onChange={(event) => setSmartRuleDrafts((items) => ({
                                 ...items,
                                 [section.id]: { ...draft, questionCount: event.target.value },
@@ -1337,28 +1627,22 @@ export function PaperEditorPage({
                               value={draft.questionCount}
                             />
                           </label>
-                          <label>
-                            <span>每题分值</span>
-                            <input
-                              aria-label={`${section.name}每题分值`}
-                              min={0}
-                              onChange={(event) => setSmartRuleDrafts((items) => ({
-                                ...items,
-                                [section.id]: { ...draft, scorePerQuestion: event.target.value },
-                              }))}
-                              step="any"
-                              type="number"
-                              value={draft.scorePerQuestion}
-                            />
-                          </label>
                         </div>
+                        <Button
+                          aria-label={`删除题型 ${section.id}`}
+                          onClick={() => void handleDeleteSmartSection(section)}
+                          type="button"
+                          variant="actionClose"
+                        >
+                          <Trash2 aria-hidden="true" size={14} />
+                        </Button>
                       </div>
                     );
                   })}
                 </div>
               </section>
 
-              <section className="exam-paper-editor__smart-block">
+              <section className="exam-paper-editor__smart-block exam-paper-editor__smart-rule-section exam-paper-editor__constraint-block">
                 <h3>组卷约束</h3>
                 <div className="exam-paper-editor__constraint-grid">
                   <label>
@@ -1375,14 +1659,42 @@ export function PaperEditorPage({
                   </label>
                 </div>
               </section>
+              {blockedSmartQuestions.length > 0 ? (
+                <section className="exam-paper-editor__smart-block exam-paper-editor__smart-rule-section exam-paper-editor__blocked-block">
+                  <h3>已屏蔽题目</h3>
+                  <div className="exam-paper-editor__blocked-list">
+                    {blockedSmartQuestions.map((question) => {
+                      const tagNames = question.tags?.length > 0 ? question.tags : [question.tag].filter(Boolean);
+
+                      return (
+                        <div className="exam-paper-editor__blocked-item" key={question.id}>
+                          <div className="exam-paper-editor__question-meta">
+                            <strong className="exam-paper-editor__blocked-title--regular" title={question.title}>{question.title}</strong>
+                            {tagNames.length > 0 ? <span>{tagNames.join(" / ")}</span> : null}
+                          </div>
+                          <Button
+                            aria-label={`移除屏蔽题目 ${question.id}`}
+                            className="exam-paper-editor__action-button--regular"
+                            onClick={() => handleUnblockSmartQuestion(question.id)}
+                            type="button"
+                            variant="actionReset"
+                          >
+                            移除屏蔽
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null}
             </section>
 
-            <section className="exam-paper-editor__panel exam-paper-editor__smart-results">
+            <section className="exam-paper-editor__panel exam-paper-editor__panel--separated exam-paper-editor__smart-results">
               <div className="exam-paper-editor__panel-head">
                 <h2>已生成试卷 / 智能推荐结果</h2>
                 <span>共 {selectedQuestionCount} 题 / 总分 {totalScore} 分</span>
               </div>
-              <div className="exam-paper-editor__smart-metrics">
+              <div className="exam-paper-editor__smart-metrics exam-paper-editor__smart-metrics--separated">
                 <div><span>可用题量</span><strong>{filteredQuestions.length}</strong></div>
                 <div><span>知识点覆盖率</span><strong>{smartQuestionScope === "tag_filter" && smartSelectedTags.length > 0 ? "已筛选" : "全部"}</strong></div>
                 <div><span>预计生成耗时</span><strong>3 秒</strong></div>
@@ -1395,7 +1707,7 @@ export function PaperEditorPage({
               ) : (
                 <div className="exam-paper-editor__selected-groups">
                   {groupedSelectedQuestions.map((group, groupIndex) => (
-                    <section className="exam-paper-editor__selected-section" key={group.section.id}>
+                    <section className="exam-paper-editor__selected-section exam-paper-editor__selected-section--separated" key={group.section.id}>
                       <div className="exam-paper-editor__selected-section-head">
                         <h3>{formatSectionTitle(group.section, groupIndex)}</h3>
                         <span>共 {group.questions.length} 题</span>
@@ -1412,23 +1724,40 @@ export function PaperEditorPage({
                             </tr>
                           </thead>
                           <tbody>
-                            {group.questions.map((item, index) => (
-                              <tr key={`${item.sectionID}-${item.questionID}`}>
-                                <td>{index + 1}. {item.question?.title ?? `题目 ${item.questionID}`}</td>
-                                <td>{item.question === null ? "题库" : (item.question.tags.length > 0 ? item.question.tags : [item.question.tag]).join(" / ")}</td>
-                                <td>
-                                  {item.question === null ? "-" : (
-                                    <span className={`exam-paper-editor__difficulty exam-paper-editor__difficulty--${item.question.difficulty}`}>
-                                      {difficultyLabels[item.question.difficulty]}
-                                    </span>
-                                  )}
-                                </td>
-                                <td>{item.score} 分</td>
-                                <td className="exam-inline-actions">
-                                  <Button disabled type="button" variant="actionReset">替换</Button>
-                                </td>
-                              </tr>
-                            ))}
+                            {group.questions.map((item, index) => {
+                              const selectedTitle = item.question?.title ?? `题目 ${item.questionID}`;
+                              return (
+                                <tr key={`${item.sectionID}-${item.questionID}`}>
+                                  <td>
+                                    <Tooltip content={`${index + 1}. ${selectedTitle}`}>
+                                      <button className="exam-paper-editor__selected-title" type="button">
+                                        {index + 1}. {selectedTitle}
+                                      </button>
+                                    </Tooltip>
+                                  </td>
+                                  <td>{item.question === null ? "题库" : (item.question.tags.length > 0 ? item.question.tags : [item.question.tag]).join(" / ")}</td>
+                                  <td>
+                                    {item.question === null ? "-" : (
+                                      <span className={`exam-paper-editor__difficulty exam-paper-editor__difficulty--${item.question.difficulty}`}>
+                                        {difficultyLabels[item.question.difficulty]}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td>{item.score} 分</td>
+                                  <td className="exam-inline-actions">
+                                    <Button
+                                      aria-label={`屏蔽题目 ${item.questionID}`}
+                                      className="exam-paper-editor__action-button--regular"
+                                      onClick={() => void handleBlockSmartQuestion(item)}
+                                      type="button"
+                                      variant="actionReset"
+                                    >
+                                      屏蔽
+                                    </Button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -1564,7 +1893,7 @@ function defaultRuleDraftForSection(section: PaperSectionRow, sectionQuestions: 
   const questions = sectionQuestions.filter((item) => item.sectionID === section.id);
   const firstScore = questions[0]?.score ?? "5";
   return {
-    questionCount: String(Math.max(1, questions.length || section.questionCount || 1)),
+    questionCount: String(questions.length || section.questionCount || 0),
     scorePerQuestion: firstScore,
   };
 }
@@ -1579,6 +1908,10 @@ function cloneSectionQuestion(item: ManualQuestionRow): ManualQuestionRow {
 
 function cloneSection(item: PaperSectionRow): PaperSectionRow {
   return { ...item };
+}
+
+function normalizeSectionOrders(items: PaperSectionRow[]) {
+  return items.map((item, index) => ({ ...item, sortOrder: index + 1 }));
 }
 
 function serializeSections(items: PaperSectionRow[]) {
@@ -1598,6 +1931,50 @@ function serializeSectionQuestions(items: ManualQuestionRow[]) {
     })
     .map((item) => `${item.sectionID}:${item.questionID}:${item.sortOrder}:${item.score}`)
     .join("|");
+}
+
+function serializeSmartRuleState({
+  sections,
+  ruleDrafts,
+  questionScope,
+  selectedTags,
+  difficultyPercentages,
+  prioritizeQuality,
+  excludeRecentExamQuestions,
+  excludeUsedQuestions,
+}: {
+  sections: PaperSectionRow[];
+  ruleDrafts: Record<number, SmartRuleDraft>;
+  questionScope: SmartQuestionScope;
+  selectedTags: string[];
+  difficultyPercentages: SmartDifficultyPercentages;
+  prioritizeQuality: boolean;
+  excludeRecentExamQuestions: boolean;
+  excludeUsedQuestions: boolean;
+}) {
+  const normalizedTags = questionScope === "tag_filter" ? [...selectedTags].sort() : [];
+  const rules = [...sections]
+    .sort((left, right) => left.id - right.id)
+    .map((section) => {
+      const draft = ruleDrafts[section.id];
+      return [
+        section.id,
+        section.sortOrder,
+        draft?.ruleID ?? "",
+        draft?.questionCount ?? "",
+        draft?.scorePerQuestion.trim() ?? "",
+      ].join(":");
+    });
+
+  return JSON.stringify({
+    rules,
+    questionScope,
+    selectedTags: normalizedTags,
+    difficultyPercentages,
+    prioritizeQuality,
+    excludeRecentExamQuestions,
+    excludeUsedQuestions,
+  });
 }
 
 function collectChangedQuestionOrders(
@@ -1660,12 +2037,16 @@ function formatSectionTitle(section: PaperSectionRow, index: number) {
   return `${toChineseSectionIndex(index + 1)}、${stripSectionPrefix(section.name)}`;
 }
 
+function defaultSectionName(questionType: QuestionType) {
+  return stripSectionPrefix(sectionTemplates[questionType].name);
+}
+
 function editorBuildModeLabel(buildMode: PaperBuildMode) {
   if (buildMode === "rule_fixed") {
-    return "智能组卷";
+    return "策略组卷";
   }
   if (buildMode === "rule_live") {
-    return "规则组卷";
+    return "实时抽题组卷";
   }
   return "手动组卷";
 }
@@ -1699,6 +2080,22 @@ function buildSectionClassName(
   }
   if (sectionDropTargetID === sectionID && sectionDropDirection !== null) {
     classes.push(`exam-paper-editor__selected-section--drop-${sectionDropDirection}`);
+  }
+  return classes.join(" ");
+}
+
+function buildRuleRowClassName(
+  sectionID: number,
+  draggingSectionID: number | null,
+  sectionDropTargetID: number | null,
+  sectionDropDirection: DropIndicatorDirection | null,
+) {
+  const classes = ["exam-paper-editor__rule-row"];
+  if (draggingSectionID === sectionID) {
+    classes.push("exam-paper-editor__rule-row--dragging");
+  }
+  if (sectionDropTargetID === sectionID && sectionDropDirection !== null) {
+    classes.push(`exam-paper-editor__rule-row--drop-${sectionDropDirection}`);
   }
   return classes.join(" ");
 }
