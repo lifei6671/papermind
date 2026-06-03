@@ -33,6 +33,7 @@ type createQuestionRequest struct {
 	ReferenceAnswer string                  `json:"reference_answer"`
 	BlankCount      int                     `json:"blank_count"`
 	ScoreDefault    string                  `json:"score_default"`
+	QualityScore    *int                    `json:"quality_score"`
 	Tags            []string                `json:"tags"`
 	Options         []questionOptionRequest `json:"options"`
 }
@@ -55,6 +56,7 @@ type questionResponse struct {
 	StandardAnswer  string                   `json:"standard_answer,omitempty"`
 	ReferenceAnswer string                   `json:"reference_answer,omitempty"`
 	ScoreDefault    string                   `json:"score_default"`
+	QualityScore    int                      `json:"quality_score"`
 	Status          string                   `json:"status"`
 	AuthorName      string                   `json:"author_name"`
 	AuthorRole      string                   `json:"author_role"`
@@ -160,6 +162,7 @@ func (h questionHandler) create(c *gin.Context) {
 		ReferenceAnswer: request.ReferenceAnswer,
 		BlankCount:      request.BlankCount,
 		ScoreDefault:    request.ScoreDefault,
+		QualityScore:    request.QualityScore,
 		Options:         request.toServiceOptions(),
 		Tags:            request.Tags,
 	})
@@ -236,6 +239,7 @@ func (h questionHandler) update(c *gin.Context) {
 		ReferenceAnswer: request.ReferenceAnswer,
 		BlankCount:      request.BlankCount,
 		ScoreDefault:    request.ScoreDefault,
+		QualityScore:    request.QualityScore,
 		Options:         request.toServiceOptions(),
 		Tags:            request.Tags,
 	})
@@ -362,6 +366,9 @@ func (r createQuestionRequest) validate() error {
 	if r.Difficulty == "" {
 		return errors.New("difficulty 不能为空")
 	}
+	if r.QualityScore != nil && (*r.QualityScore < 0 || *r.QualityScore > 10) {
+		return errors.New("quality_score 必须在 0 到 10 之间")
+	}
 	return nil
 }
 
@@ -404,6 +411,7 @@ func questionToResponse(item servicequestion.Question) questionResponse {
 		StandardAnswer:  item.StandardAnswer,
 		ReferenceAnswer: item.ReferenceAnswer,
 		ScoreDefault:    item.ScoreDefault,
+		QualityScore:    item.QualityScore,
 		Status:          item.Status,
 		AuthorName:      item.AuthorName,
 		AuthorRole:      item.AuthorRole,
@@ -432,6 +440,7 @@ func writeQuestionServiceError(c *gin.Context, err error) {
 		errors.Is(err, servicequestion.ErrUnsupportedQuestionType) ||
 		errors.Is(err, servicequestion.ErrUnsupportedDifficulty) ||
 		errors.Is(err, servicequestion.ErrUnsupportedQuestionStatus) ||
+		errors.Is(err, servicequestion.ErrQuestionQualityOutOfRange) ||
 		errors.Is(err, servicequestion.ErrFillBlankNeedsStandardAnswer) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
 		return

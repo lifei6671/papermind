@@ -12,6 +12,7 @@ type QuestionDO struct {
 	StandardAnswer     string  `gorm:"column:standard_answer"`      // 填空题标准答案或判断题标准答案。
 	ReferenceAnswer    string  `gorm:"column:reference_answer"`     // 简答题参考答案。
 	ScoreDefault       string  `gorm:"column:score_default"`        // 默认分值，使用字符串承载 DECIMAL/NUMERIC。
+	QualityScore       int     `gorm:"column:quality_score"`        // 题目质量分，0-10，智能组卷高质量优先时使用。
 	ChoiceDisplayCount *int    `gorm:"column:choice_display_count"` // 选择题展示选项数量，nil 表示不限制。
 	ShuffleOptions     bool    `gorm:"column:shuffle_options"`      // 题库默认选项随机设置。
 	Status             string  `gorm:"column:status"`               // 题目状态：draft / enabled / disabled。
@@ -33,6 +34,7 @@ var QuestionColumns = struct {
 	StandardAnswer     string
 	ReferenceAnswer    string
 	ScoreDefault       string
+	QualityScore       string
 	ChoiceDisplayCount string
 	ShuffleOptions     string
 	Status             string
@@ -48,6 +50,7 @@ var QuestionColumns = struct {
 	StandardAnswer:     "standard_answer",
 	ReferenceAnswer:    "reference_answer",
 	ScoreDefault:       "score_default",
+	QualityScore:       "quality_score",
 	ChoiceDisplayCount: "choice_display_count",
 	ShuffleOptions:     "shuffle_options",
 	Status:             "status",

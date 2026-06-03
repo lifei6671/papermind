@@ -18,6 +18,7 @@ export type QuestionRow = {
   tag: string;
   tags: string[];
   scoreDefault?: string;
+  qualityScore?: number;
   standardAnswer?: string;
   blankAnswers?: string[];
   referenceAnswer?: string;
@@ -45,6 +46,7 @@ export type CreateQuestionInput = {
   correctOptionIndexes?: number[];
   analysis: string;
   scoreDefault: string;
+  qualityScore?: number;
   tags: string[];
   standardAnswer?: string;
   referenceAnswer?: string;
@@ -118,6 +120,7 @@ type QuestionAPIResponse = {
   reference_answer?: string;
   blank_count?: number;
   score_default?: string;
+  quality_score?: number;
   author_name?: string;
   author_role?: string;
   created_at?: number;
@@ -181,6 +184,7 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
         title: input.title,
         analysis: input.analysis,
         score_default: input.scoreDefault,
+        ...(input.qualityScore === undefined ? {} : { quality_score: input.qualityScore }),
         standard_answer: input.standardAnswer,
         reference_answer: input.referenceAnswer,
         blank_count: input.blankCount,
@@ -241,6 +245,7 @@ function questionMutationBody(input: CreateQuestionInput) {
     title: input.title,
     analysis: input.analysis,
     score_default: input.scoreDefault,
+    ...(input.qualityScore === undefined ? {} : { quality_score: input.qualityScore }),
     standard_answer: input.standardAnswer,
     reference_answer: input.referenceAnswer,
     blank_count: input.blankCount,
@@ -271,6 +276,7 @@ function mapQuestionResponse(row: QuestionAPIResponse): QuestionRow {
     tag: tags[0] ?? "",
     tags,
     scoreDefault: row.score_default ?? "0",
+    qualityScore: row.quality_score ?? 5,
     standardAnswer: row.standard_answer,
     blankAnswers,
     referenceAnswer: row.reference_answer,

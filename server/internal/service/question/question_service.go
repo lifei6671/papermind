@@ -49,6 +49,7 @@ var (
 	ErrUnsupportedQuestionType            = errors.New("unsupported question type")
 	ErrUnsupportedDifficulty              = errors.New("unsupported difficulty")
 	ErrUnsupportedQuestionStatus          = errors.New("unsupported question status")
+	ErrQuestionQualityOutOfRange          = errors.New("question quality score out of range")
 	ErrQuestionNotFound                   = errors.New("question not found")
 	ErrQuestionReferenced                 = errors.New("question referenced")
 )
@@ -64,6 +65,7 @@ type Question struct {
 	Title              string  // 题干内容。
 	Analysis           string  // 题目解析，可选。
 	ScoreDefault       string  // 默认分值。
+	QualityScore       int     // 题目质量分，0-10。
 	ChoiceDisplayCount *int    // 选择题展示选项数量，nil 表示不限制。
 	ShuffleOptions     bool    // 题库默认选项随机设置。
 	StandardAnswer     string  // 填空题标准答案或判断题标准答案。
@@ -96,6 +98,7 @@ type CreateQuestionInput struct {
 	Title              string                       // 题干内容。
 	Analysis           string                       // 题目解析，可选。
 	ScoreDefault       string                       // 默认分值。
+	QualityScore       *int                         // 题目质量分，nil 表示使用默认 5。
 	ChoiceDisplayCount *int                         // 选择题展示选项数量。
 	ShuffleOptions     bool                         // 题库默认选项随机设置。
 	Options            []QuestionOptionInput        // 选择题选项。
@@ -128,6 +131,7 @@ type UpdateQuestionInput struct {
 	Title              string                       // 题干内容。
 	Analysis           string                       // 题目解析，可选。
 	ScoreDefault       string                       // 默认分值。
+	QualityScore       *int                         // 题目质量分，nil 表示使用默认 5。
 	ChoiceDisplayCount *int                         // 选择题展示选项数量。
 	ShuffleOptions     bool                         // 题库默认选项随机设置。
 	Options            []QuestionOptionInput        // 选择题选项。
@@ -247,6 +251,7 @@ func (s *QuestionService) CreateQuestion(ctx context.Context, input CreateQuesti
 		Title:              input.Title,
 		Analysis:           input.Analysis,
 		ScoreDefault:       input.ScoreDefault,
+		QualityScore:       normalizeQualityScore(input.QualityScore),
 		ChoiceDisplayCount: input.ChoiceDisplayCount,
 		ShuffleOptions:     input.ShuffleOptions,
 		StandardAnswer:     input.StandardAnswer,
@@ -300,6 +305,7 @@ func (s *QuestionService) UpdateQuestion(ctx context.Context, input UpdateQuesti
 		Title:              input.Title,
 		Analysis:           input.Analysis,
 		ScoreDefault:       input.ScoreDefault,
+		QualityScore:       input.QualityScore,
 		ChoiceDisplayCount: input.ChoiceDisplayCount,
 		ShuffleOptions:     input.ShuffleOptions,
 		Options:            input.Options,
@@ -320,6 +326,7 @@ func (s *QuestionService) UpdateQuestion(ctx context.Context, input UpdateQuesti
 		Title:              input.Title,
 		Analysis:           input.Analysis,
 		ScoreDefault:       input.ScoreDefault,
+		QualityScore:       normalizeQualityScore(input.QualityScore),
 		ChoiceDisplayCount: input.ChoiceDisplayCount,
 		ShuffleOptions:     input.ShuffleOptions,
 		StandardAnswer:     input.StandardAnswer,
@@ -439,6 +446,9 @@ func canWriteQuestionScope(ctx permission.PermissionContext, tenantID uint64, sp
 }
 
 func validateQuestionInput(input CreateQuestionInput, options []QuestionOption) error {
+	if input.QualityScore != nil && (*input.QualityScore < 0 || *input.QualityScore > 10) {
+		return ErrQuestionQualityOutOfRange
+	}
 	if input.Difficulty != "" && !supportedDifficulty(input.Difficulty) {
 		return ErrUnsupportedDifficulty
 	}
@@ -460,6 +470,13 @@ func validateQuestionInput(input CreateQuestionInput, options []QuestionOption) 
 	default:
 		return ErrUnsupportedQuestionType
 	}
+}
+
+func normalizeQualityScore(score *int) int {
+	if score == nil {
+		return 5
+	}
+	return *score
 }
 
 func supportedDifficulty(difficulty string) bool {

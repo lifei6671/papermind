@@ -23,6 +23,15 @@ type PaperRepositoryOptions struct {
 	Now func() int64
 }
 
+type paperRuleConfigJSON struct {
+	QuestionScope              string                             `json:"question_scope"`
+	TagNames                   []string                           `json:"tag_names"`
+	DifficultyPercentages      servicepaper.DifficultyPercentages `json:"difficulty_percentages"`
+	PrioritizeQuality          bool                               `json:"prioritize_quality"`
+	ExcludeRecentExamQuestions bool                               `json:"exclude_recent_exam_questions"`
+	ExcludeUsedQuestions       bool                               `json:"exclude_used_questions"`
+}
+
 type paperListRow struct {
 	PaperDO
 	CreatorName string `gorm:"column:creator_name"`
@@ -598,7 +607,7 @@ func (r *PaperRepository) createRule(tx *gorm.DB, rule servicepaper.Rule, now in
 			UpdatedAt:     now,
 			UpdatedByType: AuditActorTenantUser,
 			Version:       1,
-			ExtJSON:       datatypes.JSON("{}"),
+			ExtJSON:       datatypes.JSON(mustPaperRuleConfigJSON(rule)),
 		},
 		TenantID:         rule.TenantID,
 		SectionID:        rule.SectionID,
@@ -648,10 +657,74 @@ func (r *PaperRepository) MatchQuestionsForRule(ctx context.Context, tenantID ui
 	}
 
 	var ids []uint64
-	if err := query.Order("q." + QuestionColumns.ID + " ASC").Scan(&ids).Error; err != nil {
+	orderExpr := "q." + QuestionColumns.ID + " ASC"
+	if rule.PrioritizeQuality {
+		orderExpr = "q." + QuestionColumns.QualityScore + " DESC, q." + QuestionColumns.ID + " ASC"
+	}
+	if err := query.Order(orderExpr).Scan(&ids).Error; err != nil {
 		return nil, err
 	}
 	return ids, nil
+}
+
+func (r *PaperRepository) RecentExamQuestionIDs(ctx context.Context, tenantID uint64, paperID uint64, limit int) (map[uint64]bool, error) {
+	if limit <= 0 {
+		return map[uint64]bool{}, nil
+	}
+	var paperIDs []uint64
+	if err := r.db.WithContext(ctx).Table(ExamDO{}.TableName()+" AS e").
+		Select("e."+ExamColumns.PaperID).
+		Joins("JOIN "+PaperDO{}.TableName()+" AS ep ON ep."+PaperColumns.TenantID+" = e."+ExamColumns.TenantID+" AND ep."+PaperColumns.ID+" = e."+ExamColumns.PaperID+" AND ep."+PaperColumns.DeletedAt+" = 0").
+		Joins("JOIN "+PaperDO{}.TableName()+" AS current_paper ON current_paper."+PaperColumns.TenantID+" = e."+ExamColumns.TenantID+" AND current_paper."+PaperColumns.ID+" = ? AND current_paper."+PaperColumns.DeletedAt+" = 0", paperID).
+		Where("e."+ExamColumns.TenantID+" = ?", tenantID).
+		Where("e."+ExamColumns.PaperID+" <> ?", paperID).
+		Where("e."+ExamColumns.Status+" = ?", constant.ExamStatusPublished).
+		Where("e."+ExamColumns.DeletedAt+" = ?", 0).
+		Where("COALESCE(current_paper." + PaperColumns.SpaceID + ", 0) = COALESCE(ep." + PaperColumns.SpaceID + ", 0)").
+		Order("e." + BaseColumns.CreatedAt + " DESC").
+		Limit(limit).
+		Scan(&paperIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(paperIDs) == 0 {
+		return map[uint64]bool{}, nil
+	}
+	var questionIDs []uint64
+	if err := r.db.WithContext(ctx).Table(PaperSectionQuestionDO{}.TableName()).
+		Select(PaperSectionQuestionColumns.QuestionID).
+		Where(PaperSectionQuestionColumns.TenantID+" = ?", tenantID).
+		Where(PaperSectionQuestionColumns.PaperID+" IN ?", paperIDs).
+		Scan(&questionIDs).Error; err != nil {
+		return nil, err
+	}
+	excluded := make(map[uint64]bool, len(questionIDs))
+	for _, questionID := range questionIDs {
+		excluded[questionID] = true
+	}
+	return excluded, nil
+}
+
+func (r *PaperRepository) TagIDsByNames(ctx context.Context, tenantID uint64, names []string) ([]uint64, error) {
+	if len(names) == 0 {
+		return []uint64{}, nil
+	}
+	var rows []struct {
+		ID uint64 `gorm:"column:id"`
+	}
+	if err := r.db.WithContext(ctx).Table(TagDO{}.TableName()).
+		Select(TagColumns.ID).
+		Where(TagColumns.TenantID+" = ?", tenantID).
+		Where(TagColumns.Name+" IN ?", names).
+		Where(TagColumns.DeletedAt+" = ?", 0).
+		Order(TagColumns.ID + " ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	tagIDs := make([]uint64, 0, len(rows))
+	for _, row := range rows {
+		tagIDs = append(tagIDs, row.ID)
+	}
+	return tagIDs, nil
 }
 
 func (r *PaperRepository) ListRules(ctx context.Context, tenantID uint64, paperID uint64) ([]servicepaper.Rule, error) {
@@ -793,6 +866,7 @@ func (r *PaperRepository) updateRule(tx *gorm.DB, input servicepaper.UpdateRuleI
 			PaperSectionRuleColumns.QuestionCount:    input.QuestionCount,
 			PaperSectionRuleColumns.ScorePerQuestion: input.ScorePerQuestion,
 			PaperSectionRuleColumns.ShuffleOptions:   input.ShuffleOptions,
+			BaseColumns.ExtJSON:                      mustPaperRuleConfigJSONFromUpdate(input),
 			BaseColumns.UpdatedAt:                    now,
 			BaseColumns.UpdatedByType:                AuditActorTenantUser,
 			BaseColumns.Version:                      gorm.Expr(BaseColumns.Version + " + 1"),
@@ -957,18 +1031,68 @@ func sectionQuestionFromDO(row PaperSectionQuestionDO) servicepaper.SectionQuest
 }
 
 func ruleFromDO(row PaperSectionRuleDO) servicepaper.Rule {
+	config := paperRuleConfigFromJSON(row.ExtJSON, row.TagFilter)
 	return servicepaper.Rule{
-		ID:               row.ID,
-		TenantID:         row.TenantID,
-		SectionID:        row.SectionID,
-		PaperID:          row.PaperID,
-		SortOrder:        row.SortOrder,
-		Difficulty:       row.Difficulty,
-		TagFilter:        row.TagFilter,
-		QuestionCount:    row.QuestionCount,
-		ScorePerQuestion: row.ScorePerQuestion,
-		ShuffleOptions:   row.ShuffleOptions,
+		ID:                         row.ID,
+		TenantID:                   row.TenantID,
+		SectionID:                  row.SectionID,
+		PaperID:                    row.PaperID,
+		SortOrder:                  row.SortOrder,
+		Difficulty:                 row.Difficulty,
+		TagFilter:                  row.TagFilter,
+		TagNames:                   config.TagNames,
+		QuestionScope:              config.QuestionScope,
+		DifficultyPercentages:      config.DifficultyPercentages,
+		QuestionCount:              row.QuestionCount,
+		ScorePerQuestion:           row.ScorePerQuestion,
+		ShuffleOptions:             row.ShuffleOptions,
+		PrioritizeQuality:          config.PrioritizeQuality,
+		ExcludeRecentExamQuestions: config.ExcludeRecentExamQuestions,
+		ExcludeUsedQuestions:       config.ExcludeUsedQuestions,
 	}
+}
+
+func mustPaperRuleConfigJSON(rule servicepaper.Rule) []byte {
+	data, _ := json.Marshal(paperRuleConfigJSON{
+		QuestionScope:              rule.QuestionScope,
+		TagNames:                   rule.TagNames,
+		DifficultyPercentages:      rule.DifficultyPercentages,
+		PrioritizeQuality:          rule.PrioritizeQuality,
+		ExcludeRecentExamQuestions: rule.ExcludeRecentExamQuestions,
+		ExcludeUsedQuestions:       rule.ExcludeUsedQuestions,
+	})
+	return data
+}
+
+func mustPaperRuleConfigJSONFromUpdate(input servicepaper.UpdateRuleInput) []byte {
+	return mustPaperRuleConfigJSON(servicepaper.Rule{
+		QuestionScope:              input.QuestionScope,
+		TagNames:                   input.TagNames,
+		DifficultyPercentages:      input.DifficultyPercentages,
+		PrioritizeQuality:          input.PrioritizeQuality,
+		ExcludeRecentExamQuestions: input.ExcludeRecentExamQuestions,
+		ExcludeUsedQuestions:       input.ExcludeUsedQuestions,
+	})
+}
+
+func paperRuleConfigFromJSON(raw datatypes.JSON, tagFilter string) paperRuleConfigJSON {
+	config := paperRuleConfigJSON{QuestionScope: "space_all", ExcludeUsedQuestions: true}
+	if len(tagIDsFromFilter(tagFilter)) > 0 {
+		config.QuestionScope = "tag_filter"
+	}
+	if len(raw) == 0 {
+		return config
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return config
+	}
+	if config.QuestionScope == "" {
+		config.QuestionScope = "space_all"
+		if len(tagIDsFromFilter(tagFilter)) > 0 {
+			config.QuestionScope = "tag_filter"
+		}
+	}
+	return config
 }
 
 func (r *PaperRepository) recalculateQuestionAggregates(tx *gorm.DB, tenantID uint64, paperID uint64, now int64) error {

@@ -17,6 +17,12 @@ export type PaperRow = {
 };
 
 export type PaperBuildMode = "manual" | "rule_fixed" | "rule_live";
+export type SmartQuestionScope = "space_all" | "tag_filter";
+export type SmartDifficultyPercentages = {
+  easy: number;
+  medium: number;
+  hard: number;
+};
 
 export type PaperSectionRow = {
   id: number;
@@ -118,9 +124,15 @@ export type PaperRuleRow = {
   sortOrder: number;
   difficulty?: string;
   tagIDs: number[];
+  tagNames?: string[];
+  questionScope?: SmartQuestionScope;
+  difficultyPercentages?: SmartDifficultyPercentages;
   questionCount: number;
   scorePerQuestion: string;
   shuffleOptions?: boolean;
+  prioritizeQuality?: boolean;
+  excludeRecentExamQuestions?: boolean;
+  excludeUsedQuestions?: boolean;
 };
 
 export type CreatePaperRuleInput = {
@@ -130,9 +142,15 @@ export type CreatePaperRuleInput = {
   sortOrder: number;
   difficulty?: string;
   tagIDs: number[];
+  tagNames?: string[];
+  questionScope?: SmartQuestionScope;
+  difficultyPercentages?: SmartDifficultyPercentages;
   questionCount: number;
   scorePerQuestion: string;
   shuffleOptions?: boolean;
+  prioritizeQuality?: boolean;
+  excludeRecentExamQuestions?: boolean;
+  excludeUsedQuestions?: boolean;
 };
 
 export type UpdatePaperRuleInput = CreatePaperRuleInput & {
@@ -279,9 +297,15 @@ type PaperRuleAPIResponse = {
   sort_order: number;
   difficulty?: string | null;
   tag_ids: number[];
+  tag_names?: string[];
+  question_scope?: SmartQuestionScope;
+  difficulty_percentages?: SmartDifficultyPercentages;
   question_count: number;
   score_per_question: string;
   shuffle_options?: boolean | null;
+  prioritize_quality?: boolean;
+  exclude_recent_exam_questions?: boolean;
+  exclude_used_questions?: boolean;
 };
 
 type RuleFixedGenerateAPIResponse = {
@@ -441,9 +465,15 @@ export function createPaperAPI(apiClient: ApiClient): PaperAPI {
           sort_order: input.sortOrder,
           ...(input.difficulty === undefined ? {} : { difficulty: input.difficulty }),
           tag_ids: input.tagIDs,
+          ...(input.tagNames === undefined ? {} : { tag_names: input.tagNames }),
+          ...(input.questionScope === undefined ? {} : { question_scope: input.questionScope }),
+          ...(input.difficultyPercentages === undefined ? {} : { difficulty_percentages: input.difficultyPercentages }),
           question_count: input.questionCount,
           score_per_question: input.scorePerQuestion,
           ...(input.shuffleOptions === undefined ? {} : { shuffle_options: input.shuffleOptions }),
+          ...(input.prioritizeQuality === undefined ? {} : { prioritize_quality: input.prioritizeQuality }),
+          ...(input.excludeRecentExamQuestions === undefined ? {} : { exclude_recent_exam_questions: input.excludeRecentExamQuestions }),
+          ...(input.excludeUsedQuestions === undefined ? {} : { exclude_used_questions: input.excludeUsedQuestions }),
         },
       );
       return mapPaperRuleResponse(data);
@@ -457,9 +487,15 @@ export function createPaperAPI(apiClient: ApiClient): PaperAPI {
           sort_order: input.sortOrder,
           ...(input.difficulty === undefined ? {} : { difficulty: input.difficulty }),
           tag_ids: input.tagIDs,
+          ...(input.tagNames === undefined ? {} : { tag_names: input.tagNames }),
+          ...(input.questionScope === undefined ? {} : { question_scope: input.questionScope }),
+          ...(input.difficultyPercentages === undefined ? {} : { difficulty_percentages: input.difficultyPercentages }),
           question_count: input.questionCount,
           score_per_question: input.scorePerQuestion,
           ...(input.shuffleOptions === undefined ? {} : { shuffle_options: input.shuffleOptions }),
+          ...(input.prioritizeQuality === undefined ? {} : { prioritize_quality: input.prioritizeQuality }),
+          ...(input.excludeRecentExamQuestions === undefined ? {} : { exclude_recent_exam_questions: input.excludeRecentExamQuestions }),
+          ...(input.excludeUsedQuestions === undefined ? {} : { exclude_used_questions: input.excludeUsedQuestions }),
         },
       });
       return mapPaperRuleResponse(data);
@@ -553,8 +589,14 @@ function mapPaperRuleResponse(row: PaperRuleAPIResponse): PaperRuleRow {
     sortOrder: row.sort_order,
     ...(row.difficulty === undefined || row.difficulty === null ? {} : { difficulty: row.difficulty }),
     tagIDs: row.tag_ids,
+    ...(row.tag_names === undefined ? {} : { tagNames: row.tag_names }),
+    ...(row.question_scope === undefined ? {} : { questionScope: row.question_scope }),
+    ...(row.difficulty_percentages === undefined ? {} : { difficultyPercentages: row.difficulty_percentages }),
     questionCount: row.question_count,
     scorePerQuestion: row.score_per_question,
     ...(row.shuffle_options === undefined || row.shuffle_options === null ? {} : { shuffleOptions: row.shuffle_options }),
+    ...(row.prioritize_quality === undefined ? {} : { prioritizeQuality: row.prioritize_quality }),
+    ...(row.exclude_recent_exam_questions === undefined ? {} : { excludeRecentExamQuestions: row.exclude_recent_exam_questions }),
+    ...(row.exclude_used_questions === undefined ? {} : { excludeUsedQuestions: row.exclude_used_questions }),
   };
 }

@@ -357,6 +357,32 @@ test("保存草稿会持久化适用年级", async () => {
   expect(screen.getByText("草稿已保存")).toBeInTheDocument();
 });
 
+test("保存适用年级后刷新组卷数据不会回退", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble();
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+  });
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+
+  await user.clear(screen.getByLabelText("适用年级"));
+  await user.type(screen.getByLabelText("适用年级"), "高二");
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  await waitFor(() => expect(screen.getByText("草稿已保存")).toBeInTheDocument());
+
+  const listCallsBeforeRefresh = vi.mocked(paperApi.listPapers).mock.calls.length;
+  const refreshButton = screen.getByRole("button", { name: "刷新组卷数据" });
+  await user.click(refreshButton);
+
+  await waitFor(() => expect(paperApi.listPapers).toHaveBeenCalledTimes(listCallsBeforeRefresh + 1));
+  await waitFor(() => expect(refreshButton).toBeDisabled());
+  await waitFor(() => expect(refreshButton).not.toBeDisabled());
+  expect(screen.getByLabelText("适用年级")).toHaveValue("高二");
+});
+
 test("保存草稿会持久化考试时长", async () => {
   const user = userEvent.setup();
   const paperApi = createPaperApiDouble();
@@ -860,9 +886,6 @@ test("保存草稿会持久化组卷方式和题目排序", async () => {
   fireEvent.drop(sectionTarget);
   fireEvent.dragEnd(sectionDragHandle);
 
-  await user.click(screen.getByRole("tab", { name: "智能组卷" }));
-  expect(screen.getByText("草稿有未保存调整")).toBeInTheDocument();
-
   const dragHandle = screen.getByRole("button", { name: "拖拽排序题目 202" });
   const targetRow = screen.getByTitle("1. 关于函数 y = 1/x，下列说法正确的是（ ）").closest<HTMLElement>("tr");
   if (targetRow === null) {
@@ -872,6 +895,9 @@ test("保存草稿会持久化组卷方式和题目排序", async () => {
   fireEvent.dragOver(targetRow);
   fireEvent.drop(targetRow);
   fireEvent.dragEnd(dragHandle);
+
+  await user.click(screen.getByRole("tab", { name: "智能组卷" }));
+  expect(screen.getByText("草稿有未保存调整")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "保存草稿" }));
 
@@ -923,6 +949,45 @@ test("保存草稿会持久化组卷方式和题目排序", async () => {
   expect(screen.getByTitle("1. 已知函数 f(x)=x²+1，则 f(-1) 的值为（ ）")).toBeInTheDocument();
   expect(screen.getByText("草稿已保存")).toBeInTheDocument();
   expect(screen.queryByText("草稿已部分保存，当前版本暂不支持持久化大题顺序。")).not.toBeInTheDocument();
+});
+
+test("已选试题表格提供固定列组，避免分值列挤占来源题库", async () => {
+  const paperApi = createPaperApiDouble({
+    sections: [
+      {
+        id: 11,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 1,
+        name: "一、单项选择题",
+        questionType: "single",
+        instructions: "每题 2 分",
+        totalScore: "4",
+        questionCount: 2,
+      },
+    ],
+    sectionQuestions: [
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "2" },
+      { tenantID: 10, paperID: 100, sectionID: 11, questionID: 202, sortOrder: 2, score: "2" },
+    ],
+  });
+  const { container } = renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+
+  const columns = Array.from(container.querySelectorAll(".exam-paper-editor__selected-table col"))
+    .map((node) => node.className);
+
+  expect(columns).toEqual([
+    "exam-paper-editor__selected-col exam-paper-editor__selected-col--question",
+    "exam-paper-editor__selected-col exam-paper-editor__selected-col--source",
+    "exam-paper-editor__selected-col exam-paper-editor__selected-col--score",
+    "exam-paper-editor__selected-col exam-paper-editor__selected-col--actions",
+  ]);
 });
 
 function renderPaperEditorRoutes({
@@ -1025,20 +1090,28 @@ function createPaperApiDouble({
       createdAt: new Date("2026-06-02T10:00:00+08:00").getTime(),
       creatorName: "teacher.exam",
     })),
-    updatePaper: vi.fn(async (input) => ({
-      id: input.paperID,
-      tenantID: input.tenantID,
-      spaceID: 301,
-      name: input.name,
-      description: input.description ?? "",
-      durationMinutes: input.durationMinutes,
-      gradeLevel: input.gradeLevel ?? "高一",
-      totalScore: "10",
-      buildMode: "manual" as const,
-      status: "draft" as const,
-      createdAt: new Date("2026-06-02T09:30:00+08:00").getTime(),
-      creatorName: "teacher.exam",
-    })),
+    updatePaper: vi.fn(async (input) => {
+      const currentIndex = currentPapers.findIndex((item) => item.id === input.paperID);
+      const currentPaper = currentPapers[currentIndex];
+      const updated = {
+        id: input.paperID,
+        tenantID: input.tenantID,
+        spaceID: currentPaper?.spaceID ?? 301,
+        name: input.name,
+        description: input.description ?? "",
+        durationMinutes: input.durationMinutes ?? currentPaper?.durationMinutes ?? 120,
+        gradeLevel: input.gradeLevel ?? currentPaper?.gradeLevel ?? "高一",
+        totalScore: currentPaper?.totalScore ?? "10",
+        buildMode: currentPaper?.buildMode ?? "manual" as const,
+        status: currentPaper?.status ?? "draft" as const,
+        createdAt: currentPaper?.createdAt ?? new Date("2026-06-02T09:30:00+08:00").getTime(),
+        creatorName: currentPaper?.creatorName ?? "teacher.exam",
+      };
+      if (currentIndex >= 0) {
+        currentPapers[currentIndex] = updated;
+      }
+      return updated;
+    }),
     enablePaper: vi.fn(async () => {
       throw new Error("not used");
     }),

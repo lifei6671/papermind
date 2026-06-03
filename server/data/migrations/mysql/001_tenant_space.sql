@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS questions (
     standard_answer TEXT NOT NULL COMMENT '填空题标准答案或判断题标准答案',
     reference_answer TEXT NOT NULL COMMENT '简答题参考答案',
     score_default DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '默认分值',
+    quality_score INT NOT NULL DEFAULT 5 COMMENT '题目质量分，0-10，智能组卷高质量优先时使用',
     choice_display_count INT NULL COMMENT '选择题展示选项数量，可为空',
     shuffle_options TINYINT(1) NOT NULL DEFAULT 0 COMMENT '题库默认选项随机设置',
     status VARCHAR(32) NOT NULL DEFAULT 'draft' COMMENT '题目状态：draft / enabled / disabled',

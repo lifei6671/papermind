@@ -80,16 +80,22 @@ type paperSectionQuestionListResponse struct {
 }
 
 type paperRuleResponse struct {
-	ID               uint64   `json:"id"`
-	TenantID         uint64   `json:"tenant_id"`
-	PaperID          uint64   `json:"paper_id"`
-	SectionID        uint64   `json:"section_id"`
-	SortOrder        int      `json:"sort_order"`
-	Difficulty       *string  `json:"difficulty"`
-	TagIDs           []uint64 `json:"tag_ids"`
-	QuestionCount    int      `json:"question_count"`
-	ScorePerQuestion string   `json:"score_per_question"`
-	ShuffleOptions   *bool    `json:"shuffle_options"`
+	ID                         uint64                             `json:"id"`
+	TenantID                   uint64                             `json:"tenant_id"`
+	PaperID                    uint64                             `json:"paper_id"`
+	SectionID                  uint64                             `json:"section_id"`
+	SortOrder                  int                                `json:"sort_order"`
+	Difficulty                 *string                            `json:"difficulty"`
+	TagIDs                     []uint64                           `json:"tag_ids"`
+	TagNames                   []string                           `json:"tag_names"`
+	QuestionScope              string                             `json:"question_scope"`
+	DifficultyPercentages      servicepaper.DifficultyPercentages `json:"difficulty_percentages"`
+	QuestionCount              int                                `json:"question_count"`
+	ScorePerQuestion           string                             `json:"score_per_question"`
+	ShuffleOptions             *bool                              `json:"shuffle_options"`
+	PrioritizeQuality          bool                               `json:"prioritize_quality"`
+	ExcludeRecentExamQuestions bool                               `json:"exclude_recent_exam_questions"`
+	ExcludeUsedQuestions       bool                               `json:"exclude_used_questions"`
 }
 
 type paperRuleListResponse struct {
@@ -153,13 +159,19 @@ type addPaperSectionQuestionRequest struct {
 }
 
 type createPaperRuleRequest struct {
-	TenantID         uint64   `json:"tenant_id"`
-	SortOrder        int      `json:"sort_order"`
-	Difficulty       *string  `json:"difficulty"`
-	TagIDs           []uint64 `json:"tag_ids"`
-	QuestionCount    int      `json:"question_count"`
-	ScorePerQuestion string   `json:"score_per_question"`
-	ShuffleOptions   *bool    `json:"shuffle_options"`
+	TenantID                   uint64                             `json:"tenant_id"`
+	SortOrder                  int                                `json:"sort_order"`
+	Difficulty                 *string                            `json:"difficulty"`
+	TagIDs                     []uint64                           `json:"tag_ids"`
+	TagNames                   []string                           `json:"tag_names"`
+	QuestionScope              string                             `json:"question_scope"`
+	DifficultyPercentages      servicepaper.DifficultyPercentages `json:"difficulty_percentages"`
+	QuestionCount              int                                `json:"question_count"`
+	ScorePerQuestion           string                             `json:"score_per_question"`
+	ShuffleOptions             *bool                              `json:"shuffle_options"`
+	PrioritizeQuality          bool                               `json:"prioritize_quality"`
+	ExcludeRecentExamQuestions bool                               `json:"exclude_recent_exam_questions"`
+	ExcludeUsedQuestions       bool                               `json:"exclude_used_questions"`
 }
 
 type paperRuleActionRequest struct {
@@ -180,14 +192,20 @@ type replacePaperSectionQuestionRequest struct {
 }
 
 type updatePaperRuleRequest struct {
-	TenantID         uint64   `json:"tenant_id"`
-	SectionID        uint64   `json:"section_id"`
-	SortOrder        int      `json:"sort_order"`
-	Difficulty       *string  `json:"difficulty"`
-	TagIDs           []uint64 `json:"tag_ids"`
-	QuestionCount    int      `json:"question_count"`
-	ScorePerQuestion string   `json:"score_per_question"`
-	ShuffleOptions   *bool    `json:"shuffle_options"`
+	TenantID                   uint64                             `json:"tenant_id"`
+	SectionID                  uint64                             `json:"section_id"`
+	SortOrder                  int                                `json:"sort_order"`
+	Difficulty                 *string                            `json:"difficulty"`
+	TagIDs                     []uint64                           `json:"tag_ids"`
+	TagNames                   []string                           `json:"tag_names"`
+	QuestionScope              string                             `json:"question_scope"`
+	DifficultyPercentages      servicepaper.DifficultyPercentages `json:"difficulty_percentages"`
+	QuestionCount              int                                `json:"question_count"`
+	ScorePerQuestion           string                             `json:"score_per_question"`
+	ShuffleOptions             *bool                              `json:"shuffle_options"`
+	PrioritizeQuality          bool                               `json:"prioritize_quality"`
+	ExcludeRecentExamQuestions bool                               `json:"exclude_recent_exam_questions"`
+	ExcludeUsedQuestions       bool                               `json:"exclude_used_questions"`
 }
 
 type updatePaperBuildModeRequest struct {
@@ -775,15 +793,21 @@ func (h paperHandler) createRule(c *gin.Context) {
 	}
 	// 组卷规则持久化为 paper_section_rules，tag_ids 在 service 层稳定排序为 JSON，便于后续规则生成和预检查复用同一来源。
 	rule, err := h.service.ConfigureRule(c.Request.Context(), servicepaper.ConfigureRuleInput{
-		TenantID:         request.TenantID,
-		PaperID:          paperID,
-		SectionID:        sectionID,
-		SortOrder:        request.SortOrder,
-		Difficulty:       request.Difficulty,
-		TagIDs:           request.TagIDs,
-		QuestionCount:    request.QuestionCount,
-		ScorePerQuestion: request.ScorePerQuestion,
-		ShuffleOptions:   request.ShuffleOptions,
+		TenantID:                   request.TenantID,
+		PaperID:                    paperID,
+		SectionID:                  sectionID,
+		SortOrder:                  request.SortOrder,
+		Difficulty:                 request.Difficulty,
+		TagIDs:                     request.TagIDs,
+		TagNames:                   request.TagNames,
+		QuestionScope:              request.QuestionScope,
+		DifficultyPercentages:      request.DifficultyPercentages,
+		QuestionCount:              request.QuestionCount,
+		ScorePerQuestion:           request.ScorePerQuestion,
+		ShuffleOptions:             request.ShuffleOptions,
+		PrioritizeQuality:          request.PrioritizeQuality,
+		ExcludeRecentExamQuestions: request.ExcludeRecentExamQuestions,
+		ExcludeUsedQuestions:       request.ExcludeUsedQuestions,
 	})
 	if err != nil {
 		writePaperServiceError(c, err)
@@ -884,31 +908,43 @@ func (h paperHandler) updateRule(c *gin.Context) {
 		return
 	}
 	if err := h.service.UpdateRuleLiveRule(c.Request.Context(), servicepaper.UpdateRuleInput{
-		TenantID:         request.TenantID,
-		PaperID:          paperID,
-		RuleID:           ruleID,
-		SectionID:        request.SectionID,
-		SortOrder:        request.SortOrder,
-		Difficulty:       request.Difficulty,
-		TagIDs:           request.TagIDs,
-		QuestionCount:    request.QuestionCount,
-		ScorePerQuestion: request.ScorePerQuestion,
-		ShuffleOptions:   request.ShuffleOptions,
+		TenantID:                   request.TenantID,
+		PaperID:                    paperID,
+		RuleID:                     ruleID,
+		SectionID:                  request.SectionID,
+		SortOrder:                  request.SortOrder,
+		Difficulty:                 request.Difficulty,
+		TagIDs:                     request.TagIDs,
+		TagNames:                   request.TagNames,
+		QuestionScope:              request.QuestionScope,
+		DifficultyPercentages:      request.DifficultyPercentages,
+		QuestionCount:              request.QuestionCount,
+		ScorePerQuestion:           request.ScorePerQuestion,
+		ShuffleOptions:             request.ShuffleOptions,
+		PrioritizeQuality:          request.PrioritizeQuality,
+		ExcludeRecentExamQuestions: request.ExcludeRecentExamQuestions,
+		ExcludeUsedQuestions:       request.ExcludeUsedQuestions,
 	}); err != nil {
 		writePaperServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(ruleToResponse(servicepaper.Rule{
-		ID:               ruleID,
-		TenantID:         request.TenantID,
-		PaperID:          paperID,
-		SectionID:        request.SectionID,
-		SortOrder:        request.SortOrder,
-		Difficulty:       request.Difficulty,
-		TagFilter:        servicepaperTagFilterJSON(request.TagIDs),
-		QuestionCount:    request.QuestionCount,
-		ScorePerQuestion: request.ScorePerQuestion,
-		ShuffleOptions:   request.ShuffleOptions,
+		ID:                         ruleID,
+		TenantID:                   request.TenantID,
+		PaperID:                    paperID,
+		SectionID:                  request.SectionID,
+		SortOrder:                  request.SortOrder,
+		Difficulty:                 request.Difficulty,
+		TagFilter:                  servicepaperTagFilterJSON(request.TagIDs),
+		TagNames:                   request.TagNames,
+		QuestionScope:              request.QuestionScope,
+		DifficultyPercentages:      request.DifficultyPercentages,
+		QuestionCount:              request.QuestionCount,
+		ScorePerQuestion:           request.ScorePerQuestion,
+		ShuffleOptions:             request.ShuffleOptions,
+		PrioritizeQuality:          request.PrioritizeQuality,
+		ExcludeRecentExamQuestions: request.ExcludeRecentExamQuestions,
+		ExcludeUsedQuestions:       request.ExcludeUsedQuestions,
 	})))
 }
 
@@ -1066,6 +1102,17 @@ func (r createPaperRuleRequest) validate() error {
 	if err := validateNonNegativeScore("score_per_question", r.ScorePerQuestion); err != nil {
 		return err
 	}
+	return validateDifficultyPercentages(r.DifficultyPercentages)
+}
+
+func validateDifficultyPercentages(percentages servicepaper.DifficultyPercentages) error {
+	if percentages.Easy < 0 || percentages.Medium < 0 || percentages.Hard < 0 {
+		return errors.New("difficulty_percentages 不能包含负数")
+	}
+	total := percentages.Easy + percentages.Medium + percentages.Hard
+	if total != 0 && total != 100 {
+		return errors.New("difficulty_percentages 总和必须为 100")
+	}
 	return nil
 }
 
@@ -1136,7 +1183,10 @@ func (r updatePaperRuleRequest) validate() error {
 	if r.ScorePerQuestion == "" {
 		return errors.New("score_per_question 不能为空")
 	}
-	return validateNonNegativeScore("score_per_question", r.ScorePerQuestion)
+	if err := validateNonNegativeScore("score_per_question", r.ScorePerQuestion); err != nil {
+		return err
+	}
+	return validateDifficultyPercentages(r.DifficultyPercentages)
 }
 
 func (r updatePaperBuildModeRequest) validate() error {
@@ -1338,16 +1388,22 @@ func sectionToResponse(section servicepaper.Section) paperSectionResponse {
 
 func ruleToResponse(rule servicepaper.Rule) paperRuleResponse {
 	return paperRuleResponse{
-		ID:               rule.ID,
-		TenantID:         rule.TenantID,
-		PaperID:          rule.PaperID,
-		SectionID:        rule.SectionID,
-		SortOrder:        rule.SortOrder,
-		Difficulty:       rule.Difficulty,
-		TagIDs:           tagIDsFromRule(rule),
-		QuestionCount:    rule.QuestionCount,
-		ScorePerQuestion: rule.ScorePerQuestion,
-		ShuffleOptions:   rule.ShuffleOptions,
+		ID:                         rule.ID,
+		TenantID:                   rule.TenantID,
+		PaperID:                    rule.PaperID,
+		SectionID:                  rule.SectionID,
+		SortOrder:                  rule.SortOrder,
+		Difficulty:                 rule.Difficulty,
+		TagIDs:                     tagIDsFromRule(rule),
+		TagNames:                   rule.TagNames,
+		QuestionScope:              rule.QuestionScope,
+		DifficultyPercentages:      rule.DifficultyPercentages,
+		QuestionCount:              rule.QuestionCount,
+		ScorePerQuestion:           rule.ScorePerQuestion,
+		ShuffleOptions:             rule.ShuffleOptions,
+		PrioritizeQuality:          rule.PrioritizeQuality,
+		ExcludeRecentExamQuestions: rule.ExcludeRecentExamQuestions,
+		ExcludeUsedQuestions:       rule.ExcludeUsedQuestions,
 	}
 }
 

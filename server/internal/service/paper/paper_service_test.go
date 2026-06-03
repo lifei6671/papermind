@@ -316,6 +316,48 @@ func TestGenerateRuleFixedRejectsPublishedRuleLiveExam(t *testing.T) {
 	}
 }
 
+func TestGenerateRuleFixedExcludesRecentExamAndDuplicateQuestions(t *testing.T) {
+	repo := &fakeRepository{
+		ruleMatches: map[uint64][]uint64{
+			1: {101, 102, 103},
+			2: {102, 104},
+		},
+		rules: []Rule{
+			{
+				ID:                         1,
+				SectionID:                  200,
+				QuestionCount:              2,
+				ScorePerQuestion:           "3",
+				ExcludeRecentExamQuestions: true,
+				ExcludeUsedQuestions:       true,
+			},
+			{
+				ID:                   2,
+				SectionID:            201,
+				QuestionCount:        1,
+				ScorePerQuestion:     "5",
+				ExcludeUsedQuestions: true,
+			},
+		},
+		recentExamQuestionIDs: map[uint64]bool{101: true},
+	}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	if err := svc.GenerateRuleFixed(context.Background(), 10, 100); err != nil {
+		t.Fatalf("GenerateRuleFixed returned error: %v", err)
+	}
+	got := make([]uint64, 0, len(repo.generatedQuestions))
+	for _, question := range repo.generatedQuestions {
+		got = append(got, question.QuestionID)
+	}
+	want := []uint64{102, 103, 104}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("expected generated questions %v, got %v", want, got)
+		}
+	}
+}
+
 func TestRuleLivePrecheckDedupeAndFreezePool(t *testing.T) {
 	repo := &fakeRepository{
 		ruleMatches: map[uint64][]uint64{
@@ -474,6 +516,8 @@ type fakeRepository struct {
 	deletedSectionQuestionID               uint64
 
 	ruleMatches                 map[uint64][]uint64
+	rules                       []Rule
+	recentExamQuestionIDs       map[uint64]bool
 	configuredRule              Rule
 	generatedFixedInTransaction bool
 	generatedFixedBuildMode     string
@@ -616,7 +660,22 @@ func (r *fakeRepository) MatchQuestionsForRule(ctx context.Context, tenantID uin
 	return r.ruleMatches[rule.ID], nil
 }
 
+func (r *fakeRepository) RecentExamQuestionIDs(ctx context.Context, tenantID uint64, paperID uint64, limit int) (map[uint64]bool, error) {
+	return r.recentExamQuestionIDs, nil
+}
+
+func (r *fakeRepository) TagIDsByNames(ctx context.Context, tenantID uint64, names []string) ([]uint64, error) {
+	ids := make([]uint64, 0, len(names))
+	for index := range names {
+		ids = append(ids, uint64(index+1))
+	}
+	return ids, nil
+}
+
 func (r *fakeRepository) ListRules(ctx context.Context, tenantID uint64, paperID uint64) ([]Rule, error) {
+	if len(r.rules) > 0 {
+		return r.rules, nil
+	}
 	rules := make([]Rule, 0, len(r.ruleMatches))
 	for id := range r.ruleMatches {
 		rules = append(rules, Rule{ID: id, SectionID: 200, PaperID: paperID, QuestionCount: len(r.ruleMatches[id]), ScorePerQuestion: "3"})

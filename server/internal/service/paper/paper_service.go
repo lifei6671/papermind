@@ -25,6 +25,9 @@ const (
 	StatusEnabled = constant.PaperStatusEnabled
 	// StatusDisabled 表示试卷禁用状态。
 	StatusDisabled = constant.PaperStatusDisabled
+
+	defaultQuestionScope = "space_all"
+	tagFilterScope       = "tag_filter"
 )
 
 var (
@@ -78,16 +81,28 @@ type SectionQuestion struct {
 }
 
 type Rule struct {
-	ID               uint64  // 大题抽题规则主键 ID。
-	TenantID         uint64  // 所属租户 ID。
-	SectionID        uint64  // 大题 ID。
-	PaperID          uint64  // 试卷 ID。
-	SortOrder        int     // 规则在大题内的排序。
-	Difficulty       *string // 抽题难度条件，nil 表示不限难度。
-	TagFilter        string  // 标签过滤条件，JSON 数组字符串。
-	QuestionCount    int     // 该规则抽题数量。
-	ScorePerQuestion string  // 该规则下每题分值。
-	ShuffleOptions   *bool   // 是否随机选项，nil 表示回退题库默认值。
+	ID                         uint64                // 大题抽题规则主键 ID。
+	TenantID                   uint64                // 所属租户 ID。
+	SectionID                  uint64                // 大题 ID。
+	PaperID                    uint64                // 试卷 ID。
+	SortOrder                  int                   // 规则在大题内的排序。
+	Difficulty                 *string               // 抽题难度条件，nil 表示不限难度。
+	TagFilter                  string                // 标签过滤条件，JSON 数组字符串。
+	TagNames                   []string              // 标签名称，用于规则编辑回填。
+	QuestionScope              string                // 题库范围：space_all / tag_filter。
+	DifficultyPercentages      DifficultyPercentages // 难度占比。
+	QuestionCount              int                   // 该规则抽题数量。
+	ScorePerQuestion           string                // 该规则下每题分值。
+	ShuffleOptions             *bool                 // 是否随机选项，nil 表示回退题库默认值。
+	PrioritizeQuality          bool                  // 是否优先选择高质量题。
+	ExcludeRecentExamQuestions bool                  // 是否排除最近三次考试已用题。
+	ExcludeUsedQuestions       bool                  // 是否排除本次生成结果中的已用题。
+}
+
+type DifficultyPercentages struct {
+	Easy   int `json:"easy"`   // 简单题占比。
+	Medium int `json:"medium"` // 中等题占比。
+	Hard   int `json:"hard"`   // 困难题占比。
 }
 
 type SectionOrder struct {
@@ -161,15 +176,21 @@ type UpdateSectionQuestionInput struct {
 }
 
 type ConfigureRuleInput struct {
-	TenantID         uint64   // 所属租户 ID。
-	PaperID          uint64   // 试卷 ID。
-	SectionID        uint64   // 大题 ID。
-	SortOrder        int      // 规则排序。
-	Difficulty       *string  // 抽题难度，nil 表示不限。
-	TagIDs           []uint64 // 标签过滤条件。
-	QuestionCount    int      // 抽题数量。
-	ScorePerQuestion string   // 每题分值。
-	ShuffleOptions   *bool    // 可空选项随机设置。
+	TenantID                   uint64                // 所属租户 ID。
+	PaperID                    uint64                // 试卷 ID。
+	SectionID                  uint64                // 大题 ID。
+	SortOrder                  int                   // 规则排序。
+	Difficulty                 *string               // 抽题难度，nil 表示不限。
+	TagIDs                     []uint64              // 标签过滤条件。
+	TagNames                   []string              // 标签名称，用于按知识点筛选时解析标签 ID。
+	QuestionScope              string                // 题库范围。
+	DifficultyPercentages      DifficultyPercentages // 难度占比。
+	QuestionCount              int                   // 抽题数量。
+	ScorePerQuestion           string                // 每题分值。
+	ShuffleOptions             *bool                 // 可空选项随机设置。
+	PrioritizeQuality          bool                  // 是否优先选择高质量题。
+	ExcludeRecentExamQuestions bool                  // 是否排除最近三次考试已用题。
+	ExcludeUsedQuestions       bool                  // 是否排除本次生成结果中的已用题。
 }
 
 type ReplaceGeneratedQuestionInput struct {
@@ -196,18 +217,24 @@ type LivePrecheckResult struct {
 }
 
 type UpdateRuleInput struct {
-	TenantID         uint64   // 所属租户 ID。
-	PaperID          uint64   // 试卷 ID。
-	ExamID           uint64   // 考试 ID。
-	RuleID           uint64   // 规则 ID。
-	ExamFrozen       bool     // 考试是否已冻结题池。
-	SectionID        uint64   // 大题 ID。
-	SortOrder        int      // 规则排序。
-	Difficulty       *string  // 抽题难度，nil 表示不限。
-	TagIDs           []uint64 // 标签过滤条件。
-	QuestionCount    int      // 抽题数量。
-	ScorePerQuestion string   // 每题分值。
-	ShuffleOptions   *bool    // 可空选项随机设置。
+	TenantID                   uint64                // 所属租户 ID。
+	PaperID                    uint64                // 试卷 ID。
+	ExamID                     uint64                // 考试 ID。
+	RuleID                     uint64                // 规则 ID。
+	ExamFrozen                 bool                  // 考试是否已冻结题池。
+	SectionID                  uint64                // 大题 ID。
+	SortOrder                  int                   // 规则排序。
+	Difficulty                 *string               // 抽题难度，nil 表示不限。
+	TagIDs                     []uint64              // 标签过滤条件。
+	TagNames                   []string              // 标签名称，用于按知识点筛选时解析标签 ID。
+	QuestionScope              string                // 题库范围。
+	DifficultyPercentages      DifficultyPercentages // 难度占比。
+	QuestionCount              int                   // 抽题数量。
+	ScorePerQuestion           string                // 每题分值。
+	ShuffleOptions             *bool                 // 可空选项随机设置。
+	PrioritizeQuality          bool                  // 是否优先选择高质量题。
+	ExcludeRecentExamQuestions bool                  // 是否排除最近三次考试已用题。
+	ExcludeUsedQuestions       bool                  // 是否排除本次生成结果中的已用题。
 }
 
 type UpdateBuildModeInput struct {
@@ -249,6 +276,8 @@ type Repository interface {
 	CreateRule(ctx context.Context, rule Rule) (Rule, error)
 	CreateRuleAndRecalculate(ctx context.Context, rule Rule, buildMode string) (Rule, error)
 	MatchQuestionsForRule(ctx context.Context, tenantID uint64, paperID uint64, rule Rule) ([]uint64, error)
+	RecentExamQuestionIDs(ctx context.Context, tenantID uint64, paperID uint64, limit int) (map[uint64]bool, error)
+	TagIDsByNames(ctx context.Context, tenantID uint64, names []string) ([]uint64, error)
 	ListRules(ctx context.Context, tenantID uint64, paperID uint64) ([]Rule, error)
 	GenerateFixedQuestionsAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, buildMode string, questions []SectionQuestion) error
 	ReplaceGeneratedQuestionAndRecalculate(ctx context.Context, input ReplaceGeneratedQuestionInput) error
@@ -405,17 +434,28 @@ func (s *Service) ConfigureRule(ctx context.Context, input ConfigureRuleInput) (
 	if err := s.ensureRuleChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
 		return Rule{}, err
 	}
-	rule := Rule{
-		TenantID:         input.TenantID,
-		PaperID:          input.PaperID,
-		SectionID:        input.SectionID,
-		SortOrder:        input.SortOrder,
-		Difficulty:       input.Difficulty,
-		TagFilter:        tagFilterJSON(input.TagIDs),
-		QuestionCount:    input.QuestionCount,
-		ScorePerQuestion: input.ScorePerQuestion,
-		ShuffleOptions:   input.ShuffleOptions,
+	tagIDs, err := s.ruleTagIDs(ctx, input.TenantID, input.TagIDs, input.TagNames)
+	if err != nil {
+		return Rule{}, err
 	}
+	rule := Rule{
+		TenantID:                   input.TenantID,
+		PaperID:                    input.PaperID,
+		SectionID:                  input.SectionID,
+		SortOrder:                  input.SortOrder,
+		Difficulty:                 input.Difficulty,
+		TagFilter:                  tagFilterJSON(tagIDs),
+		TagNames:                   input.TagNames,
+		QuestionScope:              input.QuestionScope,
+		DifficultyPercentages:      input.DifficultyPercentages,
+		QuestionCount:              input.QuestionCount,
+		ScorePerQuestion:           input.ScorePerQuestion,
+		ShuffleOptions:             input.ShuffleOptions,
+		PrioritizeQuality:          input.PrioritizeQuality,
+		ExcludeRecentExamQuestions: input.ExcludeRecentExamQuestions,
+		ExcludeUsedQuestions:       input.ExcludeUsedQuestions,
+	}
+	rule = normalizeRuleConfig(rule)
 	paper, err := s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
 	if err != nil {
 		return Rule{}, err
@@ -438,27 +478,143 @@ func (s *Service) GenerateRuleFixed(ctx context.Context, tenantID uint64, paperI
 	sort.Slice(rules, func(i int, j int) bool {
 		return rules[i].SortOrder < rules[j].SortOrder
 	})
+	excludedRecent := map[uint64]bool{}
 	for _, rule := range rules {
-		matched, err := s.repo.MatchQuestionsForRule(ctx, tenantID, paperID, rule)
+		if rule.ExcludeRecentExamQuestions {
+			excludedRecent, err = s.repo.RecentExamQuestionIDs(ctx, tenantID, paperID, 3)
+			if err != nil {
+				return err
+			}
+			break
+		}
+	}
+	used := map[uint64]bool{}
+	for _, rule := range rules {
+		selected, err := s.selectQuestionsForRule(ctx, tenantID, paperID, normalizeRuleConfig(rule), used, excludedRecent)
 		if err != nil {
 			return err
 		}
-		if len(matched) < rule.QuestionCount {
+		if len(selected) < rule.QuestionCount {
 			return ErrQuestionPoolInsufficient
 		}
-		for index := 0; index < rule.QuestionCount; index++ {
+		for _, questionID := range selected {
 			questions = append(questions, SectionQuestion{
 				TenantID:       tenantID,
 				PaperID:        paperID,
 				SectionID:      rule.SectionID,
-				QuestionID:     matched[index],
+				QuestionID:     questionID,
 				SortOrder:      len(questions) + 1,
 				Score:          rule.ScorePerQuestion,
 				ShuffleOptions: rule.ShuffleOptions,
 			})
+			if rule.ExcludeUsedQuestions {
+				used[questionID] = true
+			}
 		}
 	}
 	return s.repo.GenerateFixedQuestionsAndRecalculate(ctx, tenantID, paperID, BuildModeRuleFixed, questions)
+}
+
+func (s *Service) selectQuestionsForRule(ctx context.Context, tenantID uint64, paperID uint64, rule Rule, used map[uint64]bool, excludedRecent map[uint64]bool) ([]uint64, error) {
+	difficultyCounts := allocateDifficultyCounts(rule.QuestionCount, rule.DifficultyPercentages)
+	if len(difficultyCounts) == 0 {
+		matched, err := s.repo.MatchQuestionsForRule(ctx, tenantID, paperID, rule)
+		if err != nil {
+			return nil, err
+		}
+		return filterMatchedQuestions(matched, rule, used, excludedRecent, rule.QuestionCount), nil
+	}
+
+	selected := make([]uint64, 0, rule.QuestionCount)
+	for _, difficulty := range []string{"easy", "medium", "hard"} {
+		required := difficultyCounts[difficulty]
+		if required == 0 {
+			continue
+		}
+		difficultyRule := rule
+		difficultyRule.Difficulty = &difficulty
+		matched, err := s.repo.MatchQuestionsForRule(ctx, tenantID, paperID, difficultyRule)
+		if err != nil {
+			return nil, err
+		}
+		picked := filterMatchedQuestions(matched, rule, usedFromSelected(used, selected, rule.ExcludeUsedQuestions), excludedRecent, required)
+		if len(picked) < required {
+			return selected, nil
+		}
+		selected = append(selected, picked...)
+	}
+	return selected, nil
+}
+
+func filterMatchedQuestions(matched []uint64, rule Rule, used map[uint64]bool, excludedRecent map[uint64]bool, limit int) []uint64 {
+	selected := make([]uint64, 0, limit)
+	for _, questionID := range matched {
+		if rule.ExcludeRecentExamQuestions && excludedRecent[questionID] {
+			continue
+		}
+		if rule.ExcludeUsedQuestions && used[questionID] {
+			continue
+		}
+		selected = append(selected, questionID)
+		if len(selected) == limit {
+			break
+		}
+	}
+	return selected
+}
+
+func usedFromSelected(base map[uint64]bool, selected []uint64, shouldExclude bool) map[uint64]bool {
+	if !shouldExclude {
+		return base
+	}
+	next := make(map[uint64]bool, len(base)+len(selected))
+	for questionID := range base {
+		next[questionID] = true
+	}
+	for _, questionID := range selected {
+		next[questionID] = true
+	}
+	return next
+}
+
+func allocateDifficultyCounts(questionCount int, percentages DifficultyPercentages) map[string]int {
+	totalPercent := percentages.Easy + percentages.Medium + percentages.Hard
+	if questionCount <= 0 || totalPercent == 0 {
+		return nil
+	}
+	raw := []struct {
+		name    string
+		percent int
+		count   int
+		remain  int
+	}{
+		{name: "easy", percent: percentages.Easy},
+		{name: "medium", percent: percentages.Medium},
+		{name: "hard", percent: percentages.Hard},
+	}
+	allocated := 0
+	for index := range raw {
+		product := questionCount * raw[index].percent
+		raw[index].count = product / totalPercent
+		raw[index].remain = product % totalPercent
+		allocated += raw[index].count
+	}
+	sort.SliceStable(raw, func(i int, j int) bool {
+		if raw[i].remain == raw[j].remain {
+			return raw[i].percent > raw[j].percent
+		}
+		return raw[i].remain > raw[j].remain
+	})
+	for index := 0; index < questionCount-allocated; index++ {
+		raw[index%len(raw)].count++
+	}
+	counts := map[string]int{}
+	for _, item := range raw {
+		if item.count > 0 {
+			counts[item.name] = item.count
+		}
+	}
+	return counts
 }
 
 func (s *Service) ReplaceGeneratedQuestion(ctx context.Context, input ReplaceGeneratedQuestionInput) error {
@@ -524,14 +680,18 @@ func (s *Service) UpdateRuleLiveRule(ctx context.Context, input UpdateRuleInput)
 	if err := s.ensureRuleChangesAllowed(ctx, input.TenantID, input.PaperID); err != nil {
 		return err
 	}
+	normalizedInput, err := s.normalizeUpdateRuleInput(ctx, input)
+	if err != nil {
+		return err
+	}
 	paper, err := s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
 	if err != nil {
 		return err
 	}
 	if paper.BuildMode == BuildModeRuleLive {
-		return s.repo.UpdateRuleAndRecalculate(ctx, input, paper.BuildMode)
+		return s.repo.UpdateRuleAndRecalculate(ctx, normalizedInput, paper.BuildMode)
 	}
-	return s.repo.UpdateRule(ctx, input)
+	return s.repo.UpdateRule(ctx, normalizedInput)
 }
 
 func (s *Service) DeleteRule(ctx context.Context, tenantID uint64, paperID uint64, ruleID uint64) error {
@@ -587,6 +747,78 @@ func tagFilterJSON(tagIDs []uint64) string {
 	})
 	data, _ := json.Marshal(sorted)
 	return string(data)
+}
+
+func normalizeRuleConfig(rule Rule) Rule {
+	if rule.QuestionScope == "" {
+		rule.QuestionScope = defaultQuestionScope
+		if len(tagIDsFromJSON(rule.TagFilter)) > 0 {
+			rule.QuestionScope = tagFilterScope
+		}
+	}
+	if rule.QuestionScope == defaultQuestionScope {
+		rule.TagFilter = "[]"
+	}
+	if rule.Difficulty != nil && difficultyPercentTotal(rule.DifficultyPercentages) == 0 {
+		switch *rule.Difficulty {
+		case "easy":
+			rule.DifficultyPercentages.Easy = 100
+		case "medium":
+			rule.DifficultyPercentages.Medium = 100
+		case "hard":
+			rule.DifficultyPercentages.Hard = 100
+		}
+	}
+	if difficultyPercentTotal(rule.DifficultyPercentages) > 0 {
+		rule.Difficulty = nil
+	}
+	return rule
+}
+
+func (s *Service) normalizeUpdateRuleInput(ctx context.Context, input UpdateRuleInput) (UpdateRuleInput, error) {
+	tagIDs, err := s.ruleTagIDs(ctx, input.TenantID, input.TagIDs, input.TagNames)
+	if err != nil {
+		return UpdateRuleInput{}, err
+	}
+	rule := normalizeRuleConfig(Rule{
+		Difficulty:                 input.Difficulty,
+		TagFilter:                  tagFilterJSON(tagIDs),
+		TagNames:                   input.TagNames,
+		QuestionScope:              input.QuestionScope,
+		DifficultyPercentages:      input.DifficultyPercentages,
+		QuestionCount:              input.QuestionCount,
+		PrioritizeQuality:          input.PrioritizeQuality,
+		ExcludeRecentExamQuestions: input.ExcludeRecentExamQuestions,
+		ExcludeUsedQuestions:       input.ExcludeUsedQuestions,
+	})
+	input.Difficulty = rule.Difficulty
+	input.TagIDs = tagIDsFromJSON(rule.TagFilter)
+	input.TagNames = rule.TagNames
+	input.QuestionScope = rule.QuestionScope
+	input.DifficultyPercentages = rule.DifficultyPercentages
+	input.PrioritizeQuality = rule.PrioritizeQuality
+	input.ExcludeRecentExamQuestions = rule.ExcludeRecentExamQuestions
+	input.ExcludeUsedQuestions = rule.ExcludeUsedQuestions
+	return input, nil
+}
+
+func (s *Service) ruleTagIDs(ctx context.Context, tenantID uint64, tagIDs []uint64, tagNames []string) ([]uint64, error) {
+	if len(tagIDs) > 0 || len(tagNames) == 0 {
+		return tagIDs, nil
+	}
+	return s.repo.TagIDsByNames(ctx, tenantID, tagNames)
+}
+
+func difficultyPercentTotal(percentages DifficultyPercentages) int {
+	return percentages.Easy + percentages.Medium + percentages.Hard
+}
+
+func tagIDsFromJSON(raw string) []uint64 {
+	var tagIDs []uint64
+	if err := json.Unmarshal([]byte(raw), &tagIDs); err != nil {
+		return []uint64{}
+	}
+	return tagIDs
 }
 
 func aggregateQuestions(questions []SectionQuestion) ([]SectionAggregate, string) {

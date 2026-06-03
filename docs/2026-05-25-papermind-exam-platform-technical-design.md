@@ -786,6 +786,7 @@ tags
 - 首版公共题库只允许 `tenant_admin` 创建、修改、删除和导入；`space_admin` / `teacher` 只能管理自己已加入且启用空间内的题库。
 - `space_admin` / `teacher` 可以在组卷、发布考试等流程中读取公共题库，但是否允许引用公共题库必须由对应业务 service 显式校验，不能把公共题库视为任意教师可写资源。
 - `questions.space_id` 非空表示空间题库，仅该空间成员中的教师、租户管理员和有权限的组卷流程可见。
+- `questions.quality_score` 保存题目质量分，范围 0-10，默认 5；智能组卷开启高质量优先时按该字段倒序选择候选题。
 
 在线手工出题和 CSV/Excel 导入都落到同一套题库模型。
 
@@ -878,6 +879,12 @@ paper_section_rules
 - `papers.show_analysis` 控制成绩可见后是否展示题目解析；未公布成绩前不展示解析。
 - `paper_sections` 承载大题结构、题型边界、作答说明、小计分和题号连续编排锚点。
 - `paper_section_rules.tag_filter` 使用 JSON 数组字符串保存标签 ID，例如 `[1001,1002]`，避免依赖不同数据库的 JSON 方言。
+- `paper_section_rules.ext_json` 保存智能组卷的非主键配置，包括 `question_scope`、`tag_names`、`difficulty_percentages`、`prioritize_quality`、`exclude_recent_exam_questions` 和 `exclude_used_questions`。
+- `question_scope = space_all` 表示从当前试卷所属空间可见题库抽题；`question_scope = tag_filter` 表示先按知识点标签筛选题库。
+- `difficulty_percentages` 使用 `{easy, medium, hard}` 保存难度占比，总和为 100；生成时按最大余数法分配各难度题量。
+- `prioritize_quality = true` 时，候选题按 `questions.quality_score DESC, questions.id ASC` 排序。
+- `exclude_recent_exam_questions = true` 时，生成前查询同租户同空间最近三次已发布考试，排除这些考试试卷已使用题目。
+- `exclude_used_questions = true` 时，当前生成结果内已选题目不会再次进入后续规则，保证同一张固化试卷题目不重复。
 - `paper_section_rules.shuffle_options` 控制该规则抽中的选择题是否随机选项。
 - 手动组卷和规则固化后，`paper_section_questions.shuffle_options` 控制该题在这张试卷中是否随机选项。
 - `paper_section_questions.shuffle_options` 和 `paper_section_rules.shuffle_options` 使用可空布尔值：`TRUE` 表示显式开启，`FALSE` 表示显式关闭，`NULL` 表示未设置并回退到题库默认值。

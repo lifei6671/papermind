@@ -4826,6 +4826,10 @@ body:has(.exam-paper-editor-page) {
   min-width: 0;
 }
 
+.exam-paper-editor__workspace--smart {
+  grid-template-columns: minmax(420px, 0.72fr) minmax(640px, 1.28fr);
+}
+
 .exam-paper-editor__panel {
   display: grid;
   gap: 16px;
@@ -4836,6 +4840,158 @@ body:has(.exam-paper-editor-page) {
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 10px 28px rgb(38 29 17 / 5%);
+}
+
+.exam-paper-editor__smart-fieldset,
+.exam-paper-editor__smart-block {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #eee6dd;
+  border-radius: 8px;
+  background: #fbfaf7;
+}
+
+.exam-paper-editor__smart-fieldset legend,
+.exam-paper-editor__smart-block h3 {
+  margin: 0;
+  color: #5f6f85;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.exam-paper-editor__smart-fieldset {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.exam-paper-editor__smart-fieldset legend {
+  grid-column: 1 / -1;
+}
+
+.exam-paper-editor__smart-fieldset label,
+.exam-paper-editor__constraint-grid label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.exam-paper-editor__difficulty-grid,
+.exam-paper-editor__constraint-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.exam-paper-editor__difficulty-grid label,
+.exam-paper-editor__rule-row label {
+  display: grid;
+  grid-template-columns: auto minmax(58px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.exam-paper-editor__difficulty-grid input,
+.exam-paper-editor__rule-row input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid #ded6cb;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 900;
+}
+
+.exam-paper-editor__tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.exam-paper-editor__tag-chip {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #d8dfe8;
+  border-radius: 7px;
+  background: #fff;
+  color: #5f6f85;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.exam-paper-editor__tag-chip--active {
+  border-color: #ef6b4a;
+  background: #fff0eb;
+  color: #d84f2b;
+}
+
+.exam-paper-editor__tag-chip:disabled {
+  opacity: 0.55;
+}
+
+.exam-paper-editor__rule-rows {
+  display: grid;
+  gap: 10px;
+}
+
+.exam-paper-editor__rule-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(96px, 0.5fr) minmax(126px, 0.6fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #efe8df;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.exam-paper-editor__rule-row > span,
+.exam-paper-editor__rule-row strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.exam-paper-editor__smart-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.exam-paper-editor__smart-metrics div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid #e6edf5;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.exam-paper-editor__smart-metrics span,
+.exam-paper-editor__muted {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.exam-paper-editor__smart-metrics strong {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.exam-paper-editor__smart-table {
+  min-width: 760px;
 }
 
 .exam-paper-editor__panel-head {
@@ -5047,7 +5203,20 @@ body:has(.exam-paper-editor-page) {
 }
 
 .exam-paper-editor__selected-table {
-  min-width: 680px;
+  table-layout: fixed;
+  min-width: 590px;
+}
+
+.exam-paper-editor__selected-col--source {
+  width: 142px;
+}
+
+.exam-paper-editor__selected-col--score {
+  width: 90px;
+}
+
+.exam-paper-editor__selected-col--actions {
+  width: 100px;
 }
 
 .exam-paper-editor__selected-table th:nth-child(1),
@@ -5059,19 +5228,21 @@ body:has(.exam-paper-editor-page) {
 
 .exam-paper-editor__selected-table th:nth-child(2),
 .exam-paper-editor__selected-table td:nth-child(2) {
-  width: 118px;
+  width: 142px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .exam-paper-editor__selected-table th:nth-child(3),
 .exam-paper-editor__selected-table td:nth-child(3) {
-  width: 88px;
+  width: 90px;
   white-space: nowrap;
 }
 
 .exam-paper-editor__selected-table th:nth-child(4),
 .exam-paper-editor__selected-table td:nth-child(4) {
-  width: 112px;
+  width: 100px;
   white-space: nowrap;
 }
 

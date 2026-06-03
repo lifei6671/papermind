@@ -194,6 +194,7 @@ CREATE TABLE IF NOT EXISTS questions (
     standard_answer TEXT NOT NULL DEFAULT '',
     reference_answer TEXT NOT NULL DEFAULT '',
     score_default NUMERIC NOT NULL DEFAULT 0,
+    quality_score INTEGER NOT NULL DEFAULT 5,
     choice_display_count INTEGER,
     shuffle_options INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'draft',

@@ -266,6 +266,7 @@ P0 文档与项目骨架
 - [x] `questions.type` 支持 `fill_blank`。
 - [x] `questions.type` 支持 `short_text`。
 - [x] `questions.analysis` 可为空。
+- [x] `questions.quality_score` 保存 0-10 题目质量分，默认 5。
 - [x] 创建 `question_options`。
 - [x] `question_options` 包含 `option_key`，仅用于编辑展示。
 - [x] `question_options` 包含 `sort_order`。
@@ -540,6 +541,7 @@ P0 文档与项目骨架
 - [x] 实现大题规则配置。
 - [x] `difficulty = NULL` 表示不限难度。
 - [x] `tag_filter` 使用 JSON 数组字符串。
+- [x] 智能规则扩展配置支持题库范围、难度占比、质量优先、最近三次考试排除和本次生成去重。
 - [x] 规则顺序稳定。
 - [x] 触发生成时按规则抽题。
 - [x] 生成后写入 `paper_section_questions`。
