@@ -1,8 +1,9 @@
-import { Eye, FilePlus2, GripVertical, Trash2 } from "lucide-react";
+import { Eye, FilePlus2, GripVertical, LoaderCircle, Trash2 } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
+import type { ActorRole } from "../../api/grading";
 import type {
   ManualQuestionRow,
   PaperAPI,
@@ -28,6 +29,7 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Tooltip } from "../../components/ui/Tooltip";
 
 type PaperEditorPageProps = {
+  actorRole?: ActorRole;
   paperApi?: PaperAPI;
   questionApi?: QuestionAPI;
   paperID?: number;
@@ -49,6 +51,12 @@ type SmartRuleDraft = {
   ruleID?: number;
   questionCount: string;
   scorePerQuestion: string;
+};
+
+type SmartRuleAvailability = {
+  available: number;
+  required: number;
+  isSufficient: boolean;
 };
 
 const questionTypeLabels: Record<QuestionType, string> = {
@@ -89,6 +97,7 @@ type DraggedQuestion = {
 type DropIndicatorDirection = "up" | "down";
 
 export function PaperEditorPage({
+  actorRole,
   paperApi: providedPaperApi = paperApi,
   questionApi: providedQuestionApi = questionApi,
   paperID,
@@ -98,6 +107,7 @@ export function PaperEditorPage({
   const navigate = useNavigate();
   const location = useLocation();
   const { showError, showSuccess } = useFeedback();
+  const canSelectPublicScope = canWritePublicPaperScope(actorRole);
   const pageSearch = scopedPaperSearch(location.search, spaceID);
   const listPath = `/papers${pageSearch}`;
   const [paper, setPaper] = useState<PaperRow | null>(null);
@@ -132,6 +142,7 @@ export function PaperEditorPage({
   const [page, setPage] = useState(1);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [isGeneratingSmartPaper, setIsGeneratingSmartPaper] = useState(false);
   const [isRefreshingWorkspace, setIsRefreshingWorkspace] = useState(false);
   const [draggingSectionID, setDraggingSectionID] = useState<number | null>(null);
   const [draggingQuestion, setDraggingQuestion] = useState<DraggedQuestion | null>(null);
@@ -140,6 +151,7 @@ export function PaperEditorPage({
   const [questionDropTargetKey, setQuestionDropTargetKey] = useState<string | null>(null);
   const [questionDropDirection, setQuestionDropDirection] = useState<DropIndicatorDirection | null>(null);
   const [editingScores, setEditingScores] = useState<Record<string, string>>({});
+  const [selectedPaperSpaceID, setSelectedPaperSpaceID] = useState<number | null>(spaceID ?? null);
 
   const loadQuestionPool = useCallback(async () => {
     const pageSize = 100;
@@ -235,6 +247,7 @@ export function PaperEditorPage({
   ) => {
     setQuestionPool(nextQuestionPool);
     setPaper(currentPaper);
+    setSelectedPaperSpaceID(currentPaper === null ? (spaceID ?? null) : (currentPaper.spaceID ?? null));
     setPaperName(currentPaper?.name ?? "");
     setPaperDescription(currentPaper?.description ?? "");
     setGradeText(currentPaper?.gradeLevel?.trim() ? currentPaper.gradeLevel.trim() : "高一");
@@ -247,7 +260,7 @@ export function PaperEditorPage({
     setPersistedSectionQuestions(nextSectionQuestions.map(cloneSectionQuestion));
     setEditingScores({});
     setBlockedSmartQuestionIDs([]);
-  }, [applySmartRuleState]);
+  }, [applySmartRuleState, spaceID]);
 
   useEffect(() => {
     let ignore = false;
@@ -402,6 +415,9 @@ export function PaperEditorPage({
   }
 
   const filteredQuestions = questionPool.filter((item) => {
+    if (!questionVisibleForPaperScope(item, selectedPaperSpaceID ?? undefined)) {
+      return false;
+    }
     if (selectedType !== "all" && item.type !== selectedType) {
       return false;
     }
@@ -413,6 +429,21 @@ export function PaperEditorPage({
     }
     return true;
   });
+
+  const smartRuleAvailabilityBySection = useMemo(() => calculateSmartRuleAvailability({
+    blockedQuestionIDs: blockedSmartQuestionIDs,
+    paperSpaceID: selectedPaperSpaceID ?? undefined,
+    questionPool,
+    questionScope: smartQuestionScope,
+    ruleDrafts: smartRuleDrafts,
+    sections,
+    selectedTags: smartSelectedTags,
+  }), [blockedSmartQuestionIDs, questionPool, sections, selectedPaperSpaceID, smartQuestionScope, smartRuleDrafts, smartSelectedTags]);
+  const positiveSmartRuleAvailability = Array.from(smartRuleAvailabilityBySection.values())
+    .filter((item) => item.required > 0);
+  const satisfiedSmartRuleCount = positiveSmartRuleAvailability
+    .filter((item) => item.isSufficient)
+    .length;
 
   const pagedQuestions = filteredQuestions.slice((page - 1) * 10, page * 10);
   const groupedSelectedQuestions = buildSelectedGroups(sections, sectionQuestions, questionMap);
@@ -428,7 +459,10 @@ export function PaperEditorPage({
   const isRuleLivePaper = buildMode === "rule_live";
   const isSmartPaper = buildMode === "rule_fixed";
   const canChangeBuildMode = paper === null;
+  const paperScopeLabel = paperScopeQuestionBankLabel(selectedPaperSpaceID ?? undefined);
+  const isReadOnlyPublicPaper = selectedPaperSpaceID === null && !canSelectPublicScope;
   const sectionOrderDirty = serializeSections(sections) !== serializeSections(persistedSections);
+  const paperScopeDirty = selectedPaperSpaceID !== (paper === null ? (spaceID ?? null) : (paper.spaceID ?? null));
   const currentSmartRuleSnapshot = useMemo(() => serializeSmartRuleState({
     sections,
     ruleDrafts: smartRuleDrafts,
@@ -454,16 +488,18 @@ export function PaperEditorPage({
       return paperName.trim().length > 0
         || paperDescription.trim().length > 0
         || gradeText.trim() !== "高一"
-        || durationText.trim() !== "120";
+        || durationText.trim() !== "120"
+        || paperScopeDirty;
     }
     return paperName !== paper.name
       || paperDescription !== (paper.description ?? "")
       || gradeText !== (paper.gradeLevel?.trim() ? paper.gradeLevel.trim() : "高一")
       || durationText !== String(paper.durationMinutes ?? 120)
+      || paperScopeDirty
       || sectionOrderDirty
       || smartRulesDirty
       || serializeSectionQuestions(sectionQuestions) !== serializeSectionQuestions(persistedSectionQuestions);
-  }, [durationText, gradeText, paper, paperDescription, paperName, persistedSectionQuestions, sectionOrderDirty, sectionQuestions, smartRulesDirty]);
+  }, [durationText, gradeText, paper, paperDescription, paperName, paperScopeDirty, persistedSectionQuestions, sectionOrderDirty, sectionQuestions, smartRulesDirty]);
   const lastSavedLabel = paper === null
     ? "草稿尚未保存"
     : draftDirty ? "草稿有未保存调整" : "草稿已保存";
@@ -549,16 +585,16 @@ export function PaperEditorPage({
     tenantID,
   ]);
 
-  const saveDraft = useCallback(async ({ notifySuccess }: { notifySuccess: boolean }) => {
+  const saveDraft = useCallback(async ({ notifySuccess }: { notifySuccess: boolean }): Promise<PaperRow | null> => {
     if (!paperName.trim()) {
       showError("试卷名称不能为空");
-      return;
+      return null;
     }
     const durationMinutes = Number.parseInt(durationText.trim(), 10);
     const normalizedGradeText = gradeText.trim();
     if (!Number.isInteger(durationMinutes) || durationMinutes <= 0) {
       showError("考试时长必须是正整数");
-      return;
+      return null;
     }
 
     setIsSavingDraft(true);
@@ -567,7 +603,7 @@ export function PaperEditorPage({
         // 先接管已创建的草稿，再尝试同步可失败的附加配置，避免第二步失败时重复创建。
         let nextPaper = await providedPaperApi.createPaper({
           tenantID,
-          ...(spaceID === undefined ? {} : { spaceID }),
+          spaceID: selectedPaperSpaceID,
           name: paperName.trim(),
           description: paperDescription.trim(),
           durationMinutes,
@@ -594,15 +630,18 @@ export function PaperEditorPage({
         } else if (notifySuccess) {
           showSuccess(buildMode === "manual" ? "试卷草稿已创建，可以继续手动组卷。" : "试卷草稿已创建，可以继续完善组卷。");
         }
+        return nextPaper;
       } else {
         const changedSectionOrders = collectChangedSectionOrders(sections, persistedSections);
         const changedQuestionOrders = collectChangedQuestionOrders(sectionQuestions, persistedSectionQuestions);
         let nextPaper = paper;
 
-        if (paperName !== paper.name || paperDescription !== (paper.description ?? "")) {
+        const paperUpdateScope = paperScopeDirty ? { spaceID: selectedPaperSpaceID } : {};
+        if (paperName !== paper.name || paperDescription !== (paper.description ?? "") || paperScopeDirty) {
           nextPaper = await providedPaperApi.updatePaper({
             tenantID,
             paperID: paper.id,
+            ...paperUpdateScope,
             name: paperName.trim(),
             description: paperDescription.trim(),
             durationMinutes,
@@ -612,6 +651,7 @@ export function PaperEditorPage({
           nextPaper = await providedPaperApi.updatePaper({
             tenantID,
             paperID: paper.id,
+            ...paperUpdateScope,
             name: paperName.trim(),
             description: paperDescription.trim(),
             durationMinutes,
@@ -621,6 +661,7 @@ export function PaperEditorPage({
           nextPaper = await providedPaperApi.updatePaper({
             tenantID,
             paperID: paper.id,
+            ...paperUpdateScope,
             name: paperName.trim(),
             description: paperDescription.trim(),
             durationMinutes,
@@ -655,9 +696,11 @@ export function PaperEditorPage({
         if (notifySuccess) {
           showSuccess("试卷草稿已保存。");
         }
+        return nextPaper;
       }
     } catch (error) {
       showError(formatApiErrorMessage(error, "试卷草稿保存失败"));
+      return null;
     } finally {
       setIsSavingDraft(false);
     }
@@ -673,12 +716,13 @@ export function PaperEditorPage({
     persistSmartRules,
     persistedSectionQuestions,
     persistedSections,
+    paperScopeDirty,
     providedPaperApi,
     sectionQuestions,
     sections,
+    selectedPaperSpaceID,
     showError,
     showSuccess,
-    spaceID,
     tenantID,
   ]);
 
@@ -688,7 +732,7 @@ export function PaperEditorPage({
   }
 
   useEffect(() => {
-    if (paper === null || !draftDirty || isSavingDraft || !paperName.trim()) {
+    if (paper === null || !draftDirty || isSavingDraft || isGeneratingSmartPaper || !paperName.trim()) {
       return undefined;
     }
 
@@ -697,16 +741,23 @@ export function PaperEditorPage({
     }, AUTO_SAVE_DRAFT_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [draftDirty, isSavingDraft, paper, paperName, saveDraft]);
+  }, [draftDirty, isGeneratingSmartPaper, isSavingDraft, paper, paperName, saveDraft]);
 
   async function handleGenerateSmartPaper() {
     if (paper === null) {
       showError("请先保存试卷基础信息后再智能组卷");
       return;
     }
+    if (isGeneratingSmartPaper) {
+      return;
+    }
+    setIsGeneratingSmartPaper(true);
     try {
-      await persistSmartRules(paper.id);
-      await providedPaperApi.generateRuleFixed({ tenantID, paperID: paper.id, blockedQuestionIDs: blockedSmartQuestionIDs });
+      const savedPaper = await saveDraft({ notifySuccess: false });
+      if (savedPaper === null) {
+        return;
+      }
+      await providedPaperApi.generateRuleFixed({ tenantID, paperID: savedPaper.id, blockedQuestionIDs: blockedSmartQuestionIDs });
       const [nextQuestionPool, snapshot] = await withRefreshFeedback(Promise.all([
         loadQuestionPool(),
         loadWorkspaceSnapshot(),
@@ -721,6 +772,8 @@ export function PaperEditorPage({
       showSuccess("智能组卷已生成。");
     } catch (error) {
       showError(formatApiErrorMessage(error, "智能组卷生成失败"));
+    } finally {
+      setIsGeneratingSmartPaper(false);
     }
   }
 
@@ -1067,6 +1120,24 @@ export function PaperEditorPage({
                 value={paperName}
               />
             </label>
+            <div className="exam-paper-editor__summary-item exam-paper-editor__summary-item--scope">
+              <span>归属：</span>
+              <div className="exam-paper-editor__summary-scope-select">
+                {isReadOnlyPublicPaper ? (
+                  <span className="ui-select-trigger" aria-label="试卷归属">公共试卷</span>
+                ) : (
+                  <Select
+                    ariaLabel="试卷归属"
+                    onChange={(value) => setSelectedPaperSpaceID(value === "public" ? null : spaceID ?? null)}
+                    options={[
+                      ...(canSelectPublicScope ? [{ value: "public", label: "公共试卷" }] : []),
+                      ...(spaceID === undefined ? [] : [{ value: "space", label: "当前空间试卷" }]),
+                    ]}
+                    value={selectedPaperSpaceID === null && canSelectPublicScope ? "public" : "space"}
+                  />
+                )}
+              </div>
+            </div>
             <label className="exam-paper-editor__summary-item exam-paper-editor__summary-item--duration">
               <span>考试时长：</span>
               <input
@@ -1433,7 +1504,7 @@ export function PaperEditorPage({
                     onChange={() => setSmartQuestionScope("space_all")}
                     type="radio"
                   />
-                  本空间全部题库
+                  {paperScopeLabel}
                 </label>
                 <label>
                   <input
@@ -1592,9 +1663,16 @@ export function PaperEditorPage({
                   {sections.map((section, sectionIndex) => {
                     const draft = smartRuleDrafts[section.id] ?? defaultRuleDraftForSection(section, sectionQuestions);
                     const sectionTitle = formatSectionTitle(section, sectionIndex);
+                    const availability = smartRuleAvailabilityBySection.get(section.id);
                     return (
                       <div
-                        className={buildRuleRowClassName(section.id, draggingSectionID, sectionDropTargetID, sectionDropDirection)}
+                        className={buildRuleRowClassName(
+                          section.id,
+                          draggingSectionID,
+                          sectionDropTargetID,
+                          sectionDropDirection,
+                          availability !== undefined && !availability.isSufficient,
+                        )}
                         key={section.id}
                         onDragOver={(event) => {
                           event.preventDefault();
@@ -1612,7 +1690,19 @@ export function PaperEditorPage({
                         >
                           <GripVertical aria-hidden="true" size={14} />
                         </button>
-                        <span className="exam-paper-editor__rule-title">{sectionTitle}</span>
+                        <span className="exam-paper-editor__rule-title">
+                          {sectionTitle}
+                          {availability !== undefined && availability.required > 0 ? (
+                            <span
+                              className={[
+                                "exam-paper-editor__rule-availability",
+                                availability.isSufficient ? "" : "exam-paper-editor__rule-availability--insufficient",
+                              ].filter(Boolean).join(" ")}
+                            >
+                              可用 {availability.available} / 需 {availability.required}
+                            </span>
+                          ) : null}
+                        </span>
                         <div className="exam-paper-editor__rule-controls">
                           <label>
                             <span>题数</span>
@@ -1695,7 +1785,7 @@ export function PaperEditorPage({
                 <span>共 {selectedQuestionCount} 题 / 总分 {totalScore} 分</span>
               </div>
               <div className="exam-paper-editor__smart-metrics exam-paper-editor__smart-metrics--separated">
-                <div><span>可用题量</span><strong>{filteredQuestions.length}</strong></div>
+                <div><span>规则满足</span><strong>{satisfiedSmartRuleCount} / {positiveSmartRuleAvailability.length}</strong></div>
                 <div><span>知识点覆盖率</span><strong>{smartQuestionScope === "tag_filter" && smartSelectedTags.length > 0 ? "已筛选" : "全部"}</strong></div>
                 <div><span>预计生成耗时</span><strong>3 秒</strong></div>
               </div>
@@ -1775,11 +1865,11 @@ export function PaperEditorPage({
               <p>发布能力将与考试发布流程联动，当前版本先完成真实组卷与预览。</p>
             </div>
             <div className="exam-paper-editor__footer-actions">
-              <Button disabled={isSavingDraft} type="submit" variant="secondary">
+              <Button disabled={isSavingDraft || isGeneratingSmartPaper} type="submit" variant="secondary">
                 保存草稿
               </Button>
               <Button
-                disabled={!canAssemble || (!isSmartPaper && selectedQuestionCount === 0)}
+                disabled={isSavingDraft || isGeneratingSmartPaper || !canAssemble || (!isSmartPaper && selectedQuestionCount === 0)}
                 onClick={() => {
                   if (isSmartPaper) {
                     void handleGenerateSmartPaper();
@@ -1790,7 +1880,18 @@ export function PaperEditorPage({
                 type="button"
                 variant={isSmartPaper ? "toolbarPrimary" : "toolbarSecondary"}
               >
-                {isSmartPaper ? "一键智能组卷" : "生成预览"}
+                {isSmartPaper
+                  ? (
+                    isGeneratingSmartPaper
+                      ? (
+                        <>
+                          <LoaderCircle aria-hidden="true" className="exam-paper-editor__button-spinner" size={16} />
+                          <span>组卷中</span>
+                        </>
+                      )
+                      : "一键智能组卷"
+                  )
+                  : "生成预览"}
               </Button>
               <Button disabled variant="toolbarPrimary" type="button">
                 发布试卷
@@ -1896,6 +1997,54 @@ function defaultRuleDraftForSection(section: PaperSectionRow, sectionQuestions: 
     questionCount: String(questions.length || section.questionCount || 0),
     scorePerQuestion: firstScore,
   };
+}
+
+function calculateSmartRuleAvailability({
+  blockedQuestionIDs,
+  paperSpaceID,
+  questionPool,
+  questionScope,
+  ruleDrafts,
+  sections,
+  selectedTags,
+}: {
+  blockedQuestionIDs: number[];
+  paperSpaceID?: number;
+  questionPool: QuestionRow[];
+  questionScope: SmartQuestionScope;
+  ruleDrafts: Record<number, SmartRuleDraft>;
+  sections: PaperSectionRow[];
+  selectedTags: string[];
+}) {
+  const blocked = new Set(blockedQuestionIDs);
+  const requiredTags = questionScope === "tag_filter" ? selectedTags : [];
+  const availability = new Map<number, SmartRuleAvailability>();
+
+  for (const section of sections) {
+    const draft = ruleDrafts[section.id];
+    const required = Math.max(0, Number(draft?.questionCount ?? section.questionCount ?? 0) || 0);
+    const available = questionPool.filter((question) => {
+      const inPaperScope = paperSpaceID === undefined
+        ? question.spaceID === undefined
+        : question.spaceID === undefined || question.spaceID === paperSpaceID;
+      if (!inPaperScope || question.status !== "ready" || question.type !== section.questionType || blocked.has(question.id)) {
+        return false;
+      }
+      if (requiredTags.length === 0) {
+        return true;
+      }
+      const questionTags = question.tags.length > 0 ? question.tags : [question.tag].filter(Boolean);
+      return requiredTags.every((tag) => questionTags.includes(tag));
+    }).length;
+
+    availability.set(section.id, {
+      available,
+      required,
+      isSufficient: required === 0 || available >= required,
+    });
+  }
+
+  return availability;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -2041,6 +2190,21 @@ function defaultSectionName(questionType: QuestionType) {
   return stripSectionPrefix(sectionTemplates[questionType].name);
 }
 
+function canWritePublicPaperScope(actorRole?: ActorRole) {
+  return actorRole === undefined || actorRole === "tenant_admin";
+}
+
+function paperScopeQuestionBankLabel(paperSpaceID?: number) {
+  return paperSpaceID === undefined ? "公共题库" : "本空间全部题库";
+}
+
+function questionVisibleForPaperScope(question: QuestionRow, paperSpaceID?: number) {
+  if (paperSpaceID === undefined) {
+    return question.spaceID === undefined;
+  }
+  return question.spaceID === undefined || question.spaceID === paperSpaceID;
+}
+
 function editorBuildModeLabel(buildMode: PaperBuildMode) {
   if (buildMode === "rule_fixed") {
     return "策略组卷";
@@ -2089,8 +2253,12 @@ function buildRuleRowClassName(
   draggingSectionID: number | null,
   sectionDropTargetID: number | null,
   sectionDropDirection: DropIndicatorDirection | null,
+  isInsufficient = false,
 ) {
   const classes = ["exam-paper-editor__rule-row"];
+  if (isInsufficient) {
+    classes.push("exam-paper-editor__rule-row--insufficient");
+  }
   if (draggingSectionID === sectionID) {
     classes.push("exam-paper-editor__rule-row--dragging");
   }

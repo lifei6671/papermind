@@ -369,6 +369,9 @@ func (r *PaperRepository) UpdatePaper(ctx context.Context, input servicepaper.Up
 	if input.DurationMinutes != nil {
 		updates[PaperColumns.DurationMinutes] = *input.DurationMinutes
 	}
+	if input.ChangeSpace {
+		updates[PaperColumns.SpaceID] = input.TargetSpaceID
+	}
 	result := r.db.WithContext(ctx).Model(&PaperDO{}).
 		Where(PaperColumns.TenantID+" = ?", input.TenantID).
 		Where(PaperColumns.ID+" = ?", input.PaperID).
@@ -407,15 +410,11 @@ func (r *PaperRepository) UpdatePaperStatus(ctx context.Context, tenantID uint64
 func (r *PaperRepository) DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error {
 	now := r.now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var examCount int64
-		if err := tx.Model(&ExamDO{}).
-			Where(ExamColumns.TenantID+" = ?", tenantID).
-			Where(ExamColumns.PaperID+" = ?", paperID).
-			Where(ExamColumns.DeletedAt+" = ?", 0).
-			Count(&examCount).Error; err != nil {
+		referenced, err := r.paperReferencedTx(ctx, tx, tenantID, paperID)
+		if err != nil {
 			return err
 		}
-		if examCount > 0 {
+		if referenced {
 			return servicepaper.ErrPaperInUse
 		}
 		// 删除试卷先软删除主表，随后清理组卷关系；已删除试卷不会再参与列表、发布和权限反查。
@@ -458,6 +457,22 @@ func (r *PaperRepository) DeletePaper(ctx context.Context, tenantID uint64, pape
 	})
 }
 
+func (r *PaperRepository) PaperReferenced(ctx context.Context, tenantID uint64, paperID uint64) (bool, error) {
+	return r.paperReferencedTx(ctx, r.db.WithContext(ctx), tenantID, paperID)
+}
+
+func (r *PaperRepository) paperReferencedTx(ctx context.Context, tx *gorm.DB, tenantID uint64, paperID uint64) (bool, error) {
+	var examCount int64
+	if err := tx.WithContext(ctx).Model(&ExamDO{}).
+		Where(ExamColumns.TenantID+" = ?", tenantID).
+		Where(ExamColumns.PaperID+" = ?", paperID).
+		Where(ExamColumns.DeletedAt+" = ?", 0).
+		Count(&examCount).Error; err != nil {
+		return false, err
+	}
+	return examCount > 0, nil
+}
+
 func (r *PaperRepository) PaperQuestionExists(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error) {
 	var total int64
 	err := r.db.WithContext(ctx).Model(&PaperSectionQuestionDO{}).
@@ -479,6 +494,24 @@ func (r *PaperRepository) QuestionUsableForPaper(ctx context.Context, tenantID u
 		Where(r.db.Where("q." + QuestionColumns.SpaceID + " IS NULL").Or("q." + QuestionColumns.SpaceID + " = p." + PaperColumns.SpaceID)).
 		Count(&total).Error
 	return total > 0, err
+}
+
+func (r *PaperRepository) QuestionUsableForScope(ctx context.Context, tenantID uint64, spaceID *uint64, questionID uint64) (bool, error) {
+	var total int64
+	query := r.db.WithContext(ctx).Table(QuestionDO{}.TableName()+" AS q").
+		Where("q."+QuestionColumns.TenantID+" = ?", tenantID).
+		Where("q."+QuestionColumns.ID+" = ?", questionID).
+		Where("q."+QuestionColumns.Status+" = ?", "enabled").
+		Where("q."+QuestionColumns.DeletedAt+" = ?", 0)
+	if spaceID == nil {
+		query = query.Where("q." + QuestionColumns.SpaceID + " IS NULL")
+	} else {
+		query = query.Where(r.db.Where("q." + QuestionColumns.SpaceID + " IS NULL").Or("q." + QuestionColumns.SpaceID + " = ?", *spaceID))
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return false, err
+	}
+	return total > 0, nil
 }
 
 func (r *PaperRepository) AddSectionQuestionAndRecalculate(ctx context.Context, question servicepaper.SectionQuestion) error {

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import type { ActorRole } from "../../api/grading";
 import { FeedbackProvider } from "../../app/feedback";
 import type { ManualQuestionRow, PaperAPI, PaperRow, PaperRuleRow, PaperSectionRow } from "../../api/papers";
 import type { QuestionAPI } from "../../api/questions";
@@ -29,7 +30,7 @@ test("新建试卷工作台先展示完整骨架，并要求先保存草稿再�
   expect(screen.queryByRole("textbox", { name: "搜索试卷名称、题库或题型" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "加入试卷 题目 201" })).toBeInTheDocument();
   expect(screen.getByText("请先保存试卷基础信息后再开始组卷")).toBeInTheDocument();
-  expect(container.querySelector("select:not([aria-hidden='true'])")).not.toBeInTheDocument();
+  expect(container.querySelector("select[aria-label='题型筛选']")).not.toBeInTheDocument();
 });
 
 test("试卷摘要栏允许换行展示发布状态", async () => {
@@ -47,6 +48,9 @@ test("试卷摘要栏在宽屏优先紧凑单行展示", async () => {
 
   await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
 
+  expect(container.querySelector("select[aria-label='试卷归属']")).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "试卷归属" })).toHaveClass("ui-select-trigger");
+  expect(container.querySelector(".exam-paper-editor__summary-item--scope")).toBeInTheDocument();
   expect(screen.getByLabelText("考试时长")).toHaveClass("exam-paper-editor__summary-input--compact");
   expect(screen.getByLabelText("适用年级")).toHaveClass("exam-paper-editor__summary-input--compact");
   expect(container.querySelector(".exam-paper-editor__summary-item--status")).toHaveClass("exam-paper-editor__summary-item--inline");
@@ -81,12 +85,160 @@ test("智能组卷规则和结果区域使用横线分割内部区块", async ()
   expect(resultPanel?.querySelector(".exam-paper-editor__selected-section")).toHaveClass("exam-paper-editor__selected-section--separated");
 });
 
+test("智能组卷按规则题型提示候选题量不足", async () => {
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed", spaceID: undefined })],
+    sections: [
+      {
+        id: 11,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 1,
+        name: "一、单项选择题",
+        questionType: "single",
+        instructions: "每题 1 分",
+        totalScore: "0",
+        questionCount: 0,
+      },
+      {
+        id: 12,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 2,
+        name: "二、判断题",
+        questionType: "judge",
+        instructions: "每题 1 分",
+        totalScore: "0",
+        questionCount: 0,
+      },
+    ],
+  });
+  paperApi.listRules = vi.fn(async () => ({
+    items: [
+      {
+        id: 601,
+        tenantID: 10,
+        paperID: 100,
+        sectionID: 11,
+        sortOrder: 1,
+        tagIDs: [],
+        tagNames: [],
+        questionScope: "space_all" as const,
+        difficultyPercentages: { easy: 30, medium: 50, hard: 20 },
+        questionCount: 2,
+        scorePerQuestion: "1",
+      },
+      {
+        id: 602,
+        tenantID: 10,
+        paperID: 100,
+        sectionID: 12,
+        sortOrder: 2,
+        tagIDs: [],
+        tagNames: [],
+        questionScope: "space_all" as const,
+        difficultyPercentages: { easy: 30, medium: 50, hard: 20 },
+        questionCount: 1,
+        scorePerQuestion: "1",
+      },
+    ],
+  }));
+  const questionApi = createQuestionApiDouble();
+  questionApi.listQuestions = vi.fn(async () => ({
+    page: 1,
+    pageSize: 20,
+    total: 3,
+    items: [
+      {
+        id: 201,
+        tenantID: 10,
+        type: "single" as const,
+        title: "单选候选题 A",
+        stem: "单选候选题 A",
+        options: ["A", "B", "C", "D"],
+        correctOptionIndexes: [0],
+        analysis: "",
+        difficulty: "easy" as const,
+        tag: "函数",
+        tags: ["函数"],
+        scoreDefault: "1",
+        status: "ready" as const,
+        createdAt: new Date("2026-06-01T10:00:00+08:00").getTime(),
+      },
+      {
+        id: 202,
+        tenantID: 10,
+        type: "single" as const,
+        title: "单选候选题 B",
+        stem: "单选候选题 B",
+        options: ["A", "B", "C", "D"],
+        correctOptionIndexes: [1],
+        analysis: "",
+        difficulty: "medium" as const,
+        tag: "函数",
+        tags: ["函数"],
+        scoreDefault: "1",
+        status: "ready" as const,
+        createdAt: new Date("2026-06-01T10:30:00+08:00").getTime(),
+      },
+      {
+        id: 203,
+        tenantID: 10,
+        spaceID: 301,
+        type: "judge" as const,
+        title: "空间判断题",
+        stem: "空间判断题",
+        options: [],
+        correctOptionIndexes: [],
+        analysis: "",
+        difficulty: "easy" as const,
+        tag: "函数",
+        tags: ["函数"],
+        scoreDefault: "1",
+        status: "ready" as const,
+        createdAt: new Date("2026-06-01T11:00:00+08:00").getTime(),
+      },
+    ],
+  }));
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi,
+  });
+
+  await screen.findByRole("group", { name: "难度分布滑块" });
+
+  expect(screen.getByText("规则满足")).toBeInTheDocument();
+  expect(screen.getByText("1 / 2")).toBeInTheDocument();
+  const judgeRuleRow = screen.getByText("二、判断题").closest(".exam-paper-editor__rule-row");
+  expect(judgeRuleRow).not.toBeNull();
+  expect(within(judgeRuleRow as HTMLElement).getByText("可用 0 / 需 1")).toBeInTheDocument();
+  expect(judgeRuleRow).toHaveClass("exam-paper-editor__rule-row--insufficient");
+});
+
+test("公共试卷的题库范围展示为公共题库", async () => {
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi: createPaperApiDouble({
+      papers: [createPaperRowForTest({ buildMode: "rule_fixed", spaceID: undefined })],
+    }),
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await screen.findByRole("group", { name: "难度分布滑块" });
+
+  expect(screen.getByLabelText("公共题库")).toHaveAttribute("type", "radio");
+  expect(screen.getByLabelText("公共题库")).toBeChecked();
+  expect(screen.queryByLabelText("本空间全部题库")).not.toBeInTheDocument();
+});
+
 test("题库筛选使用自定义下拉控件过滤候选题", async () => {
   const user = userEvent.setup();
   const { container } = renderPaperEditorRoutes();
 
   await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
-  expect(container.querySelector("select:not([aria-hidden='true'])")).not.toBeInTheDocument();
+  expect(container.querySelector("select[aria-label='题型筛选']")).not.toBeInTheDocument();
 
   await user.click(screen.getByRole("combobox", { name: "题型筛选" }));
   await user.click(screen.getByRole("option", { name: "简答题" }));
@@ -230,6 +382,51 @@ test("保存草稿后进入真实编辑态，并支持把题目加入试卷", as
     });
   });
   expect(await screen.findByText("/papers/101/edit")).toBeInTheDocument();
+});
+
+test("新建试卷可以选择归属到公共试卷", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble();
+  renderPaperEditorRoutes({ paperApi });
+
+  await user.type(screen.getByLabelText("试卷名称"), "公共数学测试");
+  await user.click(screen.getByRole("combobox", { name: "试卷归属" }));
+  await user.click(screen.getByRole("option", { name: "公共试卷" }));
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  await waitFor(() => {
+    expect(paperApi.createPaper).toHaveBeenCalledWith(expect.objectContaining({
+      tenantID: 10,
+      spaceID: null,
+      name: "公共数学测试",
+    }));
+  });
+});
+
+test("空间管理员在试卷编辑页看不到公共试卷选项", async () => {
+  const user = userEvent.setup();
+  renderPaperEditorRoutes({ actorRole: "space_admin" });
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+  await user.click(screen.getByRole("combobox", { name: "试卷归属" }));
+
+  expect(screen.queryByRole("option", { name: "公共试卷" })).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "当前空间试卷" })).toBeInTheDocument();
+});
+
+test("空间管理员查看公共试卷时展示只读公共试卷归属", async () => {
+  renderPaperEditorRoutes({
+    actorRole: "space_admin",
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi: createPaperApiDouble({
+      papers: [createPaperRowForTest({ spaceID: undefined })],
+    }),
+  });
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+
+  expect(screen.queryByRole("combobox", { name: "试卷归属" })).not.toBeInTheDocument();
+  expect(screen.getByText("公共试卷")).toBeInTheDocument();
 });
 
 test("新建试卷切换组卷方式失败后仍接管已创建草稿，避免重复创建", async () => {
@@ -817,6 +1014,65 @@ test("已屏蔽题目可在规则面板移除并重新参与组卷", async () =>
   });
 });
 
+test("一键智能组卷会先保存草稿再组卷并展示等待态", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+  });
+  let resolveUpdatePaper!: (paper: PaperRow) => void;
+  const updatePaperDeferred = new Promise<PaperRow>((resolve) => {
+    resolveUpdatePaper = resolve;
+  });
+  paperApi.updatePaper = vi.fn(async (input) => {
+    await updatePaperDeferred;
+    return {
+      ...createPaperRowForTest({ buildMode: "rule_fixed" }),
+      id: input.paperID,
+      tenantID: input.tenantID,
+      spaceID: input.spaceID === null ? undefined : input.spaceID ?? 301,
+      name: input.name,
+      description: input.description ?? "",
+      durationMinutes: input.durationMinutes ?? 120,
+      gradeLevel: input.gradeLevel ?? "高一",
+    };
+  });
+  paperApi.generateRuleFixed = vi.fn(async () => ({ paperID: 100, generated: true }));
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  const nameInput = await screen.findByLabelText("试卷名称");
+  await user.clear(nameInput);
+  await user.type(nameInput, "高一语文智能组卷");
+
+  await user.click(screen.getByRole("button", { name: "一键智能组卷" }));
+
+  await waitFor(() => {
+    expect(paperApi.updatePaper).toHaveBeenCalledWith(expect.objectContaining({
+      tenantID: 10,
+      paperID: 100,
+      name: "高一语文智能组卷",
+    }));
+  });
+  expect(paperApi.generateRuleFixed).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "组卷中" })).toBeDisabled();
+
+  await act(async () => {
+    resolveUpdatePaper(createPaperRowForTest({ buildMode: "rule_fixed", name: "高一语文智能组卷" }));
+  });
+
+  await waitFor(() => {
+    expect(paperApi.generateRuleFixed).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 100,
+      blockedQuestionIDs: [],
+    });
+  });
+});
+
 test("切换到另一张策略试卷时清空上一张试卷的屏蔽题目", async () => {
   const user = userEvent.setup();
   const paperApi = createPaperApiDouble({
@@ -1199,6 +1455,94 @@ test("编辑基础信息后底部草稿状态会联动切换", async () => {
     });
   });
   expect(screen.getByText("草稿已保存")).toBeInTheDocument();
+});
+
+test("编辑已有试卷可以重新设置归属为公共试卷", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble();
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+  });
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+  await user.click(screen.getByRole("combobox", { name: "试卷归属" }));
+  await user.click(screen.getByRole("option", { name: "公共试卷" }));
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  await waitFor(() => {
+    expect(paperApi.updatePaper).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 100,
+      spaceID: null,
+      name: "高一语文月考试卷",
+      description: "文学阅读与语言基础",
+      durationMinutes: 120,
+      gradeLevel: "高一",
+    });
+  });
+});
+
+test("公共试卷候选池不会展示当前空间题", async () => {
+  const questionApi = createQuestionApiDouble();
+  questionApi.listQuestions = vi.fn(async () => ({
+    page: 1,
+    pageSize: 20,
+    total: 2,
+    items: [
+      {
+        id: 201,
+        tenantID: 10,
+        type: "single" as const,
+        title: "公共候选题",
+        stem: "公共候选题",
+        options: ["A", "B", "C", "D"],
+        correctOptionIndexes: [0],
+        analysis: "",
+        difficulty: "medium" as const,
+        tag: "函数",
+        tags: ["函数"],
+        scoreDefault: "5",
+        status: "ready" as const,
+        authorName: "tenant.admin",
+        authorRole: "tenant_admin",
+        createdAt: new Date("2026-06-01T10:00:00+08:00").getTime(),
+      },
+      {
+        id: 202,
+        tenantID: 10,
+        spaceID: 301,
+        type: "single" as const,
+        title: "空间候选题",
+        stem: "空间候选题",
+        options: ["A", "B", "C", "D"],
+        correctOptionIndexes: [1],
+        analysis: "",
+        difficulty: "easy" as const,
+        tag: "函数",
+        tags: ["函数"],
+        scoreDefault: "5",
+        status: "ready" as const,
+        authorName: "teacher.exam",
+        authorRole: "teacher",
+        createdAt: new Date("2026-06-01T10:30:00+08:00").getTime(),
+      },
+    ],
+  }));
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi: createPaperApiDouble({
+      papers: [createPaperRowForTest({ buildMode: "manual", spaceID: undefined })],
+    }),
+    questionApi,
+  });
+
+  await screen.findByText("公共候选题");
+
+  expect(questionApi.listQuestions).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, page: 1, pageSize: 100 });
+  expect(screen.getByText("公共候选题")).toBeInTheDocument();
+  expect(screen.queryByText("空间候选题")).not.toBeInTheDocument();
 });
 
 test("编辑智能组卷规则后底部草稿状态会联动切换", async () => {
@@ -1957,10 +2301,12 @@ test("已选试题表格提供固定列组，避免分值列挤占来源题库",
 
 function renderPaperEditorRoutes({
   initialEntry = "/papers/new?space_id=301",
+  actorRole,
   paperApi = createPaperApiDouble(),
   questionApi = createQuestionApiDouble(),
 }: {
   initialEntry?: string;
+  actorRole?: ActorRole;
   paperApi?: PaperAPI;
   questionApi?: QuestionAPI;
 } = {}) {
@@ -1970,11 +2316,11 @@ function renderPaperEditorRoutes({
         <Routes>
           <Route
             path="/papers/new"
-            element={<PaperEditorPage paperApi={paperApi} questionApi={questionApi} tenantID={10} spaceID={301} />}
+            element={<PaperEditorPage actorRole={actorRole} paperApi={paperApi} questionApi={questionApi} tenantID={10} spaceID={301} />}
           />
           <Route
             path="/papers/:paperID/edit"
-            element={<PaperEditRoute paperApi={paperApi} questionApi={questionApi} tenantID={10} spaceID={301} />}
+            element={<PaperEditRoute actorRole={actorRole} paperApi={paperApi} questionApi={questionApi} tenantID={10} spaceID={301} />}
           />
         </Routes>
         <LocationProbe />
@@ -2049,7 +2395,7 @@ function createPaperApiDouble({
     createPaper: vi.fn(async (input) => ({
       id: 101,
       tenantID: input.tenantID,
-      ...(input.spaceID === undefined ? {} : { spaceID: input.spaceID }),
+      ...(input.spaceID === undefined || input.spaceID === null ? {} : { spaceID: input.spaceID }),
       name: input.name,
       description: input.description ?? "",
       durationMinutes: input.durationMinutes,
@@ -2066,7 +2412,7 @@ function createPaperApiDouble({
       const updated = {
         id: input.paperID,
         tenantID: input.tenantID,
-        spaceID: currentPaper?.spaceID ?? 301,
+        spaceID: input.spaceID === null ? undefined : input.spaceID ?? currentPaper?.spaceID ?? 301,
         name: input.name,
         description: input.description ?? "",
         durationMinutes: input.durationMinutes ?? currentPaper?.durationMinutes ?? 120,

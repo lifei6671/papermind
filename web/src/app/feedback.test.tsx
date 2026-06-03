@@ -58,6 +58,8 @@ test("统一提示支持页面中上部叠加并在 5 秒后自动消失", () =>
   expect(alerts[0]).toHaveTextContent("租户码已失效");
   expect(alerts[1]).toHaveTextContent("保存成功");
   expect(alerts[0].parentElement).toHaveClass("feedback-toast-stack");
+  expect(alerts[0].querySelector(".feedback-toast__icon--error")).toBeInTheDocument();
+  expect(alerts[1].querySelector(".feedback-toast__icon--success")).toBeInTheDocument();
 
   act(() => {
     vi.advanceTimersByTime(4999);

@@ -1,5 +1,5 @@
 import { Button } from "../components/ui/Button";
-import { X } from "lucide-react";
+import { AlertCircle, CheckCircle2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { FeedbackContext } from "./feedback-context";
@@ -10,6 +10,10 @@ type FeedbackProviderProps = {
 };
 
 const feedbackVisibleDuration = 5000;
+const feedbackToneLabels: Record<FeedbackTone, string> = {
+  error: "错误提示",
+  success: "成功提示",
+};
 
 export function FeedbackProvider({ children }: FeedbackProviderProps) {
   const [messages, setMessages] = useState<FeedbackMessage[]>([]);
@@ -60,7 +64,17 @@ export function FeedbackProvider({ children }: FeedbackProviderProps) {
         <div aria-live="polite" className="feedback-toast-stack">
           {messages.map((message) => (
             <div className={`feedback-toast feedback-toast--${message.tone}`} key={message.id} role="alert">
-              <span>{message.text}</span>
+              <span
+                aria-label={feedbackToneLabels[message.tone]}
+                className={`feedback-toast__icon feedback-toast__icon--${message.tone}`}
+              >
+                {message.tone === "error" ? (
+                  <AlertCircle aria-hidden="true" size={16} />
+                ) : (
+                  <CheckCircle2 aria-hidden="true" size={16} />
+                )}
+              </span>
+              <span className="feedback-toast__text">{message.text}</span>
               <Button aria-label="关闭提示" onClick={() => dismiss(message.id)} type="button">
                 <X aria-hidden="true" size={16} />
               </Button>

@@ -783,8 +783,8 @@ tags
 - 选择题判分必须基于选项 ID 或快照内选项 ID，不基于 A/B/C/D 字母。
 - 选项随机后，A/B/C/D 由前端按最终展示顺序动态生成。
 - `questions.space_id = NULL` 表示租户级公共题库，租户内所有空间可见。
-- 首版公共题库只允许 `tenant_admin` 创建、修改、删除和导入；`space_admin` / `teacher` 只能管理自己已加入且启用空间内的题库。
-- `space_admin` / `teacher` 可以在组卷、发布考试等流程中读取公共题库，但是否允许引用公共题库必须由对应业务 service 显式校验，不能把公共题库视为任意教师可写资源。
+- `tenant_admin`、具备考试业务入口的 `teacher` 可创建或导入公共题库题目；`teacher` 也可创建或导入自己已加入且启用空间内的题目。写入空间题库时必须校验真实空间成员关系，不能信任请求体中的 `space_id`。
+- 题目未被 `paper_section_questions`、`exam_live_question_pools` 或 `exam_attempt_questions` 引用时，允许有权限的调用方编辑内容、删除题目或重新设置公共/空间归属；已被引用时允许编辑题目内容，但禁止删除和修改 `space_id`，避免组卷范围和作答快照链路被破坏。
 - `questions.space_id` 非空表示空间题库，仅该空间成员中的教师、租户管理员和有权限的组卷流程可见。
 - `questions.quality_score` 保存题目质量分，范围 0-10，默认 5；智能组卷开启高质量优先时按该字段倒序选择候选题。
 
@@ -872,7 +872,8 @@ paper_section_rules
 - `rule_fixed`：教师按大题配置规则，触发生成后固化为 `paper_section_questions`，发布前可以审题和手动调整，适合正式考试。
 - `rule_live`：教师按大题配置规则，考试开始时为每个考生实时抽题，适合练习和模拟考试。
 - `papers.space_id` 可为空；为空表示租户级公共试卷，非空表示空间内试卷。
-- 首版公共试卷只允许 `tenant_admin` 创建、修改和删除；`space_admin` / `teacher` 只能管理自己已加入且启用空间内的试卷。
+- 公共试卷只允许 `tenant_admin` 创建、修改和删除；`tenant_admin` 也可以把未被考试引用的公共试卷迁移到空间，或把空间试卷迁移为公共试卷。空间试卷仍允许本租户管理员或对应启用空间内的 `space_admin` / `teacher` 管理。
+- 试卷已被未删除考试引用后，禁止删除和修改 `papers.space_id`；基础信息、组卷内容和规则修改继续受既有发布/撤回状态规则约束。
 - `space_admin` / `teacher` 可以在发布考试等流程中读取公共试卷，但是否允许引用公共试卷必须由对应业务 service 显式校验，不能把公共试卷视为任意教师可写资源。
 - `papers.duration_minutes` 保存试卷草稿的默认考试时长；创建、编辑和草稿保存都必须走真实试卷 API 持久化该字段，后续发布考试时可复用为默认值。
 - `papers.shuffle_questions` 控制整张试卷的题目顺序是否对每个考生随机。
@@ -1331,7 +1332,7 @@ API 分组：
 ├── 标签/难度字段维护
 └── 题目查询
 
-前端题库页通过独立的新增题目页面承载在线出题，避免长表单挤在抽屉内。新增题目必须提交题型、难度、默认分值、题干、解析和标签；题干和解析使用 `@uiw/react-md-editor` 编辑器内置预览渲染阅读格式，后端按 Markdown 原始字符串存储；选择题选项数量由出题人动态增减，单选和多选都通过选项正确答案标记写入 `options[].is_correct`；题目标签支持从当前题库返回的标签集合中多选，也支持输入新标签后随题目创建绑定。题目新建和导入后默认进入 `draft` 草稿状态，必须由操作区手动启用后才变为可用题目。题库列表展示题干摘要、难度、题型、题目状态、出题人账号、角色、出题时间和操作区；编辑复用题目表单，保存时后端必须检查题目是否已被试卷、实时候选池或作答快照引用；删除同样必须做引用校验，禁用/启用只改变题目状态，不影响已冻结的考试快照。草稿和禁用题目不参与新试卷组卷，手动选题候选和规则组卷候选都必须只使用启用题目。
+前端题库页通过独立的新增题目页面承载在线出题，避免长表单挤在抽屉内。新增题目必须提交题型、难度、默认分值、题干、解析和标签；题干和解析使用 `@uiw/react-md-editor` 编辑器内置预览渲染阅读格式，后端按 Markdown 原始字符串存储；选择题选项数量由出题人动态增减，单选和多选都通过选项正确答案标记写入 `options[].is_correct`；题目标签支持从当前题库返回的标签集合中多选，也支持输入新标签后随题目创建绑定。题目新建和导入后默认进入 `draft` 草稿状态，必须由操作区手动启用后才变为可用题目。题库列表展示题干摘要、难度、题型、题目状态、出题人账号、所属空间、出题时间和操作区；公共题库在所属空间列显示“公共题库”，教师或空间管理员查看公共题库时编辑入口必须置灰。编辑复用题目表单，保存时后端必须检查题目是否已被试卷、实时候选池或作答快照引用；删除同样必须做引用校验，禁用/启用只改变题目状态，不影响已冻结的考试快照。草稿和禁用题目不参与新试卷组卷，手动选题候选和规则组卷候选都必须只使用启用题目。
 
 题目导入支持同步兼容接口和异步任务接口。题库页右侧抽屉允许一次选择多个 CSV 文件，前端按文件队列依次提交，展示每个文件的导入进度、成功数、失败数和重复数。导入前可选择导入后题目状态，只允许草稿 `draft` 或已启用 `enabled`；未传入时默认草稿，已启用题目可直接参与后续组卷候选。单个导入 CSV 文件默认最大 100MB，前端控件和后端接口都必须执行同一上限。`POST /api/v1/questions/import/jobs` 接收单个 CSV 文件后创建内存导入任务并返回 `job_id`；前端通过 `GET /api/v1/questions/import/jobs/:job_id/events` 订阅 SSE 进度事件。SSE 事件必须回推 `queued`、`running`、`completed` 或 `failed` 状态，并带上总行数、已处理行数、成功数、失败数和重复数；运行中事件只保留计数，终态事件再带完整行级错误，避免大文件失败时把累计错误列表重复保存在内存任务历史中。完成或失败的内存任务只保留 30 分钟，保留窗口后再次查询或订阅会按任务不存在处理。事件流读取时要根据任务记录的 tenant/space 范围重新校验当前会话题库权限，不能只依赖随机任务 ID。导入服务按题干做去重：空间题库导入时检查租户公共题和当前空间题，公共题库导入时只检查公共题；同一批文件内重复题干也跳过。重复行计入 `duplicate_count`，不计入失败，也不写入题库。当前版本不新增数据库唯一约束，因此并发导入下仍以服务层检查为主。
 
@@ -1465,7 +1466,7 @@ GET  /api/v1/questions/:id
      query: tenant_id
 PUT  /api/v1/questions/:id
      body: tenant_id, type, difficulty, title, analysis?, score_default?, tags[], options[], standard_answer?, reference_answer?, blank_count?
-     已被 `paper_section_questions`、`exam_live_question_pools` 或 `exam_attempt_questions` 引用的题目返回 409，避免破坏组卷和作答快照。
+     已被 `paper_section_questions`、`exam_live_question_pools` 或 `exam_attempt_questions` 引用的题目允许内容编辑；显式修改 `space_id` 或删除题目时返回 409，避免破坏组卷范围和作答快照。
 POST /api/v1/questions/:id/disable
      body: tenant_id
 POST /api/v1/questions/:id/enable
@@ -1483,7 +1484,7 @@ DELETE /api/v1/questions/:id
 GET  /api/v1/papers
      query: tenant_id, space_id?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
 POST /api/v1/papers
-     body: tenant_id, space_id?, name, description, duration_minutes?, shuffle_questions?, show_analysis?；`duration_minutes` 为空时后端默认写入 120。
+     body: tenant_id, space_id?, name, description, duration_minutes?, shuffle_questions?, show_analysis?；`duration_minutes` 为空时后端默认写入 120。更新接口显式提交 `space_id` 时表示迁移试卷归属，已被未删除考试引用的试卷返回 400。
 PUT  /api/v1/papers/:id
      body: tenant_id, name, description, duration_minutes?；编辑试卷基础信息时允许同时更新默认考试时长。
 PUT  /api/v1/papers/:id/mode
@@ -1567,7 +1568,7 @@ page_size  默认 20，最大 100
 
 前端管理页不能内置核心业务 mock 数据。个人设置页必须通过 `/api/v1/profile` 读取当前账号资料并提交保存，不能只修改本地登录态；平台管理员登录账号在个人设置页只读，避免误改登录标识；租户用户保存成功后同步本地 session 的显示名称，让导航和页面标题立即刷新；租户用户处于首次登录强制改密状态时，后台路由必须跳转到个人设置页，直到成功调用 `/api/v1/profile/password` 清除该状态。租户登录页不再展示租户 ID 输入框，租户账号登录后进入 `/tenant-entry`，通过 `/api/v1/tenant/profile/spaces` 展示可进入的租户和空间，再调用 `/api/v1/auth/tenant/select-space` 绑定当前 session。`/tenant-entry` 必须按角色展示入口：`tenant_admin` 只展示租户后台入口，多个空间授权折叠为同一个租户入口，选择时不传 `space_id`；`space_admin`、`teacher` 和 `student` 才按具体空间展示空间管理、教学业务或考试入口。租户后台侧边栏必须展示当前租户身份和租户名称，主按钮固定为“切换租户”，点击后回到 `/tenant-entry`；平台管理员侧边栏继续展示平台身份和“回到概览”。后台左侧必须固定展示“总览 / 概览”入口，平台管理员进入平台概览，租户管理员进入当前租户或当前空间概览，教师进入当前授权空间的教学概览；概览指标和待办文案必须按角色视角区分。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。空间管理、用户管理等租户级页面必须从租户用户 session 获取目标租户，并调用 `/api/v1/tenant/**` 租户前缀接口；用户管理列表中启用状态用户展示“禁用用户”，禁用状态用户展示“启用用户”，并分别调用真实禁用/启用接口；缺失有效租户 ID 时只展示选择提示，不得使用 `10` 等前端默认值请求后端。后台左侧“租户空间”和“用户管理”菜单对 `tenant_admin` 显示；`tenant_admin` 不显示独立“空间成员”菜单，空间成员维护统一从“空间管理”的成员管理抽屉进入，新增成员通过抽屉内左侧按钮打开弹窗提交；抽屉右侧提供当前空间成员检索、搜索和刷新，成员列表分页展示，操作区支持禁用成员和打开成员详情抽屉。独立“空间成员”菜单只对拥有启用 `space_admin` 空间授权的账号显示，其可见性必须来自 `/api/v1/tenant/profile/spaces` 返回的当前用户启用空间成员关系和 `role = space_admin`，不能来自 session role，其中 `tenant_admin` 管理本租户全量空间和用户，`space_admin` 只能管理授权空间范围。后台左侧“考试业务”菜单对 `tenant_admin`、拥有授权空间的 `space_admin` 和 `teacher` 显示，其中 `tenant_admin` 管理本租户全量考试业务，`space_admin` / `teacher` 只能操作已加入且启用的空间范围。平台管理员直接访问租户业务后台路由时回到平台概览页，不渲染租户业务页面或触发租户业务 API 请求。平台管理员在租户管理列表中查看某个租户的空间或用户时，只在当前页面从右侧滑入抽屉并调用平台侧只读概览 API `/api/v1/tenants/:id/spaces` 或 `/api/v1/tenants/:id/users`，不跳转到租户侧空间管理或用户管理页面；遮罩层固定铺满视口并随抽屉打开淡入、关闭淡出，抽屉使用右侧绝对定位叠在遮罩层上滑入滑出，不在遮罩层内预留白色占位；抽屉默认占用 50% 视口宽度，全屏按钮在 50% 与 100% 视口宽度之间切换，宽度变化保持过渡动画；返回和关闭按钮只触发滑出和遮罩淡出动画，待动画结束后再卸载抽屉，遮罩层不触发关闭；抽屉列表必须保持租户侧空间管理、用户管理列表的列结构，只改变承载方式。教师没有加入任何空间时，用户详情和业务页必须提示“该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷”。
 
-公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 只能由本租户 `tenant_admin` 创建或导入；`teacher` 和空间管理员只能写自己启用空间内的题库。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。读取试卷大题和组卷规则详情时，也必须从 `paper_id` 反查 `papers.space_id` 后校验当前账号的真实空间成员关系；非 `tenant_admin` 不能仅凭租户考试业务入口读取其他空间试卷结构。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
+公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 可由本租户 `tenant_admin` 或具备考试业务入口的 `teacher` 创建、编辑和导入；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。题目更新接口显式提交 `space_id` 时表示重新设置归属，必须同时校验调用方对原题目范围和目标范围都有写权限；题目已被试卷、实时候选池或作答快照引用时，仍允许编辑题目内容，但必须拒绝删除和归属迁移。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷或修改试卷归属前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。读取试卷大题和组卷规则详情时，也必须从 `paper_id` 反查 `papers.space_id` 后校验当前账号的真实空间成员关系；非 `tenant_admin` 不能仅凭租户考试业务入口读取其他空间试卷结构。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
 
 成绩列表、发布配置和导出必须基于成绩行或考试范围反查真实空间。`teacher` 可以查看授权空间内成绩；当考试还没有任何提交成绩时，成绩列表返回空集合而不是权限错误。首版教师不能导出成绩；前端不展示教师导出入口，后端仍以 `CanExportExamResults` 作为最终拒绝边界。学生查分只走 `/api/v1/exam-entry/results/:id`，不能调用管理端成绩接口。
 
@@ -1672,7 +1673,7 @@ service 单元测试：
 - `space_admin` 不能修改空间基础资料或删除空间
 - `tenant_admin` 创建 `teacher` 时不自动写入 `space_members`
 - 教师未加入任何启用空间时不能操作题库、试卷、考试或阅卷
-- 公共题库和公共试卷只允许 `tenant_admin` 创建、修改、删除和导入
+- 公共题库允许 `tenant_admin` 和 `teacher` 创建、修改和导入；公共试卷只允许 `tenant_admin` 创建、修改和删除
 - 学生不能访问 `/api/v1/tenant/results/:id`，只能通过 `/api/v1/exam-entry/results/:id` 查看自己的已发布成绩
 - 角色变更后，关键写接口必须从数据库重建权限上下文，不能继续信任旧 session 角色快照
 - 多选题答案排序归一化后判分
@@ -1843,7 +1844,7 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - `question_options` 使用 `UNIQUE (tenant_id, question_id, option_key)` 防止同题选项 key 重复。
 - `question_options` 使用 `UNIQUE (tenant_id, question_id, sort_order)` 防止同题选项排序重复。
 - 题目选项编辑采用全量替换策略，已生成考试快照不受后续选项编辑影响。
-- 公共题库使用 `questions.space_id = NULL`，公共试卷使用 `papers.space_id = NULL`；首版公共资源只允许 `tenant_admin` 写入，空间角色只能按业务规则读取或引用。
+- 公共题库使用 `questions.space_id = NULL`，公共试卷使用 `papers.space_id = NULL`；公共题库允许教师写入，公共试卷仍仅 `tenant_admin` 写入，空间角色只能按业务规则读取或引用。
 - `rule_fixed` 先按规则生成固化题目，教师审题调整后再发布，适合正式考试。
 - `rule_live` 考试开始时按大题规则为每个考生实时抽题，适合练习和模拟考试。
 - `rule_live` 发布时冻结候选题池到 `exam_live_question_pools`，开考时只从冻结题池抽题。

@@ -71,6 +71,7 @@ export function buildAdminRoutes(
   const sessionTenantID = user?.tenantID;
   const actorID = user?.userID ?? 0;
   const actorRole = routeActorRole(user?.role, profileSpaces, { tenantID: sessionTenantID, spaceID: selectedSpaceID });
+  const selectedSpaceName = currentSpaceName(profileSpaces, { tenantID: sessionTenantID, spaceID: selectedSpaceID });
   const examNeedsSpace = needsExamSpace(user, selectedSpaceID);
 
   return [
@@ -169,7 +170,14 @@ export function buildAdminRoutes(
     label: "题库",
     description: "维护题目、选项、解析、标签和导入任务",
     icon: LibraryBig,
-    element: examNeedsSpace ? renderExamSpaceRequiredPage("题库") : <QuestionBankPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("题库") : (
+      <QuestionBankPage
+        actorRole={actorRole}
+        tenantID={sessionTenantID ?? 0}
+        spaceID={selectedSpaceID}
+        spaceName={selectedSpaceName}
+      />
+    ),
     group: "exam",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -179,7 +187,7 @@ export function buildAdminRoutes(
     label: "新增题目",
     description: "新增题目并维护 Markdown 题干、解析和选项",
     icon: LibraryBig,
-    element: examNeedsSpace ? renderExamSpaceRequiredPage("新增题目") : <QuestionCreatePage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("新增题目") : <QuestionCreatePage actorRole={actorRole} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "hidden",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -189,7 +197,7 @@ export function buildAdminRoutes(
     label: "编辑题目",
     description: "编辑未被引用的题目内容、选项、解析和标签",
     icon: LibraryBig,
-    element: examNeedsSpace ? renderExamSpaceRequiredPage("编辑题目") : <QuestionEditRoute tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("编辑题目") : <QuestionEditRoute actorRole={actorRole} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "hidden",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -209,7 +217,7 @@ export function buildAdminRoutes(
     label: "新建试卷",
     description: "创建试卷草稿并进入组卷管理工作台",
     icon: FileStack,
-    element: examNeedsSpace ? renderExamSpaceRequiredPage("新建试卷") : <PaperEditorPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("新建试卷") : <PaperEditorPage actorRole={actorRole} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "hidden",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -219,7 +227,7 @@ export function buildAdminRoutes(
     label: "编辑试卷",
     description: "编辑试卷摘要、题库筛选和已选试题排序",
     icon: FileStack,
-    element: examNeedsSpace ? renderExamSpaceRequiredPage("编辑试卷") : <PaperEditRoute tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("编辑试卷") : <PaperEditRoute actorRole={actorRole} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "hidden",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -319,6 +327,13 @@ function currentSpaceRole(profileSpaces: ProfileSpaceAuthorization[], scope: Rou
     return undefined;
   }
   return matchingProfileSpaces(profileSpaces, scope)[0]?.role;
+}
+
+function currentSpaceName(profileSpaces: ProfileSpaceAuthorization[], scope: RouteVisibilityScope) {
+  if (!scope.spaceID) {
+    return undefined;
+  }
+  return matchingProfileSpaces(profileSpaces, scope)[0]?.spaceName;
 }
 
 function matchingProfileSpaces(profileSpaces: ProfileSpaceAuthorization[], scope: RouteVisibilityScope) {

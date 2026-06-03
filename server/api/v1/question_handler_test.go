@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lifei6671/papermind/server/library/crypto"
 	"github.com/lifei6671/papermind/server/library/constant"
 	"gorm.io/gorm"
 )
@@ -129,6 +130,55 @@ func TestQuestionImportAPIRouteParsesCSVAndReturnsRowErrors(t *testing.T) {
 	}
 }
 
+func TestTeacherQuestionImportAPIRouteAllowsPublicScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash teacher password: %v", err)
+	}
+	if err := gormDB.Table("users").
+		Where("id = ?", 20).
+		Update("password_hash", passwordHash).Error; err != nil {
+		t.Fatalf("update teacher password hash: %v", err)
+	}
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+
+	requestBody, contentType := buildQuestionImportMultipart(t, `题型,题干,选项,正确答案,标准答案,参考答案,题目解析,难度,标签
+单选题,教师公共导入题,A.允许|B.拒绝,A,,,教师可导入公共题库。,中等,公共导入
+`)
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/questions/import", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("teacher public import status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	body := decodeExamAPIResponse[importQuestionsResponse](t, recorder.Body.Bytes())
+	if body.Data.SuccessCount != 1 || len(body.Data.Errors) != 0 {
+		t.Fatalf("expected one teacher public import row persisted, got %#v", body.Data)
+	}
+
+	var imported struct {
+		SpaceID *uint64 `gorm:"column:space_id"`
+	}
+	if err := gormDB.Table("questions").
+		Select("space_id").
+		Where("tenant_id = ? AND title = ?", 10, "教师公共导入题").
+		First(&imported).Error; err != nil {
+		t.Fatalf("query teacher public imported question: %v", err)
+	}
+	if imported.SpaceID != nil {
+		t.Fatalf("expected teacher public import to persist nil space_id, got %#v", imported.SpaceID)
+	}
+}
+
 func TestQuestionImportJobAPIRouteStartsAsyncImport(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -163,6 +213,120 @@ func TestQuestionImportJobAPIRouteStartsAsyncImport(t *testing.T) {
 	streamBody := streamRecorder.Body.String()
 	if !strings.Contains(streamBody, "event: import_progress") || !strings.Contains(streamBody, `"status":"completed"`) || !strings.Contains(streamBody, `"success_count":1`) {
 		t.Fatalf("expected completed import progress stream, got %s", streamBody)
+	}
+}
+
+func TestTeacherQuestionImportJobAPIRouteAllowsPublicScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash teacher password: %v", err)
+	}
+	if err := gormDB.Table("users").
+		Where("id = ?", 20).
+		Update("password_hash", passwordHash).Error; err != nil {
+		t.Fatalf("update teacher password hash: %v", err)
+	}
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+
+	requestBody, contentType := buildQuestionImportMultipart(t, `题型,题干,选项,正确答案,标准答案,参考答案,题目解析,难度,标签
+简答题,教师异步公共导入题,,,,参考答案,教师异步公共题解析,中等,公共导入
+`)
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/questions/import/jobs", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("teacher public import job status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	body := decodeExamAPIResponse[startQuestionImportJobResponse](t, recorder.Body.Bytes())
+	if body.Data.JobID == "" {
+		t.Fatalf("expected teacher public import job id, got %#v", body.Data)
+	}
+
+	streamRecorder := httptest.NewRecorder()
+	router.ServeHTTP(streamRecorder, authorizedRequest(http.MethodGet, "/api/v1/questions/import/jobs/"+body.Data.JobID+"/events?tenant_id=10", nil, authHeader))
+	if streamRecorder.Code != http.StatusOK {
+		t.Fatalf("teacher public import stream status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
+	}
+	streamBody := streamRecorder.Body.String()
+	if !strings.Contains(streamBody, `"status":"completed"`) || !strings.Contains(streamBody, `"success_count":1`) {
+		t.Fatalf("expected teacher public import job completed stream, got %s", streamBody)
+	}
+}
+
+func TestZeroSpaceTeacherQuestionImportJobAPIRouteRejectsPublicScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedZeroSpaceTeacherForQuestionAPITest(t, gormDB, 30, "teacher_zero")
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantLoginAuthHeader(t, router, "teacher_zero", "papermind123")
+
+	requestBody, contentType := buildQuestionImportMultipart(t, `题型,题干,选项,正确答案,标准答案,参考答案,题目解析,难度,标签
+单选题,零空间教师公共导入题,A.允许|B.拒绝,A,,,零空间教师不应能导入公共题库。,中等,公共导入
+`)
+	recorder := httptest.NewRecorder()
+	request := authorizedRequest(http.MethodPost, "/api/v1/questions/import/jobs", requestBody.Bytes(), authHeader)
+	request.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected zero-space teacher public import job forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestTeacherQuestionImportJobStreamRejectsPublicScopeAfterMembershipLoss(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash teacher password: %v", err)
+	}
+	if err := gormDB.Table("users").
+		Where("id = ?", 20).
+		Update("password_hash", passwordHash).Error; err != nil {
+		t.Fatalf("update teacher password hash: %v", err)
+	}
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+
+	adminHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+	requestBody, contentType := buildQuestionImportMultipart(t, `题型,题干,选项,正确答案,标准答案,参考答案,题目解析,难度,标签
+简答题,公共导入事件权限题,,,,参考答案,公共导入事件权限校验,中等,公共导入
+`)
+	startRecorder := httptest.NewRecorder()
+	startRequest := authorizedRequest(http.MethodPost, "/api/v1/questions/import/jobs", requestBody.Bytes(), adminHeader)
+	startRequest.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(startRecorder, startRequest)
+	if startRecorder.Code != http.StatusOK {
+		t.Fatalf("start import job status = %d, body = %s", startRecorder.Code, startRecorder.Body.String())
+	}
+	startBody := decodeExamAPIResponse[startQuestionImportJobResponse](t, startRecorder.Body.Bytes())
+
+	teacherHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+	if err := gormDB.Table("space_members").
+		Where("tenant_id = ? AND user_id = ?", 10, 20).
+		Update("status", "disabled").Error; err != nil {
+		t.Fatalf("disable teacher space memberships: %v", err)
+	}
+
+	streamRecorder := httptest.NewRecorder()
+	router.ServeHTTP(streamRecorder, authorizedRequest(http.MethodGet, "/api/v1/questions/import/jobs/"+startBody.Data.JobID+"/events?tenant_id=10", nil, teacherHeader))
+	if streamRecorder.Code != http.StatusForbidden {
+		t.Fatalf("expected teacher without enabled space memberships to lose public import stream access, got status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
 	}
 }
 
@@ -571,7 +735,7 @@ func TestDisabledTenantAdminCannotCreateQuestionWithStaleSession(t *testing.T) {
 	}
 }
 
-func TestQuestionManagementRejectsReferencedQuestionUpdateAndDelete(t *testing.T) {
+func TestQuestionManagementAllowsReferencedQuestionContentUpdateButRejectsDeleteAndSpaceMove(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
 	seedSpaceAPITestData(t, gormDB)
@@ -587,8 +751,28 @@ func TestQuestionManagementRejectsReferencedQuestionUpdateAndDelete(t *testing.T
 		"tenant_id": 10,
 		"type": "%s",
 		"difficulty": "medium",
-		"title": "被引用题目不允许编辑",
-		"analysis": "编辑前必须校验引用。",
+		"title": "被引用题目允许编辑",
+		"analysis": "编辑内容不改变题目归属。",
+		"score_default": "2",
+		"tags": ["权限"],
+		"options": [
+			{"option_key": "A", "content": "允许", "is_correct": true},
+			{"option_key": "B", "content": "拒绝", "is_distractor": true}
+		]
+	}`, constant.QuestionTypeSingle))
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPut, "/api/v1/questions/100", updatePayload, authHeader))
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("expected referenced content update allowed, got status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+
+	movePayload := []byte(fmt.Sprintf(`{
+		"tenant_id": 10,
+		"space_id": 301,
+		"type": "%s",
+		"difficulty": "medium",
+		"title": "被引用题目不允许迁移空间",
+		"analysis": "迁移归属会破坏组卷范围。",
 		"score_default": "2",
 		"tags": ["权限"],
 		"options": [
@@ -596,10 +780,10 @@ func TestQuestionManagementRejectsReferencedQuestionUpdateAndDelete(t *testing.T
 			{"option_key": "B", "content": "允许", "is_distractor": true}
 		]
 	}`, constant.QuestionTypeSingle))
-	updateRecorder := httptest.NewRecorder()
-	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPut, "/api/v1/questions/100", updatePayload, authHeader))
-	if updateRecorder.Code != http.StatusConflict {
-		t.Fatalf("expected referenced update conflict, got status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	moveRecorder := httptest.NewRecorder()
+	router.ServeHTTP(moveRecorder, authorizedRequest(http.MethodPut, "/api/v1/questions/100", movePayload, authHeader))
+	if moveRecorder.Code != http.StatusConflict {
+		t.Fatalf("expected referenced space move conflict, got status = %d, body = %s", moveRecorder.Code, moveRecorder.Body.String())
 	}
 
 	deleteRecorder := httptest.NewRecorder()
@@ -612,8 +796,8 @@ func TestQuestionManagementRejectsReferencedQuestionUpdateAndDelete(t *testing.T
 	if err := gormDB.Table("questions").Select("title").Where("tenant_id = ? AND id = ?", 10, 100).Scan(&title).Error; err != nil {
 		t.Fatalf("read referenced question title: %v", err)
 	}
-	if title != "现代文阅读主旨题" {
-		t.Fatalf("expected referenced question unchanged, got %q", title)
+	if title != "被引用题目允许编辑" {
+		t.Fatalf("expected referenced question content updated, got %q", title)
 	}
 }
 
@@ -712,6 +896,30 @@ func seedQuestionAPITestData(t *testing.T, gormDB *gorm.DB) {
 			(1, 10, 100, 1, ?, '{}')
 	`, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed question tag: %v", err)
+	}
+}
+
+func seedZeroSpaceTeacherForQuestionAPITest(t *testing.T, gormDB *gorm.DB, userID uint64, username string) {
+	t.Helper()
+
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash zero-space teacher password: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES (?, ?, '零空间教师', '13800009930', 'zero-space@example.test', ?, 'enabled', ?, ?, '{}')
+	`, userID, username, passwordHash, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed zero-space teacher user: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES (?, 10, ?, 'teacher', 'enabled', ?, ?, '{}')
+	`, userID, userID, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed zero-space teacher membership: %v", err)
 	}
 }
 

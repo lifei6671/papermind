@@ -8,14 +8,17 @@ import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
+import type { ActorRole } from "../../api/grading";
 import { useFeedback } from "../../app/feedback-context";
 import { questionApi } from "../../api/questions";
 import type { QuestionAPI, QuestionDifficulty, QuestionType } from "../../api/questions";
 import { Button } from "../../components/ui/Button";
 import { Panel } from "../../components/ui/Panel";
+import { canWritePublicQuestionScope } from "./questionScopePermissions";
 
 type QuestionCreatePageProps = {
   api?: QuestionAPI;
+  actorRole?: ActorRole;
   questionID?: number;
   tenantID?: number;
   spaceID?: number;
@@ -37,11 +40,13 @@ const questionDifficultyLabels: Record<QuestionDifficulty, string> = {
 
 const defaultChoiceOptions = ["选项 A", "选项 B"];
 
-export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 10, spaceID }: QuestionCreatePageProps) {
+export function QuestionCreatePage({ api = questionApi, actorRole, questionID, tenantID = 10, spaceID }: QuestionCreatePageProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { showError } = useFeedback();
   const isEditMode = questionID !== undefined;
+  const currentSpaceID = spaceID ?? readSpaceIDFromSearch(location.search);
+  const canSelectPublicScope = canWritePublicQuestionScope(actorRole);
   const [tags, setTags] = useState(["选择题", "语言文字"]);
   const [questionType, setQuestionType] = useState<QuestionType>("single");
   const [difficulty, setDifficulty] = useState<QuestionDifficulty>("medium");
@@ -57,6 +62,7 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
   const [selectedQuestionTags, setSelectedQuestionTags] = useState<string[]>([]);
   const [questionTagQuery, setQuestionTagQuery] = useState("");
   const [isQuestionTagInputFocused, setIsQuestionTagInputFocused] = useState(false);
+  const [selectedQuestionSpaceID, setSelectedQuestionSpaceID] = useState<number | null>(currentSpaceID ?? null);
 
   const questionTagSuggestions = tags
     .filter((item) => item.toLowerCase().includes(questionTagQuery.trim().toLowerCase()))
@@ -68,7 +74,7 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
   useEffect(() => {
     let ignore = false;
 
-    api.listQuestions({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) })
+    api.listQuestions({ tenantID, ...(currentSpaceID === undefined ? {} : { spaceID: currentSpaceID }) })
       .then((data) => {
         if (!ignore) {
           setTags((items) => mergeTags(items, data.items.flatMap((item) => item.tags.length > 0 ? item.tags : [item.tag])));
@@ -83,7 +89,7 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
     return () => {
       ignore = true;
     };
-  }, [api, tenantID, spaceID]);
+  }, [api, tenantID, currentSpaceID]);
 
   useEffect(() => {
     if (questionID === undefined) {
@@ -110,6 +116,7 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
         setAnalysis(item.analysis);
         setSelectedQuestionTags(item.tags);
         setTags((items) => mergeTags(items, item.tags));
+        setSelectedQuestionSpaceID(item.spaceID ?? null);
       })
       .catch(() => {
         if (!ignore) {
@@ -144,7 +151,7 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
     try {
       const payload = {
         tenantID,
-        ...(spaceID === undefined ? {} : { spaceID }),
+        spaceID: selectedQuestionSpaceID,
         type: questionType,
         difficulty,
         title: stem,
@@ -229,6 +236,17 @@ export function QuestionCreatePage({ api = questionApi, questionID, tenantID = 1
         </div>
         <form className="platform-form exam-question-page-form" onSubmit={handleSaveQuestion}>
           <div className="exam-question-form-grid">
+            <label className="field">
+              <span>所属空间</span>
+              <select
+                aria-label="所属空间"
+                onChange={(event) => setSelectedQuestionSpaceID(event.target.value === "public" ? null : currentSpaceID ?? null)}
+                value={selectedQuestionSpaceID === null && canSelectPublicScope ? "public" : "space"}
+              >
+                {canSelectPublicScope && <option value="public">公共题库</option>}
+                {currentSpaceID !== undefined && <option value="space">当前空间题库</option>}
+              </select>
+            </label>
             <label className="field">
               <span>题型</span>
               <select
@@ -507,6 +525,15 @@ function MarkdownEditor({
       />
     </div>
   );
+}
+
+function readSpaceIDFromSearch(search: string) {
+  const value = new URLSearchParams(search).get("space_id");
+  if (value === null) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function normalizeTags(tags: string[]) {

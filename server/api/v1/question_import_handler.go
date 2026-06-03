@@ -137,7 +137,7 @@ func (h questionHandler) importQuestions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
 		return
 	}
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users)
+	permissionContext, err := h.permissionContextForQuestionTargetScope(c, tenantID, spaceID)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
 		return
@@ -145,6 +145,10 @@ func (h questionHandler) importQuestions(c *gin.Context) {
 	targetStatus, err := readImportStatusForm(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "status 只能是 draft 或 enabled"))
+		return
+	}
+	if err := h.validateQuestionImportWrite(c.Request.Context(), permissionContext, tenantID, spaceID, targetStatus); err != nil {
+		writeQuestionServiceError(c, err)
 		return
 	}
 	fileHeader, err := c.FormFile("file")
@@ -199,7 +203,7 @@ func (h questionHandler) startImportQuestionsJob(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
 		return
 	}
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users)
+	permissionContext, err := h.permissionContextForQuestionTargetScope(c, tenantID, spaceID)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
 		return
@@ -207,6 +211,10 @@ func (h questionHandler) startImportQuestionsJob(c *gin.Context) {
 	targetStatus, err := readImportStatusForm(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "status 只能是 draft 或 enabled"))
+		return
+	}
+	if err := h.validateQuestionImportWrite(c.Request.Context(), permissionContext, tenantID, spaceID, targetStatus); err != nil {
+		writeQuestionServiceError(c, err)
 		return
 	}
 	fileHeader, err := c.FormFile("file")
@@ -247,8 +255,13 @@ func (h questionHandler) streamImportQuestionJobEvents(c *gin.Context) {
 	if !authorizeExamBusiness(c, tenantID, h.members) {
 		return
 	}
-	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users); err != nil {
+	permissionContext, err := h.permissionContextForQuestionTargetScope(c, tenantID, spaceID)
+	if err != nil {
 		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
+	if err := h.validateQuestionImportWrite(c.Request.Context(), permissionContext, tenantID, spaceID, servicequestion.QuestionStatusDraft); err != nil {
+		writeQuestionServiceError(c, err)
 		return
 	}
 	events, updates, unsubscribe, ok := store.Subscribe(jobID)
@@ -336,6 +349,18 @@ func (h questionHandler) runImportQuestionsJob(jobID string, fileName string, fi
 		errors:         result.Errors,
 	})
 }
+
+func (h questionHandler) validateQuestionImportWrite(ctx context.Context, permissionContext permission.PermissionContext, tenantID uint64, spaceID *uint64, targetStatus string) error {
+	_, err := h.service.ImportQuestions(ctx, servicequestion.ImportQuestionsInput{
+		Permission: permissionContext,
+		TenantID:   tenantID,
+		SpaceID:    spaceID,
+		Status:     targetStatus,
+		Rows:       nil,
+	})
+	return err
+}
+
 
 func writeQuestionImportSSE(c *gin.Context, event questionImportJobEvent) {
 	payload, err := json.Marshal(questionImportJobEventToResponse(event))

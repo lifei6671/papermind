@@ -773,6 +773,23 @@ papers.space_id = NULL 表示租户公共试卷。
 
 `space_admin` / `teacher` 可以在组卷、发布考试等流程中读取公共题库和公共试卷，但是否允许引用公共资源必须由对应业务 service 显式校验，不能把公共资源视为任意教师可写资源。
 
+试卷写操作还必须叠加创建者权限层级校验。资源范围授权只表示当前用户能管理该空间或公共范围，不表示可以维护任意上级角色创建的试卷：
+
+```text
+tenant_admin 创建的试卷：
+  只能由 tenant_admin 修改、删除、启停或维护组卷内容。
+
+space_admin 创建的空间试卷：
+  可由 tenant_admin 或同空间 space_admin 维护。
+  teacher 不能修改、删除、启停或维护组卷内容。
+
+teacher 创建的空间试卷：
+  可由 tenant_admin、同空间 space_admin 或创建者本人维护。
+  同空间其他 teacher 不能互相修改、删除、启停或维护组卷内容。
+```
+
+当前实现不新增创建者角色快照字段，写权限层级通过 `papers.created_by` 反查创建者当前租户角色和空间成员身份得到。若后续要求严格按“创建时角色”冻结权限层级，需要新增 `creator_role` 类字段并同步三套数据库迁移。
+
 ### 9.9 教师零空间状态
 
 `teacher` 是租户级角色标签，实际业务范围来自 `space_members`。教师没有加入任何启用空间时是合法状态，但该教师没有题库、试卷、考试、阅卷等实际操作权限。
@@ -855,7 +872,7 @@ POST   /api/v1/platform/tenant-admins/:id/reset-password
 | `POST /api/v1/uploads` | `/api/v1/uploads` | `platform_admin` / `tenant_admin` | 当前通用上传接口同时承载平台租户 Logo 和租户内头像、空间 Logo；平台管理员只用于平台租户管理上传，租户用户按业务用途收口。 |
 | `GET/POST /api/v1/questions` | `/api/v1/tenant/questions` | `tenant_admin` / `space_admin` / `teacher` | 题库操作必须受租户或授权空间限制。 |
 | `POST /api/v1/questions/import` | `/api/v1/tenant/questions/import` | `tenant_admin` / `space_admin` / `teacher` | 导入题目按题库权限校验。 |
-| `/api/v1/papers/**` | `/api/v1/tenant/papers/**` | `tenant_admin` / `space_admin` / `teacher` | 试卷、章节和组卷规则按租户或授权空间校验。 |
+| `/api/v1/papers/**` | `/api/v1/tenant/papers/**` | `tenant_admin` / `space_admin` / `teacher` | 试卷、章节和组卷规则按租户或授权空间校验；写操作必须叠加创建者权限层级，低角色不能维护高角色创建的试卷，教师不能互改试卷。 |
 | `GET/POST /api/v1/exams` | `/api/v1/tenant/exams` | `tenant_admin` / `space_admin` / `teacher` | 考试列表和发布按租户或授权空间校验。 |
 | `/api/v1/grading/**` | `/api/v1/tenant/grading/**` | `tenant_admin` / `space_admin` / `teacher` | 阅卷操作按考试归属和授权空间校验。 |
 | `GET /api/v1/results/exams/:id` | `GET /api/v1/tenant/results/exams/:id` | `tenant_admin` / `space_admin` / `teacher` | 管理端查看范围内考试成绩列表，学生不走此接口。 |
@@ -1297,6 +1314,7 @@ tenant_user 访问 /api/v1/platform
 - space_admin 不能修改空间基础资料或删除空间
 - space_admin 不能管理其他空间成员
 - space_admin 不能创建、修改、删除或导入租户公共题库和公共试卷
+- space_admin 不能修改、删除、启停或维护 tenant_admin 创建的试卷
 - 禁止移除最后一个 space_admin
 - 禁止禁用最后一个 space_admin
 ```
@@ -1308,6 +1326,8 @@ tenant_user 访问 /api/v1/platform
 - teacher 不能创建、修改、删除或导入租户公共题库和公共试卷
 - teacher 不能管理空间成员
 - teacher 不能管理其他空间题库
+- teacher 不能修改、删除、启停或维护 tenant_admin / space_admin 创建的试卷
+- teacher 只能维护自己创建的空间试卷，不能互改同空间其他教师创建的试卷
 - teacher 未加入任何启用空间时不能操作题库、试卷、考试或阅卷
 ```
 

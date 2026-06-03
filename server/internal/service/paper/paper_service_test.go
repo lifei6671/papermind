@@ -161,6 +161,77 @@ func TestManualPaperAddQuestionPreventsDuplicatesAndRecalculates(t *testing.T) {
 	}
 }
 
+func TestUpdatePaperCanMoveUnreferencedPaperScope(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(ServiceOptions{Repo: repo})
+	spaceID := uint64(301)
+
+	updated, err := svc.UpdatePaper(context.Background(), UpdatePaperInput{
+		TenantID:      10,
+		PaperID:       100,
+		TargetSpaceID: &spaceID,
+		ChangeSpace:   true,
+		Name:          "空间试卷",
+		Description:   "迁移到空间",
+		GradeLevel:    "高二",
+		ActorID:       501,
+	})
+	if err != nil {
+		t.Fatalf("UpdatePaper returned error: %v", err)
+	}
+	if updated.SpaceID == nil || *updated.SpaceID != spaceID {
+		t.Fatalf("expected paper moved to space %d, got %#v", spaceID, updated.SpaceID)
+	}
+	if repo.updatedPaper.TargetSpaceID == nil || *repo.updatedPaper.TargetSpaceID != spaceID || !repo.updatedPaper.ChangeSpace {
+		t.Fatalf("expected repository to receive paper scope move, got %#v", repo.updatedPaper)
+	}
+}
+
+func TestUpdatePaperRejectsReferencedPaperScopeMove(t *testing.T) {
+	repo := &fakeRepository{paperReferenced: true}
+	svc := NewService(ServiceOptions{Repo: repo})
+	spaceID := uint64(301)
+
+	_, err := svc.UpdatePaper(context.Background(), UpdatePaperInput{
+		TenantID:      10,
+		PaperID:       100,
+		TargetSpaceID: &spaceID,
+		ChangeSpace:   true,
+		Name:          "已引用试卷",
+		GradeLevel:    "高二",
+		ActorID:       501,
+	})
+	if !errors.Is(err, ErrPaperInUse) {
+		t.Fatalf("expected referenced paper space move rejected, got %v", err)
+	}
+}
+
+func TestUpdatePaperRejectsScopeMoveWhenExistingQuestionFallsOutOfScope(t *testing.T) {
+	repo := &fakeRepository{
+		currentPaperSpaceID: &[]uint64{301}[0],
+		manualSectionQuestions: []SectionQuestion{
+			{TenantID: 10, PaperID: 100, SectionID: 11, QuestionID: 2001, SortOrder: 1, Score: "5"},
+		},
+		questionUsableForScope: map[uint64]bool{
+			2001: false,
+		},
+	}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	_, err := svc.UpdatePaper(context.Background(), UpdatePaperInput{
+		TenantID:      10,
+		PaperID:       100,
+		TargetSpaceID: nil,
+		ChangeSpace:   true,
+		Name:          "迁移到公共试卷",
+		GradeLevel:    "高二",
+		ActorID:       501,
+	})
+	if !errors.Is(err, ErrQuestionOutOfScope) {
+		t.Fatalf("expected out-of-scope question to block paper scope move, got %v", err)
+	}
+}
+
 func TestRuleLivePaperRejectsManualQuestionWrites(t *testing.T) {
 	repo := &fakeRepository{
 		currentBuildMode:       BuildModeRuleLive,
@@ -588,11 +659,14 @@ type fakeRepository struct {
 
 	createdPaper  Paper
 	updatedPaper  UpdatePaperInput
-	updatedStatus string
-	updatedBy     uint64
+	updatedStatus      string
+	updatedBy          uint64
+	paperReferenced   bool
+	currentPaperSpaceID *uint64
 
 	duplicatePaperQuestion                 bool
 	questionUsableForPaper                 bool
+	questionUsableForScope                 map[uint64]bool
 	addQuestionAndRecalculateInTransaction bool
 	addedQuestion                          SectionQuestion
 	deletedSectionQuestionID               uint64
@@ -638,7 +712,7 @@ func (r *fakeRepository) GetPaper(ctx context.Context, tenantID uint64, paperID 
 	if buildMode == "" {
 		buildMode = BuildModeManual
 	}
-	return Paper{ID: paperID, TenantID: tenantID, BuildMode: buildMode}, nil
+	return Paper{ID: paperID, TenantID: tenantID, SpaceID: r.currentPaperSpaceID, BuildMode: buildMode}, nil
 }
 
 func (r *fakeRepository) CreateSection(ctx context.Context, section Section) (Section, error) {
@@ -679,7 +753,7 @@ func (r *fakeRepository) CreatePaper(ctx context.Context, paper Paper) (Paper, e
 
 func (r *fakeRepository) UpdatePaper(ctx context.Context, input UpdatePaperInput) (Paper, error) {
 	r.updatedPaper = input
-	paper := Paper{ID: input.PaperID, TenantID: input.TenantID, Name: input.Name, Description: input.Description}
+	paper := Paper{ID: input.PaperID, TenantID: input.TenantID, SpaceID: input.TargetSpaceID, Name: input.Name, Description: input.Description}
 	if input.DurationMinutes != nil {
 		paper.DurationMinutes = *input.DurationMinutes
 	}
@@ -696,12 +770,23 @@ func (r *fakeRepository) DeletePaper(ctx context.Context, tenantID uint64, paper
 	return nil
 }
 
+func (r *fakeRepository) PaperReferenced(ctx context.Context, tenantID uint64, paperID uint64) (bool, error) {
+	return r.paperReferenced, nil
+}
+
 func (r *fakeRepository) PaperQuestionExists(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error) {
 	return r.duplicatePaperQuestion, nil
 }
 
 func (r *fakeRepository) QuestionUsableForPaper(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error) {
 	return r.questionUsableForPaper, nil
+}
+
+func (r *fakeRepository) QuestionUsableForScope(ctx context.Context, tenantID uint64, spaceID *uint64, questionID uint64) (bool, error) {
+	if r.questionUsableForScope == nil {
+		return true, nil
+	}
+	return r.questionUsableForScope[questionID], nil
 }
 
 func (r *fakeRepository) AddSectionQuestionAndRecalculate(ctx context.Context, question SectionQuestion) error {

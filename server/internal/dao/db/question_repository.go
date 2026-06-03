@@ -122,9 +122,7 @@ func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input ser
 		Joins("LEFT JOIN tenant_user_memberships AS tum ON tum.tenant_id = questions.tenant_id AND tum.user_id = questions."+BaseColumns.CreatedBy).
 		Where("questions."+QuestionColumns.TenantID+" = ?", input.TenantID).
 		Where("questions."+QuestionColumns.DeletedAt+" = ?", 0)
-	if input.SpaceID == nil {
-		query = query.Where("questions." + QuestionColumns.SpaceID + " IS NULL")
-	} else {
+	if input.SpaceID != nil {
 		query = query.Where(r.db.Where("questions."+QuestionColumns.SpaceID+" IS NULL").Or("questions."+QuestionColumns.SpaceID+" = ?", *input.SpaceID))
 	}
 	query = r.applyQuestionSearch(query, input.Search)
@@ -222,6 +220,7 @@ func (r *QuestionRepository) applyQuestionSearch(query *gorm.DB, search string) 
 func (r *QuestionRepository) UpdateQuestion(ctx context.Context, item servicequestion.Question, options []servicequestion.QuestionOption, tags []string) (servicequestion.Question, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		updates := map[string]any{
+			QuestionColumns.SpaceID:            item.SpaceID,
 			QuestionColumns.Type:               item.Type,
 			QuestionColumns.Difficulty:         item.Difficulty,
 			QuestionColumns.Title:              item.Title,

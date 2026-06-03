@@ -5,8 +5,10 @@ import type { PaperAssemblyAPI, PaperBuildMode, PaperRow, PaperRuleRow, PaperSec
 import { paperApi } from "../../api/papers";
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
+import { Pagination } from "../../components/ui/Pagination";
 import { Panel } from "../../components/ui/Panel";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { Select } from "../../components/ui/Select";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 
@@ -38,6 +40,8 @@ const paperBuildModeOptions: Array<{
   { value: "rule_fixed", label: "策略组卷", hint: "按策略先生成试卷，再进行审题和屏蔽。" },
   { value: "rule_live", label: "实时抽题组卷", hint: "考试开始时再抽题，适合动态题池场景。" },
 ];
+
+const paperPageSizeOptions = [10, 20, 30, 40, 50];
 
 export function PaperAssemblyPage({
   api = paperApi,
@@ -73,6 +77,8 @@ export function PaperAssemblyPage({
   const [newPaperGradeText, setNewPaperGradeText] = useState("高一");
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
+  const [paperPage, setPaperPage] = useState(1);
+  const [paperPageSize, setPaperPageSize] = useState(20);
   const [loadError, setLoadError] = useState("");
   const [isPaperListRefreshing, setIsPaperListRefreshing] = useState(false);
   const [isCreatingPaper, setIsCreatingPaper] = useState(false);
@@ -151,6 +157,11 @@ export function PaperAssemblyPage({
       value.toLowerCase().includes(keyword),
     );
   });
+  const normalizedPaperPage = Math.min(paperPage, Math.max(1, Math.ceil(filteredPapers.length / paperPageSize)));
+  const pagedPapers = filteredPapers.slice(
+    (normalizedPaperPage - 1) * paperPageSize,
+    normalizedPaperPage * paperPageSize,
+  );
 
   async function loadWorkspace(paperID: number) {
     try {
@@ -391,12 +402,14 @@ export function PaperAssemblyPage({
   }
 
   function handleSearchPapers() {
+    setPaperPage(1);
     setAppliedSearchQuery(searchQuery);
   }
 
   async function handleRefreshPapers() {
     setSearchQuery("");
     setAppliedSearchQuery("");
+    setPaperPage(1);
     setIsPaperListRefreshing(true);
     try {
       const data = await withRefreshFeedback(api.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }));
@@ -443,82 +456,107 @@ export function PaperAssemblyPage({
   }
 
   const paperOverviewList = (
-    <div
-      className={[
-        "table-wrap",
-        "tenant-list-transition",
-        isPaperListRefreshing ? "tenant-list-transition--refreshing" : "",
-      ].filter(Boolean).join(" ")}
-    >
-      <table className="data-table tenant-admin-table exam-paper-overview-table">
-        <thead>
-          <tr>
-            <th scope="col">试卷名称</th>
-            <th scope="col">策略</th>
-            <th scope="col">试卷分数</th>
-            <th scope="col">状态</th>
-            <th scope="col">创建时间</th>
-            <th scope="col">创建人</th>
-            <th scope="col">操作区</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredPapers.length === 0 && <EmptyTableRow colSpan={7} />}
-          {filteredPapers.map((paper) => (
-            <tr key={paper.id}>
-              <td>{paper.name}</td>
-              <td>
-                <span className={`exam-paper-mode-badge exam-paper-mode-badge--${paper.buildMode}`}>
-                  {buildModeLabel(paper.buildMode)}
-                </span>
-              </td>
-              <td>{paper.totalScore}</td>
-              <td>
-                <StatusBadge tone={paperStatusTone(paper.status)}>
-                  {paperStatusLabel(paper.status)}
-                </StatusBadge>
-              </td>
-              <td>{formatPaperCreatedAt(paper.createdAt)}</td>
-              <td>{paper.creatorName || "-"}</td>
-              <td>
-                <div className="tenant-actions">
-                  <Button
-                    aria-label={`编辑试卷 ${paper.name}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      navigateToPaperEditor(paper.id);
-                    }}
-                    variant="actionEdit"
-                  >
-                    编辑
-                  </Button>
-                  <Button
-                    aria-label={`预览试卷 ${paper.name}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handlePreviewPaper(paper.id);
-                    }}
-                    variant="actionReset"
-                  >
-                    预览
-                  </Button>
-                  <Button
-                    aria-label={`${paper.status === "enabled" ? "禁用试卷" : "启用试卷"} ${paper.name}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handleTogglePaperStatus(paper);
-                    }}
-                    variant="actionClose"
-                  >
-                    {paper.status === "enabled" ? "禁用" : "启用"}
-                  </Button>
-                </div>
-              </td>
+    <>
+      <div
+        className={[
+          "table-wrap",
+          "tenant-list-transition",
+          isPaperListRefreshing ? "tenant-list-transition--refreshing" : "",
+        ].filter(Boolean).join(" ")}
+      >
+        <table className="data-table tenant-admin-table exam-paper-overview-table">
+          <thead>
+            <tr>
+              <th scope="col">试卷名称</th>
+              <th scope="col">策略</th>
+              <th scope="col">试卷分数</th>
+              <th scope="col">状态</th>
+              <th scope="col">创建时间</th>
+              <th scope="col">归属空间</th>
+              <th scope="col">创建人</th>
+              <th scope="col">操作区</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {pagedPapers.length === 0 && <EmptyTableRow colSpan={8} />}
+            {pagedPapers.map((paper) => (
+              <tr key={paper.id}>
+                <td>{paper.name}</td>
+                <td>
+                  <span className={`exam-paper-mode-badge exam-paper-mode-badge--${paper.buildMode}`}>
+                    {buildModeLabel(paper.buildMode)}
+                  </span>
+                </td>
+                <td>{paper.totalScore}</td>
+                <td>
+                  <StatusBadge tone={paperStatusTone(paper.status)}>
+                    {paperStatusLabel(paper.status)}
+                  </StatusBadge>
+                </td>
+                <td>{formatPaperCreatedAt(paper.createdAt)}</td>
+                <td>{paperScopeLabel(paper)}</td>
+                <td>{paper.creatorName || "-"}</td>
+                <td>
+                  <div className="tenant-actions">
+                    <Button
+                      aria-label={`编辑试卷 ${paper.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        navigateToPaperEditor(paper.id);
+                      }}
+                      variant="actionEdit"
+                    >
+                      编辑
+                    </Button>
+                    <Button
+                      aria-label={`预览试卷 ${paper.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handlePreviewPaper(paper.id);
+                      }}
+                      variant="actionReset"
+                    >
+                      预览
+                    </Button>
+                    <Button
+                      aria-label={`${paper.status === "enabled" ? "禁用试卷" : "启用试卷"} ${paper.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleTogglePaperStatus(paper);
+                      }}
+                      variant="actionClose"
+                    >
+                      {paper.status === "enabled" ? "禁用" : "启用"}
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="question-bank-pagination">
+        <div className="question-bank-pagination__page-size">
+          <span>每页条数</span>
+          <div className="question-bank-pagination__page-size-select">
+            <Select
+              ariaLabel="每页条数"
+              onChange={(value) => {
+                const nextPageSize = Number(value);
+                setPaperPage(1);
+                setPaperPageSize(nextPageSize);
+              }}
+              options={paperPageSizeOptions.map((option) => ({
+                value: String(option),
+                label: `${option} 条 / 页`,
+              }))}
+              value={String(paperPageSize)}
+            />
+          </div>
+        </div>
+        <Pagination page={normalizedPaperPage} pageSize={paperPageSize} total={filteredPapers.length} onPageChange={setPaperPage} />
+      </div>
+    </>
   );
 
   const paperWorkspaceList = (
@@ -959,6 +997,10 @@ function paperStatusTone(status: PaperRow["status"]) {
     return "warning";
   }
   return "info";
+}
+
+function paperScopeLabel(paper: PaperRow) {
+  return paper.spaceID === undefined ? "公共试卷" : `空间 ${paper.spaceID}`;
 }
 
 function formatPaperCreatedAt(value: number) {

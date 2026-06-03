@@ -550,8 +550,9 @@ func TestImportQuestionsUsesRequestedStatus(t *testing.T) {
 	}
 }
 
-func TestQuestionPublicWritesRequireTenantAdmin(t *testing.T) {
-	svc := NewQuestionService(QuestionServiceOptions{Repo: &fakeQuestionRepository{}})
+func TestQuestionPublicWritesAllowTeacher(t *testing.T) {
+	repo := &fakeQuestionRepository{}
+	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
 
 	_, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{
 		Permission:   teacherQuestionPermission(100),
@@ -564,8 +565,11 @@ func TestQuestionPublicWritesRequireTenantAdmin(t *testing.T) {
 			{OptionKey: "B", Content: "错"},
 		},
 	})
-	if !errors.Is(err, permission.ErrForbidden) {
-		t.Fatalf("expected teacher public question write forbidden, got %v", err)
+	if err != nil {
+		t.Fatalf("expected teacher public question write allowed, got %v", err)
+	}
+	if repo.createdQuestion.SpaceID != nil {
+		t.Fatalf("expected teacher-created public question to keep nil space ID, got %#v", repo.createdQuestion.SpaceID)
 	}
 
 	spaceID := uint64(100)
@@ -583,6 +587,123 @@ func TestQuestionPublicWritesRequireTenantAdmin(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("expected teacher space question write allowed, got %v", err)
+	}
+}
+
+func TestQuestionPublicWritesRejectTeacherWithoutEnabledSpace(t *testing.T) {
+	repo := &fakeQuestionRepository{}
+	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
+
+	_, err := svc.CreateQuestion(context.Background(), CreateQuestionInput{
+		Permission: permission.PermissionContext{
+			SubjectType: permission.SubjectTenantUser,
+			UserID:      2,
+			TenantID:    10,
+			Role:        permission.RoleTeacher,
+		},
+		TenantID:     10,
+		Type:         QuestionTypeSingle,
+		Title:        "零空间教师公共题",
+		ScoreDefault: "2",
+		Options: []QuestionOptionInput{
+			{OptionKey: "A", Content: "对", IsCorrect: true},
+			{OptionKey: "B", Content: "错"},
+		},
+	})
+	if !errors.Is(err, permission.ErrForbidden) {
+		t.Fatalf("expected zero-space teacher public question write forbidden, got %v", err)
+	}
+}
+
+func TestUpdateReferencedQuestionAllowsContentEditButRejectsSpaceMove(t *testing.T) {
+	spaceID := uint64(100)
+	repo := &fakeQuestionRepository{
+		currentQuestion: Question{
+			ID:       10,
+			TenantID: 10,
+			SpaceID:  &spaceID,
+			Type:     QuestionTypeSingle,
+			Status:   QuestionStatusEnabled,
+		},
+		referenced: true,
+	}
+	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
+
+	updated, err := svc.UpdateQuestion(context.Background(), UpdateQuestionInput{
+		Permission:   teacherQuestionPermission(spaceID),
+		TenantID:     10,
+		QuestionID:   10,
+		Type:         QuestionTypeSingle,
+		Difficulty:   DifficultyMedium,
+		Title:        "更新题干",
+		ScoreDefault: "2",
+		Options: []QuestionOptionInput{
+			{OptionKey: "A", Content: "对", IsCorrect: true},
+			{OptionKey: "B", Content: "错"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected referenced question content edit allowed, got %v", err)
+	}
+	if updated.Title != "更新题干" || updated.SpaceID == nil || *updated.SpaceID != spaceID {
+		t.Fatalf("expected content update to keep original space, got %#v", updated)
+	}
+
+	publicScope := (*uint64)(nil)
+	_, err = svc.UpdateQuestion(context.Background(), UpdateQuestionInput{
+		Permission:    teacherQuestionPermission(spaceID),
+		TenantID:      10,
+		QuestionID:    10,
+		TargetSpaceID: publicScope,
+		ChangeSpace:   true,
+		Type:          QuestionTypeSingle,
+		Difficulty:    DifficultyMedium,
+		Title:         "迁移公共题库",
+		ScoreDefault:  "2",
+		Options: []QuestionOptionInput{
+			{OptionKey: "A", Content: "对", IsCorrect: true},
+			{OptionKey: "B", Content: "错"},
+		},
+	})
+	if !errors.Is(err, ErrQuestionReferenced) {
+		t.Fatalf("expected referenced question space move rejected, got %v", err)
+	}
+}
+
+func TestUpdateUnreferencedQuestionCanMoveScope(t *testing.T) {
+	oldSpaceID := uint64(100)
+	newSpaceID := uint64(101)
+	repo := &fakeQuestionRepository{
+		currentQuestion: Question{
+			ID:       10,
+			TenantID: 10,
+			SpaceID:  &oldSpaceID,
+			Type:     QuestionTypeSingle,
+			Status:   QuestionStatusEnabled,
+		},
+	}
+	svc := NewQuestionService(QuestionServiceOptions{Repo: repo})
+
+	updated, err := svc.UpdateQuestion(context.Background(), UpdateQuestionInput{
+		Permission:    tenantAdminQuestionPermission(),
+		TenantID:      10,
+		QuestionID:    10,
+		TargetSpaceID: &newSpaceID,
+		ChangeSpace:   true,
+		Type:          QuestionTypeSingle,
+		Difficulty:    DifficultyMedium,
+		Title:         "迁移到新空间",
+		ScoreDefault:  "2",
+		Options: []QuestionOptionInput{
+			{OptionKey: "A", Content: "对", IsCorrect: true},
+			{OptionKey: "B", Content: "错"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected unreferenced question space move allowed, got %v", err)
+	}
+	if updated.SpaceID == nil || *updated.SpaceID != newSpaceID {
+		t.Fatalf("expected question moved to space %d, got %#v", newSpaceID, updated.SpaceID)
 	}
 }
 

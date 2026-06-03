@@ -149,21 +149,25 @@ func TestTenantAdminMainFlowCreatesSpaceAndAssignsTeacherWithSQLite(t *testing.T
 		t.Fatalf("expected tenant admin public question without space scope, got %#v", publicQuestionBody.Data)
 	}
 
-	forbiddenPublicQuestionRecorder := httptest.NewRecorder()
-	router.ServeHTTP(forbiddenPublicQuestionRecorder, authorizedRequest(http.MethodPost, "/api/v1/questions", []byte(fmt.Sprintf(`{
+	teacherPublicQuestionRecorder := httptest.NewRecorder()
+	router.ServeHTTP(teacherPublicQuestionRecorder, authorizedRequest(http.MethodPost, "/api/v1/questions", []byte(fmt.Sprintf(`{
 		"tenant_id": %d,
 		"type": %q,
 		"difficulty": "easy",
-		"title": "教师越权公共题",
-		"analysis": "教师不能写公共题库。",
+		"title": "教师公共题",
+		"analysis": "教师可以写公共题库。",
 		"score_default": "2",
 		"options": [
 			{"option_key": "A", "content": "正确", "is_correct": true},
 			{"option_key": "B", "content": "错误", "is_distractor": true}
 		]
 	}`, tenantID, constant.QuestionTypeSingle)), teacherHeader))
-	if forbiddenPublicQuestionRecorder.Code != http.StatusForbidden {
-		t.Fatalf("expected teacher public question write to be forbidden, got status = %d, body = %s", forbiddenPublicQuestionRecorder.Code, forbiddenPublicQuestionRecorder.Body.String())
+	if teacherPublicQuestionRecorder.Code != http.StatusOK {
+		t.Fatalf("teacher public question status = %d, body = %s", teacherPublicQuestionRecorder.Code, teacherPublicQuestionRecorder.Body.String())
+	}
+	teacherPublicQuestionBody := decodeExamAPIResponse[questionResponse](t, teacherPublicQuestionRecorder.Body.Bytes())
+	if teacherPublicQuestionBody.Data.SpaceID != nil {
+		t.Fatalf("expected teacher public question without space scope, got %#v", teacherPublicQuestionBody.Data)
 	}
 
 	createSpaceQuestionRecorder := httptest.NewRecorder()

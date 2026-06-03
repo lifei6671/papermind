@@ -71,7 +71,9 @@ func TestNewSessionStoreSupportsRedisProvider(t *testing.T) {
 		},
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "connectex") || strings.Contains(err.Error(), "connection refused") {
+		if strings.Contains(err.Error(), "connectex") ||
+			strings.Contains(err.Error(), "connection refused") ||
+			strings.Contains(err.Error(), "operation not permitted") {
 			t.Skipf("redis is not available for provider smoke test: %v", err)
 		}
 		t.Fatalf("NewSessionStore() error = %v", err)

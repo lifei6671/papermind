@@ -46,6 +46,28 @@ function renderQuestionBankRoutes(api: ReturnType<typeof createQuestionAPI>) {
   );
 }
 
+function renderQuestionBankRoutesWithRole(api: ReturnType<typeof createQuestionAPI>, actorRole: "teacher" | "space_admin" | "tenant_admin") {
+  return render(
+    <FeedbackProvider>
+      <MemoryRouter initialEntries={["/questions?space_id=301"]}>
+        <Routes>
+          <Route
+            path="/questions"
+            element={(
+              <>
+                <QuestionBankPage api={api} actorRole={actorRole} tenantID={10} spaceID={301} />
+                <LocationProbe />
+              </>
+            )}
+          />
+          <Route path="/questions/new" element={<LocationProbe />} />
+          <Route path="/questions/:questionID/edit" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </FeedbackProvider>,
+  );
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -197,7 +219,7 @@ test("题库页展示题目列表并隐藏本地标签管理入口", async () =>
   expect(screen.getByRole("columnheader", { name: "题目类型" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "题目状态" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "出题人" })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "角色" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "所属空间" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "出题时间" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "操作区" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "100" })).toBeInTheDocument();
@@ -207,7 +229,7 @@ test("题库页展示题目列表并隐藏本地标签管理入口", async () =>
   expect(screen.getByRole("cell", { name: "已禁用" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "草稿" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "teacher01" })).toBeInTheDocument();
-  expect(screen.getByRole("cell", { name: "教师" })).toBeInTheDocument();
+  expect(screen.getAllByRole("cell", { name: "公共题库" })).toHaveLength(3);
   expect(screen.getByRole("cell", { name: "2023-11-15 06:13" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: `编辑 ${longQuestionTitle}` })).toHaveAttribute("href", "/questions/100/edit");
   expect(screen.getByRole("button", { name: `删除 ${longQuestionTitle}` })).toBeInTheDocument();
@@ -216,6 +238,101 @@ test("题库页展示题目列表并隐藏本地标签管理入口", async () =>
   expect(screen.getByText("共 43 条")).toBeInTheDocument();
   expect(screen.getByText("第 1 / 3 页")).toBeInTheDocument();
   expect(api.listQuestions).toHaveBeenCalledWith({ tenantID: 10, page: 1, pageSize: 20, search: "" });
+});
+
+test("题库列表展示所属空间并在教师视角允许管理公共题库操作入口", async () => {
+  const api = createQuestionAPI();
+  vi.mocked(api.listQuestions).mockResolvedValueOnce({
+    page: 1,
+    pageSize: 20,
+    total: 2,
+    items: [
+      {
+        id: 200,
+        tenantID: 10,
+        type: "short_text",
+        title: "公共题库试题",
+        stem: "公共题库试题",
+        options: [],
+        analysis: "公共题库题目。",
+        difficulty: "medium",
+        tag: "公共",
+        tags: ["公共"],
+        scoreDefault: "4",
+        authorName: "tenant.admin",
+        authorRole: "tenant_admin",
+        createdAt: 1700000000000,
+        status: "ready",
+      },
+      {
+        id: 201,
+        tenantID: 10,
+        spaceID: 301,
+        type: "short_text",
+        title: "空间题库试题",
+        stem: "空间题库试题",
+        options: [],
+        analysis: "空间题库题目。",
+        difficulty: "medium",
+        tag: "空间",
+        tags: ["空间"],
+        scoreDefault: "4",
+        authorName: "teacher01",
+        authorRole: "teacher",
+        createdAt: 1700000000000,
+        status: "ready",
+      },
+    ],
+  });
+
+  renderWithFeedback(<QuestionBankPage api={api} actorRole="teacher" tenantID={10} spaceID={301} spaceName="青藤一中" />);
+
+  expect(await screen.findByRole("cell", { name: "公共题库" })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "青藤一中" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "编辑 公共题库试题" })).toHaveAttribute("href", "/questions/200/edit");
+  expect(screen.getByRole("button", { name: "禁用 公共题库试题" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "删除 公共题库试题" })).toBeEnabled();
+  expect(screen.getByRole("link", { name: "编辑 空间题库试题" })).toHaveAttribute(
+    "href",
+    "/questions/201/edit",
+  );
+  expect(screen.getByRole("button", { name: "禁用 空间题库试题" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "删除 空间题库试题" })).toBeEnabled();
+});
+
+test("题库列表展示所属空间并在空间管理员视角置灰公共题库操作入口", async () => {
+  const api = createQuestionAPI();
+  vi.mocked(api.listQuestions).mockResolvedValueOnce({
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    items: [
+      {
+        id: 200,
+        tenantID: 10,
+        type: "short_text",
+        title: "公共题库试题",
+        stem: "公共题库试题",
+        options: [],
+        analysis: "公共题库题目。",
+        difficulty: "medium",
+        tag: "公共",
+        tags: ["公共"],
+        scoreDefault: "4",
+        authorName: "tenant.admin",
+        authorRole: "tenant_admin",
+        createdAt: 1700000000000,
+        status: "ready",
+      },
+    ],
+  });
+
+  renderWithFeedback(<QuestionBankPage api={api} actorRole="space_admin" tenantID={10} spaceID={301} spaceName="青藤一中" />);
+
+  expect(await screen.findByRole("cell", { name: "公共题库" })).toBeInTheDocument();
+  expect(screen.getByLabelText("编辑 公共题库试题")).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("button", { name: "禁用 公共题库试题" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "删除 公共题库试题" })).toBeDisabled();
 });
 
 test("教师可以搜索和刷新题目列表", async () => {
@@ -467,6 +584,7 @@ test("教师可以在题库右侧抽屉导入题目", async () => {
   const templateLink = within(drawer).getByRole("link", { name: "下载 CSV 模板" });
   expect(templateLink).toHaveAttribute("download", "question-import-template.csv");
   expect(templateLink).toHaveAttribute("href", expect.stringContaining("data:text/csv"));
+  expect(within(drawer).getByLabelText("导入所属空间")).toHaveValue("space");
   expect(within(drawer).getByLabelText("题目导入文件")).toHaveAttribute("accept", "text/csv");
   expect(within(drawer).queryByRole("combobox", { name: "导入后题目状态" })).not.toBeInTheDocument();
   expect(within(drawer).getByRole("radio", { name: "草稿" })).toBeChecked();
@@ -485,6 +603,36 @@ test("教师可以在题库右侧抽屉导入题目", async () => {
   expect(alert).toHaveTextContent("导入完成 2 条");
   expect(alert.parentElement).toHaveClass("feedback-toast-stack");
   expect(within(drawer).getAllByText("questions.csv").length).toBeGreaterThan(0);
+});
+
+test("题库导入抽屉可以选择导入到公共题库", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  renderWithFeedback(<QuestionBankPage api={api} tenantID={10} spaceID={301} />);
+
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+
+  const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
+  await user.selectOptions(within(drawer).getByLabelText("导入所属空间"), "public");
+  const file = new File(["type,title"], "public-questions.csv", { type: "text/csv" });
+  await user.upload(within(drawer).getByLabelText("题目导入文件"), file);
+  await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
+
+  expect(api.startQuestionImportJob).toHaveBeenCalledWith({ tenantID: 10, spaceID: null, file, status: "draft" });
+});
+
+test("空间管理员在题库导入抽屉中看不到公共题库选项", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  renderQuestionBankRoutesWithRole(api, "space_admin");
+
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+
+  const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
+  expect(within(drawer).queryByRole("option", { name: "公共题库" })).not.toBeInTheDocument();
+  expect(within(drawer).getByRole("option", { name: "当前空间题库" })).toBeInTheDocument();
 });
 
 test("题目导入抽屉支持多文件队列并依次启动导入任务", async () => {

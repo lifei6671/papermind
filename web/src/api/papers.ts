@@ -48,7 +48,7 @@ export type ListPaperSectionsInput = {
 
 export type CreatePaperInput = {
   tenantID: number;
-  spaceID?: number;
+  spaceID?: number | null;
   name: string;
   description?: string;
   durationMinutes?: number;
@@ -71,6 +71,7 @@ export type DeletePaperSectionInput = {
 export type UpdatePaperInput = {
   tenantID: number;
   paperID: number;
+  spaceID?: number | null;
   name: string;
   description?: string;
   durationMinutes?: number;
@@ -360,6 +361,7 @@ export function createPaperAPI(apiClient: ApiClient): PaperAPI {
         method: "PUT",
         body: {
           tenant_id: input.tenantID,
+          ...(input.spaceID === undefined ? {} : { space_id: input.spaceID }),
           name: input.name,
           description: input.description ?? "",
           ...(input.durationMinutes === undefined ? {} : { duration_minutes: input.durationMinutes }),

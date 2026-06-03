@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { expect, test, vi } from "vitest";
+import type { ActorRole } from "../../api/grading";
 import { FeedbackProvider } from "../../app/feedback";
 import { QuestionCreatePage } from "./QuestionCreatePage";
 
@@ -20,6 +21,7 @@ function createQuestionAPI() {
         {
           id: 100,
           tenantID: 10,
+          spaceID: 301,
           type: "single",
           title: "现代文阅读主旨题",
           stem: "下列选项最能概括文章中心的是哪一项？",
@@ -39,6 +41,7 @@ function createQuestionAPI() {
     createQuestion: vi.fn().mockResolvedValue({
       id: 101,
       tenantID: 10,
+      spaceID: 301,
       type: "multiple",
       title: "下列函数在 R 上单调递增的是哪一项？",
       stem: "下列函数在 R 上单调递增的是哪一项？",
@@ -56,6 +59,7 @@ function createQuestionAPI() {
     getQuestion: vi.fn().mockResolvedValue({
       id: 100,
       tenantID: 10,
+      spaceID: 301,
       type: "single",
       title: "原题干",
       stem: "原题干",
@@ -74,6 +78,7 @@ function createQuestionAPI() {
     updateQuestion: vi.fn().mockResolvedValue({
       id: 100,
       tenantID: 10,
+      spaceID: 301,
       type: "single",
       title: "更新后题干",
       stem: "更新后题干",
@@ -103,6 +108,18 @@ function renderCreatePage(api = createQuestionAPI()) {
     <MemoryRouter initialEntries={["/questions/new?space_id=301"]}>
       <Routes>
         <Route path="/questions/new" element={<QuestionCreatePage api={api} tenantID={10} spaceID={301} />} />
+        <Route path="/questions" element={<div>题库列表页</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  return api;
+}
+
+function renderCreatePageWithRole(actorRole: ActorRole, api = createQuestionAPI()) {
+  renderWithFeedback(
+    <MemoryRouter initialEntries={["/questions/new?space_id=301"]}>
+      <Routes>
+        <Route path="/questions/new" element={<QuestionCreatePage actorRole={actorRole} api={api} tenantID={10} spaceID={301} />} />
         <Route path="/questions" element={<div>题库列表页</div>} />
       </Routes>
     </MemoryRouter>,
@@ -204,6 +221,32 @@ test("教师可以在新增题目页面创建选择题并编辑选项和标签",
     blankCount: undefined,
   });
   expect(await screen.findByText("题库列表页")).toBeInTheDocument();
+});
+
+test("新增题目可以选择归属到公共题库", async () => {
+  const user = userEvent.setup();
+  const api = renderCreatePage();
+
+  await user.selectOptions(screen.getByLabelText("所属空间"), "public");
+  await user.clear(screen.getByLabelText("题干"));
+  await user.type(screen.getByLabelText("题干"), "公共题库题目");
+  await user.clear(screen.getByLabelText("题目解析"));
+  await user.type(screen.getByLabelText("题目解析"), "公共题库解析");
+  await user.click(screen.getByRole("button", { name: "确认新增" }));
+
+  expect(api.createQuestion).toHaveBeenCalledWith(expect.objectContaining({
+    tenantID: 10,
+    spaceID: null,
+    title: "公共题库题目",
+    analysis: "公共题库解析",
+  }));
+});
+
+test("空间管理员在新增题目页面看不到公共题库选项", async () => {
+  renderCreatePageWithRole("space_admin");
+
+  expect(screen.queryByRole("option", { name: "公共题库" })).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "当前空间题库" })).toBeInTheDocument();
 });
 
 test("新增选择题时不能把空白选项设为正确答案", async () => {

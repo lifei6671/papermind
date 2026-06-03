@@ -29,6 +29,7 @@ test("组卷页默认展示试卷列表而不是试卷详情", async () => {
   expect(screen.getByRole("columnheader", { name: "试卷分数" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "状态" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "创建时间" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "归属空间" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "创建人" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "操作区" })).toBeInTheDocument();
   expect(screen.queryByText("当前试卷")).not.toBeInTheDocument();
@@ -39,6 +40,40 @@ test("组卷页默认展示试卷列表而不是试卷详情", async () => {
   expect(screen.getByRole("button", { name: "编辑试卷 高一语文月考试卷" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "预览试卷 高一语文月考试卷" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "启用试卷 高一语文月考试卷" })).toBeInTheDocument();
+});
+
+test("试卷列表展示公共试卷和空间试卷归属", async () => {
+  const api = createPaperApiDouble();
+  vi.mocked(api.listPapers).mockResolvedValueOnce({
+    items: [
+      {
+        id: 100,
+        tenantID: 10,
+        spaceID: 301,
+        name: "空间试卷",
+        totalScore: "18",
+        buildMode: "rule_fixed",
+        status: "draft" as const,
+        createdAt: new Date("2026-06-03T09:30:00+08:00").getTime(),
+        creatorName: "teacher.exam",
+      },
+      {
+        id: 101,
+        tenantID: 10,
+        name: "公共试卷",
+        totalScore: "12",
+        buildMode: "manual",
+        status: "enabled" as const,
+        createdAt: new Date("2026-06-03T10:00:00+08:00").getTime(),
+        creatorName: "tenant.admin",
+      },
+    ],
+  });
+
+  renderPaperAssemblyRoutes(api);
+
+  expect(await screen.findByRole("row", { name: /空间试卷/ })).toHaveTextContent("空间 301");
+  expect(screen.getByRole("row", { name: /公共试卷/ })).toHaveTextContent("公共试卷");
 });
 
 test("教师新建试卷需要先填写基础信息再进入组卷页", async () => {
@@ -111,6 +146,26 @@ test("教师可以搜索和刷新试卷列表", async () => {
   });
 
   expect(await screen.findByRole("row", { name: /高一语文月考试卷/ })).toBeInTheDocument();
+});
+
+test("试卷列表支持分页切换", async () => {
+  const user = userEvent.setup();
+  const api = createPaperApiDouble();
+  vi.mocked(api.listPapers).mockResolvedValueOnce({ items: createPaperRows(21) });
+
+  renderPaperAssemblyRoutes(api);
+
+  expect(await screen.findByRole("row", { name: /模拟试卷 01/ })).toBeInTheDocument();
+  expect(screen.getByRole("row", { name: /模拟试卷 20/ })).toBeInTheDocument();
+  expect(screen.queryByRole("row", { name: /模拟试卷 21/ })).not.toBeInTheDocument();
+  expect(screen.getByText("共 21 条")).toBeInTheDocument();
+  expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "下一页" }));
+
+  expect(await screen.findByRole("row", { name: /模拟试卷 21/ })).toBeInTheDocument();
+  expect(screen.queryByRole("row", { name: /模拟试卷 01/ })).not.toBeInTheDocument();
+  expect(screen.getByText("第 2 / 2 页")).toBeInTheDocument();
 });
 
 test("教师可以从列表进入试卷编辑工作台", async () => {
@@ -526,4 +581,17 @@ function createPaperApiDouble(): PaperAssemblyAPI {
       creatorName: "teacher.exam",
     })),
   };
+}
+
+function createPaperRows(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: index + 1,
+    tenantID: 10,
+    name: `模拟试卷 ${String(index + 1).padStart(2, "0")}`,
+    totalScore: String(index + 1),
+    buildMode: "rule_fixed" as const,
+    status: "draft" as const,
+    createdAt: new Date("2026-06-02T09:30:00+08:00").getTime() + index,
+    creatorName: "teacher.exam",
+  }));
 }

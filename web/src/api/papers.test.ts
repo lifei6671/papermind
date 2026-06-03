@@ -31,6 +31,7 @@ describe("paperApi", () => {
           items: [{
             id: 100,
             tenant_id: 10,
+            space_id: 301,
             name: "高一语文月考试卷",
             description: "月考",
             duration_minutes: 120,
@@ -52,6 +53,7 @@ describe("paperApi", () => {
       items: [{
         id: 100,
         tenantID: 10,
+        spaceID: 301,
         name: "高一语文月考试卷",
         description: "月考",
         durationMinutes: 120,
@@ -250,6 +252,7 @@ describe("paperApi", () => {
       expect(init?.method).toBe("PUT");
       expect(JSON.parse(init?.body as string)).toEqual({
         tenant_id: 10,
+        space_id: null,
         name: "高一语文期末试卷",
         description: "文学阅读与语言基础",
         duration_minutes: 135,
@@ -280,6 +283,7 @@ describe("paperApi", () => {
     await expect(api.updatePaper({
       tenantID: 10,
       paperID: 100,
+      spaceID: null,
       name: "高一语文期末试卷",
       description: "文学阅读与语言基础",
       durationMinutes: 135,

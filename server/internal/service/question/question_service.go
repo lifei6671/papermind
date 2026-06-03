@@ -127,6 +127,8 @@ type UpdateQuestionInput struct {
 	Permission         permission.PermissionContext // 当前写入人权限上下文。
 	TenantID           uint64                       // 所属租户 ID。
 	QuestionID         uint64                       // 待更新题目 ID。
+	TargetSpaceID      *uint64                      // 新所属空间 ID，nil 表示租户公共题库。
+	ChangeSpace        bool                         // 是否显式变更题目归属。
 	Type               string                       // 题型。
 	Difficulty         string                       // 难度。
 	Title              string                       // 题干内容。
@@ -301,18 +303,25 @@ func (s *QuestionService) UpdateQuestion(ctx context.Context, input UpdateQuesti
 	if err := canWriteQuestionScope(input.Permission, existing.TenantID, existing.SpaceID); err != nil {
 		return Question{}, err
 	}
-	referenced, err := s.repo.QuestionReferenced(ctx, input.TenantID, input.QuestionID)
-	if err != nil {
-		return Question{}, err
-	}
-	if referenced {
-		return Question{}, ErrQuestionReferenced
+	targetSpaceID := existing.SpaceID
+	if input.ChangeSpace {
+		if err := canWriteQuestionScope(input.Permission, input.TenantID, input.TargetSpaceID); err != nil {
+			return Question{}, err
+		}
+		referenced, err := s.repo.QuestionReferenced(ctx, input.TenantID, input.QuestionID)
+		if err != nil {
+			return Question{}, err
+		}
+		if referenced && !sameOptionalUint64(existing.SpaceID, input.TargetSpaceID) {
+			return Question{}, ErrQuestionReferenced
+		}
+		targetSpaceID = input.TargetSpaceID
 	}
 	options := toQuestionOptions(input.Options)
 	createInput := CreateQuestionInput{
 		Permission:         input.Permission,
 		TenantID:           input.TenantID,
-		SpaceID:            existing.SpaceID,
+		SpaceID:            targetSpaceID,
 		Type:               input.Type,
 		Difficulty:         input.Difficulty,
 		Title:              input.Title,
@@ -333,7 +342,7 @@ func (s *QuestionService) UpdateQuestion(ctx context.Context, input UpdateQuesti
 	item := Question{
 		ID:                 input.QuestionID,
 		TenantID:           input.TenantID,
-		SpaceID:            existing.SpaceID,
+		SpaceID:            targetSpaceID,
 		Type:               input.Type,
 		Difficulty:         input.Difficulty,
 		Title:              input.Title,
@@ -493,6 +502,9 @@ func canWriteQuestionScope(ctx permission.PermissionContext, tenantID uint64, sp
 		return nil
 	}
 	if spaceID == nil {
+		if ctx.Role == permission.RoleTeacher && len(ctx.SpaceMemberships) > 0 {
+			return nil
+		}
 		return permission.ErrForbidden
 	}
 	role := ctx.SpaceMemberships[*spaceID]
@@ -500,6 +512,13 @@ func canWriteQuestionScope(ctx permission.PermissionContext, tenantID uint64, sp
 		return nil
 	}
 	return permission.ErrForbidden
+}
+
+func sameOptionalUint64(left *uint64, right *uint64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func validateQuestionInput(input CreateQuestionInput, options []QuestionOption) error {

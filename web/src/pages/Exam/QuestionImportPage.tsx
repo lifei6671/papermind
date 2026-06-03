@@ -2,14 +2,17 @@ import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { refreshFeedbackMinDurationMs } from "../../components/ui/refreshFeedback";
 import { useFeedback } from "../../app/feedback-context";
+import type { ActorRole } from "../../api/grading";
 import { questionApi } from "../../api/questions";
 import type { QuestionImportAPI } from "../../api/questions";
 import { formatApiErrorMessage } from "../../api/client";
+import { canWritePublicQuestionScope } from "./questionScopePermissions";
 import { questionImportTemplateFileName, questionImportTemplateHref } from "./questionImportTemplate";
 
 type ImportRecord = {
@@ -20,14 +23,18 @@ type ImportRecord = {
 
 type QuestionImportPageProps = {
   api?: QuestionImportAPI;
+  actorRole?: ActorRole;
   tenantID?: number;
   spaceID?: number;
 };
 
 const questionImportFileMaxBytes = 100 * 1024 * 1024;
 
-export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }: QuestionImportPageProps) {
+export function QuestionImportPage({ api = questionApi, actorRole, tenantID = 10, spaceID }: QuestionImportPageProps) {
+  const location = useLocation();
   const { showError, showSuccess } = useFeedback();
+  const currentSpaceID = spaceID ?? readSpaceIDFromSearch(location.search);
+  const canSelectPublicScope = canWritePublicQuestionScope(actorRole);
   const [importRecords, setImportRecords] = useState<ImportRecord[]>([]);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -35,6 +42,7 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [isImportRecordsRefreshing, setIsImportRecordsRefreshing] = useState(false);
+  const [selectedImportSpaceID, setSelectedImportSpaceID] = useState<number | null>(currentSpaceID ?? null);
 
   useEffect(() => {
     if (!isImportRecordsRefreshing) {
@@ -66,7 +74,7 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
       // 题目文件由后端按统一 CSV 模板解析，前端只负责提交原始文件并展示成功数与行级错误。
       const result = await api.importQuestions({
         tenantID,
-        spaceID,
+        spaceID: selectedImportSpaceID,
         file: importFile,
       });
       const summary = formatImportSummary(result.successCount, result.errors.length);
@@ -96,6 +104,7 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
 
   function openImportDialog() {
     setImportFile(null);
+    setSelectedImportSpaceID(currentSpaceID ?? null);
     setIsImportDialogOpen(true);
   }
 
@@ -172,6 +181,17 @@ export function QuestionImportPage({ api = questionApi, tenantID = 10, spaceID }
           <div className="platform-dialog__card">
             <h2>导入题目</h2>
             <div className="platform-form">
+              <label className="field">
+                <span>所属空间</span>
+                <select
+                  aria-label="导入所属空间"
+                  onChange={(event) => setSelectedImportSpaceID(event.target.value === "public" ? null : currentSpaceID ?? null)}
+                  value={selectedImportSpaceID === null && canSelectPublicScope ? "public" : "space"}
+                >
+                  {canSelectPublicScope && <option value="public">公共题库</option>}
+                  {currentSpaceID !== undefined && <option value="space">当前空间题库</option>}
+                </select>
+              </label>
               <FileUploadField
                 accept={["text/csv"]}
                 helperAction={
@@ -212,4 +232,13 @@ function formatImportSummary(successCount: number, errorCount: number) {
 
 function formatImportErrors(errors: Array<{ rowNumber: number; reason: string }>) {
   return errors.map((error) => `第 ${error.rowNumber} 行：${error.reason}`).join("；");
+}
+
+function readSpaceIDFromSearch(search: string) {
+  const value = new URLSearchParams(search).get("space_id");
+  if (value === null) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }

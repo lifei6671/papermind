@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -25,7 +26,7 @@ type questionHandler struct {
 
 type createQuestionRequest struct {
 	TenantID        uint64                  `json:"tenant_id"`
-	SpaceID         *uint64                 `json:"space_id"`
+	SpaceID         questionSpaceIDRequest  `json:"space_id"`
 	Type            string                  `json:"type"`
 	Difficulty      string                  `json:"difficulty"`
 	Title           string                  `json:"title"`
@@ -37,6 +38,28 @@ type createQuestionRequest struct {
 	QualityScore    *int                    `json:"quality_score"`
 	Tags            []string                `json:"tags"`
 	Options         []questionOptionRequest `json:"options"`
+}
+
+type questionSpaceIDRequest struct {
+	Value *uint64
+	Set   bool
+}
+
+func (r *questionSpaceIDRequest) UnmarshalJSON(data []byte) error {
+	r.Set = true
+	if string(data) == "null" {
+		r.Value = nil
+		return nil
+	}
+	var value uint64
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value == 0 {
+		return errors.New("space_id 必须是正整数")
+	}
+	r.Value = &value
+	return nil
 }
 
 type questionOptionRequest struct {
@@ -146,7 +169,7 @@ func (h questionHandler) create(c *gin.Context) {
 	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
-	permissionContext, err := permissionContextForResourceScope(c, request.TenantID, request.SpaceID, h.members, h.users)
+	permissionContext, err := h.permissionContextForQuestionTargetScope(c, request.TenantID, request.SpaceID.Value)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
 		return
@@ -154,7 +177,7 @@ func (h questionHandler) create(c *gin.Context) {
 	created, err := h.service.CreateQuestion(c.Request.Context(), servicequestion.CreateQuestionInput{
 		Permission:      permissionContext,
 		TenantID:        request.TenantID,
-		SpaceID:         request.SpaceID,
+		SpaceID:         request.SpaceID.Value,
 		Type:            request.Type,
 		Difficulty:      request.Difficulty,
 		Title:           request.Title,
@@ -232,6 +255,8 @@ func (h questionHandler) update(c *gin.Context) {
 		Permission:      permissionContext,
 		TenantID:        request.TenantID,
 		QuestionID:      questionID,
+		TargetSpaceID:   request.SpaceID.Value,
+		ChangeSpace:     request.SpaceID.Set,
 		Type:            request.Type,
 		Difficulty:      request.Difficulty,
 		Title:           request.Title,
@@ -249,6 +274,13 @@ func (h questionHandler) update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(questionToResponse(updated)))
+}
+
+func (h questionHandler) permissionContextForQuestionTargetScope(c *gin.Context, tenantID uint64, spaceID *uint64) (permission.PermissionContext, error) {
+	if spaceID != nil {
+		return permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users)
+	}
+	return h.permissionContextForQuestionOperation(c, tenantID)
 }
 
 func (h questionHandler) disable(c *gin.Context) {

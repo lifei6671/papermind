@@ -8,6 +8,7 @@ export type QuestionDifficulty = "easy" | "medium" | "hard";
 export type QuestionRow = {
   id: number;
   tenantID: number;
+  spaceID?: number;
   type: QuestionType;
   title: string;
   stem: string;
@@ -38,7 +39,7 @@ export type ListQuestionsInput = {
 
 export type CreateQuestionInput = {
   tenantID: number;
-  spaceID?: number;
+  spaceID?: number | null;
   type: QuestionType;
   difficulty: QuestionDifficulty;
   title: string;
@@ -69,7 +70,7 @@ export type QuestionActionInput = {
 
 export type ImportQuestionsInput = {
   tenantID: number;
-  spaceID?: number;
+  spaceID?: number | null;
   file: File;
   status?: "draft" | "enabled";
 };
@@ -144,6 +145,7 @@ export type QuestionAPI = QuestionBankAPI & QuestionManagementAPI & QuestionImpo
 type QuestionAPIResponse = {
   id: number;
   tenant_id: number;
+  space_id?: number | null;
   type: QuestionType;
   difficulty: QuestionDifficulty;
   title: string;
@@ -279,7 +281,7 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
     async importQuestions(input) {
       const formData = new FormData();
       formData.append("tenant_id", String(input.tenantID));
-      if (input.spaceID !== undefined) {
+      if (input.spaceID !== undefined && input.spaceID !== null) {
         formData.append("space_id", String(input.spaceID));
       }
       if (input.status !== undefined) {
@@ -292,7 +294,7 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
     async startQuestionImportJob(input) {
       const formData = new FormData();
       formData.append("tenant_id", String(input.tenantID));
-      if (input.spaceID !== undefined) {
+      if (input.spaceID !== undefined && input.spaceID !== null) {
         formData.append("space_id", String(input.spaceID));
       }
       if (input.status !== undefined) {
@@ -346,6 +348,7 @@ function mapQuestionResponse(row: QuestionAPIResponse): QuestionRow {
   return {
     id: row.id,
     tenantID: row.tenant_id,
+    spaceID: row.space_id ?? undefined,
     type: row.type,
     title: row.title,
     stem: row.title,

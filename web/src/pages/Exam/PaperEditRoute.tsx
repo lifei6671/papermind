@@ -1,4 +1,5 @@
 import { useParams } from "react-router-dom";
+import type { ActorRole } from "../../api/grading";
 import type { PaperAPI } from "../../api/papers";
 import type { QuestionAPI } from "../../api/questions";
 import { paperApi } from "../../api/papers";
@@ -6,6 +7,7 @@ import { questionApi } from "../../api/questions";
 import { PaperEditorPage } from "./PaperEditorPage";
 
 type PaperEditRouteProps = {
+  actorRole?: ActorRole;
   paperApi?: PaperAPI;
   questionApi?: QuestionAPI;
   tenantID: number;
@@ -13,6 +15,7 @@ type PaperEditRouteProps = {
 };
 
 export function PaperEditRoute({
+  actorRole,
   paperApi: providedPaperApi = paperApi,
   questionApi: providedQuestionApi = questionApi,
   tenantID,
@@ -23,6 +26,7 @@ export function PaperEditRoute({
 
   return (
     <PaperEditorPage
+      actorRole={actorRole}
       paperApi={providedPaperApi}
       questionApi={providedQuestionApi}
       paperID={paperID}

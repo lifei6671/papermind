@@ -15,6 +15,7 @@ describe("questionApi", () => {
             {
               id: 100,
               tenant_id: 10,
+              space_id: 301,
               type: "single",
               difficulty: "medium",
               title: "题干",
@@ -46,6 +47,7 @@ describe("questionApi", () => {
     expect(result.total).toBe(87);
     expect(result.items).toHaveLength(1);
     expect(result.items[0].id).toBe(100);
+    expect(result.items[0].spaceID).toBe(301);
   });
 
   test("导入题目时使用 multipart 表单提交文件和租户信息", async () => {
@@ -205,6 +207,7 @@ describe("questionApi", () => {
     expect(result.tags).toEqual(["函数", "基础"]);
     expect(result.authorName).toBe("teacher01");
     expect(result.authorRole).toBe("teacher");
+    expect(result.spaceID).toBe(301);
     expect(result.createdAt).toBe(1700000000000);
     expect(result.status).toBe("draft");
   });
@@ -259,6 +262,7 @@ describe("questionApi", () => {
       if (url === "/api/v1/questions/100" && init?.method === "PUT") {
         expect(JSON.parse(String(init.body))).toMatchObject({
           tenant_id: 10,
+          space_id: null,
           title: "更新后的题干",
         });
         return questionResponse({ title: "更新后的题干" });
@@ -278,6 +282,7 @@ describe("questionApi", () => {
     const updated = await api.updateQuestion({
       tenantID: 10,
       questionID: 100,
+      spaceID: null,
       type: "single",
       difficulty: "medium",
       title: "更新后的题干",

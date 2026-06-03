@@ -1,13 +1,23 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { expect, test } from "vitest";
+import type { ActorRole } from "../../api/grading";
 import { FeedbackProvider } from "../../app/feedback";
 import type { QuestionImportAPI } from "../../api/questions";
 import { QuestionImportPage } from "./QuestionImportPage";
 
 function renderWithFeedback(page: ReactElement) {
-  return render(<FeedbackProvider>{page}</FeedbackProvider>);
+  return render(
+    <FeedbackProvider>
+      <MemoryRouter>{page}</MemoryRouter>
+    </FeedbackProvider>,
+  );
+}
+
+function renderImportPage(api: QuestionImportAPI, actorRole?: ActorRole) {
+  renderWithFeedback(<QuestionImportPage actorRole={actorRole} api={api} tenantID={10} spaceID={301} />);
 }
 
 test("题目导入页可以上传文件并展示解析结果", async () => {
@@ -52,6 +62,39 @@ test("题目导入页可以上传文件并展示解析结果", async () => {
   expect(alert).toHaveTextContent("第 3 行");
   expect(alert.parentElement).toHaveClass("feedback-toast-stack");
   expect(document.querySelector(".tenant-admin-status")).not.toBeInTheDocument();
+});
+
+test("题目导入页可以选择导入到公共题库", async () => {
+  const user = userEvent.setup();
+  const api: QuestionImportAPI = {
+    importQuestions: async (input) => {
+      expect(input.tenantID).toBe(10);
+      expect(input.spaceID).toBeNull();
+      expect(input.file.name).toBe("questions.csv");
+      return { successCount: 1, duplicateCount: 0, errors: [] };
+    },
+  };
+  renderImportPage(api);
+
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+  await user.selectOptions(screen.getByLabelText("导入所属空间"), "public");
+  await user.upload(screen.getByLabelText("题目导入文件"), new File(["title,type"], "questions.csv", { type: "text/csv" }));
+  await user.click(screen.getByRole("button", { name: "确认导入" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("已导入 1 道题");
+});
+
+test("空间管理员在独立导入页看不到公共题库选项", async () => {
+  const user = userEvent.setup();
+  const api: QuestionImportAPI = {
+    importQuestions: async () => ({ successCount: 1, duplicateCount: 0, errors: [] }),
+  };
+  renderImportPage(api, "space_admin");
+
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+
+  expect(screen.queryByRole("option", { name: "公共题库" })).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "当前空间题库" })).toBeInTheDocument();
 });
 
 test("题目导入页可以搜索和刷新导入记录", async () => {

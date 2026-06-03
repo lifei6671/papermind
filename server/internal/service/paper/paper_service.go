@@ -147,6 +147,8 @@ type CreatePaperInput struct {
 type UpdatePaperInput struct {
 	TenantID        uint64 // 所属租户 ID。
 	PaperID         uint64 // 试卷 ID。
+	TargetSpaceID   *uint64
+	ChangeSpace     bool
 	Name            string // 试卷名称。
 	Description     string // 试卷说明。
 	DurationMinutes *int   // 默认考试时长，单位分钟；nil 表示保持不变。
@@ -273,8 +275,10 @@ type Repository interface {
 	UpdatePaper(ctx context.Context, input UpdatePaperInput) (Paper, error)
 	UpdatePaperStatus(ctx context.Context, tenantID uint64, paperID uint64, status string, actorID uint64) (Paper, error)
 	DeletePaper(ctx context.Context, tenantID uint64, paperID uint64) error
+	PaperReferenced(ctx context.Context, tenantID uint64, paperID uint64) (bool, error)
 	PaperQuestionExists(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error)
 	QuestionUsableForPaper(ctx context.Context, tenantID uint64, paperID uint64, questionID uint64) (bool, error)
+	QuestionUsableForScope(ctx context.Context, tenantID uint64, spaceID *uint64, questionID uint64) (bool, error)
 	AddSectionQuestionAndRecalculate(ctx context.Context, question SectionQuestion) error
 	UpdateSectionQuestionAndRecalculate(ctx context.Context, input UpdateSectionQuestionInput) error
 	DeleteSectionQuestionAndRecalculate(ctx context.Context, tenantID uint64, paperID uint64, sectionID uint64, questionID uint64) error
@@ -384,6 +388,34 @@ func (s *Service) CreateManualPaper(ctx context.Context, input CreatePaperInput)
 }
 
 func (s *Service) UpdatePaper(ctx context.Context, input UpdatePaperInput) (Paper, error) {
+	if input.ChangeSpace {
+		existing, err := s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
+		if err != nil {
+			return Paper{}, err
+		}
+		if !sameOptionalUint64(existing.SpaceID, input.TargetSpaceID) {
+			referenced, err := s.repo.PaperReferenced(ctx, input.TenantID, input.PaperID)
+			if err != nil {
+				return Paper{}, err
+			}
+			if referenced {
+				return Paper{}, ErrPaperInUse
+			}
+			questions, err := s.repo.ListSectionQuestions(ctx, input.TenantID, input.PaperID)
+			if err != nil {
+				return Paper{}, err
+			}
+			for _, question := range questions {
+				usable, err := s.repo.QuestionUsableForScope(ctx, input.TenantID, input.TargetSpaceID, question.QuestionID)
+				if err != nil {
+					return Paper{}, err
+				}
+				if !usable {
+					return Paper{}, ErrQuestionOutOfScope
+				}
+			}
+		}
+	}
 	return s.repo.UpdatePaper(ctx, input)
 }
 
@@ -850,6 +882,13 @@ func (s *Service) normalizeUpdateRuleInput(ctx context.Context, input UpdateRule
 	input.ExcludeRecentExamQuestions = rule.ExcludeRecentExamQuestions
 	input.ExcludeUsedQuestions = rule.ExcludeUsedQuestions
 	return input, nil
+}
+
+func sameOptionalUint64(left *uint64, right *uint64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func (s *Service) ruleTagIDs(ctx context.Context, tenantID uint64, tagIDs []uint64, tagNames []string) ([]uint64, error) {

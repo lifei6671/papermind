@@ -26,6 +26,7 @@ type paperHandler struct {
 }
 
 type paperScopeFinder interface {
+	GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (servicepaper.Paper, error)
 	GetPaperSpaceID(ctx context.Context, tenantID uint64, paperID uint64) (*uint64, error)
 }
 
@@ -141,11 +142,34 @@ type createPaperRequest struct {
 }
 
 type updatePaperRequest struct {
-	TenantID        uint64 `json:"tenant_id"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	DurationMinutes *int   `json:"duration_minutes"`
-	GradeLevel      string `json:"grade_level"`
+	TenantID        uint64              `json:"tenant_id"`
+	SpaceID         paperSpaceIDRequest `json:"space_id"`
+	Name            string              `json:"name"`
+	Description     string              `json:"description"`
+	DurationMinutes *int                `json:"duration_minutes"`
+	GradeLevel      string              `json:"grade_level"`
+}
+
+type paperSpaceIDRequest struct {
+	Value *uint64
+	Set   bool
+}
+
+func (r *paperSpaceIDRequest) UnmarshalJSON(data []byte) error {
+	r.Set = true
+	if string(data) == "null" {
+		r.Value = nil
+		return nil
+	}
+	var value uint64
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if value == 0 {
+		return errors.New("space_id 必须是正整数")
+	}
+	r.Value = &value
+	return nil
 }
 
 type paperTenantRequest struct {
@@ -309,6 +333,9 @@ func (h paperHandler) update(c *gin.Context) {
 	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
 		return
 	}
+	if request.SpaceID.Set && !h.authorizePaperCreate(c, request.TenantID, request.SpaceID.Value) {
+		return
+	}
 	principal, err := liveTenantPrincipalFromSession(c, request.TenantID, h.users)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建试卷写权限上下文失败")
@@ -321,6 +348,8 @@ func (h paperHandler) update(c *gin.Context) {
 		Description:     request.Description,
 		DurationMinutes: request.DurationMinutes,
 		GradeLevel:      request.GradeLevel,
+		TargetSpaceID:   request.SpaceID.Value,
+		ChangeSpace:     request.SpaceID.Set,
 		ActorID:         principal.UserID,
 	})
 	if err != nil {
@@ -1266,7 +1295,7 @@ func (h paperHandler) authorizePaperRead(c *gin.Context, tenantID uint64, paperI
 }
 
 func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paperID uint64) bool {
-	spaceID, err := h.papers.GetPaperSpaceID(c.Request.Context(), tenantID, paperID)
+	paper, err := h.papers.GetPaper(c.Request.Context(), tenantID, paperID)
 	if err != nil {
 		if errors.Is(err, servicepaper.ErrPaperNotFound) {
 			writePaperServiceError(c, err)
@@ -1275,6 +1304,7 @@ func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paper
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷权限范围失败"))
 		return false
 	}
+	spaceID := paper.SpaceID
 	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users)
 	if err != nil {
 		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
@@ -1292,7 +1322,85 @@ func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paper
 		writePermissionOrInternalError(c, err, "校验试卷写权限失败")
 		return false
 	}
+	if !h.authorizePaperCreatorHierarchy(c, permissionContext, paper) {
+		return false
+	}
 	return true
+}
+
+func (h paperHandler) authorizePaperCreatorHierarchy(c *gin.Context, permissionContext permission.PermissionContext, paper servicepaper.Paper) bool {
+	// 旧数据可能没有 created_by。此时仍按资源空间权限处理，避免历史草稿无法维护。
+	if paper.CreatedBy == 0 || paper.SpaceID == nil {
+		return true
+	}
+	actorRank := paperWriteRankFromPermissionContext(permissionContext, *paper.SpaceID)
+	creatorRank, err := h.paperCreatorWriteRank(c.Request.Context(), paper)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "读取试卷创建者权限层级失败")
+		return false
+	}
+	if creatorRank == 0 {
+		return true
+	}
+	if actorRank < creatorRank {
+		writePermissionOrInternalError(c, permission.ErrForbidden, "下级角色不能维护上级角色创建的试卷")
+		return false
+	}
+	if creatorRank == paperWriteRankTeacher && actorRank == paperWriteRankTeacher && permissionContext.UserID != paper.CreatedBy {
+		writePermissionOrInternalError(c, permission.ErrForbidden, "教师只能维护自己创建的试卷")
+		return false
+	}
+	return true
+}
+
+func (h paperHandler) paperCreatorWriteRank(ctx context.Context, paper servicepaper.Paper) (int, error) {
+	user, err := h.users.Get(ctx, paper.TenantID, paper.CreatedBy)
+	if errors.Is(err, servicetenantuser.ErrUserNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if user.Role == permission.RoleTenantAdmin {
+		return paperWriteRankTenantAdmin, nil
+	}
+	if paper.SpaceID == nil {
+		return 0, nil
+	}
+	member, err := h.members.FindMember(ctx, paper.TenantID, *paper.SpaceID, paper.CreatedBy)
+	if errors.Is(err, servicespace.ErrMemberNotFound) {
+		return paperWriteRankTeacher, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if member.Role == permission.RoleSpaceAdmin {
+		return paperWriteRankSpaceAdmin, nil
+	}
+	if member.Role == permission.RoleTeacher {
+		return paperWriteRankTeacher, nil
+	}
+	return 0, nil
+}
+
+const (
+	paperWriteRankTeacher     = 1
+	paperWriteRankSpaceAdmin  = 2
+	paperWriteRankTenantAdmin = 3
+)
+
+func paperWriteRankFromPermissionContext(ctx permission.PermissionContext, spaceID uint64) int {
+	if ctx.Role == permission.RoleTenantAdmin {
+		return paperWriteRankTenantAdmin
+	}
+	switch ctx.SpaceMemberships[spaceID] {
+	case permission.RoleSpaceAdmin:
+		return paperWriteRankSpaceAdmin
+	case permission.RoleTeacher:
+		return paperWriteRankTeacher
+	default:
+		return 0
+	}
 }
 
 func (h paperHandler) authorizePaperCreate(c *gin.Context, tenantID uint64, spaceID *uint64) bool {

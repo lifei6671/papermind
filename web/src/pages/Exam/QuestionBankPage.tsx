@@ -15,13 +15,17 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { formatApiErrorMessage } from "../../api/client";
 import { useFeedback } from "../../app/feedback-context";
 import { questionApi } from "../../api/questions";
+import type { ActorRole } from "../../api/grading";
 import type { QuestionAPI, QuestionImportJobEvent, QuestionListResult, QuestionRow, QuestionType } from "../../api/questions";
+import { canWritePublicQuestionScope } from "./questionScopePermissions";
 import { questionImportTemplateFileName, questionImportTemplateHref } from "./questionImportTemplate";
 
 type QuestionBankPageProps = {
   api?: QuestionAPI;
+  actorRole?: ActorRole;
   tenantID?: number;
   spaceID?: number;
+  spaceName?: string;
 };
 
 type ImportRecord = {
@@ -58,18 +62,13 @@ const questionStatusLabels: Record<QuestionRow["status"], string> = {
   disabled: "已禁用",
 };
 
-const questionAuthorRoleLabels: Record<string, string> = {
-  tenant_admin: "租户管理员",
-  space_admin: "空间管理员",
-  teacher: "教师",
-  student: "学生",
-};
-
 const questionPageSizeOptions = [10, 20, 30, 40, 50];
 
-export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: QuestionBankPageProps) {
+export function QuestionBankPage({ api = questionApi, actorRole, tenantID = 10, spaceID, spaceName }: QuestionBankPageProps) {
   const location = useLocation();
   const { showError, showSuccess } = useFeedback();
+  const currentSpaceID = spaceID ?? readSpaceIDFromSearch(location.search);
+  const canSelectPublicScope = canWritePublicQuestionScope(actorRole);
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -77,6 +76,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
   const [isImportDrawerOpen, setIsImportDrawerOpen] = useState(false);
   const [importRecords, setImportRecords] = useState<ImportRecord[]>([]);
   const [importTargetStatus, setImportTargetStatus] = useState<"draft" | "enabled">("draft");
+  const [selectedImportSpaceID, setSelectedImportSpaceID] = useState<number | null>(currentSpaceID ?? null);
   const [isImporting, setIsImporting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
@@ -94,7 +94,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
   useEffect(() => {
     let ignore = false;
 
-    api.listQuestions({ tenantID, ...(spaceID === undefined ? {} : { spaceID }), page, pageSize, search: appliedSearchQuery })
+    api.listQuestions({ tenantID, ...(currentSpaceID === undefined ? {} : { spaceID: currentSpaceID }), page, pageSize, search: appliedSearchQuery })
       .then((data) => {
         if (!ignore) {
           applyQuestionPageData(data);
@@ -109,7 +109,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
     return () => {
       ignore = true;
     };
-  }, [api, tenantID, spaceID, page, pageSize, appliedSearchQuery, showError]);
+  }, [api, tenantID, currentSpaceID, page, pageSize, appliedSearchQuery, showError]);
 
   const visibleQuestions = questions;
 
@@ -127,7 +127,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
     try {
       const data = await withRefreshFeedback(api.listQuestions({
         tenantID,
-        ...(spaceID === undefined ? {} : { spaceID }),
+        ...(currentSpaceID === undefined ? {} : { spaceID: currentSpaceID }),
         page: nextPage,
         pageSize,
         search: "",
@@ -154,7 +154,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
       }
       const data = await api.listQuestions({
         tenantID,
-        ...(spaceID === undefined ? {} : { spaceID }),
+        ...(currentSpaceID === undefined ? {} : { spaceID: currentSpaceID }),
         page,
         pageSize,
         search: appliedSearchQuery,
@@ -172,7 +172,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
       updateImportRecord(record.id, { status: "uploading", progress: Math.max(record.progress, 8), message: "上传中" });
       const job = await api.startQuestionImportJob({
         tenantID,
-        ...(spaceID === undefined ? {} : { spaceID }),
+        spaceID: selectedImportSpaceID,
         file: record.file,
         status: importTargetStatus,
       });
@@ -243,6 +243,11 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
     ]);
   }
 
+  function openImportDrawer() {
+    setSelectedImportSpaceID(currentSpaceID ?? null);
+    setIsImportDrawerOpen(true);
+  }
+
   async function runQuestionAction(question: QuestionRow, action: "delete" | "disable" | "enable") {
     setPendingQuestionID(question.id);
     try {
@@ -279,7 +284,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
             <Link className="primary-button tenant-create-button" to={questionCreateHref}>
               新增题目
             </Link>
-            <Button variant="toolbarSecondary" onClick={() => setIsImportDrawerOpen(true)} type="button">
+            <Button variant="toolbarSecondary" onClick={openImportDrawer} type="button">
               导入题目
             </Button>
           </div>
@@ -316,7 +321,7 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
                 <th scope="col">题目类型</th>
                 <th scope="col">题目状态</th>
                 <th scope="col">出题人</th>
-                <th scope="col">角色</th>
+                <th scope="col">所属空间</th>
                 <th scope="col">出题时间</th>
                 <th scope="col">操作区</th>
               </tr>
@@ -335,22 +340,35 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
                   <td>{questionTypeLabels[item.type]}</td>
                   <td><StatusBadge tone={questionStatusTone(item.status)}>{questionStatusLabels[item.status]}</StatusBadge></td>
                   <td>{item.authorName || "-"}</td>
-                  <td>{questionAuthorRoleLabels[item.authorRole ?? ""] ?? (item.authorRole || "-")}</td>
+                  <td>{questionSpaceLabel(item, spaceName)}</td>
                   <td>{formatQuestionCreatedAt(item.createdAt ?? 0)}</td>
                   <td>
                     <div className="tenant-table-actions">
-                      <Link
-                        aria-label={`编辑 ${item.title}`}
-                        className="tenant-action-button tenant-action--edit"
-                        to={`/questions/${item.id}/edit${location.search}`}
-                      >
-                        编辑
-                      </Link>
+                      {canManageQuestion(item, actorRole) ? (
+                        <Link
+                          aria-label={`编辑 ${item.title}`}
+                          className="tenant-action-button tenant-action--edit"
+                          to={`/questions/${item.id}/edit${location.search}`}
+                        >
+                          编辑
+                        </Link>
+                      ) : (
+                        <span
+                          aria-disabled="true"
+                          aria-label={`编辑 ${item.title}`}
+                          className="tenant-action-button tenant-action--edit tenant-action-button--disabled"
+                          role="link"
+                          title="当前角色不能编辑公共题库试题"
+                        >
+                          编辑
+                        </span>
+                      )}
                       {item.status === "ready" ? (
                         <Button
                           aria-label={`禁用 ${item.title}`}
-                          disabled={pendingQuestionID === item.id}
+                          disabled={pendingQuestionID === item.id || !canManageQuestion(item, actorRole)}
                           onClick={() => void runQuestionAction(item, "disable")}
+                          title={!canManageQuestion(item, actorRole) ? "当前角色不能禁用公共题库试题" : undefined}
                           variant="actionClose"
                         >
                           禁用
@@ -358,8 +376,9 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
                       ) : (
                         <Button
                           aria-label={`启用 ${item.title}`}
-                          disabled={pendingQuestionID === item.id}
+                          disabled={pendingQuestionID === item.id || !canManageQuestion(item, actorRole)}
                           onClick={() => void runQuestionAction(item, "enable")}
+                          title={!canManageQuestion(item, actorRole) ? "当前角色不能启用公共题库试题" : undefined}
                           variant="actionOpen"
                         >
                           启用
@@ -367,8 +386,9 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
                       )}
                       <Button
                         aria-label={`删除 ${item.title}`}
-                        disabled={pendingQuestionID === item.id}
+                        disabled={pendingQuestionID === item.id || !canManageQuestion(item, actorRole)}
                         onClick={() => void runQuestionAction(item, "delete")}
+                        title={!canManageQuestion(item, actorRole) ? "当前角色不能删除公共题库试题" : undefined}
                         variant="actionReset"
                       >
                         删除
@@ -440,6 +460,17 @@ export function QuestionBankPage({ api = questionApi, tenantID = 10, spaceID }: 
               </div>
             </header>
             <div className="tenant-resource-drawer__body">
+              <label className="field">
+                <span>所属空间</span>
+                <select
+                  aria-label="导入所属空间"
+                  onChange={(event) => setSelectedImportSpaceID(event.target.value === "public" ? null : currentSpaceID ?? null)}
+                  value={selectedImportSpaceID === null && canSelectPublicScope ? "public" : "space"}
+                >
+                  {canSelectPublicScope && <option value="public">公共题库</option>}
+                  {currentSpaceID !== undefined && <option value="space">当前空间题库</option>}
+                </select>
+              </label>
               <FileUploadField
                 accept={["text/csv"]}
                 emptyPreviewText="暂未选择文件"
@@ -579,6 +610,29 @@ function questionStatusTone(status: QuestionRow["status"]) {
     return "warning";
   }
   return "info";
+}
+
+function questionSpaceLabel(question: QuestionRow, currentSpaceName?: string) {
+  if (question.spaceID === undefined) {
+    return "公共题库";
+  }
+  return currentSpaceName || `空间 ${question.spaceID}`;
+}
+
+function canManageQuestion(question: QuestionRow, actorRole?: ActorRole) {
+  if (question.spaceID === undefined) {
+    return canWritePublicQuestionScope(actorRole);
+  }
+  return true;
+}
+
+function readSpaceIDFromSearch(search: string) {
+  const value = new URLSearchParams(search).get("space_id");
+  if (value === null) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function formatQuestionCreatedAt(value: number) {
