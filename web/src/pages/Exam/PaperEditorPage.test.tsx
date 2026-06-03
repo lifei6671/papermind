@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { FeedbackProvider } from "../../app/feedback";
-import type { ManualQuestionRow, PaperAPI, PaperSectionRow } from "../../api/papers";
+import type { ManualQuestionRow, PaperAPI, PaperRow, PaperSectionRow } from "../../api/papers";
 import type { QuestionAPI } from "../../api/questions";
 import { PaperEditRoute } from "./PaperEditRoute";
 import { PaperEditorPage } from "./PaperEditorPage";
@@ -297,7 +297,9 @@ test("保存草稿失败时使用 toast 提示并透出后端错误", async () =
 
 test("智能组卷知识点使用下拉输入选择并保存标签", async () => {
   const user = userEvent.setup();
-  const paperApi = createPaperApiDouble();
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+  });
   paperApi.createRule = vi.fn(async (input) => ({
     id: 501,
     tenantID: input.tenantID,
@@ -323,8 +325,7 @@ test("智能组卷知识点使用下拉输入选择并保存标签", async () =>
     questionApi: createQuestionApiDouble(),
   });
 
-  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
-  await user.click(screen.getByRole("tab", { name: "智能组卷" }));
+  await screen.findByRole("group", { name: "难度分布滑块" });
   await user.click(screen.getByLabelText("根据知识点筛选"));
   await user.type(screen.getByRole("textbox", { name: "搜索知识点标签" }), "阅读");
   await user.click(screen.getByRole("option", { name: "阅读理解" }));
@@ -346,7 +347,9 @@ test("智能组卷知识点使用下拉输入选择并保存标签", async () =>
 
 test("智能组卷难度分布使用分段滑块并保存百分比", async () => {
   const user = userEvent.setup();
-  const paperApi = createPaperApiDouble();
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ buildMode: "rule_fixed" })],
+  });
   paperApi.createRule = vi.fn(async (input) => ({
     id: 501,
     tenantID: input.tenantID,
@@ -372,10 +375,7 @@ test("智能组卷难度分布使用分段滑块并保存百分比", async () =>
     questionApi: createQuestionApiDouble(),
   });
 
-  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
-  await user.click(screen.getByRole("tab", { name: "智能组卷" }));
-
-  expect(screen.getByRole("group", { name: "难度分布滑块" })).toBeInTheDocument();
+  expect(await screen.findByRole("group", { name: "难度分布滑块" })).toBeInTheDocument();
   expect(screen.getByText("较易 30%")).toBeInTheDocument();
   expect(screen.getByText("中等 50%")).toBeInTheDocument();
   expect(screen.getByText("较难 20%")).toBeInTheDocument();
@@ -908,7 +908,7 @@ test("已选题分值支持输入并通过现有接口保存", async () => {
   expect(container.querySelector(".exam-paper-editor__panel-head span")).toHaveTextContent("共 3 题 / 总分 15 分");
 });
 
-test("保存草稿会持久化组卷方式和题目排序", async () => {
+test("保存草稿会持久化题目排序且不修改已有试卷组卷方式", async () => {
   const user = userEvent.setup();
   let persistedSections: PaperSectionRow[] = [
     {
@@ -1001,18 +1001,13 @@ test("保存草稿会持久化组卷方式和题目排序", async () => {
   fireEvent.drop(targetRow);
   fireEvent.dragEnd(dragHandle);
 
-  await user.click(screen.getByRole("tab", { name: "智能组卷" }));
   expect(screen.getByText("草稿有未保存调整")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "保存草稿" }));
 
-  await waitFor(() => {
-    expect(paperApi.updateBuildMode).toHaveBeenCalledWith({
-      tenantID: 10,
-      paperID: 100,
-      buildMode: "rule_fixed",
-    });
-  });
+  expect(screen.getByLabelText("组卷方式")).toHaveTextContent("手动组卷");
+  expect(screen.queryByRole("tab", { name: "智能组卷" })).not.toBeInTheDocument();
+  expect(paperApi.updateBuildMode).not.toHaveBeenCalled();
   await waitFor(() => {
     expect(paperApi.reorderSections).toHaveBeenCalledWith({
       tenantID: 10,
@@ -1128,25 +1123,30 @@ function LocationProbe() {
   return <div>{location.pathname}</div>;
 }
 
+function createPaperRowForTest(overrides: Partial<PaperRow> = {}): PaperRow {
+  return {
+    id: 100,
+    tenantID: 10,
+    spaceID: 301,
+    name: "高一语文月考试卷",
+    description: "文学阅读与语言基础",
+    durationMinutes: 120,
+    gradeLevel: "高一",
+    totalScore: "14",
+    buildMode: "manual",
+    status: "draft",
+    createdAt: new Date("2026-06-02T09:30:00+08:00").getTime(),
+    creatorName: "teacher.exam",
+    ...overrides,
+  };
+}
+
 function createPaperApiDouble({
   papers,
   sections,
   sectionQuestions,
 }: {
-  papers?: Array<{
-    id: number;
-    tenantID: number;
-    spaceID?: number;
-    name: string;
-    description?: string;
-    durationMinutes?: number;
-    gradeLevel?: string;
-    totalScore: string;
-    buildMode: "manual" | "rule_fixed" | "rule_live";
-    status: "draft" | "enabled" | "disabled";
-    createdAt: number;
-    creatorName: string;
-  }>;
+  papers?: PaperRow[];
   sections?: PaperSectionRow[];
   sectionQuestions?: ManualQuestionRow[];
 } = {}): PaperAPI {

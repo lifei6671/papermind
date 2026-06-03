@@ -63,12 +63,19 @@ export function PaperAssemblyPage({
   const [precheckMessage, setPrecheckMessage] = useState("");
   const [editableRule, setEditableRule] = useState<EditableRuleState | null>(null);
   const [isSectionDialogOpen, setIsSectionDialogOpen] = useState(false);
+  const [isCreatePaperDialogOpen, setIsCreatePaperDialogOpen] = useState(false);
   const [isFixedDialogOpen, setIsFixedDialogOpen] = useState(false);
   const [isLiveDialogOpen, setIsLiveDialogOpen] = useState(false);
+  const [newPaperName, setNewPaperName] = useState("");
+  const [newPaperDescription, setNewPaperDescription] = useState("");
+  const [newPaperBuildMode, setNewPaperBuildMode] = useState<PaperBuildMode>("manual");
+  const [newPaperDurationText, setNewPaperDurationText] = useState("120");
+  const [newPaperGradeText, setNewPaperGradeText] = useState("高一");
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
   const [isPaperListRefreshing, setIsPaperListRefreshing] = useState(false);
+  const [isCreatingPaper, setIsCreatingPaper] = useState(false);
 
   const activePaper = papers.find((paper) => paper.id === activePaperID) ?? null;
   const activeBuildMode = activePaper?.buildMode ?? "manual";
@@ -164,6 +171,52 @@ export function PaperAssemblyPage({
       return;
     }
     await loadWorkspace(activePaperID);
+  }
+
+  async function handleCreatePaper(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const name = newPaperName.trim();
+    const durationMinutes = Number.parseInt(newPaperDurationText, 10);
+    if (!name) {
+      setLoadError("请输入试卷名称");
+      return;
+    }
+    if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+      setLoadError("考试时长必须是正整数");
+      return;
+    }
+
+    setIsCreatingPaper(true);
+    try {
+      const createdPaper = await api.createPaper({
+        tenantID,
+        ...(spaceID === undefined ? {} : { spaceID }),
+        name,
+        description: newPaperDescription.trim(),
+        durationMinutes,
+        gradeLevel: newPaperGradeText.trim() || "高一",
+      });
+      if (newPaperBuildMode !== "manual") {
+        await api.updateBuildMode({
+          tenantID,
+          paperID: createdPaper.id,
+          buildMode: newPaperBuildMode,
+        });
+      }
+      setIsCreatePaperDialogOpen(false);
+      setNewPaperName("");
+      setNewPaperDescription("");
+      setNewPaperBuildMode("manual");
+      setNewPaperDurationText("120");
+      setNewPaperGradeText("高一");
+      setLoadError("");
+      navigateToPaperEditor(createdPaper.id);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "创建试卷失败");
+    } finally {
+      setIsCreatingPaper(false);
+    }
   }
 
   async function handleAddSection(event: React.FormEvent<HTMLFormElement>) {
@@ -282,20 +335,14 @@ export function PaperAssemblyPage({
     }
   }
 
-  async function handleSwitchBuildMode(nextBuildMode: PaperBuildMode) {
+  async function syncPaperBuildMode(nextBuildMode: PaperBuildMode) {
     if (activePaperID === null) {
       return;
     }
-    try {
-      await syncPaperBuildMode(nextBuildMode);
-      setLoadError("");
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "切换组卷模式失败");
+    if (activePaper !== null && activePaper.buildMode !== nextBuildMode) {
+      throw new Error("已创建试卷不能修改组卷方式");
     }
-  }
-
-  async function syncPaperBuildMode(nextBuildMode: PaperBuildMode) {
-    if (activePaperID === null) {
+    if (activePaper !== null && activePaper.buildMode === nextBuildMode) {
       return;
     }
     const nextPaper = await api.updateBuildMode({ tenantID, paperID: activePaperID, buildMode: nextBuildMode });
@@ -372,8 +419,8 @@ export function PaperAssemblyPage({
     }
   }
 
-  function navigateToPaperEditor(target: "new" | number) {
-    const path = target === "new" ? "/papers/new" : `/papers/${target}/edit`;
+  function navigateToPaperEditor(target: number) {
+    const path = `/papers/${target}/edit`;
     navigate(`${path}${scopedPaperSearch(location.search, spaceID)}`);
   }
 
@@ -535,7 +582,7 @@ export function PaperAssemblyPage({
         <div className="tenant-list-toolbar">
           <div className="tenant-list-actions" aria-label="试卷操作区">
             {activeTab === "papers" ? (
-              <Button variant="toolbarPrimary" onClick={() => navigateToPaperEditor("new")} type="button">
+              <Button variant="toolbarPrimary" onClick={() => setIsCreatePaperDialogOpen(true)} type="button">
                 新建试卷
               </Button>
             ) : (
@@ -543,21 +590,11 @@ export function PaperAssemblyPage({
                 <Button variant="toolbarPrimary" onClick={() => setIsSectionDialogOpen(true)} type="button">
                   新增大题
                 </Button>
-                <label className="exam-paper-mode-field field">
+                <div className="exam-paper-mode-field field" aria-label="当前组卷方式">
                   <span className="exam-paper-mode-field__label">组卷模式</span>
                   <strong className="exam-paper-mode-field__value">{buildModeLabel(activeBuildMode)}</strong>
-                  <select
-                    aria-label="组卷模式"
-                    className="exam-paper-mode-field__select"
-                    onChange={(event) => void handleSwitchBuildMode(event.target.value as PaperBuildMode)}
-                    value={activeBuildMode}
-                  >
-                    {paperBuildModeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
                   <span className="exam-paper-mode-field__hint">{buildModeHint(activeBuildMode)}</span>
-                </label>
+                </div>
               </>
             )}
           </div>
@@ -684,6 +721,73 @@ export function PaperAssemblyPage({
           </div>
         )}
       </Panel>
+
+      {isCreatePaperDialogOpen && (
+        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="新建试卷">
+          <div className="platform-dialog__card">
+            <h2>新建试卷</h2>
+            <form className="platform-form" onSubmit={handleCreatePaper}>
+              <label className="field">
+                <span>试卷名称</span>
+                <input
+                  aria-label="试卷名称"
+                  onChange={(event) => setNewPaperName(event.target.value)}
+                  required
+                  value={newPaperName}
+                />
+              </label>
+              <label className="field">
+                <span>组卷方式</span>
+                <select
+                  aria-label="组卷方式"
+                  onChange={(event) => setNewPaperBuildMode(event.target.value as PaperBuildMode)}
+                  value={newPaperBuildMode}
+                >
+                  {paperBuildModeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>考试时长</span>
+                <input
+                  aria-label="考试时长"
+                  min={1}
+                  onChange={(event) => setNewPaperDurationText(event.target.value)}
+                  required
+                  type="number"
+                  value={newPaperDurationText}
+                />
+              </label>
+              <label className="field">
+                <span>适用年级</span>
+                <input
+                  aria-label="适用年级"
+                  onChange={(event) => setNewPaperGradeText(event.target.value)}
+                  required
+                  value={newPaperGradeText}
+                />
+              </label>
+              <label className="field">
+                <span>试卷说明</span>
+                <input
+                  aria-label="试卷说明"
+                  onChange={(event) => setNewPaperDescription(event.target.value)}
+                  value={newPaperDescription}
+                />
+              </label>
+              <div className="platform-dialog__actions">
+                <Button variant="secondary" onClick={() => setIsCreatePaperDialogOpen(false)} type="button">
+                  取消
+                </Button>
+                <Button variant="primary" disabled={isCreatingPaper} type="submit">
+                  保存并组卷
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {isSectionDialogOpen && (
         <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="新增大题弹窗">

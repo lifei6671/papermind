@@ -323,6 +323,7 @@ export function PaperEditorPage({
   const canAssemble = paper !== null;
   const isRuleLivePaper = buildMode === "rule_live";
   const isSmartPaper = buildMode === "rule_fixed";
+  const canChangeBuildMode = paper === null;
   const sectionOrderDirty = serializeSections(sections) !== serializeSections(persistedSections);
   const draftDirty = useMemo(() => {
     if (paper === null) {
@@ -335,10 +336,9 @@ export function PaperEditorPage({
       || paperDescription !== (paper.description ?? "")
       || gradeText !== (paper.gradeLevel?.trim() ? paper.gradeLevel.trim() : "高一")
       || durationText !== String(paper.durationMinutes ?? 120)
-      || buildMode !== ((paper.buildMode as PaperBuildMode | undefined) ?? "manual")
       || sectionOrderDirty
       || serializeSectionQuestions(sectionQuestions) !== serializeSectionQuestions(persistedSectionQuestions);
-  }, [buildMode, durationText, gradeText, paper, paperDescription, paperName, persistedSectionQuestions, sectionOrderDirty, sectionQuestions]);
+  }, [durationText, gradeText, paper, paperDescription, paperName, persistedSectionQuestions, sectionOrderDirty, sectionQuestions]);
   const lastSavedLabel = paper === null
     ? "草稿尚未保存"
     : draftDirty ? "草稿有未保存调整" : "草稿已保存";
@@ -374,13 +374,13 @@ export function PaperEditorPage({
           try {
             nextPaper = await providedPaperApi.updateBuildMode({
               tenantID,
-            paperID: nextPaper.id,
-            buildMode,
-          });
+              paperID: nextPaper.id,
+              buildMode,
+            });
             setPaper(nextPaper);
             setBuildMode((nextPaper.buildMode as PaperBuildMode | undefined) ?? buildMode);
           } catch (error) {
-            buildModeSyncError = error
+            buildModeSyncError = error;
           }
         }
         navigate(`/papers/${nextPaper.id}/edit${pageSearch}`, { replace: true });
@@ -421,20 +421,6 @@ export function PaperEditorPage({
             durationMinutes,
             gradeLevel: normalizedGradeText,
           });
-        }
-        if (buildMode !== ((paper.buildMode as PaperBuildMode | undefined) ?? "manual")) {
-          const updatedModePaper = await providedPaperApi.updateBuildMode({
-            tenantID,
-            paperID: paper.id,
-            buildMode,
-          });
-          nextPaper = {
-            ...nextPaper,
-            ...updatedModePaper,
-            name: paperName.trim(),
-            description: paperDescription.trim(),
-            buildMode,
-          };
         }
         if (changedSectionOrders.length > 0) {
           await providedPaperApi.reorderSections({
@@ -879,12 +865,18 @@ export function PaperEditorPage({
             </label>
             <div className="exam-paper-editor__summary-item exam-paper-editor__summary-item--modes">
               <span>组卷方式：</span>
-              <SegmentTabs
-                active={buildMode === "manual" ? "手动组卷" : "智能组卷"}
-                ariaLabel="组卷方式"
-                items={["手动组卷", "智能组卷"]}
-                onChange={(item) => setBuildMode(item === "手动组卷" ? "manual" : "rule_fixed")}
-              />
+              {canChangeBuildMode ? (
+                <SegmentTabs
+                  active={buildMode === "manual" ? "手动组卷" : "智能组卷"}
+                  ariaLabel="组卷方式"
+                  items={["手动组卷", "智能组卷"]}
+                  onChange={(item) => setBuildMode(item === "手动组卷" ? "manual" : "rule_fixed")}
+                />
+              ) : (
+                <strong aria-label="组卷方式" className="exam-paper-editor__mode-value">
+                  {editorBuildModeLabel(buildMode)}
+                </strong>
+              )}
             </div>
             <div className="exam-paper-editor__summary-item exam-paper-editor__summary-item--status">
               <span className="exam-paper-editor__status">
@@ -1666,6 +1658,16 @@ function moveSectionOrder(items: PaperSectionRow[], draggedSectionID: number, ta
 
 function formatSectionTitle(section: PaperSectionRow, index: number) {
   return `${toChineseSectionIndex(index + 1)}、${stripSectionPrefix(section.name)}`;
+}
+
+function editorBuildModeLabel(buildMode: PaperBuildMode) {
+  if (buildMode === "rule_fixed") {
+    return "智能组卷";
+  }
+  if (buildMode === "rule_live") {
+    return "规则组卷";
+  }
+  return "手动组卷";
 }
 
 function stripSectionPrefix(name: string) {

@@ -4792,6 +4792,19 @@ body:has(.exam-paper-editor-page) {
   font-size: 13px;
 }
 
+.exam-paper-editor__mode-value {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: #eef3f8;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .exam-paper-editor__summary-item--status {
   margin-left: auto;
   justify-content: flex-end;

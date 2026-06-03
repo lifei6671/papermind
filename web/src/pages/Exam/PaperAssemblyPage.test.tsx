@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-import type { PaperAssemblyAPI, PaperBuildMode } from "../../api/papers";
+import type { PaperAssemblyAPI } from "../../api/papers";
 import { PaperAssemblyPage } from "./PaperAssemblyPage";
 
 function deferred<T>() {
@@ -41,14 +41,41 @@ test("组卷页默认展示试卷列表而不是试卷详情", async () => {
   expect(screen.getByRole("button", { name: "启用试卷 高一语文月考试卷" })).toBeInTheDocument();
 });
 
-test("教师可以新建试卷", async () => {
+test("教师新建试卷需要先填写基础信息再进入组卷页", async () => {
   const user = userEvent.setup();
-  renderPaperAssemblyRoutes(createPaperApiDouble());
+  const api = createPaperApiDouble();
+  renderPaperAssemblyRoutes(api);
 
   await screen.findByRole("row", { name: /高一语文月考试卷/ });
   await user.click(screen.getByRole("button", { name: "新建试卷" }));
 
-  expect(await screen.findByText("/papers/new")).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "新建试卷" })).toBeInTheDocument();
+  await user.type(screen.getByLabelText("试卷名称"), "高一数学周测");
+  await user.selectOptions(screen.getByLabelText("组卷方式"), "rule_fixed");
+  await user.clear(screen.getByLabelText("考试时长"));
+  await user.type(screen.getByLabelText("考试时长"), "90");
+  await user.clear(screen.getByLabelText("适用年级"));
+  await user.type(screen.getByLabelText("适用年级"), "高一");
+  await user.click(screen.getByRole("button", { name: "保存并组卷" }));
+
+  await waitFor(() => {
+    expect(api.createPaper).toHaveBeenCalledWith({
+      tenantID: 10,
+      spaceID: 301,
+      name: "高一数学周测",
+      description: "",
+      durationMinutes: 90,
+      gradeLevel: "高一",
+    });
+  });
+  await waitFor(() => {
+    expect(api.updateBuildMode).toHaveBeenCalledWith({
+      tenantID: 10,
+      paperID: 101,
+      buildMode: "rule_fixed",
+    });
+  });
+  expect(await screen.findByText("/papers/101/edit")).toBeInTheDocument();
 });
 
 test("教师可以搜索和刷新试卷列表", async () => {
@@ -135,7 +162,7 @@ test("rule_fixed 生成会复用现有规则而不是重复追加", async () => 
 
   await user.click(screen.getByRole("tab", { name: "组卷规则" }));
   expect(screen.getByRole("button", { name: "新增大题" })).toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "组卷模式" })).toBeInTheDocument();
+  expect(screen.getByLabelText("当前组卷方式")).toHaveTextContent("固定规则组卷");
 
   await user.click(screen.getByRole("button", { name: "生成固定规则试卷" }));
 
@@ -251,73 +278,39 @@ test("rule_live 配置和组卷预检查展示风险提示", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent("候选题池 2 道题");
 });
 
-test("规则列表支持切换模式和编辑规则", async () => {
+test("规则列表锁定已有试卷组卷模式但仍支持编辑规则", async () => {
   const user = userEvent.setup();
   const api = createPaperApiDouble();
-  let activeBuildMode: PaperBuildMode = "rule_fixed";
   vi.mocked(api.listSections).mockImplementation(async () => ({
-    items: activeBuildMode === "rule_live"
-      ? [
-          {
-            id: 1,
-            tenantID: 10,
-            paperID: 100,
-            sortOrder: 1,
-            name: "一、实时抽题池",
-            questionType: "single",
-            totalScore: "15",
-            questionCount: 3,
-          },
-        ]
-      : [
-          {
-            id: 1,
-            tenantID: 10,
-            paperID: 100,
-            sortOrder: 1,
-            name: "一、现代文阅读",
-            questionType: "single",
-            totalScore: "30",
-            questionCount: 5,
-          },
-          {
-            id: 2,
-            tenantID: 10,
-            paperID: 100,
-            sortOrder: 2,
-            name: "二、语言文字运用",
-            questionType: "single",
-            totalScore: "20",
-            questionCount: 5,
-          },
-        ],
+    items: [
+      {
+        id: 1,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 1,
+        name: "一、现代文阅读",
+        questionType: "single",
+        totalScore: "30",
+        questionCount: 5,
+      },
+      {
+        id: 2,
+        tenantID: 10,
+        paperID: 100,
+        sortOrder: 2,
+        name: "二、语言文字运用",
+        questionType: "single",
+        totalScore: "20",
+        questionCount: 5,
+      },
+    ],
   }));
-  vi.mocked(api.updateBuildMode).mockImplementation(async (input) => {
-    activeBuildMode = input.buildMode;
-    return {
-      id: 100,
-      tenantID: input.tenantID,
-      name: "高一语文月考试卷",
-      totalScore: input.buildMode === "rule_live" ? "15" : "50",
-      buildMode: input.buildMode,
-      status: "draft" as const,
-      createdAt: new Date("2026-06-02T09:30:00+08:00").getTime(),
-      creatorName: "teacher.exam",
-    };
-  });
   renderPaperAssemblyRoutes(api);
 
   await user.click(screen.getByRole("tab", { name: "组卷规则" }));
-  await user.selectOptions(screen.getByLabelText("组卷模式"), "rule_live");
-
-  await waitFor(() => {
-    expect(api.updateBuildMode).toHaveBeenCalledWith({
-      tenantID: 10,
-      paperID: 100,
-      buildMode: "rule_live",
-    });
-  });
-  expect(screen.getByRole("row", { name: /实时抽题组卷/ })).toBeInTheDocument();
+  expect(screen.getByLabelText("当前组卷方式")).toHaveTextContent("固定规则组卷");
+  expect(screen.queryByRole("combobox", { name: "组卷模式" })).not.toBeInTheDocument();
+  expect(api.updateBuildMode).not.toHaveBeenCalled();
 
   await user.click(screen.getByRole("button", { name: "编辑规则 301" }));
   await user.clear(screen.getByLabelText("规则题量"));
