@@ -114,6 +114,8 @@ export function PaperEditorPage({
   const [smartExcludeRecentExamQuestions, setSmartExcludeRecentExamQuestions] = useState(true);
   const [smartExcludeUsedQuestions, setSmartExcludeUsedQuestions] = useState(true);
   const [smartRuleDrafts, setSmartRuleDrafts] = useState<Record<number, SmartRuleDraft>>({});
+  const [smartTagQuery, setSmartTagQuery] = useState("");
+  const [isSmartTagPickerOpen, setIsSmartTagPickerOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<"all" | QuestionType>("all");
   const [selectedDifficulty, setSelectedDifficulty] = useState<"all" | QuestionDifficulty>("all");
   const [selectedTag, setSelectedTag] = useState("all");
@@ -238,6 +240,10 @@ export function PaperEditorPage({
     values.sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
     return values;
   }, [questionPool]);
+  const smartTagOptions = useMemo(() => {
+    const query = smartTagQuery.trim().toLocaleLowerCase();
+    return tags.filter((tag) => !smartSelectedTags.includes(tag) && (query.length === 0 || tag.toLocaleLowerCase().includes(query)));
+  }, [smartSelectedTags, smartTagQuery, tags]);
 
   function applySmartRuleState(
     nextSections: PaperSectionRow[],
@@ -248,10 +254,22 @@ export function PaperEditorPage({
     setSmartQuestionScope(firstRule?.questionScope ?? "space_all");
     setSmartDifficultyPercentages(firstRule?.difficultyPercentages ?? defaultDifficultyPercentages);
     setSmartSelectedTags(firstRule?.tagNames ?? []);
+    setSmartTagQuery("");
+    setIsSmartTagPickerOpen(false);
     setSmartPrioritizeQuality(firstRule?.prioritizeQuality ?? true);
     setSmartExcludeRecentExamQuestions(firstRule?.excludeRecentExamQuestions ?? true);
     setSmartExcludeUsedQuestions(firstRule?.excludeUsedQuestions ?? true);
     setSmartRuleDrafts(buildSmartRuleDrafts(nextSections, nextSectionQuestions, nextRules));
+  }
+
+  function selectSmartTag(tag: string) {
+    setSmartSelectedTags((items) => items.includes(tag) ? items : [...items, tag]);
+    setSmartTagQuery("");
+    setIsSmartTagPickerOpen(false);
+  }
+
+  function removeSmartTag(tag: string) {
+    setSmartSelectedTags((items) => items.filter((item) => item !== tag));
   }
 
   const filteredQuestions = questionPool.filter((item) => {
@@ -1199,19 +1217,63 @@ export function PaperEditorPage({
 
               <section className="exam-paper-editor__smart-block">
                 <h3>知识点覆盖</h3>
-                <div className="exam-paper-editor__tag-chips">
-                  {tags.length === 0 ? (
-                    <span className="exam-paper-editor__muted">暂无可用标签</span>
-                  ) : tags.map((tag) => (
-                    <button
-                      className={smartSelectedTags.includes(tag) ? "exam-paper-editor__tag-chip exam-paper-editor__tag-chip--active" : "exam-paper-editor__tag-chip"}
-                      disabled={smartQuestionScope !== "tag_filter"}
-                      key={tag}
-                      onClick={() => setSmartSelectedTags((items) => toggleValue(items, tag))}
-                      type="button"
-                    >
+                <div
+                  className="exam-paper-editor__tag-combobox"
+                  onBlur={(event) => {
+                    const nextTarget = event.relatedTarget;
+                    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+                      return;
+                    }
+                    setIsSmartTagPickerOpen(false);
+                  }}
+                >
+                  <label className="exam-paper-editor__tag-input">
+                    <span>选择知识点</span>
+                    <input
+                      aria-label="搜索知识点标签"
+                      disabled={smartQuestionScope !== "tag_filter" || tags.length === 0}
+                      onChange={(event) => {
+                        setSmartTagQuery(event.target.value);
+                        setIsSmartTagPickerOpen(true);
+                      }}
+                      onFocus={() => setIsSmartTagPickerOpen(true)}
+                      placeholder={tags.length === 0 ? "暂无可用标签" : "输入关键词选择标签"}
+                      value={smartTagQuery}
+                    />
+                  </label>
+                  {isSmartTagPickerOpen && smartQuestionScope === "tag_filter" && tags.length > 0 ? (
+                    <div className="exam-paper-editor__tag-options" role="listbox">
+                      {smartTagOptions.length === 0 ? (
+                        <span className="exam-paper-editor__tag-empty">没有匹配的标签</span>
+                      ) : smartTagOptions.map((tag) => (
+                        <button
+                          key={tag}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => selectSmartTag(tag)}
+                          role="option"
+                          type="button"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="exam-paper-editor__selected-tags" aria-label="已选知识点标签">
+                  {smartSelectedTags.length === 0 ? (
+                    <span className="exam-paper-editor__muted">未选择知识点时，将按当前题库范围生成。</span>
+                  ) : smartSelectedTags.map((tag) => (
+                    <span className="exam-paper-editor__selected-tag" key={tag}>
                       {tag}
-                    </button>
+                      <button
+                        aria-label={`移除知识点 ${tag}`}
+                        disabled={smartQuestionScope !== "tag_filter"}
+                        onClick={() => removeSmartTag(tag)}
+                        type="button"
+                      >
+                        ×
+                      </button>
+                    </span>
                   ))}
                 </div>
               </section>
@@ -1468,10 +1530,6 @@ function defaultRuleDraftForSection(section: PaperSectionRow, sectionQuestions: 
     questionCount: String(Math.max(1, questions.length || section.questionCount || 1)),
     scorePerQuestion: firstScore,
   };
-}
-
-function toggleValue(items: string[], value: string) {
-  return items.includes(value) ? items.filter((item) => item !== value) : [...items, value];
 }
 
 function cloneSectionQuestion(item: ManualQuestionRow): ManualQuestionRow {

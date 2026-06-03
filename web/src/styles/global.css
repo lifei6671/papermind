@@ -4912,31 +4912,119 @@ body:has(.exam-paper-editor-page) {
   font-weight: 900;
 }
 
-.exam-paper-editor__tag-chips {
-  display: flex;
-  flex-wrap: wrap;
+.exam-paper-editor__tag-combobox {
+  position: relative;
+  display: grid;
   gap: 8px;
 }
 
-.exam-paper-editor__tag-chip {
-  min-height: 30px;
+.exam-paper-editor__tag-input {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.exam-paper-editor__tag-input input {
+  width: 100%;
+  height: 36px;
+  min-width: 0;
+  padding: 0 11px;
+  border: 1px solid #ded6cb;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 500;
+}
+
+.exam-paper-editor__tag-input input:disabled {
+  background: #f3f0ea;
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.exam-paper-editor__tag-options {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: 220px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid #ded6cb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 14px 28px rgb(38 29 17 / 12%);
+}
+
+.exam-paper-editor__tag-options button {
+  min-height: 32px;
   padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.exam-paper-editor__tag-options button:hover,
+.exam-paper-editor__tag-options button:focus-visible {
+  background: #fff0eb;
+  color: #d84f2b;
+  outline: none;
+}
+
+.exam-paper-editor__tag-empty {
+  padding: 8px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.exam-paper-editor__selected-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.exam-paper-editor__selected-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 6px 0 10px;
   border: 1px solid #d8dfe8;
   border-radius: 7px;
   background: #fff;
   color: #5f6f85;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 500;
 }
 
-.exam-paper-editor__tag-chip--active {
-  border-color: #ef6b4a;
+.exam-paper-editor__selected-tag button {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #8c9aab;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.exam-paper-editor__selected-tag button:hover,
+.exam-paper-editor__selected-tag button:focus-visible {
   background: #fff0eb;
   color: #d84f2b;
-}
-
-.exam-paper-editor__tag-chip:disabled {
-  opacity: 0.55;
+  outline: none;
 }
 
 .exam-paper-editor__rule-rows {

@@ -295,6 +295,55 @@ test("保存草稿失败时使用 toast 提示并透出后端错误", async () =
   expect(document.querySelector(".tenant-admin-status")).not.toBeInTheDocument();
 });
 
+test("智能组卷知识点使用下拉输入选择并保存标签", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble();
+  paperApi.createRule = vi.fn(async (input) => ({
+    id: 501,
+    tenantID: input.tenantID,
+    paperID: input.paperID,
+    sectionID: input.sectionID,
+    sortOrder: 1,
+    questionType: input.questionType,
+    questionCount: input.questionCount,
+    scorePerQuestion: input.scorePerQuestion,
+    difficulty: input.difficulty,
+    tagIDs: input.tagIDs,
+    tagNames: input.tagNames,
+    questionScope: input.questionScope,
+    difficultyPercentages: input.difficultyPercentages,
+    prioritizeQuality: input.prioritizeQuality,
+    excludeRecentExamQuestions: input.excludeRecentExamQuestions,
+    excludeUsedQuestions: input.excludeUsedQuestions,
+  }));
+
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi,
+    questionApi: createQuestionApiDouble(),
+  });
+
+  await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
+  await user.click(screen.getByRole("tab", { name: "智能组卷" }));
+  await user.click(screen.getByLabelText("根据知识点筛选"));
+  await user.type(screen.getByRole("textbox", { name: "搜索知识点标签" }), "阅读");
+  await user.click(screen.getByRole("option", { name: "阅读理解" }));
+
+  expect(within(screen.getByLabelText("已选知识点标签")).getByText("阅读理解")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  await waitFor(() => {
+    expect(paperApi.createRule).toHaveBeenCalledWith(expect.objectContaining({
+      tenantID: 10,
+      paperID: 100,
+      sectionID: 11,
+      questionScope: "tag_filter",
+      tagNames: ["阅读理解"],
+    }));
+  });
+});
+
 test("编辑基础信息后底部草稿状态会联动切换", async () => {
   const user = userEvent.setup();
   const paperApi = createPaperApiDouble();
