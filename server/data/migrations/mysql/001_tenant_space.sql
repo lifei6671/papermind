@@ -258,6 +258,8 @@ CREATE TABLE IF NOT EXISTS papers (
     space_id BIGINT UNSIGNED NULL COMMENT '所属空间 ID，NULL 表示租户公共试卷',
     name VARCHAR(128) NOT NULL COMMENT '试卷名称',
     description TEXT NOT NULL COMMENT '试卷说明',
+    duration_minutes INT NOT NULL DEFAULT 120 COMMENT '默认考试时长，单位分钟',
+    grade_level VARCHAR(64) NOT NULL DEFAULT '' COMMENT '适用年级，例如高一 / 高二',
     total_score DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '试卷总分，由系统按大题题目聚合计算',
     build_mode VARCHAR(32) NOT NULL COMMENT '组卷方式：manual / rule_fixed / rule_live',
     shuffle_questions TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否对每个考生随机题目顺序',

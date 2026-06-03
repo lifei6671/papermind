@@ -443,6 +443,8 @@ CREATE TABLE IF NOT EXISTS papers (
     space_id BIGINT,
     name VARCHAR(128) NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    duration_minutes INTEGER NOT NULL DEFAULT 120,
+    grade_level VARCHAR(64) NOT NULL DEFAULT '',
     total_score NUMERIC(10,2) NOT NULL DEFAULT 0,
     build_mode VARCHAR(32) NOT NULL,
     shuffle_questions BOOLEAN NOT NULL DEFAULT FALSE,
@@ -464,6 +466,8 @@ COMMENT ON COLUMN papers.tenant_id IS '所属租户 ID';
 COMMENT ON COLUMN papers.space_id IS '所属空间 ID，NULL 表示租户公共试卷';
 COMMENT ON COLUMN papers.name IS '试卷名称';
 COMMENT ON COLUMN papers.description IS '试卷说明';
+COMMENT ON COLUMN papers.duration_minutes IS '默认考试时长，单位分钟';
+COMMENT ON COLUMN papers.grade_level IS '适用年级，例如高一 / 高二';
 COMMENT ON COLUMN papers.total_score IS '试卷总分，由系统按大题题目聚合计算';
 COMMENT ON COLUMN papers.build_mode IS '组卷方式：manual / rule_fixed / rule_live';
 COMMENT ON COLUMN papers.shuffle_questions IS '是否对每个考生随机题目顺序';

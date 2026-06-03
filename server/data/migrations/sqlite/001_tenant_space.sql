@@ -281,6 +281,8 @@ CREATE TABLE IF NOT EXISTS papers (
     space_id INTEGER,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    duration_minutes INTEGER NOT NULL DEFAULT 120,
+    grade_level TEXT NOT NULL DEFAULT '',
     total_score NUMERIC NOT NULL DEFAULT 0,
     build_mode TEXT NOT NULL,
     shuffle_questions INTEGER NOT NULL DEFAULT 0,
