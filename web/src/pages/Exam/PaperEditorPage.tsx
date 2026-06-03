@@ -1329,35 +1329,37 @@ export function PaperEditorPage({
                     const subtotal = Number(draft.questionCount || "0") * Number(draft.scorePerQuestion || "0");
                     return (
                       <div className="exam-paper-editor__rule-row" key={section.id}>
-                        <span>{section.name}</span>
-                        <label>
-                          <span>题数</span>
-                          <input
-                            aria-label={`${section.name}题数`}
-                            min={1}
-                            onChange={(event) => setSmartRuleDrafts((items) => ({
-                              ...items,
-                              [section.id]: { ...draft, questionCount: event.target.value },
-                            }))}
-                            type="number"
-                            value={draft.questionCount}
-                          />
-                        </label>
-                        <label>
-                          <span>每题分值</span>
-                          <input
-                            aria-label={`${section.name}每题分值`}
-                            min={0}
-                            onChange={(event) => setSmartRuleDrafts((items) => ({
-                              ...items,
-                              [section.id]: { ...draft, scorePerQuestion: event.target.value },
-                            }))}
-                            step="any"
-                            type="number"
-                            value={draft.scorePerQuestion}
-                          />
-                        </label>
+                        <span className="exam-paper-editor__rule-title">{section.name}</span>
                         <strong>{Number.isFinite(subtotal) ? subtotal : 0} 分</strong>
+                        <div className="exam-paper-editor__rule-controls">
+                          <label>
+                            <span>题数</span>
+                            <input
+                              aria-label={`${section.name}题数`}
+                              min={1}
+                              onChange={(event) => setSmartRuleDrafts((items) => ({
+                                ...items,
+                                [section.id]: { ...draft, questionCount: event.target.value },
+                              }))}
+                              type="number"
+                              value={draft.questionCount}
+                            />
+                          </label>
+                          <label>
+                            <span>每题分值</span>
+                            <input
+                              aria-label={`${section.name}每题分值`}
+                              min={0}
+                              onChange={(event) => setSmartRuleDrafts((items) => ({
+                                ...items,
+                                [section.id]: { ...draft, scorePerQuestion: event.target.value },
+                              }))}
+                              step="any"
+                              type="number"
+                              value={draft.scorePerQuestion}
+                            />
+                          </label>
+                        </div>
                       </div>
                     );
                   })}

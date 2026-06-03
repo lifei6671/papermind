@@ -5123,24 +5123,50 @@ body:has(.exam-paper-editor-page) {
 .exam-paper-editor__rule-rows {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .exam-paper-editor__rule-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(96px, 0.5fr) minmax(126px, 0.6fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
+  min-width: 0;
   padding: 10px;
   border: 1px solid #efe8df;
   border-radius: 8px;
   background: #fff;
 }
 
-.exam-paper-editor__rule-row > span,
+.exam-paper-editor__rule-title,
 .exam-paper-editor__rule-row strong {
+  min-width: 0;
   color: var(--text-primary);
   font-size: 13px;
   font-weight: 900;
+}
+
+.exam-paper-editor__rule-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exam-paper-editor__rule-row strong {
+  white-space: nowrap;
+}
+
+.exam-paper-editor__rule-controls {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.exam-paper-editor__rule-controls label {
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
 }
 
 .exam-paper-editor__smart-metrics {
