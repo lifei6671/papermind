@@ -107,6 +107,20 @@ func TestExportServiceCreatesConfiguredExportDir(t *testing.T) {
 		t.Fatalf("expected export file created: %v", err)
 	}
 }
+
+func TestExportServiceLogsEmptyExportOnlyInAuthorizedSpace(t *testing.T) {
+	repo := &fakeExportRepository{targetSpaceIDs: []uint64{301, 302}}
+	svc := NewExportService(ExportServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), ExportDir: t.TempDir(), Now: fixedNow})
+
+	_, err := svc.ExportExamScores(context.Background(), ExportExamScoresInput{Permission: exportPermissionContext(), TenantID: 10, ExamID: 20})
+	if err != nil {
+		t.Fatalf("ExportExamScores returned error: %v", err)
+	}
+	if len(repo.operationSpaceIDs) != 1 || repo.operationSpaceIDs[0] != 301 {
+		t.Fatalf("expected empty export log scoped to authorized space 301, got %#v", repo.operationSpaceIDs)
+	}
+}
+
 func TestExportServiceRejectsExportFileFromDifferentTenant(t *testing.T) {
 	exportDir := t.TempDir()
 	fileName := "exam-20-scores-tenant-123456.csv"
@@ -146,6 +160,42 @@ func TestExportServiceFiltersRowsByActualSpaceScope(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].StudentName != "张三" {
 		t.Fatalf("expected only rows in actual allowed space, got %#v", rows)
+	}
+}
+
+func TestExportServiceDisplaysAuthorizedSpaceForMultiSpaceRows(t *testing.T) {
+	repo := &fakeExportRepository{
+		rows: []ScoreExportRow{{
+			StudentName: "张三",
+			SpaceID:     301,
+			SpaceName:   "一班",
+			SpaceIDs:    []uint64{301, 302},
+			SpaceNames:  map[uint64]string{301: "一班", 302: "二班"},
+			TotalScore:  "10",
+		}},
+	}
+	svc := NewExportService(ExportServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), ExportDir: t.TempDir(), Now: fixedNow})
+
+	rows, err := svc.ListExamScores(context.Background(), ListExamScoresInput{
+		Permission: permission.PermissionContext{
+			SubjectType:      permission.SubjectTenantUser,
+			UserID:           20,
+			TenantID:         10,
+			Role:             permission.RoleSpaceAdmin,
+			SpaceMemberships: map[uint64]string{302: permission.RoleSpaceAdmin},
+			ExamScope:        map[uint64]uint64{20: 302},
+		},
+		TenantID: 10,
+		ExamID:   20,
+	})
+	if err != nil {
+		t.Fatalf("ListExamScores returned error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected one scoped row, got %#v", rows)
+	}
+	if rows[0].SpaceID != 302 || rows[0].SpaceName != "二班" {
+		t.Fatalf("expected export row display space to stay in authorized space 302, got %#v", rows[0])
 	}
 }
 
@@ -248,9 +298,11 @@ func (failingWriter) Write(p []byte) (int, error) {
 }
 
 type fakeExportRepository struct {
-	rows           []ScoreExportRow
-	targetSpaceIDs []uint64
-	called         bool
+	rows              []ScoreExportRow
+	targetSpaceIDs    []uint64
+	operationLogs     []OperationLog
+	operationSpaceIDs []uint64
+	called            bool
 }
 
 func (r *fakeExportRepository) ListScoreExportRows(ctx context.Context, tenantID uint64, examID uint64) ([]ScoreExportRow, error) {
@@ -260,4 +312,10 @@ func (r *fakeExportRepository) ListScoreExportRows(ctx context.Context, tenantID
 
 func (r *fakeExportRepository) ExamTargetSpaceIDs(ctx context.Context, tenantID uint64, examID uint64) ([]uint64, error) {
 	return append([]uint64(nil), r.targetSpaceIDs...), nil
+}
+
+func (r *fakeExportRepository) AppendExportOperationLog(ctx context.Context, log OperationLog, spaceIDs []uint64) error {
+	r.operationLogs = append(r.operationLogs, log)
+	r.operationSpaceIDs = append([]uint64(nil), spaceIDs...)
+	return nil
 }

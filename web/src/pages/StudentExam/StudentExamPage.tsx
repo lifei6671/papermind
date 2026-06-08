@@ -303,6 +303,14 @@ type StudentExamPageProps = {
   tenantID?: number;
   examID?: number;
   userID?: number;
+  preview?: StudentExamPreviewData;
+};
+
+export type StudentExamPreviewData = {
+  durationMinutes?: number;
+  exitPath?: string;
+  questions: APIStudentExamQuestion[];
+  title: string;
 };
 
 type ExamSession = {
@@ -315,11 +323,19 @@ type StudentExamRouteParams = {
   examID: number;
 };
 
+type DesktopStudentExamPageProps = {
+  api: StudentExamAPI;
+  examID: number;
+  preview?: StudentExamPreviewData;
+  tenantID: number;
+};
+
 function DesktopStudentExamPage({
   api,
   tenantID,
   examID,
-}: Required<StudentExamPageProps>) {
+  preview,
+}: DesktopStudentExamPageProps) {
   const [isExamDrawerOpen, setIsExamDrawerOpen] = useState(false);
   const navigate = useNavigate();
   const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
@@ -339,6 +355,8 @@ function DesktopStudentExamPage({
   const [remainingMillis, setRemainingMillis] = useState<number | null>(null);
   const [loadError, setLoadError] = useState("");
   const autoSubmitStarted = useRef(false);
+  const isPreviewMode = preview !== undefined;
+  const examTitle = preview?.title ?? fallbackExamTitle;
 
   const questionGroups = buildQuestionGroups(apiQuestions);
   const currentQuestion = apiQuestions.find((question) => question.number === currentQuestionNumber);
@@ -367,6 +385,19 @@ function DesktopStudentExamPage({
   useEffect(() => {
     let isCancelled = false;
     async function startAttempt() {
+      if (preview) {
+        const questions = preview.questions.map(mapAPIQuestion);
+        const previewDeadline = preview.durationMinutes
+          ? Date.now() + preview.durationMinutes * 60 * 1000
+          : null;
+        setApiQuestions(questions);
+        setExamSession(null);
+        setAnswerDeadline(previewDeadline);
+        setRemainingMillis(previewDeadline === null ? null : Math.max(0, previewDeadline - Date.now()));
+        setLoadError("");
+        setCurrentQuestionNumber(questions[0]?.number ?? 1);
+        return;
+      }
       try {
         const started = await api.startAttempt({ tenantID, examID });
         if (isCancelled) {
@@ -391,7 +422,7 @@ function DesktopStudentExamPage({
     return () => {
       isCancelled = true;
     };
-  }, [api, tenantID, examID]);
+  }, [api, tenantID, examID, preview]);
 
   useEffect(() => {
     if (!answerDeadline) {
@@ -431,6 +462,10 @@ function DesktopStudentExamPage({
       return;
     }
     setAnswers((currentAnswers) => ({ ...currentAnswers, [currentQuestionNumber]: value }));
+    if (isPreviewMode) {
+      setSaveMessage(`第 ${currentQuestionNumber} 题已在预览中标记`);
+      return;
+    }
     try {
       if (examSession && currentQuestion.id) {
         await api.saveAnswer({
@@ -460,6 +495,10 @@ function DesktopStudentExamPage({
       delete nextAnswers[currentQuestionNumber];
       return nextAnswers;
     });
+    if (isPreviewMode) {
+      setSaveMessage("第 " + currentQuestionNumber + " 题已在预览中清空");
+      return;
+    }
     try {
       if (examSession && currentQuestion.id) {
         await api.saveAnswer({
@@ -480,6 +519,13 @@ function DesktopStudentExamPage({
 
   const submitExam = useCallback(async (eventType: "submit" | "auto_submit" = "submit") => {
     try {
+      if (isPreviewMode) {
+        setVisibleResult(null);
+        setResultMessage("预览模式不会提交答卷。");
+        setIsSubmitDialogOpen(false);
+        setIsSubmitted(true);
+        return;
+      }
       if (examSession) {
         await api.submitAttempt({
           ...(eventType === "auto_submit" ? { eventType } : {}),
@@ -501,14 +547,14 @@ function DesktopStudentExamPage({
     } catch {
       setSaveMessage("交卷失败，请稍后重试");
     }
-  }, [api, examSession, tenantID]);
+  }, [api, examSession, isPreviewMode, tenantID]);
   useEffect(() => {
-    if (remainingMillis !== 0 || !examSession || isSubmitted || autoSubmitStarted.current) {
+    if (isPreviewMode || remainingMillis !== 0 || !examSession || isSubmitted || autoSubmitStarted.current) {
       return;
     }
     autoSubmitStarted.current = true;
     void submitExam("auto_submit");
-  }, [remainingMillis, examSession, isSubmitted, submitExam]);
+  }, [remainingMillis, examSession, isPreviewMode, isSubmitted, submitExam]);
 
 
   if (isSubmitted) {
@@ -523,7 +569,7 @@ function DesktopStudentExamPage({
             <span className="student-brand__mark">P</span>
             <span>PaperMind</span>
           </div>
-          <h1>{fallbackExamTitle}</h1>
+          <h1>{examTitle}</h1>
         </header>
         <main className="exam-result-page">
           <section className="exam-card exam-result-card" aria-live="polite">
@@ -541,7 +587,7 @@ function DesktopStudentExamPage({
           <span className="student-brand__mark">P</span>
           <span>PaperMind</span>
         </div>
-        <h1>{fallbackExamTitle}</h1>
+        <h1>{examTitle}</h1>
         <div
           className="student-tools"
           aria-label="考生账户"
@@ -695,8 +741,8 @@ function DesktopStudentExamPage({
           </div>
           <section className="exam-card info-panel">
             <h2>考试信息</h2>
-            <p>考试名称：{fallbackExamTitle}</p>
-            <p>考试时长：以服务端截止时间为准</p>
+            <p>考试名称：{examTitle}</p>
+            <p>考试时长：{preview?.durationMinutes ? `${preview.durationMinutes} 分钟` : "以服务端截止时间为准"}</p>
             <p>总题目数：{apiQuestions.length} 题</p>
             <p>总分：{formatScore(totalScore)} 分</p>
           </section>
@@ -759,7 +805,7 @@ function DesktopStudentExamPage({
             <p>检测到您将离开考试页面，请确认是否离开？</p>
             <div>
               <Button onClick={() => setIsLeaveDialogOpen(false)} type="button">留在页面</Button>
-              <Button onClick={() => navigate("/exam-entry", { replace: true })} type="button">确认离开</Button>
+              <Button onClick={() => navigate(preview?.exitPath ?? "/exam-entry", { replace: true })} type="button">确认离开</Button>
             </div>
           </div>
         </div>
@@ -778,7 +824,7 @@ export function StudentExamPage({
   api = examApi,
   tenantID,
   examID,
-  userID,
+  preview,
 }: StudentExamPageProps) {
   const [searchParams] = useSearchParams();
   const routeParams = readStudentExamRouteParams(searchParams);
@@ -786,6 +832,16 @@ export function StudentExamPage({
     tenantID: tenantID ?? routeParams?.tenantID,
     examID: examID ?? routeParams?.examID,
   };
+  if (preview) {
+    return (
+      <DesktopStudentExamPage
+        api={api}
+        examID={examID ?? 0}
+        preview={preview}
+        tenantID={tenantID ?? 0}
+      />
+    );
+  }
   if (!resolvedParams.tenantID || !resolvedParams.examID) {
     return <StudentExamLoadError message="考试入口参数缺失，请重新通过邀请码进入考试。" />;
   }
@@ -794,7 +850,6 @@ export function StudentExamPage({
       api={api}
       tenantID={resolvedParams.tenantID}
       examID={resolvedParams.examID}
-      userID={userID ?? 0}
     />
   );
 }

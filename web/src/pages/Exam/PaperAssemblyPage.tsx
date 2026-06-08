@@ -1,8 +1,11 @@
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { formatApiErrorMessage } from "../../api/client";
+import type { ActorRole } from "../../api/grading";
 import type { PaperAssemblyAPI, PaperBuildMode, PaperRow, PaperRuleRow, PaperSectionRow } from "../../api/papers";
 import { paperApi } from "../../api/papers";
+import { useFeedback } from "../../app/feedback-context";
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Pagination } from "../../components/ui/Pagination";
@@ -26,6 +29,7 @@ type EditableRuleState = {
 };
 
 type PaperAssemblyPageProps = {
+  actorRole?: ActorRole;
   api?: PaperAssemblyAPI;
   tenantID?: number;
   spaceID?: number;
@@ -44,14 +48,16 @@ const paperBuildModeOptions: Array<{
 const paperPageSizeOptions = [10, 20, 30, 40, 50];
 
 export function PaperAssemblyPage({
+  actorRole,
   api = paperApi,
   tenantID = 10,
   spaceID,
 }: PaperAssemblyPageProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { showError } = useFeedback();
   const [papers, setPapers] = useState<PaperRow[]>([]);
-  const [activeTab, setActiveTab] = useState<PaperSubMenu>("papers");
+  const [activeTab] = useState<PaperSubMenu>("papers");
   const [sections, setSections] = useState<PaperSectionRow[]>([]);
   const [rules, setRules] = useState<PaperRuleRow[]>([]);
   const [activePaperID, setActivePaperID] = useState<number | null>(null);
@@ -437,21 +443,23 @@ export function PaperAssemblyPage({
     navigate(`${path}${scopedPaperSearch(location.search, spaceID)}`);
   }
 
-  async function handlePreviewPaper(paperID: number) {
-    setActivePaperID(paperID);
-    await loadWorkspace(paperID);
-    setActiveTab("rules");
+  function navigateToPaperPreview(target: number) {
+    const path = `/papers/${target}/student-preview`;
+    window.open(`${path}${scopedPaperSearch(location.search, spaceID)}`, "_blank", "noopener,noreferrer");
   }
 
   async function handleTogglePaperStatus(paper: PaperRow) {
+    if (!canManagePaper(paper, actorRole)) {
+      return;
+    }
     try {
       const nextPaper = paper.status === "enabled"
         ? await api.disablePaper({ tenantID, paperID: paper.id })
         : await api.enablePaper({ tenantID, paperID: paper.id });
       setPapers((items) => items.map((item) => (item.id === nextPaper.id ? nextPaper : item)));
       setLoadError("");
-    } catch {
-      setLoadError(paper.status === "enabled" ? "禁用试卷失败" : "启用试卷失败");
+    } catch (error) {
+      showError(formatApiErrorMessage(error, paper.status === "enabled" ? "禁用试卷失败" : "启用试卷失败"));
     }
   }
 
@@ -500,10 +508,15 @@ export function PaperAssemblyPage({
                   <div className="tenant-actions">
                     <Button
                       aria-label={`编辑试卷 ${paper.name}`}
+                      disabled={!canEditPaper(paper)}
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (!canEditPaper(paper)) {
+                          return;
+                        }
                         navigateToPaperEditor(paper.id);
                       }}
+                      title={paperEditDisabledTitle(paper)}
                       variant="actionEdit"
                     >
                       编辑
@@ -512,7 +525,7 @@ export function PaperAssemblyPage({
                       aria-label={`预览试卷 ${paper.name}`}
                       onClick={(event) => {
                         event.stopPropagation();
-                        void handlePreviewPaper(paper.id);
+                        navigateToPaperPreview(paper.id);
                       }}
                       variant="actionReset"
                     >
@@ -520,10 +533,12 @@ export function PaperAssemblyPage({
                     </Button>
                     <Button
                       aria-label={`${paper.status === "enabled" ? "禁用试卷" : "启用试卷"} ${paper.name}`}
+                      disabled={!canManagePaper(paper, actorRole)}
                       onClick={(event) => {
                         event.stopPropagation();
                         void handleTogglePaperStatus(paper);
                       }}
+                      title={!canManagePaper(paper, actorRole) ? "教师不能维护公共试卷" : undefined}
                       variant="actionClose"
                     >
                       {paper.status === "enabled" ? "禁用" : "启用"}
@@ -599,21 +614,9 @@ export function PaperAssemblyPage({
   return (
     <section className="page platform-page exam-builder-page">
       <nav aria-label="试卷菜单" className="platform-tabbar" role="tablist">
-        {[
-          ["papers", "试卷"],
-          ["rules", "组卷规则"],
-        ].map(([tab, label]) => (
-          <button
-            aria-selected={activeTab === tab}
-            className={activeTab === tab ? "platform-tab platform-tab--active" : "platform-tab"}
-            key={tab}
-            onClick={() => setActiveTab(tab as PaperSubMenu)}
-            role="tab"
-            type="button"
-          >
-            {label}
-          </button>
-        ))}
+        <span aria-selected="true" className="platform-tab platform-tab--active" role="tab">
+          试卷
+        </span>
       </nav>
 
       <Panel>
@@ -1020,4 +1023,26 @@ function scopedPaperSearch(currentSearch: string, spaceID: number | undefined) {
   params.delete("space_id");
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function canWritePublicPaperScope(actorRole?: ActorRole) {
+  return actorRole === undefined || actorRole === "tenant_admin";
+}
+
+function canManagePaper(paper: PaperRow, actorRole?: ActorRole) {
+  if (paper.spaceID === undefined) {
+    return canWritePublicPaperScope(actorRole);
+  }
+  return true;
+}
+
+function canEditPaper(paper: PaperRow) {
+  return paper.status !== "enabled";
+}
+
+function paperEditDisabledTitle(paper: PaperRow) {
+  if (paper.status === "enabled") {
+    return "已发布试卷仅可预览";
+  }
+  return undefined;
 }

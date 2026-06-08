@@ -37,6 +37,13 @@ type paperListRow struct {
 	CreatorName string `gorm:"column:creator_name"`
 }
 
+type paperSectionQuestionListRow struct {
+	PaperSectionQuestionDO
+	QuestionType   string `gorm:"column:question_type"`
+	Title          string `gorm:"column:title"`
+	StandardAnswer string `gorm:"column:standard_answer"`
+}
+
 func NewPaperRepository(gormDB *gorm.DB, options PaperRepositoryOptions) *PaperRepository {
 	now := options.Now
 	if now == nil {
@@ -506,7 +513,7 @@ func (r *PaperRepository) QuestionUsableForScope(ctx context.Context, tenantID u
 	if spaceID == nil {
 		query = query.Where("q." + QuestionColumns.SpaceID + " IS NULL")
 	} else {
-		query = query.Where(r.db.Where("q." + QuestionColumns.SpaceID + " IS NULL").Or("q." + QuestionColumns.SpaceID + " = ?", *spaceID))
+		query = query.Where(r.db.Where("q."+QuestionColumns.SpaceID+" IS NULL").Or("q."+QuestionColumns.SpaceID+" = ?", *spaceID))
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return false, err
@@ -1044,19 +1051,53 @@ func (r *PaperRepository) UpdateBuildMode(ctx context.Context, tenantID uint64, 
 }
 
 func (r *PaperRepository) ListSectionQuestions(ctx context.Context, tenantID uint64, paperID uint64) ([]servicepaper.SectionQuestion, error) {
-	var rows []PaperSectionQuestionDO
-	if err := r.db.WithContext(ctx).
-		Where(PaperSectionQuestionColumns.TenantID+" = ?", tenantID).
-		Where(PaperSectionQuestionColumns.PaperID+" = ?", paperID).
-		Order(PaperSectionQuestionColumns.SortOrder + " ASC").
+	var rows []paperSectionQuestionListRow
+	if err := r.db.WithContext(ctx).Table(PaperSectionQuestionDO{}.TableName()+" AS psq").
+		Select("psq.*, q."+QuestionColumns.Type+" AS question_type, q."+QuestionColumns.Title+" AS title, q."+QuestionColumns.StandardAnswer+" AS standard_answer").
+		Joins("LEFT JOIN "+QuestionDO{}.TableName()+" AS q ON q."+QuestionColumns.TenantID+" = psq."+PaperSectionQuestionColumns.TenantID+" AND q."+QuestionColumns.ID+" = psq."+PaperSectionQuestionColumns.QuestionID+" AND q."+QuestionColumns.DeletedAt+" = 0").
+		Where("psq."+PaperSectionQuestionColumns.TenantID+" = ?", tenantID).
+		Where("psq."+PaperSectionQuestionColumns.PaperID+" = ?", paperID).
+		Order("psq." + PaperSectionQuestionColumns.SortOrder + " ASC").
 		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	optionsByQuestionID, err := r.listSectionQuestionOptionContents(ctx, tenantID, rows)
+	if err != nil {
 		return nil, err
 	}
 	items := make([]servicepaper.SectionQuestion, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, sectionQuestionFromDO(row))
+		items = append(items, sectionQuestionFromListRow(row, optionsByQuestionID[row.QuestionID]))
 	}
 	return items, nil
+}
+
+func (r *PaperRepository) listSectionQuestionOptionContents(ctx context.Context, tenantID uint64, rows []paperSectionQuestionListRow) (map[uint64][]string, error) {
+	questionIDs := make([]uint64, 0, len(rows))
+	seen := make(map[uint64]struct{}, len(rows))
+	for _, row := range rows {
+		if _, ok := seen[row.QuestionID]; ok {
+			continue
+		}
+		seen[row.QuestionID] = struct{}{}
+		questionIDs = append(questionIDs, row.QuestionID)
+	}
+	if len(questionIDs) == 0 {
+		return map[uint64][]string{}, nil
+	}
+	var optionRows []QuestionOptionDO
+	if err := r.db.WithContext(ctx).
+		Where(QuestionOptionColumns.TenantID+" = ?", tenantID).
+		Where(QuestionOptionColumns.QuestionID+" IN ?", questionIDs).
+		Order(QuestionOptionColumns.QuestionID + " ASC, " + QuestionOptionColumns.SortOrder + " ASC").
+		Find(&optionRows).Error; err != nil {
+		return nil, err
+	}
+	optionsByQuestionID := make(map[uint64][]string, len(questionIDs))
+	for _, option := range optionRows {
+		optionsByQuestionID[option.QuestionID] = append(optionsByQuestionID[option.QuestionID], option.Content)
+	}
+	return optionsByQuestionID, nil
 }
 
 func (r *PaperRepository) ListRuleLiveRules(ctx context.Context, tenantID uint64, paperID uint64) ([]servicepaper.Rule, error) {
@@ -1141,6 +1182,15 @@ func sectionQuestionFromDO(row PaperSectionQuestionDO) servicepaper.SectionQuest
 		Score:          row.Score,
 		ShuffleOptions: row.ShuffleOptions,
 	}
+}
+
+func sectionQuestionFromListRow(row paperSectionQuestionListRow, options []string) servicepaper.SectionQuestion {
+	item := sectionQuestionFromDO(row.PaperSectionQuestionDO)
+	item.QuestionType = row.QuestionType
+	item.Title = row.Title
+	item.Options = options
+	item.BlankCount = fillBlankCount(row.QuestionType, row.StandardAnswer)
+	return item
 }
 
 func ruleFromDO(row PaperSectionRuleDO) servicepaper.Rule {

@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	apimiddleware "github.com/lifei6671/papermind/server/api/middleware"
 	apirouter "github.com/lifei6671/papermind/server/api/router"
+	serviceexam "github.com/lifei6671/papermind/server/internal/service/exam"
 )
 
 const (
@@ -36,7 +37,8 @@ func AuthMiddlewares(options RouterOptions) []gin.HandlerFunc {
 
 // RegisterRoutes 只负责注册 /api/v1 下的版本路由和对应 handler。
 func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
-	examHandler := examHandler{service: deps.Exams, taking: deps.Taking, review: deps.Review, export: deps.Export, result: deps.Results, papers: deps.PaperRepository, targets: deps.ExamRepository, members: deps.SpaceRepository, tenantUsers: deps.TenantUsers, sessionMaxAgeSeconds: deps.AuthSessionTTL, now: deps.Now}
+	managementDetail := serviceexam.NewManagementDetailService(serviceexam.ManagementDetailServiceOptions{Repo: deps.ExamRepository, Now: deps.Now})
+	examHandler := examHandler{service: deps.Exams, management: managementDetail, taking: deps.Taking, review: deps.Review, export: deps.Export, result: deps.Results, papers: deps.PaperRepository, targets: deps.ExamRepository, members: deps.SpaceRepository, tenantUsers: deps.TenantUsers, sessionMaxAgeSeconds: deps.AuthSessionTTL, now: deps.Now}
 	tenantHandler := tenantHandler{service: deps.Tenants, spaces: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository, passwordMinLength: deps.PasswordMinLength}
 	spaceHandler := spaceHandler{service: deps.Spaces, users: deps.TenantUsers, members: deps.SpaceRepository}
 	userHandler := userHandler{service: deps.TenantUsers, passwordMinLength: deps.PasswordMinLength}
@@ -58,6 +60,17 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	tenant.GET("/profile/spaces", apimiddleware.RequireAuthPrincipal(), authHandler.listProfileSpaces)
 	api.GET("/exams", apimiddleware.RequireExamBusinessPrincipal(), examHandler.list)
 	api.POST("/exams", apimiddleware.RequireExamBusinessPrincipal(), examHandler.publish)
+	api.GET("/exams/:id/detail", apimiddleware.RequireExamBusinessPrincipal(), examHandler.getManagementDetail)
+	api.GET("/exams/:id/overview", apimiddleware.RequireExamBusinessPrincipal(), examHandler.getOverview)
+	api.GET("/exams/:id/paper-preview", apimiddleware.RequireExamBusinessPrincipal(), examHandler.getPaperPreview)
+	api.GET("/exams/:id/candidates", apimiddleware.RequireExamBusinessPrincipal(), examHandler.listCandidates)
+	api.GET("/exams/:id/results/summary", apimiddleware.RequireExamBusinessPrincipal(), examHandler.getResultsSummary)
+	api.GET("/exams/:id/results", apimiddleware.RequireExamBusinessPrincipal(), examHandler.listManagementResults)
+	api.GET("/exams/:id/attempts/:attempt_id/answer-sheet", apimiddleware.RequireExamBusinessPrincipal(), examHandler.getManagementAnswerSheet)
+	api.GET("/exams/:id/logs", apimiddleware.RequireExamBusinessPrincipal(), examHandler.listManagementOperationLogs)
+	api.POST("/exams/:id/settings", apimiddleware.RequireExamBusinessPrincipal(), examHandler.updateManagementSettings)
+	api.POST("/exams/:id/candidates/import", apimiddleware.RequireExamBusinessPrincipal(), examHandler.importCandidates)
+	api.POST("/exams/:id/invitations/resend", apimiddleware.RequireExamBusinessPrincipal(), examHandler.resendInvitations)
 	api.POST("/exams/invite/resolve", examHandler.resolveInvite)
 	api.POST("/exams/:id/attempts/start", examHandler.startAttempt)
 	api.POST("/exam-entry/invite/resolve", examHandler.resolveInvite)

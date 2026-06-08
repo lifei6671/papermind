@@ -10,6 +10,7 @@ import { PaperEditRoute } from "./PaperEditRoute";
 import { PaperEditorPage } from "./PaperEditorPage";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -414,19 +415,89 @@ test("空间管理员在试卷编辑页看不到公共试卷选项", async () =>
   expect(screen.getByRole("option", { name: "当前空间试卷" })).toBeInTheDocument();
 });
 
-test("空间管理员查看公共试卷时展示只读公共试卷归属", async () => {
+test("空间管理员查看公共试卷时可以归属到当前空间", async () => {
+  const user = userEvent.setup();
+  const paperApi = createPaperApiDouble({
+    papers: [createPaperRowForTest({ spaceID: undefined })],
+  });
   renderPaperEditorRoutes({
     actorRole: "space_admin",
     initialEntry: "/papers/100/edit?space_id=301",
-    paperApi: createPaperApiDouble({
-      papers: [createPaperRowForTest({ spaceID: undefined })],
-    }),
+    paperApi,
   });
 
   await screen.findByText("关于函数 y = 1/x，下列说法正确的是（ ）");
 
+  await user.click(screen.getByRole("combobox", { name: "试卷归属" }));
+  expect(screen.queryByRole("option", { name: "公共试卷" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("option", { name: "当前空间试卷" }));
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+
+  await waitFor(() => {
+    expect(paperApi.updatePaper).toHaveBeenCalledWith(expect.objectContaining({
+      tenantID: 10,
+      paperID: 100,
+      spaceID: 301,
+    }));
+  });
+});
+
+test("教师查看公共试卷时提示只读且禁用底部操作", async () => {
+  renderPaperEditorRoutes({
+    actorRole: "teacher",
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi: createPaperApiDouble({
+      papers: [createPaperRowForTest({ spaceID: undefined, buildMode: "rule_fixed", creatorName: "tenant.admin" })],
+    }),
+  });
+
+  await screen.findByDisplayValue("高一语文月考试卷");
+
+  expect(screen.getByRole("alert")).toHaveTextContent("你没有权限编辑该公共试卷，仅可查看。");
   expect(screen.queryByRole("combobox", { name: "试卷归属" })).not.toBeInTheDocument();
   expect(screen.getByText("公共试卷")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "一键智能组卷" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "发布试卷" })).toBeDisabled();
+});
+
+test("已发布试卷编辑页仅允许预览", async () => {
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi: createPaperApiDouble({
+      papers: [createPaperRowForTest({ status: "enabled", buildMode: "rule_fixed" })],
+    }),
+  });
+
+  await screen.findByDisplayValue("高一语文月考试卷");
+
+  expect(screen.getByRole("alert")).toHaveTextContent("已发布试卷仅可预览。");
+  expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "一键智能组卷" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "发布试卷" })).toBeDisabled();
+});
+
+test("试卷编辑页预览按钮进入后台学生视角预览", async () => {
+  const user = userEvent.setup();
+  const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+  renderPaperEditorRoutes({
+    initialEntry: "/papers/100/edit?space_id=301",
+    paperApi: createPaperApiDouble({
+      sectionQuestions: [
+        { tenantID: 10, paperID: 100, sectionID: 11, questionID: 201, sortOrder: 1, score: "5" },
+      ],
+    }),
+  });
+
+  await screen.findByDisplayValue("高一语文月考试卷");
+  await user.click(screen.getByRole("button", { name: "预览试卷" }));
+
+  expect(openSpy).toHaveBeenCalledWith(
+    "/papers/100/student-preview?space_id=301",
+    "_blank",
+    "noopener,noreferrer",
+  );
+  expect(screen.getByRole("tab", { name: "组卷管理" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("新建试卷切换组卷方式失败后仍接管已创建草稿，避免重复创建", async () => {
@@ -2322,6 +2393,7 @@ function renderPaperEditorRoutes({
             path="/papers/:paperID/edit"
             element={<PaperEditRoute actorRole={actorRole} paperApi={paperApi} questionApi={questionApi} tenantID={10} spaceID={301} />}
           />
+          <Route path="/papers/:paperID/student-preview" element={<LocationProbe />} />
         </Routes>
         <LocationProbe />
       </MemoryRouter>

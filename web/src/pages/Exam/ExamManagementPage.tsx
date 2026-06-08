@@ -3,19 +3,21 @@ import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { useEffect, useState } from "react";
+import { ApiError } from "../../api/client";
+import { useFeedback } from "../../app/feedback-context";
 import { examApi } from "../../api/exams";
 import type { ExamManagementAPI, ExamRow } from "../../api/exams";
 import { paperApi as defaultPaperApi } from "../../api/papers";
 import type { PaperAPI, PaperRow } from "../../api/papers";
 import { spaceApi as defaultSpaceApi } from "../../api/spaces";
-import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
+import type { SpaceManagementAPI, SpaceMember, SpaceMemberAPI, SpaceRow } from "../../api/spaces";
 import { userApi as defaultUserApi } from "../../api/users";
 import type { TenantUserRow, UserManagementAPI } from "../../api/users";
 
 type ExamManagementPageProps = {
   api?: ExamManagementAPI;
   paperApi?: Pick<PaperAPI, "listPapers">;
-  spaceApi?: Pick<SpaceManagementAPI, "listSpaces">;
+  spaceApi?: Pick<SpaceManagementAPI & SpaceMemberAPI, "listSpaces" | "listSpaceMembers">;
   userApi?: Pick<UserManagementAPI, "listUsers">;
   tenantID?: number;
   spaceID?: number;
@@ -29,6 +31,8 @@ type TargetOption = {
   value: string;
 };
 
+type PublishScopeMode = "space" | "users";
+
 export function ExamManagementPage({
   api = examApi,
   paperApi = defaultPaperApi,
@@ -38,17 +42,22 @@ export function ExamManagementPage({
   spaceID,
   canManageTenantTargets = true,
 }: ExamManagementPageProps) {
+  const { showError } = useFeedback();
   const [exams, setExams] = useState<ExamRow[]>([]);
   const [papers, setPapers] = useState<PaperRow[]>([]);
   const [targetOptions, setTargetOptions] = useState<TargetOption[]>([]);
+  const [targetOptionsNotice, setTargetOptionsNotice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [paperID, setPaperID] = useState("");
-  const [targetValue, setTargetValue] = useState("");
-  const [startAt, setStartAt] = useState("");
-  const [endAt, setEndAt] = useState("");
+  const [scopeMode, setScopeMode] = useState<PublishScopeMode>("space");
+  const [selectedSpaceTargetValue, setSelectedSpaceTargetValue] = useState("");
+  const [selectedUserTargetValues, setSelectedUserTargetValues] = useState<string[]>([]);
+  const [isUserPickerOpen, setIsUserPickerOpen] = useState(false);
+  const [examDate, setExamDate] = useState("");
+  const [startTimeText, setStartTimeText] = useState("");
+  const [endTimeText, setEndTimeText] = useState("");
   const [durationMinutes, setDurationMinutes] = useState("120");
-  const [publishError, setPublishError] = useState("");
   const [publishMessage, setPublishMessage] = useState("");
 
   useEffect(() => {
@@ -58,12 +67,11 @@ export function ExamManagementPage({
       .then((data) => {
         if (!ignore) {
           setExams(data.items);
-          setPublishError("");
         }
       })
       .catch(() => {
         if (!ignore) {
-          setPublishError("考试列表加载失败");
+          showError("考试列表加载失败");
         }
       })
       .finally(() => {
@@ -75,7 +83,7 @@ export function ExamManagementPage({
     return () => {
       ignore = true;
     };
-  }, [api, tenantID, spaceID]);
+  }, [api, showError, tenantID, spaceID]);
 
   useEffect(() => {
     let ignore = false;
@@ -83,80 +91,164 @@ export function ExamManagementPage({
     const paperRequest = paperApi.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) });
     const targetRequest = canManageTenantTargets
       ? Promise.all([spaceApi.listSpaces(tenantID), userApi.listUsers(tenantID)])
-          .then(([spaceData, userData]) => buildTargetOptions(spaceData.items, userData.items))
-      : Promise.resolve(spaceID === undefined ? [] : [currentSpaceTargetOption(spaceID)]);
+          .then(([spaceData, userData]) => ({
+            notice: null,
+            options: buildTargetOptions(spaceData.items, userData.items),
+          }))
+      : spaceID === undefined
+        ? Promise.resolve({ notice: null, options: [] })
+        : spaceApi.listSpaceMembers({ tenantID, spaceID })
+            .then((memberData) => ({
+              notice: null,
+              options: [
+                currentSpaceTargetOption(spaceID),
+                ...buildSpaceMemberTargetOptions(memberData.items),
+              ],
+            }))
+            .catch((error: unknown) => {
+              if (error instanceof ApiError && error.status === 403) {
+                return {
+                  // 当前身份无法读取成员列表时，只允许继续向当前空间发布，并显式提示范围已收窄。
+                  notice: "当前身份无法读取空间成员列表，仅支持向当前空间发布考试",
+                  options: [currentSpaceTargetOption(spaceID)],
+                };
+              }
+              throw error;
+            });
 
     Promise.all([paperRequest, targetRequest])
-      .then(([paperData, nextTargets]) => {
+      .then(([paperData, targetData]) => {
         if (ignore) {
           return;
         }
         const availablePapers = paperData.items.filter((paper) => paper.status === "enabled");
+        const nextTargets = targetData.options;
         setPapers(availablePapers);
         setTargetOptions(nextTargets);
+        setTargetOptionsNotice(targetData.notice);
         setPaperID((current) =>
           current && availablePapers.some((paper) => String(paper.id) === current)
             ? current
             : String(availablePapers[0]?.id ?? ""),
         );
-        setTargetValue((current) => current || (nextTargets[0]?.value ?? ""));
+        setSelectedSpaceTargetValue((current) => {
+          const availableSpaceTargets = nextTargets.filter((target) => target.type === "space");
+          return current && availableSpaceTargets.some((target) => target.value === current)
+            ? current
+            : availableSpaceTargets[0]?.value ?? "";
+        });
+        setSelectedUserTargetValues((current) => {
+          const availableUserValues = new Set(
+            nextTargets.filter((target) => target.type === "user").map((target) => target.value),
+          );
+          return current.filter((value) => availableUserValues.has(value));
+        });
+        setScopeMode((current) => {
+          const hasCurrentModeOptions = nextTargets.some((target) =>
+            current === "space" ? target.type === "space" : target.type === "user",
+          );
+          if (hasCurrentModeOptions) {
+            return current;
+          }
+          return nextTargets.some((target) => target.type === "space") ? "space" : "users";
+        });
       })
       .catch(() => {
         if (!ignore) {
-          setPublishError("发布选项加载失败");
+          setPapers([]);
+          setTargetOptions([]);
+          setTargetOptionsNotice(null);
+          setPaperID("");
+          setSelectedSpaceTargetValue("");
+          setSelectedUserTargetValues([]);
+          setScopeMode("space");
+          setIsUserPickerOpen(false);
+          showError("发布选项加载失败");
         }
       });
 
     return () => {
       ignore = true;
     };
-  }, [paperApi, spaceApi, tenantID, userApi, spaceID, canManageTenantTargets]);
+  }, [paperApi, spaceApi, tenantID, userApi, spaceID, canManageTenantTargets, showError]);
+
+  const spaceTargetOptions = targetOptions.filter((option) => option.type === "space");
+  const userTargetOptions = targetOptions.filter((option) => option.type === "user");
+  const selectedUserTargetSet = new Set(selectedUserTargetValues);
+  const selectedUserLabels = userTargetOptions
+    .filter((option) => selectedUserTargetSet.has(option.value))
+    .map((option) => option.label);
 
   async function handlePublishExam(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const selectedPaper = papers.find((option) => String(option.id) === paperID);
-    const selectedTarget = targetOptions.find((option) => option.value === targetValue);
-    if (!selectedPaper || !selectedTarget) {
-      setPublishError("请先选择试卷和发布范围");
+    const selectedTargets = scopeMode === "space"
+      ? spaceTargetOptions.filter((option) => option.value === selectedSpaceTargetValue)
+      : userTargetOptions.filter((option) => selectedUserTargetSet.has(option.value));
+    if (!selectedPaper || selectedTargets.length === 0) {
+      showError("请先选择试卷和发布范围");
       return;
     }
 
-    const startTime = new Date(startAt).getTime();
-    const endTime = new Date(endAt).getTime();
+    const startTime = combineDateAndTime(examDate, startTimeText);
+    const endTime = combineDateAndTime(examDate, endTimeText);
     const duration = Number(durationMinutes);
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || !Number.isFinite(duration)) {
+      showError("请选择有效的考试日期和时间");
+      return;
+    }
+    if (endTime <= startTime) {
+      showError("考试结束时间必须晚于开始时间");
+      return;
+    }
     const windowMinutes = (endTime - startTime) / 60000;
 
     if (duration > windowMinutes) {
-      setPublishError("作答时长不能超过考试时间窗口");
+      showError("作答时长不能超过考试时间窗口");
       return;
     }
 
-    const nextExam = await api.publishExam({
-      tenantID,
-      paperID: selectedPaper.id,
-      name: selectedPaper.name,
-      targetType: selectedTarget.type,
-      targetID: selectedTarget.id,
-      startTime,
-      endTime,
-      durationMinutes: duration,
-      maxAttempts: 1,
-      resultStrategy: "latest",
-      publishMode: "manual_publish",
-    });
+    try {
+      const nextExam = await api.publishExam({
+        tenantID,
+        paperID: selectedPaper.id,
+        name: selectedPaper.name,
+        targets: selectedTargets.map((target) => ({
+          targetType: target.type,
+          targetID: target.id,
+        })),
+        targetType: selectedTargets[0].type,
+        targetID: selectedTargets[0].id,
+        startTime,
+        endTime,
+        durationMinutes: duration,
+        maxAttempts: 1,
+        resultStrategy: "latest",
+        publishMode: "manual_publish",
+      });
 
-    setExams((items) => [...items, nextExam]);
-    setPublishError("");
-    setPublishMessage(`${nextExam.name} 已发布，邀请码 ${nextExam.inviteCode}`);
-    setIsPublishDialogOpen(false);
+      setExams((items) => [...items, nextExam]);
+      setPublishMessage(`${nextExam.name} 已发布，邀请码 ${nextExam.inviteCode}`);
+      setIsPublishDialogOpen(false);
+    } catch {
+      showError("发布考试失败");
+    }
+  }
+
+  function toggleUserTarget(value: string) {
+    setSelectedUserTargetValues((current) =>
+      current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value],
+    );
   }
 
   return (
     <section className="page platform-page">
       <nav aria-label="考试菜单" className="platform-tabbar" role="tablist">
         <span className="platform-tab platform-tab--active" role="tab" aria-selected="true">
-          考试发布
+          考试列表
         </span>
       </nav>
 
@@ -175,7 +267,6 @@ export function ExamManagementPage({
           </div>
         )}
         {isLoading && <div className="tenant-admin-status" role="status">正在加载考试列表</div>}
-        {publishError && !isPublishDialogOpen && <div className="tenant-admin-warning" role="alert">{publishError}</div>}
 
         <div className="table-wrap">
           <table className="data-table tenant-admin-table">
@@ -216,24 +307,31 @@ export function ExamManagementPage({
             <h2>发布考试</h2>
             <form className="platform-form" onSubmit={handlePublishExam}>
               <label className="field">
-                <span>发布试卷</span>
-                <select onChange={(event) => setPaperID(event.target.value)} required value={paperID}>
+                <RequiredLabel>发布试卷</RequiredLabel>
+                <select aria-label="发布试卷" onChange={(event) => setPaperID(event.target.value)} required value={paperID}>
                   {papers.map((option) => (
                     <option key={option.id} value={option.id}>{option.name}</option>
                   ))}
                 </select>
               </label>
               <label className="field">
-                <span>考试开始时间</span>
-                <input onChange={(event) => setStartAt(event.target.value)} required type="datetime-local" value={startAt} />
+                <RequiredLabel>考试日期</RequiredLabel>
+                <input aria-label="考试日期" onChange={(event) => setExamDate(event.target.value)} required type="date" value={examDate} />
               </label>
+              <div className="exam-time-range">
+                <label className="field">
+                  <RequiredLabel>开始时间</RequiredLabel>
+                  <input aria-label="开始时间" onChange={(event) => setStartTimeText(event.target.value)} required type="time" value={startTimeText} />
+                </label>
+                <label className="field">
+                  <RequiredLabel>结束时间</RequiredLabel>
+                  <input aria-label="结束时间" onChange={(event) => setEndTimeText(event.target.value)} required type="time" value={endTimeText} />
+                </label>
+              </div>
               <label className="field">
-                <span>考试结束时间</span>
-                <input onChange={(event) => setEndAt(event.target.value)} required type="datetime-local" value={endAt} />
-              </label>
-              <label className="field">
-                <span>单次作答时长</span>
+                <RequiredLabel>单次作答时长</RequiredLabel>
                 <input
+                  aria-label="单次作答时长"
                   min={1}
                   onChange={(event) => setDurationMinutes(event.target.value)}
                   required
@@ -241,15 +339,75 @@ export function ExamManagementPage({
                   value={durationMinutes}
                 />
               </label>
-              <label className="field">
-                <span>发布范围</span>
-                <select onChange={(event) => setTargetValue(event.target.value)} required value={targetValue}>
-                  {targetOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-              {publishError && <div className="tenant-admin-warning" role="alert">{publishError}</div>}
+              <fieldset className="exam-publish-scope">
+                <legend>
+                  <RequiredLabel>发布范围</RequiredLabel>
+                </legend>
+                <div aria-label="发布范围类型" className="exam-scope-mode" role="radiogroup">
+                  <label className="exam-scope-mode__item">
+                    <input
+                      checked={scopeMode === "space"}
+                      onChange={() => setScopeMode("space")}
+                      type="radio"
+                    />
+                    <span>班级范围</span>
+                  </label>
+                  <label className="exam-scope-mode__item">
+                    <input
+                      checked={scopeMode === "users"}
+                      onChange={() => setScopeMode("users")}
+                      type="radio"
+                    />
+                    <span>指定人群</span>
+                  </label>
+                </div>
+                {scopeMode === "space" ? (
+                  <label className="field">
+                    <span className="field-label">选择班级范围</span>
+                    <select
+                      aria-label="选择班级范围"
+                      onChange={(event) => setSelectedSpaceTargetValue(event.target.value)}
+                      required
+                      value={selectedSpaceTargetValue}
+                    >
+                      {spaceTargetOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <div className="field exam-user-picker">
+                    <span className="field-label">指定同学</span>
+                    <button
+                      aria-expanded={isUserPickerOpen}
+                      aria-label="指定同学"
+                      className="exam-user-picker__trigger"
+                      onClick={() => setIsUserPickerOpen((current) => !current)}
+                      type="button"
+                    >
+                      {selectedUserLabels.length > 0 ? selectedUserLabels.join("、") : "请选择指定同学"}
+                    </button>
+                    {isUserPickerOpen && (
+                      <div aria-label="指定同学列表" className="exam-user-picker__menu" role="group">
+                        {userTargetOptions.length === 0 && (
+                          <div className="exam-user-picker__empty">暂无可选学生</div>
+                        )}
+                        {userTargetOptions.map((option) => (
+                          <label className="exam-user-picker__option" key={option.value}>
+                            <input
+                              checked={selectedUserTargetSet.has(option.value)}
+                              onChange={() => toggleUserTarget(option.value)}
+                              type="checkbox"
+                            />
+                            <span>{option.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </fieldset>
+              {targetOptionsNotice && <div className="tenant-admin-warning" role="status">{targetOptionsNotice}</div>}
               <div className="platform-dialog__actions">
                 <Button variant="secondary" onClick={() => setIsPublishDialogOpen(false)} type="button">
                   取消
@@ -263,6 +421,22 @@ export function ExamManagementPage({
         </div>
       )}
     </section>
+  );
+}
+
+function combineDateAndTime(dateValue: string, timeValue: string): number {
+  if (!dateValue || !timeValue) {
+    return Number.NaN;
+  }
+  return new Date(`${dateValue}T${timeValue}`).getTime();
+}
+
+function RequiredLabel({ children }: { children: string }) {
+  return (
+    <span className="field-label">
+      {children}
+      <span aria-hidden="true" className="required-marker">*</span>
+    </span>
   );
 }
 
@@ -284,7 +458,7 @@ function buildTargetOptions(spaces: SpaceRow[], users: TenantUserRow[]): TargetO
       value: `space:${space.id}`,
     })),
     ...users
-      .filter((user) => user.status === "enabled")
+      .filter((user) => user.role === "student" && user.status === "enabled")
       .map((user) => ({
         id: user.id,
         label: `${user.name}（个人）`,
@@ -292,4 +466,19 @@ function buildTargetOptions(spaces: SpaceRow[], users: TenantUserRow[]): TargetO
         value: `user:${user.id}`,
       })),
   ];
+}
+
+// buildSpaceMemberTargetOptions 将当前空间内启用学生转换成个人发布目标。
+//
+// 空间管理员和教师只能在当前空间范围内发起考试，因此候选个人目标必须来自
+// space_members，而不能直接复用租户全量用户列表。
+function buildSpaceMemberTargetOptions(members: SpaceMember[]): TargetOption[] {
+  return members
+    .filter((member) => member.role === "student" && member.status === "enabled")
+    .map((member) => ({
+      id: member.userID,
+      label: `${member.name}（个人）`,
+      type: "user" as const,
+      value: `user:${member.userID}`,
+    }));
 }

@@ -1,5 +1,6 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
+import type { QuestionType } from "./questions";
 
 export type PaperRow = {
   id: number;
@@ -117,6 +118,10 @@ export type ManualQuestionRow = {
   questionID: number;
   sortOrder: number;
   score: string;
+  questionType?: QuestionType;
+  title?: string;
+  options?: string[];
+  blankCount?: number;
 };
 
 export type SectionQuestionListResult = {
@@ -296,6 +301,10 @@ type ManualQuestionAPIResponse = {
   question_id: number;
   sort_order: number;
   score: string;
+  question_type?: QuestionType;
+  title?: string;
+  options?: string[];
+  blank_count?: number;
 };
 
 type PaperRuleAPIResponse = {
@@ -346,7 +355,7 @@ export function createPaperAPI(apiClient: ApiClient): PaperAPI {
     async createPaper(input) {
       const data = await apiClient.post<PaperAPIResponse>("/api/v1/papers", {
         tenant_id: input.tenantID,
-        ...(input.spaceID === undefined ? {} : { space_id: input.spaceID }),
+        ...(input.spaceID == null ? {} : { space_id: input.spaceID }),
         name: input.name,
         description: input.description ?? "",
         ...(input.durationMinutes === undefined ? {} : { duration_minutes: input.durationMinutes }),
@@ -598,6 +607,10 @@ function mapManualQuestionResponse(row: ManualQuestionAPIResponse): ManualQuesti
     questionID: row.question_id,
     sortOrder: row.sort_order,
     score: row.score,
+    ...(row.question_type === undefined ? {} : { questionType: row.question_type }),
+    ...(row.title === undefined ? {} : { title: row.title }),
+    ...(row.options === undefined ? {} : { options: row.options }),
+    ...(row.blank_count === undefined ? {} : { blankCount: row.blank_count }),
   };
 }
 

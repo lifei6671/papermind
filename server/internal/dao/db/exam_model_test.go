@@ -21,6 +21,7 @@ func TestExamTablesUseExpectedNames(t *testing.T) {
 		{name: "exam attempt question", do: ExamAttemptQuestionDO{}, want: "exam_attempt_questions"},
 		{name: "exam answer", do: ExamAnswerDO{}, want: "exam_answers"},
 		{name: "exam event", do: ExamEventDO{}, want: "exam_events"},
+		{name: "exam operation log", do: ExamOperationLogDO{}, want: "exam_operation_logs"},
 	}
 
 	for _, tt := range tests {
@@ -44,6 +45,7 @@ func TestExamBusinessFieldsUseColumnMappings(t *testing.T) {
 		{model: ExamAttemptQuestionDO{}, names: []string{"TenantID", "AttemptID", "SectionID", "QuestionID", "SectionSnapshot", "SortOrder", "Score", "QuestionSnapshot", "OptionSnapshot", "CorrectAnswerSnapshot"}},
 		{model: ExamAnswerDO{}, names: []string{"TenantID", "AttemptID", "AttemptQuestionID", "AnswerContent", "Score", "GradingStatus", "GradedBy", "GradedAt", "GraderComment"}},
 		{model: ExamEventDO{}, names: []string{"TenantID", "AttemptID", "EventType", "EventTime", "Payload"}},
+		{model: ExamOperationLogDO{}, names: []string{"TenantID", "ExamID", "OperationType", "OperationTitle", "OperationDetail", "ActorID", "ActorType", "ActorRole", "SpaceID"}},
 	}
 
 	for _, tt := range tests {
@@ -76,6 +78,9 @@ func TestExamColumnMappings(t *testing.T) {
 	if ExamEventColumns.EventType != "event_type" {
 		t.Fatalf("ExamEventColumns.EventType = %q", ExamEventColumns.EventType)
 	}
+	if ExamOperationLogColumns.OperationType != "operation_type" {
+		t.Fatalf("ExamOperationLogColumns.OperationType = %q", ExamOperationLogColumns.OperationType)
+	}
 }
 
 func TestExamFieldBoundaryTypes(t *testing.T) {
@@ -83,6 +88,7 @@ func TestExamFieldBoundaryTypes(t *testing.T) {
 	assertHasEmbeddedField(t, reflect.TypeOf(ExamTargetDO{}), "RelationFields")
 	assertHasEmbeddedField(t, reflect.TypeOf(ExamLiveQuestionPoolDO{}), "RelationFields")
 	assertHasEmbeddedField(t, reflect.TypeOf(ExamEventDO{}), "EventFields")
+	assertHasEmbeddedField(t, reflect.TypeOf(ExamOperationLogDO{}), "EventFields")
 	assertMissingField(t, reflect.TypeOf(ExamAttemptDO{}), "DeletedAt")
 
 	assertPointerField(t, reflect.TypeOf(ExamDO{}), "ScorePublishTime")

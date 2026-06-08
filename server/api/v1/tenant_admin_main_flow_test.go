@@ -471,7 +471,7 @@ func TestTenantAdminMainFlowCreatesSpaceAndAssignsTeacherWithSQLite(t *testing.T
 		"space_id": %d,
 		"publish_mode": "manual_publish",
 		"score_publish_time": %d
-	}`, tenantID, publishBody.Data.ID, createSpaceBody.Data.ID, publishScoreTime)), teacherHeader))
+	}`, tenantID, publishBody.Data.ID, createSpaceBody.Data.ID, publishScoreTime)), adminHeader))
 	if configRecorder.Code != http.StatusOK {
 		t.Fatalf("publish config status = %d, body = %s", configRecorder.Code, configRecorder.Body.String())
 	}

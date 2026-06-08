@@ -252,6 +252,39 @@ describe("StudentExamPage", () => {
     expect(await screen.findByText("已回到考试入口")).toBeInTheDocument();
   });
 
+  test("后台学生视角预览使用传入题目且不创建真实答题记录", async () => {
+    const user = userEvent.setup();
+    const api = createStudentExamApiDouble();
+
+    renderStudentExam(
+      <StudentExamPage
+        api={api}
+        preview={{
+          title: "高一语文月考试卷",
+          durationMinutes: 45,
+          questions: [createStudentExamQuestion({ stem: "预览模式题干", score: 5 })],
+        }}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "高一语文月考试卷" })).toBeInTheDocument();
+    expect(screen.getByText("预览模式题干")).toBeInTheDocument();
+    expect(api.startAttempt).not.toHaveBeenCalled();
+
+    await user.click(screen.getByLabelText(/A\./));
+    expect(api.saveAnswer).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "考试信息与答题卡" }));
+    expect(screen.getByText("考试名称：高一语文月考试卷")).toBeInTheDocument();
+    expect(screen.getByText("考试时长：45 分钟")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "交 卷" }));
+    const dialog = screen.getByRole("dialog", { name: "确认交卷" });
+    await user.click(within(dialog).getByRole("button", { name: "确认交卷" }));
+
+    expect(api.submitAttempt).not.toHaveBeenCalled();
+    expect(await screen.findByText("预览模式不会提交答卷。")).toBeInTheDocument();
+  });
+
 });
 
 function mockExamViewport(matchesNarrow: boolean) {

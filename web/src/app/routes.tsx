@@ -19,6 +19,7 @@ import { ExamManagementPage } from "../pages/Exam/ExamManagementPage";
 import { PaperAssemblyPage } from "../pages/Exam/PaperAssemblyPage";
 import { PaperEditRoute } from "../pages/Exam/PaperEditRoute";
 import { PaperEditorPage } from "../pages/Exam/PaperEditorPage";
+import { ExamPreviewRoute, PaperPreviewRoute } from "../pages/Exam/PaperPreviewRoute";
 import { QuestionBankPage } from "../pages/Exam/QuestionBankPage";
 import { QuestionCreatePage } from "../pages/Exam/QuestionCreatePage";
 import { QuestionEditRoute } from "../pages/Exam/QuestionEditRoute";
@@ -207,7 +208,7 @@ export function buildAdminRoutes(
     label: "试卷",
     description: "维护大题、手动组卷和规则组卷",
     icon: FileStack,
-    element: examNeedsSpace ? renderExamSpaceRequiredPage("试卷") : <PaperAssemblyPage tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("试卷") : <PaperAssemblyPage actorRole={actorRole} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
@@ -233,12 +234,42 @@ export function buildAdminRoutes(
     spaceMemberRoles: examSpaceMemberRoles,
   },
   {
+    path: "/papers/:paperID/preview",
+    label: "预览试卷",
+    description: "按考试视图预览试卷结构、统计和题目内容",
+    icon: FileStack,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("预览试卷") : <PaperPreviewRoute tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    group: "hidden",
+    menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
+  },
+  {
     path: "/exams",
-    label: "考试",
+    label: "考试列表",
     description: "发布考试、配置范围、邀请码和结果策略",
     icon: ClipboardList,
-    element: examNeedsSpace ? renderExamSpaceRequiredPage("考试发布") : <ExamManagementPage canManageTenantTargets={user?.role === "tenant_admin"} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("考试列表") : <ExamManagementPage canManageTenantTargets={user?.role === "tenant_admin"} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
+    menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
+  },
+  {
+    path: "/exams/:examID",
+    label: "考试详情",
+    description: "查看考试概览、基本信息、试卷预览和管理入口",
+    icon: ClipboardList,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("考试详情") : <ExamPreviewRoute tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    group: "hidden",
+    menuRoles: examBusinessRoles,
+    spaceMemberRoles: examSpaceMemberRoles,
+  },
+  {
+    path: "/exams/:examID/preview",
+    label: "考试详情预览",
+    description: "兼容旧预览入口的考试详情页",
+    icon: ClipboardList,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("考试详情预览") : <ExamPreviewRoute tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    group: "hidden",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,
   },

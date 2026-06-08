@@ -53,12 +53,13 @@ func TestReviewServiceFiltersPendingAttemptsByGradePermission(t *testing.T) {
 
 func TestReviewServiceGradesShortTextWithVersionAndRecalculatesScores(t *testing.T) {
 	repo := newFakeReviewRepository()
-	repo.attemptSpaces = map[uint64]uint64{1001: 301}
+	repo.attemptSpaces = map[uint64][]uint64{1001: {301}}
 	svc := NewReviewService(ReviewServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
 
 	err := svc.GradeShortText(context.Background(), GradeShortTextInput{
 		Permission:        teacherPermissionContext(),
 		TenantID:          10,
+		ExamID:            501,
 		AttemptID:         1001,
 		AttemptQuestionID: 9001,
 		AnswerVersion:     7,
@@ -74,6 +75,9 @@ func TestReviewServiceGradesShortTextWithVersionAndRecalculatesScores(t *testing
 	if repo.graded.GradedBy != 501 || repo.graded.GradedAt != fixedUnixMilli || repo.graded.Comment != "要点完整" {
 		t.Fatalf("expected grader metadata saved, got %#v", repo.graded)
 	}
+	if repo.graded.ExamID != 501 || repo.graded.GraderType != permission.SubjectTenantUser || repo.graded.GraderRole != permission.RoleTeacher || len(repo.graded.SpaceIDs) != 1 || repo.graded.SpaceIDs[0] != 301 {
+		t.Fatalf("expected grading audit metadata saved, got %#v", repo.graded)
+	}
 	if !repo.recalculated {
 		t.Fatal("expected subjective score and total score recalculated in grading transaction")
 	}
@@ -81,7 +85,7 @@ func TestReviewServiceGradesShortTextWithVersionAndRecalculatesScores(t *testing
 
 func TestReviewServiceRejectsClientClaimedAttemptScope(t *testing.T) {
 	repo := newFakeReviewRepository()
-	repo.attemptSpaces = map[uint64]uint64{1001: 302}
+	repo.attemptSpaces = map[uint64][]uint64{1001: {302}}
 	svc := NewReviewService(ReviewServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
 
 	err := svc.GradeShortText(context.Background(), GradeShortTextInput{
@@ -102,7 +106,7 @@ func TestReviewServiceRejectsClientClaimedAttemptScope(t *testing.T) {
 
 func TestReviewServiceRejectsStaleShortTextGradeVersion(t *testing.T) {
 	repo := newFakeReviewRepository()
-	repo.attemptSpaces = map[uint64]uint64{1001: 301}
+	repo.attemptSpaces = map[uint64][]uint64{1001: {301}}
 	repo.gradeErr = ErrAnswerVersionConflict
 	svc := NewReviewService(ReviewServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
 
@@ -139,6 +143,28 @@ func TestReviewServiceUsesPermissionCheckerForGrading(t *testing.T) {
 	}
 }
 
+func TestReviewServiceGradesShortTextLogsAllAttemptSpaces(t *testing.T) {
+	repo := newFakeReviewRepository()
+	repo.attemptSpaces = map[uint64][]uint64{1001: {301, 302}}
+	svc := NewReviewService(ReviewServiceOptions{Repo: repo, PermissionChecker: permission.NewFixedRoleChecker(), Now: fixedNow})
+
+	err := svc.GradeShortText(context.Background(), GradeShortTextInput{
+		Permission:        teacherPermissionContext(),
+		TenantID:          10,
+		ExamID:            501,
+		AttemptID:         1001,
+		AttemptQuestionID: 9001,
+		AnswerVersion:     7,
+		Score:             "4",
+	})
+	if err != nil {
+		t.Fatalf("GradeShortText returned error: %v", err)
+	}
+	if len(repo.graded.SpaceIDs) != 2 || repo.graded.SpaceIDs[0] != 301 || repo.graded.SpaceIDs[1] != 302 {
+		t.Fatalf("expected grading log to keep all attempt spaces, got %#v", repo.graded)
+	}
+}
+
 func newFakeReviewRepository() *fakeReviewRepository {
 	return &fakeReviewRepository{}
 }
@@ -159,7 +185,7 @@ func teacherPermissionContext() permission.PermissionContext {
 
 type fakeReviewRepository struct {
 	pendingAttempts []PendingAttempt
-	attemptSpaces   map[uint64]uint64
+	attemptSpaces   map[uint64][]uint64
 	graded          ShortTextGrade
 	recalculated    bool
 	gradeErr        error
@@ -170,7 +196,7 @@ func (r *fakeReviewRepository) ListPendingAttempts(ctx context.Context, tenantID
 }
 
 func (r *fakeReviewRepository) AttemptSpaceIDs(ctx context.Context, tenantID uint64, attemptID uint64) ([]uint64, error) {
-	return []uint64{r.attemptSpaces[attemptID]}, nil
+	return append([]uint64(nil), r.attemptSpaces[attemptID]...), nil
 }
 
 func (r *fakeReviewRepository) GradeShortTextAndRecalculate(ctx context.Context, grade ShortTextGrade) error {

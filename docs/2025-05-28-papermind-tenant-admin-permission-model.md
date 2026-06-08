@@ -769,7 +769,7 @@ questions.space_id = NULL 表示租户公共题库。
 papers.space_id = NULL 表示租户公共试卷。
 ```
 
-首版公共题库和公共试卷只允许 `tenant_admin` 创建、修改、删除和导入。`space_admin` / `teacher` 只能管理自己已加入且启用空间内的题库和试卷。
+公共题库允许本租户 `tenant_admin` 写入，也允许具备考试业务入口且至少拥有一个启用空间成员关系的 `teacher` 写入。公共试卷内容只允许 `tenant_admin` 创建、修改、删除和导入。目标空间 `space_admin` 仅可把未被考试引用的公共试卷归属到自己授权空间；归属前不能维护公共试卷内容，归属后按空间试卷规则校验。`space_admin` / `teacher` 只能管理自己已加入且启用空间内的空间题库和空间试卷。
 
 `space_admin` / `teacher` 可以在组卷、发布考试等流程中读取公共题库和公共试卷，但是否允许引用公共资源必须由对应业务 service 显式校验，不能把公共资源视为任意教师可写资源。
 
@@ -1084,7 +1084,7 @@ updated_by
 
 `created_by` / `updated_by` 继续保存操作者 ID，新增的两个类型字段负责解释 ID 来源。
 
-当前项目仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；审计主体类型、全局 `users` 表、`tenant_user_memberships` 租户成员关系表和单角色唯一约束直接落在 `001_tenant_space.sql` 初始建库脚本中。本次需求不新增 `002_audit_actor_type.sql`，也不新增其他 `002_*` 数据库迁移脚本，不执行追加迁移动作。
+当前项目早期权限模型仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；审计主体类型、全局 `users` 表、`tenant_user_memberships` 租户成员关系表和单角色唯一约束直接落在 `001_tenant_space.sql` 初始建库脚本中。该权限模型需求不新增 `002_audit_actor_type.sql`；后续考试管理详情阶段已通过 `002_exam_management_detail.sql`、`003_exam_target_scope_spaces.sql` 追加审计日志、成绩汇总索引和发布目标作用空间迁移。
 
 至少覆盖：
 
@@ -1313,7 +1313,7 @@ tenant_user 访问 /api/v1/platform
 - space_admin 可以管理本空间成员
 - space_admin 不能修改空间基础资料或删除空间
 - space_admin 不能管理其他空间成员
-- space_admin 不能创建、修改、删除或导入租户公共题库和公共试卷
+- space_admin 不能创建、修改、删除或导入租户公共题库和公共试卷；仅可把未被考试引用的公共试卷归属到自己授权空间
 - space_admin 不能修改、删除、启停或维护 tenant_admin 创建的试卷
 - 禁止移除最后一个 space_admin
 - 禁止禁用最后一个 space_admin
@@ -1322,8 +1322,8 @@ tenant_user 访问 /api/v1/platform
 ### 教师相关
 
 ```text
-- teacher 可以管理授权空间题库
-- teacher 不能创建、修改、删除或导入租户公共题库和公共试卷
+- teacher 可以管理授权空间题库，也可以在至少拥有一个启用空间成员关系时维护租户公共题库
+- teacher 不能创建、修改、删除或导入租户公共试卷
 - teacher 不能管理空间成员
 - teacher 不能管理其他空间题库
 - teacher 不能修改、删除、启停或维护 tenant_admin / space_admin 创建的试卷

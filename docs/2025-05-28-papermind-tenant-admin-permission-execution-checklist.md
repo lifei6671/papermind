@@ -81,7 +81,7 @@ git status --short
 - [x] 确认首版不做复杂 RBAC 权限配置 UI。
 - [x] 确认首版不做 platform impersonation。
 - [x] 确认 session 主动 revoke 是增强项，不阻塞首版；关键写接口必须实时从数据库重建权限。
-- [x] 确认公共题库和公共试卷首版只允许 `tenant_admin` 写入。
+- [x] 确认公共题库允许本租户 `tenant_admin` 与具备启用空间成员关系的 `teacher` 写入；公共试卷内容只允许 `tenant_admin` 写入，目标空间 `space_admin` 仅可把未引用公共试卷归属到自己授权空间。
 
 **验收标准**：
 
@@ -536,9 +536,9 @@ go test -tags json1 ./internal/service/permission
 
 ### P6.1 公共题库和公共试卷
 
-- [x] `questions.space_id = NULL` 的公共题库只允许 `tenant_admin` 创建。
-- [x] 公共题库只允许 `tenant_admin` 修改、删除和导入。
-- [x] 已暴露的公共试卷写接口只允许 `tenant_admin` 修改大题、选题、规则和规则生成。
+- [x] `questions.space_id = NULL` 的公共题库允许本租户 `tenant_admin` 或具备启用空间成员关系的 `teacher` 创建。
+- [x] 公共题库允许本租户 `tenant_admin` 或具备启用空间成员关系的 `teacher` 修改、删除和导入。
+- [x] 已暴露的公共试卷内容写接口只允许 `tenant_admin` 修改大题、选题、规则和规则生成；目标空间 `space_admin` 仅可把未被考试引用的公共试卷归属到自己授权空间。
 - [x] `space_admin` / `teacher` 只能管理自己启用空间内的题库和试卷。
 - [x] `space_admin` / `teacher` 读取或引用公共资源时，由对应 service 显式校验。
 - [x] `papers.space_id = NULL` 的创建和删除 API 已复用公共试卷写入校验。
@@ -550,7 +550,7 @@ go test -tags json1 ./internal/service/permission
 
 **验收标准**：
 
-- [x] 教师不能把 `space_id = NULL` 当成自己的可写资源。
+- [x] 教师可以维护租户公共题库，但不能把 `space_id = NULL` 的公共试卷当成自己的可写资源。
 - [x] 空间管理员不能导入公共题库。
 
 ### P6.2 资源归属反查
@@ -685,7 +685,7 @@ go test -tags json1 ./internal/service/permission
 - [x] 覆盖 `tenant_admin` 不在 `space_members` 中也可以管理本租户空间资源。
 - [x] 覆盖 `space_admin` 不能管理空间基础资料。
 - [x] 覆盖 `teacher` 零空间不可操作题库、试卷、考试或阅卷。
-- [x] 覆盖公共题库和已暴露公共试卷写接口只允许 `tenant_admin` 写入。
+- [x] 覆盖公共题库允许 `tenant_admin` / 具备启用空间成员关系的 `teacher` 写入，已暴露公共试卷内容写接口只允许 `tenant_admin` 写入；目标空间 `space_admin` 归属未引用公共试卷的例外路径有单独用例。
 - [x] 覆盖学生不能访问 `/api/v1/tenant/results/:id`。
 - [x] 覆盖学生只能访问自己的 `/api/v1/exam-entry/results/:id`。
 - [x] 覆盖 `exam_token` 过期后不续期、重复开考续发 token、不能访问后台接口。
@@ -743,10 +743,10 @@ npm run build
     创建 `teacher` 后其 `/api/v1/tenant/profile/spaces` 初始为空，
     再通过空间成员入口分配后获得启用空间授权。
 - [x] 租户管理员创建公共题库或公共试卷。
-- [x] 教师不能修改公共题库或公共试卷。
+- [x] 教师可以修改公共题库，不能修改公共试卷。
 - [x] 教师创建空间题库、组卷、发布考试。
   - 2026-05-29：`TestTenantAdminMainFlowCreatesSpaceAndAssignsTeacherWithSQLite`
-    扩展覆盖租户管理员创建公共题库，教师写公共题库返回 403；
+    扩展覆盖租户管理员创建公共题库，教师具备启用空间成员关系时可写公共题库；
     教师在授权空间创建空间题库、创建试卷大题、加入空间题目并发布空间考试。
     早前主链路测试先用数据库预置空间试卷；后续已补齐公开试卷创建/删除 API，
     公共试卷创建和删除权限由 `paper_handler_test.go` 覆盖。
@@ -770,7 +770,7 @@ npm run build
   - 2026-05-29：主链路测试内所有管理端、教师端、学生端请求均使用对应登录态；
     租户与空间来源通过服务端权限上下文校验，未依赖伪造请求字段放行。
 - [x] 所有关键拒绝路径返回明确 401 或 403。
-  - 2026-05-29：当前主链路验收覆盖教师写公共题库 403、教师导出成绩 403；
+  - 2026-05-29：当前主链路验收覆盖教师无启用空间成员关系时写公共题库 403，以及教师导出成绩 403；
     其他权限拒绝路径由 P5/P6/P8.1 的专项 API 测试继续覆盖。
 
 ### P8.4 文档和总清单回写

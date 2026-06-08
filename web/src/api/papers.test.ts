@@ -506,6 +506,10 @@ describe("paperApi", () => {
               question_id: 101,
               sort_order: 1,
               score: "6",
+              question_type: "single",
+              title: "学生预览题干",
+              options: ["选项 A", "选项 B"],
+              blank_count: 1,
             }],
           },
         }));
@@ -629,6 +633,10 @@ describe("paperApi", () => {
         questionID: 101,
         sortOrder: 1,
         score: "6",
+        questionType: "single",
+        title: "学生预览题干",
+        options: ["选项 A", "选项 B"],
+        blankCount: 1,
       }],
     });
     await expect(api.updateSectionQuestion({

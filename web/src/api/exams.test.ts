@@ -3,6 +3,125 @@ import { createApiClient } from "./client";
 import { createExamAPI } from "./exams";
 
 describe("examApi", () => {
+  test("考试列表请求携带分页参数并回填分页元数据", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("GET");
+      expect(String(input)).toBe("/api/v1/exams?tenant_id=10&space_id=301&page=2&page_size=50");
+      return jsonResponse({
+        items: [{
+          id: 8,
+          tenant_id: 10,
+          paper_id: 100,
+          name: "高一数学月考",
+          start_time: 1779792000000,
+          end_time: 1779799200000,
+          duration_minutes: 120,
+          invite_code: "PM8888",
+          status: "published",
+          target_type: "space",
+          target_id: 301,
+          targets: [
+            { target_type: "space", target_id: 301 },
+            { target_type: "user", target_id: 501 },
+          ],
+        }],
+        page: 2,
+        page_size: 50,
+        total: 128,
+      });
+    });
+    const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.listExams({
+      tenantID: 10,
+      spaceID: 301,
+      page: 2,
+      pageSize: 50,
+    });
+
+    expect(result).toEqual({
+      items: [{
+        id: 8,
+        tenantID: 10,
+        paperID: 100,
+        name: "高一数学月考",
+        paperName: "试卷 100",
+        inviteCode: "PM8888",
+        target: "空间 301、用户 501",
+        status: "published",
+        startAt: "2026-05-26 18:40",
+        endAt: "2026-05-26 20:40",
+        durationMinutes: 120,
+      }],
+      page: 2,
+      pageSize: 50,
+      total: 128,
+    });
+  });
+
+  test("发布考试请求同时发送多目标数组和兼容单目标字段", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        paper_id: 100,
+        name: "高一数学月考",
+        target_type: "space",
+        target_id: 301,
+        targets: [
+          { target_type: "space", target_id: 301 },
+          { target_type: "user", target_id: 501 },
+        ],
+        start_time: 1779792000000,
+        end_time: 1779799200000,
+        duration_minutes: 120,
+        max_attempts: 1,
+        result_strategy: "latest",
+        publish_mode: "manual_publish",
+      });
+      return jsonResponse({
+        id: 8,
+        tenant_id: 10,
+        paper_id: 100,
+        name: "高一数学月考",
+        start_time: 1779792000000,
+        end_time: 1779799200000,
+        duration_minutes: 120,
+        invite_code: "PM8888",
+        status: "published",
+        target_type: "space",
+        target_id: 301,
+        targets: [
+          { target_type: "space", target_id: 301 },
+          { target_type: "user", target_id: 501 },
+        ],
+      });
+    });
+    const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.publishExam({
+      tenantID: 10,
+      paperID: 100,
+      name: "高一数学月考",
+      targets: [
+        { targetType: "space", targetID: 301 },
+        { targetType: "user", targetID: 501 },
+      ],
+      startTime: 1779792000000,
+      endTime: 1779799200000,
+      durationMinutes: 120,
+      maxAttempts: 1,
+      resultStrategy: "latest",
+      publishMode: "manual_publish",
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/exams",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(result.target).toBe("空间 301、用户 501");
+  });
+
   test("考试入口按邀请码解析考试信息", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe("POST");

@@ -1,5 +1,5 @@
 import { Button } from "../../components/ui/Button";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { ArrowLeftRight, ChevronLeft, ChevronRight, Home, LogOut, Menu, Settings, X } from "lucide-react";
 import { type AuthSession, useSession } from "../../auth/session-context";
@@ -38,28 +38,27 @@ export function AdminShell({ routes }: AdminShellProps) {
 
   const renderRouteLink = (route: AdminRoute) => {
     const Icon = route.icon;
+    const isActive = menuRouteActive(route, location.pathname);
+    const classes = ["menu-link"];
+    if (isActive) {
+      classes.push("menu-link--active");
+    }
+    if (iconOnly) {
+      classes.push("menu-link--icon-only");
+    }
 
     return (
-      <NavLink
-        className={({ isActive }) => {
-          const classes = ["menu-link"];
-          if (isActive) {
-            classes.push("menu-link--active");
-          }
-          if (iconOnly) {
-            classes.push("menu-link--icon-only");
-          }
-          return classes.join(" ");
-        }}
-        end={route.path === "/"}
+      <Link
+        aria-current={isActive ? "page" : undefined}
+        className={classes.join(" ")}
         key={route.path}
         onClick={() => setSidebarOpen(false)}
-        to={routeLinkTarget(route, location.search, session)}
+        to={routeLinkTarget(route, location.search, location.pathname, session)}
       >
         <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
         <span>{route.label}</span>
         {route.badge && <em>{route.badge}</em>}
-      </NavLink>
+      </Link>
     );
   };
 
@@ -180,7 +179,7 @@ export function AdminShell({ routes }: AdminShellProps) {
       </aside>
 
       <div className="workspace">
-        <main className="workspace__content">
+        <main className={workspaceContentClassName(location.pathname)}>
           <Outlet />
         </main>
       </div>
@@ -201,6 +200,15 @@ function buildSidebarClassName(sidebarOpen: boolean, sidebarCollapsed: boolean, 
   }
   if (!sidebarOpen && sidebarCollapsed && sidebarHovered) {
     classes.push("sidebar--hover-open");
+  }
+  return classes.join(" ");
+}
+
+function workspaceContentClassName(pathname: string) {
+  const classes = ["workspace__content"];
+  // 试卷预览和考试详情属于卡片式详情页，必须允许内容随视口收缩，避免统计卡片被固定最小宽度裁切。
+  if (paperPreviewPath(pathname) || examDetailPath(pathname)) {
+    classes.push("workspace__content--paper-preview");
   }
   return classes.join(" ");
 }
@@ -233,12 +241,12 @@ function scopedSpaceIDFromSession(session: AuthSession | null, searchParams: URL
   return session.selectedSpaceID ?? positiveID(searchParams.get("space_id"));
 }
 
-function routeLinkTarget(route: AdminRoute, currentSearch: string, session: AuthSession | null) {
+function routeLinkTarget(route: AdminRoute, currentSearch: string, currentPathname: string, session: AuthSession | null) {
   const currentParams = new URLSearchParams(currentSearch);
   const nextParams = new URLSearchParams();
   const tenantID = currentParams.get("tenant_id");
   const spaceID = shouldPreserveSpaceScope(session) ? currentParams.get("space_id") : null;
-  const examID = currentParams.get("exam_id");
+  const examID = currentParams.get("exam_id") ?? examIDFromPathname(currentPathname);
   if ((route.group === "overview" || route.group === "tenant" || route.group === "exam") && tenantID) {
     nextParams.set("tenant_id", tenantID);
   }
@@ -258,6 +266,27 @@ function shouldPreserveSpaceScope(session: AuthSession | null) {
 
 function routeNeedsExamContext(path: string) {
   return path === "/grading" || path === "/results";
+}
+
+function examIDFromPathname(pathname: string) {
+  const match = /^\/exams\/([^/]+)(?:\/preview)?$/.exec(pathname);
+  const examID = positiveID(match?.[1] ?? null);
+  return examID === undefined ? null : String(examID);
+}
+
+function menuRouteActive(route: AdminRoute, pathname: string) {
+  if (route.path === "/") {
+    return pathname === "/";
+  }
+  return pathname === route.path || pathname.startsWith(`${route.path}/`);
+}
+
+function paperPreviewPath(pathname: string) {
+  return /^\/papers\/[^/]+\/preview$/.test(pathname);
+}
+
+function examDetailPath(pathname: string) {
+  return /^\/exams\/[^/]+(?:\/preview)?$/.test(pathname);
 }
 
 function buildSidebarIdentity(session: AuthSession | null) {

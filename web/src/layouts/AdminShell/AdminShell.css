@@ -406,13 +406,16 @@
   padding: 42px 40px 64px;
 }
 
-.workspace__content:has(.exam-paper-editor-page) {
+.workspace__content--paper-preview,
+.workspace__content:has(.exam-paper-editor-page),
+.workspace__content:has(.paper-preview-page) {
   min-width: 0;
   overflow-x: hidden;
   padding: 28px 24px 48px;
 }
 
-.workspace:has(.exam-paper-editor-page) {
+.workspace:has(.exam-paper-editor-page),
+.workspace:has(.paper-preview-page) {
   overflow-x: hidden;
 }
 

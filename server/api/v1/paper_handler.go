@@ -68,12 +68,16 @@ type paperSectionListResponse struct {
 }
 
 type paperSectionQuestionResponse struct {
-	TenantID   uint64 `json:"tenant_id"`
-	PaperID    uint64 `json:"paper_id"`
-	SectionID  uint64 `json:"section_id"`
-	QuestionID uint64 `json:"question_id"`
-	SortOrder  int    `json:"sort_order"`
-	Score      string `json:"score"`
+	TenantID     uint64   `json:"tenant_id"`
+	PaperID      uint64   `json:"paper_id"`
+	SectionID    uint64   `json:"section_id"`
+	QuestionID   uint64   `json:"question_id"`
+	SortOrder    int      `json:"sort_order"`
+	Score        string   `json:"score"`
+	QuestionType string   `json:"question_type,omitempty"`
+	Title        string   `json:"title,omitempty"`
+	Options      []string `json:"options,omitempty"`
+	BlankCount   int      `json:"blank_count,omitempty"`
 }
 
 type paperSectionQuestionListResponse struct {
@@ -147,7 +151,7 @@ type updatePaperRequest struct {
 	Name            string              `json:"name"`
 	Description     string              `json:"description"`
 	DurationMinutes *int                `json:"duration_minutes"`
-	GradeLevel      string              `json:"grade_level"`
+	GradeLevel      *string             `json:"grade_level"`
 }
 
 type paperSpaceIDRequest struct {
@@ -330,7 +334,7 @@ func (h paperHandler) update(c *gin.Context) {
 	if !authorizeExamBusiness(c, request.TenantID, h.members) {
 		return
 	}
-	if !h.authorizePaperWrite(c, request.TenantID, paperID) {
+	if !h.authorizePaperUpdate(c, request.TenantID, paperID, request) {
 		return
 	}
 	if request.SpaceID.Set && !h.authorizePaperCreate(c, request.TenantID, request.SpaceID.Value) {
@@ -341,13 +345,25 @@ func (h paperHandler) update(c *gin.Context) {
 		writePermissionOrInternalError(c, err, "构建试卷写权限上下文失败")
 		return
 	}
+	gradeLevel := ""
+	if request.GradeLevel != nil {
+		gradeLevel = *request.GradeLevel
+	} else {
+		// 更新接口允许省略 grade_level，此时沿用当前试卷值，避免纯归属迁移把年级误清空。
+		existing, getErr := h.papers.GetPaper(c.Request.Context(), request.TenantID, paperID)
+		if getErr != nil {
+			writePaperServiceError(c, getErr)
+			return
+		}
+		gradeLevel = existing.GradeLevel
+	}
 	paper, err := h.service.UpdatePaper(c.Request.Context(), servicepaper.UpdatePaperInput{
 		TenantID:        request.TenantID,
 		PaperID:         paperID,
 		Name:            request.Name,
 		Description:     request.Description,
 		DurationMinutes: request.DurationMinutes,
-		GradeLevel:      request.GradeLevel,
+		GradeLevel:      gradeLevel,
 		TargetSpaceID:   request.SpaceID.Value,
 		ChangeSpace:     request.SpaceID.Set,
 		ActorID:         principal.UserID,
@@ -1304,6 +1320,34 @@ func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paper
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷权限范围失败"))
 		return false
 	}
+	return h.authorizeLoadedPaperWrite(c, tenantID, paperID, paper)
+}
+
+func (h paperHandler) authorizePaperUpdate(c *gin.Context, tenantID uint64, paperID uint64, request updatePaperRequest) bool {
+	paper, err := h.papers.GetPaper(c.Request.Context(), tenantID, paperID)
+	if err != nil {
+		if errors.Is(err, servicepaper.ErrPaperNotFound) {
+			writePaperServiceError(c, err)
+			return false
+		}
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷权限范围失败"))
+		return false
+	}
+	if paper.SpaceID == nil && request.SpaceID.Set && request.SpaceID.Value != nil {
+		permissionContext, ok := h.authorizePublicPaperTransferToSpace(c, tenantID, *request.SpaceID.Value)
+		if !ok {
+			return false
+		}
+		if permissionContext.Role != permission.RoleTenantAdmin && !request.onlyChangesPaperSpace(paper) {
+			writePermissionOrInternalError(c, permission.ErrForbidden, "空间管理员归属公共试卷时不能修改试卷内容")
+			return false
+		}
+		return true
+	}
+	return h.authorizeLoadedPaperWrite(c, tenantID, paperID, paper)
+}
+
+func (h paperHandler) authorizeLoadedPaperWrite(c *gin.Context, tenantID uint64, paperID uint64, paper servicepaper.Paper) bool {
 	spaceID := paper.SpaceID
 	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users)
 	if err != nil {
@@ -1326,6 +1370,34 @@ func (h paperHandler) authorizePaperWrite(c *gin.Context, tenantID uint64, paper
 		return false
 	}
 	return true
+}
+
+func (h paperHandler) authorizePublicPaperTransferToSpace(c *gin.Context, tenantID uint64, spaceID uint64) (permission.PermissionContext, bool) {
+	permissionContext, err := permissionContextForResourceScope(c, tenantID, &spaceID, h.members, h.users)
+	if err != nil {
+		writePermissionOrInternalError(c, err, "构建公共试卷归属权限上下文失败")
+		return permission.PermissionContext{}, false
+	}
+	if permissionContext.Role == permission.RoleTenantAdmin || permissionContext.SpaceMemberships[spaceID] == permission.RoleSpaceAdmin {
+		return permissionContext, true
+	}
+	writePermissionOrInternalError(c, permission.ErrForbidden, "公共试卷仅空间管理员可归属到当前空间")
+	return permission.PermissionContext{}, false
+}
+
+func (r updatePaperRequest) onlyChangesPaperSpace(paper servicepaper.Paper) bool {
+	durationMinutes := paper.DurationMinutes
+	if r.DurationMinutes != nil {
+		durationMinutes = *r.DurationMinutes
+	}
+	gradeLevel := paper.GradeLevel
+	if r.GradeLevel != nil {
+		gradeLevel = *r.GradeLevel
+	}
+	return r.Name == paper.Name &&
+		r.Description == paper.Description &&
+		durationMinutes == paper.DurationMinutes &&
+		gradeLevel == paper.GradeLevel
 }
 
 func (h paperHandler) authorizePaperCreatorHierarchy(c *gin.Context, permissionContext permission.PermissionContext, paper servicepaper.Paper) bool {
@@ -1501,12 +1573,16 @@ func paperToResponse(paper servicepaper.Paper) paperResponse {
 
 func sectionQuestionToResponse(question servicepaper.SectionQuestion) paperSectionQuestionResponse {
 	return paperSectionQuestionResponse{
-		TenantID:   question.TenantID,
-		PaperID:    question.PaperID,
-		SectionID:  question.SectionID,
-		QuestionID: question.QuestionID,
-		SortOrder:  question.SortOrder,
-		Score:      question.Score,
+		TenantID:     question.TenantID,
+		PaperID:      question.PaperID,
+		SectionID:    question.SectionID,
+		QuestionID:   question.QuestionID,
+		SortOrder:    question.SortOrder,
+		Score:        question.Score,
+		QuestionType: question.QuestionType,
+		Title:        question.Title,
+		Options:      question.Options,
+		BlankCount:   question.BlankCount,
 	}
 }
 

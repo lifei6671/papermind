@@ -1,6 +1,6 @@
 # PaperMind SQLite 单机模式
 
-本目录用于本地开发、功能演示和低并发单机体验。SQLite 不推荐用于 100 人正式考试，正式考试优先使用 PostgreSQL，MySQL 作为兼容目标。
+本目录用于本地开发、功能演示和低并发单机体验。SQLite 不推荐用于 100 人正式考试，正式考试优先使用 PostgreSQL，MySQL 8.0+ 作为兼容目标。
 
 ## 启动
 
@@ -49,4 +49,4 @@ file:<repo>\server\data\sqlite\papermind.db?_foreign_keys=on&_journal_mode=WAL&_
 - 密码：`admin123`
 - 邮箱：`admin@iminho.me`
 
-如需正式考试部署，请使用 PostgreSQL 或 MySQL，并完成 P10 的压测和迁移验证。
+如需正式考试部署，请使用 PostgreSQL 或 MySQL 8.0+，并完成 P10 的压测和迁移验证。

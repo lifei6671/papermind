@@ -313,6 +313,15 @@ func TestPaperAssemblyWorkspaceRoutesManageSectionQuestionsWithSQLite(t *testing
 	if len(listBody.Data.Items) != 1 || listBody.Data.Items[0].QuestionID != 101 || listBody.Data.Items[0].Score != "4" {
 		t.Fatalf("unexpected paper questions: %#v", listBody.Data.Items)
 	}
+	if listBody.Data.Items[0].Title != "病句辨析题" || listBody.Data.Items[0].QuestionType != constant.QuestionTypeSingle {
+		t.Fatalf("expected section question preview fields, got %#v", listBody.Data.Items[0])
+	}
+	if len(listBody.Data.Items[0].Options) != 2 || listBody.Data.Items[0].Options[0] != "语序不当" {
+		t.Fatalf("expected sanitized option content, got %#v", listBody.Data.Items[0].Options)
+	}
+	if strings.Contains(listRecorder.Body.String(), "is_correct") || strings.Contains(listRecorder.Body.String(), "standard_answer") {
+		t.Fatalf("section question list must not expose answers, body = %s", listRecorder.Body.String())
+	}
 
 	updateRecorder := httptest.NewRecorder()
 	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPut, "/api/v1/papers/100/sections/1/questions/101", []byte(`{
@@ -1004,6 +1013,127 @@ func TestTenantAdminCanMoveUnreferencedPaperScopeWithSQLite(t *testing.T) {
 	}
 }
 
+func TestSpaceAdminCanMovePublicPaperIntoOwnSpaceWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+	seedStudentSpaceAdminExamBusinessTestData(t, gormDB)
+
+	if err := gormDB.Exec(`
+		INSERT INTO papers (
+			id, tenant_id, space_id, name, description, duration_minutes, grade_level, total_score, build_mode, status,
+			created_at, created_by, created_by_type, updated_at, updated_by, updated_by_type, ext_json
+		) VALUES (?, ?, NULL, ?, '', 120, '高一', 0, ?, 'draft', ?, 99, 'tenant_user', ?, 99, 'tenant_user', '{}')
+	`, 200, 10, "租户公共试卷", constant.BuildModeManual, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed public paper: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student.space.admin", "papermind123")
+
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPut, "/api/v1/papers/200", []byte(`{
+		"tenant_id": 10,
+		"space_id": 301,
+		"name": "租户公共试卷",
+		"description": "",
+		"duration_minutes": 120,
+		"grade_level": "高一"
+	}`), authHeader))
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("space admin move public paper status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+	updateBody := decodeExamAPIResponse[paperResponse](t, updateRecorder.Body.Bytes())
+	if updateBody.Data.SpaceID == nil || *updateBody.Data.SpaceID != 301 {
+		t.Fatalf("expected public paper moved into space 301, got %#v", updateBody.Data)
+	}
+}
+
+func TestSpaceAdminCanMovePublicPaperIntoOwnSpaceWithoutGradeLevelWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+	seedStudentSpaceAdminExamBusinessTestData(t, gormDB)
+
+	if err := gormDB.Exec(`
+		INSERT INTO papers (
+			id, tenant_id, space_id, name, description, duration_minutes, grade_level, total_score, build_mode, status,
+			created_at, created_by, created_by_type, updated_at, updated_by, updated_by_type, ext_json
+		) VALUES (?, ?, NULL, ?, '', 120, '高一', 0, ?, 'draft', ?, 99, 'tenant_user', ?, 99, 'tenant_user', '{}')
+	`, 202, 10, "租户公共试卷", constant.BuildModeManual, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed public paper: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student.space.admin", "papermind123")
+
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPut, "/api/v1/papers/202", []byte(`{
+		"tenant_id": 10,
+		"space_id": 301,
+		"name": "租户公共试卷",
+		"description": "",
+		"duration_minutes": 120
+	}`), authHeader))
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("space admin move public paper without grade_level status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+	updateBody := decodeExamAPIResponse[paperResponse](t, updateRecorder.Body.Bytes())
+	if updateBody.Data.SpaceID == nil || *updateBody.Data.SpaceID != 301 {
+		t.Fatalf("expected public paper moved into space 301, got %#v", updateBody.Data)
+	}
+	if updateBody.Data.GradeLevel != "高一" {
+		t.Fatalf("expected public paper grade level preserved, got %#v", updateBody.Data)
+	}
+}
+
+func TestSpaceAdminCannotEditPublicPaperWhileMovingIntoOwnSpaceWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+	seedStudentSpaceAdminExamBusinessTestData(t, gormDB)
+
+	if err := gormDB.Exec(`
+		INSERT INTO papers (
+			id, tenant_id, space_id, name, description, duration_minutes, grade_level, total_score, build_mode, status,
+			created_at, created_by, created_by_type, updated_at, updated_by, updated_by_type, ext_json
+		) VALUES (?, ?, NULL, ?, '', 120, '高一', 0, ?, 'draft', ?, 99, 'tenant_user', ?, 99, 'tenant_user', '{}')
+	`, 201, 10, "租户公共试卷", constant.BuildModeManual, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed public paper: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "student.space.admin", "papermind123")
+
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, authorizedRequest(http.MethodPut, "/api/v1/papers/201", []byte(`{
+		"tenant_id": 10,
+		"space_id": 301,
+		"name": "空间接管公共试卷",
+		"description": "",
+		"duration_minutes": 120,
+		"grade_level": "高一"
+	}`), authHeader))
+	if updateRecorder.Code != http.StatusForbidden {
+		t.Fatalf("expected public paper content update to be forbidden, got status = %d, body = %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+}
+
 func TestTenantAdminCannotCreatePaperForMissingSpaceWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -1382,12 +1512,22 @@ func seedPaperAPITestData(t *testing.T, gormDB *gorm.DB) {
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO questions (
-			id, tenant_id, type, difficulty, title, analysis, score_default, status,
+			id, tenant_id, type, difficulty, title, analysis, standard_answer, score_default, status,
 			created_at, updated_at, ext_json
 		) VALUES
-			(101, 10, ?, 'easy', '病句辨析题', '识别语序不当。', 4, 'enabled', ?, ?, '{}')
+			(101, 10, ?, 'easy', '病句辨析题', '识别语序不当。', '正确答案', 4, 'enabled', ?, ?, '{}')
 	`, constant.QuestionTypeSingle, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed question: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO question_options (
+			tenant_id, question_id, option_key, sort_order, content, is_correct, is_distractor,
+			created_at, updated_at, ext_json
+		) VALUES
+			(10, 101, 'A', 1, '语序不当', TRUE, FALSE, ?, ?, '{}'),
+			(10, 101, 'B', 2, '搭配正确', FALSE, TRUE, ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed question options: %v", err)
 	}
 }
 

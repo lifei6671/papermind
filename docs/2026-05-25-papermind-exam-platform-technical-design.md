@@ -20,7 +20,7 @@ PaperMind 首版定位为小而美的在线 SaaS 考试平台，覆盖初高中�
 首版并发目标：
 
 - 支持单场考试约 100 名考生同时在线作答。
-- 正式多人考试推荐使用 PostgreSQL 或 MySQL。
+- 正式多人考试推荐使用 PostgreSQL 或 MySQL 8.0+。
 - SQLite 单机版仅用于演示、本地开发和低并发小规模考试，不作为 100 人正式考试的推荐部署方式。
 
 首版不做大而全的平台能力：
@@ -49,7 +49,7 @@ Go + Gin 模块化单体
              ↓
 GORM Repository
              ↓
-PostgreSQL / MySQL / SQLite
+PostgreSQL / MySQL 8.0+ / SQLite
 ```
 
 技术选型：
@@ -60,7 +60,7 @@ PostgreSQL / MySQL / SQLite
 - 数据库驱动：`gorm.io/driver/sqlite`、`gorm.io/driver/mysql`、`gorm.io/driver/postgres`
 - JSON 字段：`gorm.io/datatypes`
 - 配置：YAML
-- 数据库：PostgreSQL 优先，兼容 MySQL，支持 SQLite 单机版
+- 数据库：PostgreSQL 优先，兼容 MySQL 8.0+，支持 SQLite 单机版
 - API：REST API，统一使用 `/api/v1`
 
 后续小程序端复用同一套业务 API，不单独拆一套考试业务接口。
@@ -214,7 +214,7 @@ type PermissionChecker interface {
 
 - PostgreSQL：生产推荐，第一优先级验证。
 - SQLite：单机版、演示环境、本地轻量部署，第一阶段一起验证；不推荐承载 100 人正式在线考试。
-- MySQL：兼容目标，第二阶段补充完整验证。
+- MySQL 8.0+：兼容目标，第二阶段补充完整验证；考试目标范围迁移依赖 `JSON_TABLE` 回填历史 `ext_json.space_ids`。
 
 GORM 数据库驱动固定使用：
 
@@ -244,7 +244,7 @@ database:
 
 PostgreSQL 和 MySQL 可以按部署规模配置连接池，但首版默认保持保守值。
 
-首版 100 人在线考试场景下，推荐部署 PostgreSQL 或 MySQL。SQLite 写入仍然是串行化能力，即使开启 WAL，也可能在自动保存和防作弊事件高频写入时出现排队或超时，因此只作为演示和低并发单机模式。
+首版 100 人在线考试场景下，推荐部署 PostgreSQL 或 MySQL 8.0+。SQLite 写入仍然是串行化能力，即使开启 WAL，也可能在自动保存和防作弊事件高频写入时出现排队或超时，因此只作为演示和低并发单机模式。
 
 SQLite 连接池规则：
 
@@ -281,7 +281,7 @@ server/data/migrations
 - 服务启动时根据 `database.driver` 自动选择迁移目录，并按版本号从小到大执行。
 - 已执行版本记录到 `schema_migrations`，重复执行时自动跳过。
 - 已发布或已执行的迁移版本不得改写；项目进入生产或存在历史库后，新增字段、索引调整和约束收口必须通过更高版本追加迁移落地，避免旧库因版本已记录而跳过结构变更。
-- 当前权限模型调整仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；本次需求不新增 `002_audit_actor_type.sql` 或其他 `002_*` 迁移脚本，审计主体类型字段、全局 `users` 表、`tenant_user_memberships` 租户成员关系表和单角色唯一约束直接写入 `001_tenant_space.sql`。
+- 早期权限模型调整仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；该阶段不新增 `002_audit_actor_type.sql`，审计主体类型字段、全局 `users` 表、`tenant_user_memberships` 租户成员关系表和单角色唯一约束直接写入 `001_tenant_space.sql`。考试管理详情阶段的审计日志、成绩汇总索引和发布目标作用空间通过后续 `002_exam_management_detail.sql`、`003_exam_target_scope_spaces.sql` 增量迁移落地。
 - 任意迁移失败必须立即停止启动流程，禁止服务运行在半迁移状态。
 - 首版不提供单独数据库迁移脚本，避免部署流程和应用启动流程产生两套迁移入口。
 - 迁移期间 HTTP 层必须返回“系统升级中”的中间页或稳定 JSON 响应，并带 `Retry-After`，避免迁移耗时较长时前端白屏或接口表现为未知错误。
@@ -341,7 +341,7 @@ ext_json     JSON 扩展字段
 
 - 所有表都保留 `ext_json` 字段，包括平台级表、关系表和日志表。
 - Go 实体统一使用 `datatypes.JSON` 映射 `ext_json`。
-- PostgreSQL 迁移 SQL 使用 `jsonb`，MySQL 使用 `json`，SQLite 使用 `text` 保存 JSON 字符串。
+- PostgreSQL 迁移 SQL 使用 `jsonb`，MySQL 8.0+ 使用 `json`，SQLite 使用 `text` 保存 JSON 字符串。
 - `ext_json` 只能保存非核心扩展元数据，例如导入来源、外部系统引用、展示偏好、临时标记。
 - 主流程字段不得放入 `ext_json`，例如权限、租户隔离、考试状态、判分答案、成绩、时间窗口、唯一标识。
 - 首版不对 `ext_json` 建索引，不基于 `ext_json` 做关键业务查询。
@@ -872,7 +872,7 @@ paper_section_rules
 - `rule_fixed`：教师按大题配置规则，触发生成后固化为 `paper_section_questions`，发布前可以审题和手动调整，适合正式考试。
 - `rule_live`：教师按大题配置规则，考试开始时为每个考生实时抽题，适合练习和模拟考试。
 - `papers.space_id` 可为空；为空表示租户级公共试卷，非空表示空间内试卷。
-- 公共试卷只允许 `tenant_admin` 创建、修改和删除；`tenant_admin` 也可以把未被考试引用的公共试卷迁移到空间，或把空间试卷迁移为公共试卷。空间试卷仍允许本租户管理员或对应启用空间内的 `space_admin` / `teacher` 管理。
+- 公共试卷只允许 `tenant_admin` 创建、修改和删除；`tenant_admin` 可以把未被考试引用的公共试卷迁移到空间，或把空间试卷迁移为公共试卷。目标空间的 `space_admin` 可以把未被考试引用的公共试卷归属到自己授权空间，但不能维护公共试卷内容或把空间试卷迁回公共范围。空间试卷仍允许本租户管理员或对应启用空间内的 `space_admin` / `teacher` 管理。
 - 试卷已被未删除考试引用后，禁止删除和修改 `papers.space_id`；基础信息、组卷内容和规则修改继续受既有发布/撤回状态规则约束。
 - `space_admin` / `teacher` 可以在发布考试等流程中读取公共试卷，但是否允许引用公共试卷必须由对应业务 service 显式校验，不能把公共试卷视为任意教师可写资源。
 - `papers.duration_minutes` 保存试卷草稿的默认考试时长；创建、编辑和草稿保存都必须走真实试卷 API 持久化该字段，后续发布考试时可复用为默认值。
@@ -988,6 +988,19 @@ exam_targets
 └── ext_json              # JSON 扩展字段，保存非主流程元数据
 
 `exam_targets` 必须建立 `UNIQUE (tenant_id, exam_id, target_type, target_id)`，防止同一考试重复添加相同空间或用户目标。
+
+exam_target_scope_spaces
+├── id                    # 考试发布目标作用空间主键 ID
+├── tenant_id             # 所属租户 ID
+├── exam_id               # 考试 ID
+├── exam_target_id        # exam_targets.id
+├── space_id              # 目标作用空间 ID
+├── created_at            # 创建时间
+├── created_by            # 创建人用户 ID
+├── created_by_type       # 创建人主体类型
+└── ext_json              # JSON 扩展字段，保存非主流程元数据
+
+`exam_target_scope_spaces` 必须建立 `UNIQUE (tenant_id, exam_target_id, space_id)`，防止同一考试目标重复映射同一空间；同时建立 `(tenant_id, exam_id, space_id)` 索引，支撑成绩、阅卷、候选人和导出按授权空间过滤。空间投放目标映射自身空间；用户直投目标映射发布或导入时裁剪出的空间范围。
 
 exam_live_question_pools
 ├── id                    # rule_live 发布态题池主键 ID
@@ -1354,7 +1367,10 @@ API 分组：
 操作区。新建试卷必须先填写试卷名称、组卷方式、考试时长和适用年级，保存基础信息后再进入组卷页；已创建试卷的组卷方式在前端只读展示，不允许在编辑或规则管理过程中二次切换。工作台至少包含三块：试卷列表与模式展示、大题与已选题工作区、规则工作区。智能组卷的题型数量与分值区必须复用真实大题结构，支持新增题型、删除题型和拖拽排序；左侧题型序号与右侧已生成试卷分组都按当前大题顺序即时重算。`manual`
 模式下教师需要直接查看已选题并执行移除；`rule_fixed` 模式下需要在生成后查看固化题、
 发起替题并回写新的题目分值与排序；`rule_live` 模式下需要查看当前规则列表、编辑或删除
-规则，并在工作台中直接触发预检查查看候选题池数量。
+规则，并在工作台中直接触发预检查查看候选题池数量。后台试卷列表和组卷编辑页的预览入口
+统一通过新窗口打开 `/papers/:paperID/student-preview`；该路由独立于后台壳层，按学生答题页布局
+展示当前试卷题目。预览只使用管理端已有的试卷、大题、已选题和题目详情数据装配页面，不调用
+正式学生开考接口，也不创建真实作答记录。
 
 /api/v1/exams
 ├── 发布考试
@@ -1503,6 +1519,28 @@ DELETE /api/v1/papers/:id/rules/:rule_id
      query: tenant_id；rule_live 当前模式下删除后立即重算。
 GET  /api/v1/exams
      query: tenant_id, space_id?, page?, page_size?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
+GET  /api/v1/exams/:id/detail
+     query: tenant_id, space_id?；返回考试详情、发布目标、目标空间、授权空间和管理端权限。
+GET  /api/v1/exams/:id/overview
+     query: tenant_id, space_id?；返回考试概览、题型分布和近期动态。
+GET  /api/v1/exams/:id/paper-preview
+     query: tenant_id, space_id?, type?, page?, page_size?；返回管理端试卷预览分页。
+GET  /api/v1/exams/:id/candidates
+     query: tenant_id, space_id?, status?, keyword?, page?, page_size?；返回授权范围内考生列表。
+POST /api/v1/exams/:id/candidates/import
+     body: tenant_id, space_id?, user_ids[]；开考前追加授权范围内的用户直投考生。
+POST /api/v1/exams/:id/invitations/resend
+     body: tenant_id, space_id?, user_ids[]；校验并重发当前授权范围内考生的邀请码。
+GET  /api/v1/exams/:id/results/summary
+     query: tenant_id, space_id?；返回成绩统计、分数段和题型得分率。
+GET  /api/v1/exams/:id/results
+     query: tenant_id, space_id?, status?, keyword?, page?, page_size?；返回授权范围内成绩列表。
+GET  /api/v1/exams/:id/attempts/:attempt_id/answer-sheet
+     query: tenant_id, space_id?；返回授权范围内单次作答答卷详情。
+GET  /api/v1/exams/:id/logs
+     query: tenant_id, space_id?, operation_type?, page?, page_size?；返回管理端操作日志。
+POST /api/v1/exams/:id/settings
+     body: tenant_id, space_id?, publish_mode, score_publish_time?；更新成绩发布配置。
 
 GET  /api/v1/grading/pending
      query: tenant_id, exam_id, space_id?
@@ -1568,7 +1606,7 @@ page_size  默认 20，最大 100
 
 前端管理页不能内置核心业务 mock 数据。个人设置页必须通过 `/api/v1/profile` 读取当前账号资料并提交保存，不能只修改本地登录态；平台管理员登录账号在个人设置页只读，避免误改登录标识；租户用户保存成功后同步本地 session 的显示名称，让导航和页面标题立即刷新；租户用户处于首次登录强制改密状态时，后台路由必须跳转到个人设置页，直到成功调用 `/api/v1/profile/password` 清除该状态。租户登录页不再展示租户 ID 输入框，租户账号登录后进入 `/tenant-entry`，通过 `/api/v1/tenant/profile/spaces` 展示可进入的租户和空间，再调用 `/api/v1/auth/tenant/select-space` 绑定当前 session。`/tenant-entry` 必须按角色展示入口：`tenant_admin` 只展示租户后台入口，多个空间授权折叠为同一个租户入口，选择时不传 `space_id`；`space_admin`、`teacher` 和 `student` 才按具体空间展示空间管理、教学业务或考试入口。租户后台侧边栏必须展示当前租户身份和租户名称，主按钮固定为“切换租户”，点击后回到 `/tenant-entry`；平台管理员侧边栏继续展示平台身份和“回到概览”。后台左侧必须固定展示“总览 / 概览”入口，平台管理员进入平台概览，租户管理员进入当前租户或当前空间概览，教师进入当前授权空间的教学概览；概览指标和待办文案必须按角色视角区分。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。空间管理、用户管理等租户级页面必须从租户用户 session 获取目标租户，并调用 `/api/v1/tenant/**` 租户前缀接口；用户管理列表中启用状态用户展示“禁用用户”，禁用状态用户展示“启用用户”，并分别调用真实禁用/启用接口；缺失有效租户 ID 时只展示选择提示，不得使用 `10` 等前端默认值请求后端。后台左侧“租户空间”和“用户管理”菜单对 `tenant_admin` 显示；`tenant_admin` 不显示独立“空间成员”菜单，空间成员维护统一从“空间管理”的成员管理抽屉进入，新增成员通过抽屉内左侧按钮打开弹窗提交；抽屉右侧提供当前空间成员检索、搜索和刷新，成员列表分页展示，操作区支持禁用成员和打开成员详情抽屉。独立“空间成员”菜单只对拥有启用 `space_admin` 空间授权的账号显示，其可见性必须来自 `/api/v1/tenant/profile/spaces` 返回的当前用户启用空间成员关系和 `role = space_admin`，不能来自 session role，其中 `tenant_admin` 管理本租户全量空间和用户，`space_admin` 只能管理授权空间范围。后台左侧“考试业务”菜单对 `tenant_admin`、拥有授权空间的 `space_admin` 和 `teacher` 显示，其中 `tenant_admin` 管理本租户全量考试业务，`space_admin` / `teacher` 只能操作已加入且启用的空间范围。平台管理员直接访问租户业务后台路由时回到平台概览页，不渲染租户业务页面或触发租户业务 API 请求。平台管理员在租户管理列表中查看某个租户的空间或用户时，只在当前页面从右侧滑入抽屉并调用平台侧只读概览 API `/api/v1/tenants/:id/spaces` 或 `/api/v1/tenants/:id/users`，不跳转到租户侧空间管理或用户管理页面；遮罩层固定铺满视口并随抽屉打开淡入、关闭淡出，抽屉使用右侧绝对定位叠在遮罩层上滑入滑出，不在遮罩层内预留白色占位；抽屉默认占用 50% 视口宽度，全屏按钮在 50% 与 100% 视口宽度之间切换，宽度变化保持过渡动画；返回和关闭按钮只触发滑出和遮罩淡出动画，待动画结束后再卸载抽屉，遮罩层不触发关闭；抽屉列表必须保持租户侧空间管理、用户管理列表的列结构，只改变承载方式。教师没有加入任何空间时，用户详情和业务页必须提示“该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷”。
 
-公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 可由本租户 `tenant_admin` 或具备考试业务入口的 `teacher` 创建、编辑和导入；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。题目更新接口显式提交 `space_id` 时表示重新设置归属，必须同时校验调用方对原题目范围和目标范围都有写权限；题目已被试卷、实时候选池或作答快照引用时，仍允许编辑题目内容，但必须拒绝删除和归属迁移。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷写入只允许 `tenant_admin`，空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷或修改试卷归属前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。读取试卷大题和组卷规则详情时，也必须从 `paper_id` 反查 `papers.space_id` 后校验当前账号的真实空间成员关系；非 `tenant_admin` 不能仅凭租户考试业务入口读取其他空间试卷结构。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
+公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 可由本租户 `tenant_admin` 或具备考试业务入口的 `teacher` 创建、编辑和导入；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。题目更新接口显式提交 `space_id` 时表示重新设置归属，必须同时校验调用方对原题目范围和目标范围都有写权限；题目已被试卷、实时候选池或作答快照引用时，仍允许编辑题目内容，但必须拒绝删除和归属迁移。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷内容写入只允许 `tenant_admin`；未被考试引用的公共试卷显式提交目标 `space_id` 时，目标空间的 `space_admin` 可以把试卷归属到自己授权空间。空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷或修改试卷归属前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。读取试卷大题和组卷规则详情时，也必须从 `paper_id` 反查 `papers.space_id` 后校验当前账号的真实空间成员关系；非 `tenant_admin` 不能仅凭租户考试业务入口读取其他空间试卷结构。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
 
 成绩列表、发布配置和导出必须基于成绩行或考试范围反查真实空间。`teacher` 可以查看授权空间内成绩；当考试还没有任何提交成绩时，成绩列表返回空集合而不是权限错误。首版教师不能导出成绩；前端不展示教师导出入口，后端仍以 `CanExportExamResults` 作为最终拒绝边界。学生查分只走 `/api/v1/exam-entry/results/:id`，不能调用管理端成绩接口。
 
@@ -1673,7 +1711,7 @@ service 单元测试：
 - `space_admin` 不能修改空间基础资料或删除空间
 - `tenant_admin` 创建 `teacher` 时不自动写入 `space_members`
 - 教师未加入任何启用空间时不能操作题库、试卷、考试或阅卷
-- 公共题库允许 `tenant_admin` 和 `teacher` 创建、修改和导入；公共试卷只允许 `tenant_admin` 创建、修改和删除
+- 公共题库允许 `tenant_admin` 和 `teacher` 创建、修改和导入；公共试卷只允许 `tenant_admin` 创建、修改和删除，目标空间 `space_admin` 仅可把未引用公共试卷归属到自己授权空间
 - 学生不能访问 `/api/v1/tenant/results/:id`，只能通过 `/api/v1/exam-entry/results/:id` 查看自己的已发布成绩
 - 角色变更后，关键写接口必须从数据库重建权限上下文，不能继续信任旧 session 角色快照
 - 多选题答案排序归一化后判分
@@ -1804,12 +1842,12 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - 关键 API 测试
 - Docker Compose 验证
 - SQLite 单机验证
-- PostgreSQL 或 MySQL 下 100 人同时在线考试链路验证
+- PostgreSQL 或 MySQL 8.0+ 下 100 人同时在线考试链路验证
 
 ## 13. 关键决策记录
 
 - 首版做在线 SaaS 考试平台，不做局域网机房版。
-- 首版目标支持单场约 100 名考生同时在线作答，正式多人考试推荐 PostgreSQL 或 MySQL。
+- 首版目标支持单场约 100 名考生同时在线作答，正式多人考试推荐 PostgreSQL 或 MySQL 8.0+。
 - 首版采用 Go + Gin + React + GORM。
 - 首版采用模块化单体，不拆微服务。
 - 多租户采用共享数据库加 `tenant_id` 隔离。
@@ -1844,7 +1882,7 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - `question_options` 使用 `UNIQUE (tenant_id, question_id, option_key)` 防止同题选项 key 重复。
 - `question_options` 使用 `UNIQUE (tenant_id, question_id, sort_order)` 防止同题选项排序重复。
 - 题目选项编辑采用全量替换策略，已生成考试快照不受后续选项编辑影响。
-- 公共题库使用 `questions.space_id = NULL`，公共试卷使用 `papers.space_id = NULL`；公共题库允许教师写入，公共试卷仍仅 `tenant_admin` 写入，空间角色只能按业务规则读取或引用。
+- 公共题库使用 `questions.space_id = NULL`，公共试卷使用 `papers.space_id = NULL`；公共题库允许教师写入，公共试卷内容仍仅 `tenant_admin` 写入，目标空间 `space_admin` 仅可把未引用公共试卷归属到自己授权空间。
 - `rule_fixed` 先按规则生成固化题目，教师审题调整后再发布，适合正式考试。
 - `rule_live` 考试开始时按大题规则为每个考生实时抽题，适合练习和模拟考试。
 - `rule_live` 发布时冻结候选题池到 `exam_live_question_pools`，开考时只从冻结题池抽题。
@@ -1870,6 +1908,7 @@ Tracing 和 Prometheus 指标先预留，不作为首版强制实现。
 - `exam_attempts` 使用 `UNIQUE (tenant_id, exam_id, user_id, attempt_no)` 约束多次作答序号。
 - `exam_token_hash` 建立 `(exam_token_hash, status)` 索引。
 - `exam_targets` 使用 `UNIQUE (tenant_id, exam_id, target_type, target_id)` 防止发布范围重复。
+- `exam_target_scope_spaces` 使用 `UNIQUE (tenant_id, exam_target_id, space_id)` 防止作用空间重复，并使用 `(tenant_id, exam_id, space_id)` 支撑空间授权过滤。
 - `exam_answers` 使用 `UNIQUE (tenant_id, attempt_id, attempt_question_id)` 并通过 upsert 自动保存。
 - 多选题答案保存和判分前必须按选项 ID 升序排序。
 - 多选题判分必须反序列化 JSON 后比较选项 ID 集合，禁止裸字符串比较。

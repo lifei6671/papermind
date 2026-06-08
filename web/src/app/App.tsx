@@ -1,11 +1,13 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { AdminShell } from "../layouts/AdminShell/AdminShell";
 import { PlatformLoginPage } from "../pages/Login/PlatformLoginPage";
 import { ExamEntryPage } from "../pages/Exam/ExamEntryPage";
+import { PaperStudentPreviewRoute } from "../pages/Exam/PaperPreviewRoute";
 import { StudentExamPage } from "../pages/StudentExam/StudentExamPage";
 import { TenantEntryPage } from "../pages/Tenant/TenantEntryPage";
 import { useSession } from "../auth/session-context";
+import { pageTitleForPathname } from "./page-title";
 import { buildAdminRoutes, routeVisibleForRole } from "./routes";
 
 export function App() {
@@ -16,12 +18,24 @@ export function App() {
   const scopedExamID = positiveID(searchParams.get("exam_id"));
   const adminRoutes = buildAdminRoutes(session?.user, scopedSpaceID, session?.profileSpaces ?? [], scopedExamID);
 
+  useEffect(() => {
+    document.title = pageTitleForPathname(location.pathname, adminRoutes);
+  }, [location.pathname, adminRoutes]);
+
   return (
     <Routes>
       <Route path="/login" element={<PlatformLoginPage />} />
       <Route path="/tenant-entry" element={<RequireSession allowTenantUser><TenantEntryPage /></RequireSession>} />
       <Route path="/exam-entry" element={<ExamEntryPage />} />
       <Route path="/student/exam" element={<StudentExamPage />} />
+      <Route
+        path="/papers/:paperID/student-preview"
+        element={(
+          <RequireSession>
+            <PaperStudentPreviewRoute tenantID={session?.user.tenantID ?? 0} spaceID={scopedSpaceID} />
+          </RequireSession>
+        )}
+      />
       <Route element={<RequireSession><AdminShell routes={adminRoutes} /></RequireSession>}>
         {adminRoutes.map((route) => (
           <Route

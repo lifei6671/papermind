@@ -88,6 +88,8 @@ const sectionTemplates: Record<QuestionType, { name: string; instructions: strin
 };
 
 const AUTO_SAVE_DRAFT_DELAY_MS = 30_000;
+const READ_ONLY_PUBLIC_PAPER_MESSAGE = "你没有权限编辑该公共试卷，仅可查看。";
+const READ_ONLY_PUBLISHED_PAPER_MESSAGE = "已发布试卷仅可预览。";
 
 type DraggedQuestion = {
   sectionID: number;
@@ -140,7 +142,6 @@ export function PaperEditorPage({
   const [selectedDifficulty, setSelectedDifficulty] = useState<"all" | QuestionDifficulty>("all");
   const [selectedTag, setSelectedTag] = useState("all");
   const [page, setPage] = useState(1);
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isGeneratingSmartPaper, setIsGeneratingSmartPaper] = useState(false);
   const [isRefreshingWorkspace, setIsRefreshingWorkspace] = useState(false);
@@ -358,6 +359,10 @@ export function PaperEditorPage({
       showError("请先保存试卷基础信息后再添加题型");
       return;
     }
+    if (isContentReadOnly) {
+      showError(contentReadOnlyMessage);
+      return;
+    }
     const name = newSmartSectionName.trim();
     if (!name) {
       showError("题型名称不能为空");
@@ -391,6 +396,10 @@ export function PaperEditorPage({
 
   async function handleDeleteSmartSection(section: PaperSectionRow) {
     if (paper === null) {
+      return;
+    }
+    if (isContentReadOnly) {
+      showError(contentReadOnlyMessage);
       return;
     }
     try {
@@ -460,7 +469,23 @@ export function PaperEditorPage({
   const isSmartPaper = buildMode === "rule_fixed";
   const canChangeBuildMode = paper === null;
   const paperScopeLabel = paperScopeQuestionBankLabel(selectedPaperSpaceID ?? undefined);
-  const isReadOnlyPublicPaper = selectedPaperSpaceID === null && !canSelectPublicScope;
+  const canAssignPublicPaperToCurrentSpace = actorRole === "space_admin" && selectedPaperSpaceID === null && spaceID !== undefined;
+  const canShowPublicScopeOption = canSelectPublicScope || selectedPaperSpaceID === null;
+  const isScopeTransferOnly = paper?.spaceID === undefined && actorRole === "space_admin" && spaceID !== undefined && !canSelectPublicScope;
+  const isReadOnlyPublicPaper = selectedPaperSpaceID === null && !canSelectPublicScope && !canAssignPublicPaperToCurrentSpace;
+  const isReadOnlyPublishedPaper = paper?.status === "enabled";
+  const isReadOnlyPaper = isReadOnlyPublicPaper || isReadOnlyPublishedPaper;
+  const readOnlyPaperMessage = isReadOnlyPublishedPaper ? READ_ONLY_PUBLISHED_PAPER_MESSAGE : READ_ONLY_PUBLIC_PAPER_MESSAGE;
+  const isContentReadOnly = isReadOnlyPaper || isScopeTransferOnly;
+  const contentReadOnlyMessage = isScopeTransferOnly ? "请先将公共试卷归属到当前空间后再编辑。" : readOnlyPaperMessage;
+
+  function navigateToPreviewPage() {
+    if (paper === null) {
+      return;
+    }
+    window.open(`/papers/${paper.id}/student-preview${pageSearch}`, "_blank", "noopener,noreferrer");
+  }
+
   const sectionOrderDirty = serializeSections(sections) !== serializeSections(persistedSections);
   const paperScopeDirty = selectedPaperSpaceID !== (paper === null ? (spaceID ?? null) : (paper.spaceID ?? null));
   const currentSmartRuleSnapshot = useMemo(() => serializeSmartRuleState({
@@ -586,6 +611,10 @@ export function PaperEditorPage({
   ]);
 
   const saveDraft = useCallback(async ({ notifySuccess }: { notifySuccess: boolean }): Promise<PaperRow | null> => {
+    if (isReadOnlyPaper) {
+      showError(readOnlyPaperMessage);
+      return null;
+    }
     if (!paperName.trim()) {
       showError("试卷名称不能为空");
       return null;
@@ -721,6 +750,8 @@ export function PaperEditorPage({
     sectionQuestions,
     sections,
     selectedPaperSpaceID,
+    isReadOnlyPaper,
+    readOnlyPaperMessage,
     showError,
     showSuccess,
     tenantID,
@@ -732,7 +763,7 @@ export function PaperEditorPage({
   }
 
   useEffect(() => {
-    if (paper === null || !draftDirty || isSavingDraft || isGeneratingSmartPaper || !paperName.trim()) {
+    if (paper === null || isReadOnlyPaper || !draftDirty || isSavingDraft || isGeneratingSmartPaper || !paperName.trim()) {
       return undefined;
     }
 
@@ -741,9 +772,13 @@ export function PaperEditorPage({
     }, AUTO_SAVE_DRAFT_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [draftDirty, isGeneratingSmartPaper, isSavingDraft, paper, paperName, saveDraft]);
+  }, [draftDirty, isGeneratingSmartPaper, isReadOnlyPaper, isSavingDraft, paper, paperName, saveDraft]);
 
   async function handleGenerateSmartPaper() {
+    if (isContentReadOnly) {
+      showError(contentReadOnlyMessage);
+      return;
+    }
     if (paper === null) {
       showError("请先保存试卷基础信息后再智能组卷");
       return;
@@ -778,6 +813,10 @@ export function PaperEditorPage({
   }
 
   async function handleAddQuestion(question: QuestionRow) {
+    if (isContentReadOnly) {
+      showError(contentReadOnlyMessage);
+      return;
+    }
     try {
       if (paper === null) {
         showError("请先保存试卷基础信息后再开始组卷");
@@ -841,6 +880,10 @@ export function PaperEditorPage({
     if (paper === null) {
       return;
     }
+    if (isContentReadOnly) {
+      showError(contentReadOnlyMessage);
+      return;
+    }
     if (isRuleLivePaper) {
       showError("rule_live 试卷请到组卷规则页维护题池和分值。");
       return;
@@ -869,6 +912,10 @@ export function PaperEditorPage({
     if (paper === null) {
       return;
     }
+    if (isContentReadOnly) {
+      showError(contentReadOnlyMessage);
+      return;
+    }
     try {
       await providedPaperApi.deleteSectionQuestion({
         tenantID,
@@ -891,11 +938,18 @@ export function PaperEditorPage({
   }
 
   function handleUnblockSmartQuestion(questionID: number) {
+    if (isContentReadOnly) {
+      return;
+    }
     setBlockedSmartQuestionIDs((ids) => ids.filter((id) => id !== questionID));
   }
 
   async function handleScoreBlur(item: ManualQuestionRow) {
     if (paper === null) {
+      return;
+    }
+    if (isContentReadOnly) {
+      showError(contentReadOnlyMessage);
       return;
     }
     if (isRuleLivePaper) {
@@ -946,7 +1000,7 @@ export function PaperEditorPage({
   }
 
   function handleSectionDrop(targetSectionID: number) {
-    if (isRuleLivePaper) {
+    if (isContentReadOnly || isRuleLivePaper) {
       clearDragState();
       return;
     }
@@ -959,7 +1013,7 @@ export function PaperEditorPage({
   }
 
   function handleSectionDragStart(event: React.DragEvent<HTMLButtonElement>, sectionID: number) {
-    if (isRuleLivePaper) {
+    if (isContentReadOnly || isRuleLivePaper) {
       event.preventDefault();
       return;
     }
@@ -983,7 +1037,7 @@ export function PaperEditorPage({
   }
 
   function handleQuestionDrop(target: ManualQuestionRow) {
-    if (isRuleLivePaper) {
+    if (isContentReadOnly || isRuleLivePaper) {
       clearDragState();
       return;
     }
@@ -1007,7 +1061,7 @@ export function PaperEditorPage({
     event: React.DragEvent<HTMLButtonElement>,
     item: Pick<ManualQuestionRow, "sectionID" | "questionID">,
   ) {
-    if (isRuleLivePaper) {
+    if (isContentReadOnly || isRuleLivePaper) {
       event.preventDefault();
       return;
     }
@@ -1039,37 +1093,6 @@ export function PaperEditorPage({
     setQuestionDropDirection(null);
   }
 
-  const previewDialog = isPreviewOpen ? (
-    <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="试卷预览弹窗">
-      <div className="platform-dialog__card exam-paper-preview-dialog">
-        <div className="exam-paper-preview-dialog__head">
-          <div>
-            <h2>{paperName || "未命名试卷"}</h2>
-            <p>{selectedQuestionCount} 题 / 总分 {totalScore} 分</p>
-          </div>
-          <Button variant="secondary" onClick={() => setIsPreviewOpen(false)} type="button">
-            关闭预览
-          </Button>
-        </div>
-        <div className="exam-paper-preview-dialog__body">
-          {groupedSelectedQuestions.map((group, groupIndex) => (
-            <section key={group.section.id} className="exam-paper-preview-dialog__section">
-              <h3>{formatSectionTitle(group.section, groupIndex)}</h3>
-              <ol>
-                {group.questions.map((item) => (
-                  <li key={`${item.sectionID}-${item.questionID}`}>
-                    <span>{item.question?.title ?? `题目 ${item.questionID}`}</span>
-                    <strong>{item.score} 分</strong>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          ))}
-        </div>
-      </div>
-    </div>
-  ) : null;
-
   return (
     <section className="page platform-page exam-builder-page exam-paper-editor-page">
       <nav aria-label="试卷编辑菜单" className="platform-tabbar" role="tablist">
@@ -1083,12 +1106,17 @@ export function PaperEditorPage({
 
       <Panel>
         <form className="exam-paper-editor" onSubmit={handleSaveDraft}>
+          {isReadOnlyPaper && (
+            <div className="tenant-admin-warning" role="alert">
+              {readOnlyPaperMessage}
+            </div>
+          )}
           <div className="tenant-list-toolbar exam-paper-editor__toolbar">
             <div className="tenant-list-actions" aria-label="组卷操作区">
               <Button
                 className="exam-paper-editor__toolbar-button--icon-center"
                 disabled={!canAssemble || selectedQuestionCount === 0}
-                onClick={() => setIsPreviewOpen(true)}
+                onClick={navigateToPreviewPage}
                 variant="toolbarSecondary"
                 type="button"
               >
@@ -1115,6 +1143,7 @@ export function PaperEditorPage({
               <span>试卷名称：</span>
               <input
                 aria-label="试卷名称"
+                disabled={isContentReadOnly}
                 onChange={(event) => setPaperName(event.target.value)}
                 placeholder="请输入试卷名称"
                 value={paperName}
@@ -1123,17 +1152,19 @@ export function PaperEditorPage({
             <div className="exam-paper-editor__summary-item exam-paper-editor__summary-item--scope">
               <span>归属：</span>
               <div className="exam-paper-editor__summary-scope-select">
-                {isReadOnlyPublicPaper ? (
-                  <span className="ui-select-trigger" aria-label="试卷归属">公共试卷</span>
+                {isReadOnlyPublicPaper || isReadOnlyPublishedPaper ? (
+                  <span className="ui-select-trigger" aria-label="试卷归属">
+                    {selectedPaperSpaceID === null ? "公共试卷" : "当前空间试卷"}
+                  </span>
                 ) : (
                   <Select
                     ariaLabel="试卷归属"
                     onChange={(value) => setSelectedPaperSpaceID(value === "public" ? null : spaceID ?? null)}
                     options={[
-                      ...(canSelectPublicScope ? [{ value: "public", label: "公共试卷" }] : []),
+                      ...(canShowPublicScopeOption ? [{ value: "public", label: "公共试卷" }] : []),
                       ...(spaceID === undefined ? [] : [{ value: "space", label: "当前空间试卷" }]),
                     ]}
-                    value={selectedPaperSpaceID === null && canSelectPublicScope ? "public" : "space"}
+                    value={selectedPaperSpaceID === null ? "public" : "space"}
                   />
                 )}
               </div>
@@ -1143,6 +1174,7 @@ export function PaperEditorPage({
               <input
                 aria-label="考试时长"
                 className="exam-paper-editor__summary-input--compact exam-paper-editor__summary-input--duration"
+                disabled={isContentReadOnly}
                 onChange={(event) => setDurationText(event.target.value)}
                 placeholder="120"
                 value={durationText}
@@ -1159,6 +1191,7 @@ export function PaperEditorPage({
               <input
                 aria-label="适用年级"
                 className="exam-paper-editor__summary-input--compact exam-paper-editor__summary-input--grade"
+                disabled={isContentReadOnly}
                 onChange={(event) => setGradeText(event.target.value)}
                 placeholder="高一"
                 value={gradeText}
@@ -1190,7 +1223,12 @@ export function PaperEditorPage({
           </div>
           <label className="sr-only">
             <span>试卷说明</span>
-            <input aria-label="试卷说明" onChange={(event) => setPaperDescription(event.target.value)} value={paperDescription} />
+            <input
+              aria-label="试卷说明"
+              disabled={isContentReadOnly}
+              onChange={(event) => setPaperDescription(event.target.value)}
+              value={paperDescription}
+            />
           </label>
           {!isSmartPaper ? (
           <div className="exam-paper-editor__workspace">
@@ -1294,7 +1332,7 @@ export function PaperEditorPage({
                               <td>
                                 <Button
                                   aria-label={`${isSelected ? "移除试卷" : "加入试卷"} 题目 ${item.id}`}
-                                  disabled={isRuleLivePaper}
+                                  disabled={isContentReadOnly || isRuleLivePaper}
                                   onClick={() => {
                                     if (selectedQuestion !== undefined) {
                                       void handleRemoveQuestion(selectedQuestion);
@@ -1366,7 +1404,7 @@ export function PaperEditorPage({
                           <button
                             aria-label={`拖拽排序大题 ${group.section.id}`}
                             className="exam-paper-editor__drag-handle"
-                            disabled={isRuleLivePaper}
+                            disabled={isContentReadOnly || isRuleLivePaper}
                             draggable
                             onDragEnd={handleSectionDragEnd}
                             onDragStart={(event) => handleSectionDragStart(event, group.section.id)}
@@ -1420,7 +1458,7 @@ export function PaperEditorPage({
                                       <button
                                         aria-label={`拖拽排序题目 ${item.questionID}`}
                                         className="exam-paper-editor__drag-handle"
-                                        disabled={isRuleLivePaper}
+                                        disabled={isContentReadOnly || isRuleLivePaper}
                                         draggable
                                         onDragEnd={handleQuestionDragEnd}
                                         onDragStart={(event) => handleQuestionDragStart(event, item)}
@@ -1440,7 +1478,7 @@ export function PaperEditorPage({
                                     <input
                                       aria-label={`题目 ${item.questionID} 分值`}
                                       className="exam-paper-editor__score-input"
-                                      disabled={isRuleLivePaper}
+                                      disabled={isContentReadOnly || isRuleLivePaper}
                                       inputMode="decimal"
                                       min="0"
                                       onBlur={() => void handleScoreBlur(item)}
@@ -1468,7 +1506,7 @@ export function PaperEditorPage({
                                   <td className="exam-inline-actions">
                                     <Button
                                       aria-label={`移除题目 ${item.questionID}`}
-                                      disabled={isRuleLivePaper}
+                                      disabled={isContentReadOnly || isRuleLivePaper}
                                       onClick={() => void handleRemoveQuestion(item)}
                                       type="button"
                                       variant="actionClose"
@@ -1501,6 +1539,7 @@ export function PaperEditorPage({
                 <label>
                   <input
                     checked={smartQuestionScope === "space_all"}
+                    disabled={isContentReadOnly}
                     onChange={() => setSmartQuestionScope("space_all")}
                     type="radio"
                   />
@@ -1509,6 +1548,7 @@ export function PaperEditorPage({
                 <label>
                   <input
                     checked={smartQuestionScope === "tag_filter"}
+                    disabled={isContentReadOnly}
                     onChange={() => setSmartQuestionScope("tag_filter")}
                     type="radio"
                   />
@@ -1533,6 +1573,7 @@ export function PaperEditorPage({
                     <span className="exam-paper-editor__difficulty-fill" aria-hidden="true" />
                     <input
                       aria-label="较易占比边界"
+                      disabled={isContentReadOnly}
                       max={100}
                       min={0}
                       onChange={(event) => updateEasyBoundary(Number.parseInt(event.target.value || "0", 10))}
@@ -1541,6 +1582,7 @@ export function PaperEditorPage({
                     />
                     <input
                       aria-label="中等占比边界"
+                      disabled={isContentReadOnly}
                       max={100}
                       min={0}
                       onChange={(event) => updateMediumBoundary(Number.parseInt(event.target.value || "0", 10))}
@@ -1568,7 +1610,7 @@ export function PaperEditorPage({
                       <span>选择知识点</span>
                       <input
                         aria-label="搜索知识点标签"
-                        disabled={tags.length === 0}
+                        disabled={isContentReadOnly || tags.length === 0}
                         onChange={(event) => {
                           setSmartTagQuery(event.target.value);
                           setIsSmartTagPickerOpen(true);
@@ -1584,6 +1626,7 @@ export function PaperEditorPage({
                           <span className="exam-paper-editor__tag-empty">没有匹配的标签</span>
                         ) : smartTagOptions.map((tag) => (
                           <button
+                            disabled={isContentReadOnly}
                             key={tag}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => selectSmartTag(tag)}
@@ -1604,6 +1647,7 @@ export function PaperEditorPage({
                         {tag}
                         <button
                           aria-label={`移除知识点 ${tag}`}
+                          disabled={isContentReadOnly}
                           onClick={() => removeSmartTag(tag)}
                           type="button"
                         >
@@ -1619,6 +1663,7 @@ export function PaperEditorPage({
                 <div className="exam-paper-editor__smart-block-head">
                   <h3>题型数量与分值</h3>
                   <Button
+                    disabled={isContentReadOnly}
                     onClick={() => setIsAddingSmartSection((value) => !value)}
                     type="button"
                     variant="toolbarSecondary"
@@ -1633,6 +1678,7 @@ export function PaperEditorPage({
                       <span>题型</span>
                       <select
                         aria-label="新增题型类型"
+                        disabled={isContentReadOnly}
                         onChange={(event) => handleNewSmartSectionTypeChange(event.target.value as QuestionType)}
                         value={newSmartSectionType}
                       >
@@ -1645,12 +1691,13 @@ export function PaperEditorPage({
                       <span>名称</span>
                       <input
                         aria-label="新增题型名称"
+                        disabled={isContentReadOnly}
                         onChange={(event) => setNewSmartSectionName(event.target.value)}
                         value={newSmartSectionName}
                       />
                     </label>
                     <Button
-                      disabled={isCreatingSmartSection}
+                      disabled={isContentReadOnly || isCreatingSmartSection}
                       onClick={() => void handleCreateSmartSection()}
                       type="button"
                       variant="primary"
@@ -1683,6 +1730,7 @@ export function PaperEditorPage({
                         <button
                           aria-label={`拖拽排序题型 ${section.id}`}
                           className="exam-paper-editor__drag-handle"
+                          disabled={isContentReadOnly}
                           draggable
                           onDragEnd={handleSectionDragEnd}
                           onDragStart={(event) => handleSectionDragStart(event, section.id)}
@@ -1708,6 +1756,7 @@ export function PaperEditorPage({
                             <span>题数</span>
                             <input
                               aria-label={`${sectionTitle}题数`}
+                              disabled={isContentReadOnly}
                               min={0}
                               onChange={(event) => setSmartRuleDrafts((items) => ({
                                 ...items,
@@ -1720,6 +1769,7 @@ export function PaperEditorPage({
                         </div>
                         <Button
                           aria-label={`删除题型 ${section.id}`}
+                          disabled={isContentReadOnly}
                           onClick={() => void handleDeleteSmartSection(section)}
                           type="button"
                           variant="actionClose"
@@ -1736,15 +1786,15 @@ export function PaperEditorPage({
                 <h3>组卷约束</h3>
                 <div className="exam-paper-editor__constraint-grid">
                   <label>
-                    <input checked={smartPrioritizeQuality} onChange={(event) => setSmartPrioritizeQuality(event.target.checked)} type="checkbox" />
+                    <input checked={smartPrioritizeQuality} disabled={isContentReadOnly} onChange={(event) => setSmartPrioritizeQuality(event.target.checked)} type="checkbox" />
                     优先高质量题目
                   </label>
                   <label>
-                    <input checked={smartExcludeRecentExamQuestions} onChange={(event) => setSmartExcludeRecentExamQuestions(event.target.checked)} type="checkbox" />
+                    <input checked={smartExcludeRecentExamQuestions} disabled={isContentReadOnly} onChange={(event) => setSmartExcludeRecentExamQuestions(event.target.checked)} type="checkbox" />
                     近三次考试不重复
                   </label>
                   <label>
-                    <input checked={smartExcludeUsedQuestions} onChange={(event) => setSmartExcludeUsedQuestions(event.target.checked)} type="checkbox" />
+                    <input checked={smartExcludeUsedQuestions} disabled={isContentReadOnly} onChange={(event) => setSmartExcludeUsedQuestions(event.target.checked)} type="checkbox" />
                     排除已用题目
                   </label>
                 </div>
@@ -1765,6 +1815,7 @@ export function PaperEditorPage({
                           <Button
                             aria-label={`移除屏蔽题目 ${question.id}`}
                             className="exam-paper-editor__action-button--regular"
+                            disabled={isContentReadOnly}
                             onClick={() => handleUnblockSmartQuestion(question.id)}
                             type="button"
                             variant="actionReset"
@@ -1838,6 +1889,7 @@ export function PaperEditorPage({
                                     <Button
                                       aria-label={`屏蔽题目 ${item.questionID}`}
                                       className="exam-paper-editor__action-button--regular"
+                                      disabled={isContentReadOnly}
                                       onClick={() => void handleBlockSmartQuestion(item)}
                                       type="button"
                                       variant="actionReset"
@@ -1865,17 +1917,17 @@ export function PaperEditorPage({
               <p>发布能力将与考试发布流程联动，当前版本先完成真实组卷与预览。</p>
             </div>
             <div className="exam-paper-editor__footer-actions">
-              <Button disabled={isSavingDraft || isGeneratingSmartPaper} type="submit" variant="secondary">
+              <Button disabled={isReadOnlyPaper || isSavingDraft || isGeneratingSmartPaper} type="submit" variant="secondary">
                 保存草稿
               </Button>
               <Button
-                disabled={isSavingDraft || isGeneratingSmartPaper || !canAssemble || (!isSmartPaper && selectedQuestionCount === 0)}
+                disabled={isContentReadOnly || isSavingDraft || isGeneratingSmartPaper || !canAssemble || (!isSmartPaper && selectedQuestionCount === 0)}
                 onClick={() => {
                   if (isSmartPaper) {
                     void handleGenerateSmartPaper();
                     return;
                   }
-                  setIsPreviewOpen(true);
+                  navigateToPreviewPage();
                 }}
                 type="button"
                 variant={isSmartPaper ? "toolbarPrimary" : "toolbarSecondary"}
@@ -1900,8 +1952,6 @@ export function PaperEditorPage({
           </div>
         </form>
       </Panel>
-
-      {previewDialog}
     </section>
   );
 }

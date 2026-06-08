@@ -83,6 +83,33 @@ var ExamTargetColumns = struct {
 	TargetID:   "target_id",
 }
 
+type ExamTargetScopeSpaceDO struct {
+	RelationFields        // 纯关系表公共字段。
+	TenantID       uint64 `gorm:"column:tenant_id"`      // 所属租户 ID。
+	ExamID         uint64 `gorm:"column:exam_id"`        // 考试 ID。
+	ExamTargetID   uint64 `gorm:"column:exam_target_id"` // 考试发布目标 ID。
+	SpaceID        uint64 `gorm:"column:space_id"`       // 目标作用空间 ID。
+}
+
+func (ExamTargetScopeSpaceDO) TableName() string {
+	return "exam_target_scope_spaces"
+}
+
+// ExamTargetScopeSpaceColumns 与 ExamTargetScopeSpaceDO 同文件维护，用户直投的空间作用域查询统一引用这些列名。
+var ExamTargetScopeSpaceColumns = struct {
+	ID           string
+	TenantID     string
+	ExamID       string
+	ExamTargetID string
+	SpaceID      string
+}{
+	ID:           RelationColumns.ID,
+	TenantID:     "tenant_id",
+	ExamID:       "exam_id",
+	ExamTargetID: "exam_target_id",
+	SpaceID:      "space_id",
+}
+
 type ExamLiveQuestionPoolDO struct {
 	RelationFields        // 纯关系表公共字段。
 	TenantID       uint64 `gorm:"column:tenant_id"`   // 所属租户 ID。
@@ -279,4 +306,48 @@ var ExamEventColumns = struct {
 	EventType: "event_type",
 	EventTime: "event_time",
 	Payload:   "payload",
+}
+
+// ExamOperationLogDO 是考试管理端操作日志表的 GORM 映射。
+// 该表只追加写入，不允许业务更新，因此嵌入 EventFields 而不是 BaseFields。
+type ExamOperationLogDO struct {
+	EventFields             // 追加写日志表公共字段。
+	TenantID        uint64  `gorm:"column:tenant_id"`        // 所属租户 ID。
+	ExamID          uint64  `gorm:"column:exam_id"`          // 考试 ID。
+	OperationType   string  `gorm:"column:operation_type"`   // 操作类型，例如 publish_exam / send_invite。
+	OperationTitle  string  `gorm:"column:operation_title"`  // 操作标题，用于操作日志列表展示。
+	OperationDetail string  `gorm:"column:operation_detail"` // 操作详情摘要，避免前端拼接审计文案。
+	ActorID         uint64  `gorm:"column:actor_id"`         // 操作人用户 ID，由后端 session 派生。
+	ActorType       string  `gorm:"column:actor_type"`       // 操作人主体类型，例如 tenant_user / system。
+	ActorRole       string  `gorm:"column:actor_role"`       // 操作时的租户级角色快照。
+	SpaceID         *uint64 `gorm:"column:space_id"`         // 操作关联空间；nil 表示租户级操作。
+}
+
+func (ExamOperationLogDO) TableName() string {
+	return "exam_operation_logs"
+}
+
+// ExamOperationLogColumns 与 ExamOperationLogDO 同文件维护，操作日志按考试和空间过滤时必须引用这里的列名。
+var ExamOperationLogColumns = struct {
+	ID              string
+	TenantID        string
+	ExamID          string
+	OperationType   string
+	OperationTitle  string
+	OperationDetail string
+	ActorID         string
+	ActorType       string
+	ActorRole       string
+	SpaceID         string
+}{
+	ID:              EventColumns.ID,
+	TenantID:        "tenant_id",
+	ExamID:          "exam_id",
+	OperationType:   "operation_type",
+	OperationTitle:  "operation_title",
+	OperationDetail: "operation_detail",
+	ActorID:         "actor_id",
+	ActorType:       "actor_type",
+	ActorRole:       "actor_role",
+	SpaceID:         "space_id",
 }

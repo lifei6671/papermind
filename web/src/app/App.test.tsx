@@ -4,13 +4,16 @@ import { afterEach, vi } from "vitest";
 import { act } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "./App";
+import { pageTitleForPathname } from "./page-title";
 import { AppProviders } from "./providers";
+import { buildAdminRoutes } from "./routes";
 
 const originalMatchMedia = window.matchMedia;
 
 afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
+  document.title = "PaperMind";
   Object.defineProperty(window, "matchMedia", {
     value: originalMatchMedia,
     writable: true,
@@ -229,6 +232,30 @@ test("渲染 Papermind 管理端基础骨架", () => {
   expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
 });
 
+test("页面 title 根据当前后台子菜单和独立页面切换", () => {
+  const routes = buildAdminRoutes({
+    userID: 88,
+    displayName: "租户管理员",
+    role: "tenant_admin",
+    tenantID: 77,
+  });
+
+  expect(pageTitleForPathname("/", routes)).toBe("概览 - PaperMind");
+  expect(pageTitleForPathname("/papers", routes)).toBe("试卷 - PaperMind");
+  expect(pageTitleForPathname("/exams", routes)).toBe("考试列表 - PaperMind");
+  expect(pageTitleForPathname("/exams/8", routes)).toBe("考试详情 - PaperMind");
+  expect(pageTitleForPathname("/papers/100/student-preview", routes)).toBe("学生视角预览 - PaperMind");
+  expect(pageTitleForPathname("/student/exam", routes)).toBe("在线考试 - PaperMind");
+});
+
+test("App 挂载后同步浏览器 title", async () => {
+  storePlatformSession();
+
+  renderApp(["/tenants"]);
+
+  await waitFor(() => expect(document.title).toBe("租户管理 - PaperMind"));
+});
+
 test("未登录访问后台路由会跳转登录页", () => {
   window.localStorage.removeItem("papermind.session.v1");
 
@@ -320,6 +347,80 @@ test("学生考试端与管理员后台路由隔离", async () => {
   expect(screen.queryByRole("button", { name: "草稿纸" })).not.toBeInTheDocument();
   expect(screen.queryByLabelText("后台导航")).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /租户管理/ })).not.toBeInTheDocument();
+});
+
+test("后台学生视角试卷预览使用独立学生端布局", async () => {
+  storeSpaceTeacherSession();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url === "/api/v1/papers?tenant_id=77&space_id=301") {
+      return okJSON({
+        items: [{
+          id: 100,
+          tenant_id: 77,
+          space_id: 301,
+          name: "高一语文月考试卷",
+          description: "",
+          duration_minutes: 60,
+          grade_level: "高一",
+          total_score: "5",
+          build_mode: "manual",
+          status: "draft",
+          created_at: 1780373000000,
+          creator_name: "teacher.exam",
+        }],
+        page: 1,
+        page_size: 20,
+        total: 1,
+      });
+    }
+    if (url === "/api/v1/papers/100/sections?tenant_id=77") {
+      return okJSON({
+        items: [{
+          id: 11,
+          tenant_id: 77,
+          paper_id: 100,
+          sort_order: 1,
+          name: "一、单项选择题",
+          question_type: "single",
+          instructions: "每题 5 分",
+          total_score: "5",
+          question_count: 1,
+        }],
+        page: 1,
+        page_size: 20,
+        total: 1,
+      });
+    }
+    if (url === "/api/v1/papers/100/questions?tenant_id=77") {
+      return okJSON({
+        items: [{
+          tenant_id: 77,
+          paper_id: 100,
+          section_id: 11,
+          question_id: 201,
+          sort_order: 1,
+          score: "5",
+          question_type: "single",
+          title: "学生视角独立预览题干",
+          options: ["正确选项", "干扰项"],
+          blank_count: 1,
+        }],
+        page: 1,
+        page_size: 20,
+        total: 1,
+      });
+    }
+    return new Response(JSON.stringify({ code: 50000, message: `unexpected request: ${url}`, data: null }), { status: 500 });
+  });
+
+  renderApp(["/papers/100/student-preview?space_id=301"]);
+
+  expect(await screen.findByRole("heading", { name: "高一语文月考试卷" })).toBeInTheDocument();
+  expect(await screen.findByText("学生视角独立预览题干")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "考试信息与答题卡" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("后台导航")).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /试卷/ })).not.toBeInTheDocument();
 });
 
 test("考生身份提示折叠在右侧用户菜单中", async () => {

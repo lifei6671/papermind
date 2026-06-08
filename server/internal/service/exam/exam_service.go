@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
@@ -47,6 +48,30 @@ const (
 	AttemptStatusInProgress = constant.AttemptStatusInProgress
 	// AttemptStatusSubmitted 表示作答已提交。
 	AttemptStatusSubmitted = constant.AttemptStatusSubmitted
+
+	// CandidateStatusNotStarted 表示应考考生尚未开始作答。
+	CandidateStatusNotStarted = "not_started"
+	// CandidateStatusInProgress 表示应考考生存在未提交的进行中作答。
+	CandidateStatusInProgress = "in_progress"
+	// CandidateStatusSubmitted 表示应考考生已经存在可计入成绩的已提交作答。
+	CandidateStatusSubmitted = "submitted"
+
+	// OperationTypePublishExam 表示发布考试的管理端操作。
+	OperationTypePublishExam = "publish_exam"
+	// OperationTypeSendInvite 表示发送或重发考试邀请码的管理端操作。
+	OperationTypeSendInvite = "send_invite"
+	// OperationTypeImportCandidates 表示导入应考考生的管理端操作。
+	OperationTypeImportCandidates = "import_candidates"
+	// OperationTypeExportResults 表示导出考试成绩的管理端操作。
+	OperationTypeExportResults = "export_results"
+	// OperationTypePublishResults 表示发布考试成绩的管理端操作。
+	OperationTypePublishResults = "publish_results"
+	// OperationTypeUpdateSettings 表示修改考试设置的管理端操作。
+	OperationTypeUpdateSettings = "update_settings"
+	// OperationTypeGradeAnswer 表示人工阅卷的管理端操作。
+	OperationTypeGradeAnswer = "grade_answer"
+	// OperationTypeSystemEvent 表示系统自动补充的管理端操作日志。
+	OperationTypeSystemEvent = "system_event"
 )
 
 var (
@@ -59,6 +84,8 @@ var (
 	ErrExamNotEligible                  = errors.New("exam not eligible")
 	ErrExamNotStarted                   = errors.New("exam not started")
 	ErrExamEnded                        = errors.New("exam ended")
+	ErrExamAlreadyStarted               = errors.New("exam already started")
+	ErrExamTargetRequired               = errors.New("exam target required")
 	ErrAttemptNotFound                  = errors.New("attempt not found")
 	ErrMaxAttemptsReached               = errors.New("max attempts reached")
 	ErrAttemptUniqueConflict            = errors.New("attempt unique conflict")
@@ -90,6 +117,9 @@ type Exam struct {
 	InviteCode       string // 考试邀请码。
 	Status           string // 考试状态。
 	BuildMode        string // 冗余的试卷组卷模式，便于快照生成。
+	Targets          []Target
+	TargetType       string // 列表和兼容响应使用的首个发布目标类型。
+	TargetID         uint64 // 列表和兼容响应使用的首个发布目标 ID。
 }
 
 type Paper struct {
@@ -100,10 +130,30 @@ type Paper struct {
 }
 
 type Target struct {
-	TenantID   uint64 // 所属租户 ID。
-	ExamID     uint64 // 考试 ID。
-	TargetType string // 发布目标类型：space / user。
-	TargetID   uint64 // 发布目标 ID。
+	TenantID      uint64   // 所属租户 ID。
+	ExamID        uint64   // 考试 ID。
+	TargetType    string   // 发布目标类型：space / user。
+	TargetID      uint64   // 发布目标 ID。
+	ScopeSpaceIDs []uint64 // 用户直投目标在发布时命中的空间范围；为空时回退到当前有效成员空间。
+}
+
+// OperationLog 表示管理端考试操作审计记录。
+// service 和 API 层使用该对象传递日志，避免直接依赖数据库 DO 和 JSON 字段实现。
+type OperationLog struct {
+	ID              uint64  // 操作日志主键 ID。
+	TenantID        uint64  // 所属租户 ID。
+	ExamID          uint64  // 考试 ID。
+	OperationType   string  // 操作类型，例如 publish_exam / send_invite。
+	OperationTitle  string  // 操作标题，用于操作日志列表展示。
+	OperationDetail string  // 操作详情摘要，避免前端拼接审计文案。
+	ActorID         uint64  // 操作人用户 ID，由后端 session 派生。
+	ActorType       string  // 操作人主体类型，例如 tenant_user / system。
+	ActorRole       string  // 操作发生时的租户级角色快照。
+	SpaceID         *uint64 // 操作关联空间；nil 表示租户级操作。
+	CreatedAt       int64   // 操作日志创建时间，Unix 毫秒时间戳。
+	CreatedBy       uint64  // 创建人主体 ID，通常与 ActorID 一致。
+	CreatedByType   string  // 创建人主体类型，通常与 ActorType 一致。
+	ExtJSON         string  // JSON 扩展字段，用于保存 operation_group_id 等元数据。
 }
 
 type LivePoolItem struct {
@@ -180,20 +230,25 @@ type PublishInput struct {
 	ScorePublishTime *int64 // 成绩公布时间。
 }
 
-// PublishWithTargetInput 用于一次性创建已发布考试并写入首个投放目标。
+// PublishWithTargetInput 用于一次性创建已发布考试并写入投放目标。
+// Targets 是新版本多目标字段；TargetType 和 TargetID 只用于兼容旧单目标请求。
 type PublishWithTargetInput struct {
-	TenantID         uint64 // 所属租户 ID。
-	PaperID          uint64 // 关联试卷 ID。
-	Name             string // 考试名称。
-	TargetType       string // 发布目标类型。
-	TargetID         uint64 // 发布目标 ID。
-	StartTime        int64  // 开始时间。
-	EndTime          int64  // 结束时间。
-	DurationMinutes  int    // 单次作答时长。
-	MaxAttempts      int    // 最大作答次数。
-	ResultStrategy   string // 成绩策略。
-	PublishMode      string // 成绩发布模式。
-	ScorePublishTime *int64 // 成绩公布时间。
+	TenantID         uint64   // 所属租户 ID。
+	PaperID          uint64   // 关联试卷 ID。
+	Name             string   // 考试名称。
+	TargetType       string   // 发布目标类型。
+	TargetID         uint64   // 发布目标 ID。
+	Targets          []Target // 发布目标列表；非空时优先于 TargetType 和 TargetID。
+	StartTime        int64    // 开始时间。
+	EndTime          int64    // 结束时间。
+	DurationMinutes  int      // 单次作答时长。
+	MaxAttempts      int      // 最大作答次数。
+	ResultStrategy   string   // 成绩策略。
+	PublishMode      string   // 成绩发布模式。
+	ScorePublishTime *int64   // 成绩公布时间。
+	ActorID          uint64   // 发布人用户 ID，由 API 层从 session 派生。
+	ActorType        string   // 发布人主体类型，由 API 层从 session 派生。
+	ActorRole        string   // 发布人角色快照，由 API 层从 session 派生。
 }
 
 type UpdateScorePublishConfigInput struct {
@@ -201,6 +256,9 @@ type UpdateScorePublishConfigInput struct {
 	ExamID           uint64 // 考试 ID。
 	PublishMode      string // 成绩发布模式。
 	ScorePublishTime *int64 // 成绩公布时间。
+	ActorID          uint64 // 发布成绩的用户 ID，由 API 层从 session 派生。
+	ActorType        string // 发布成绩的主体类型，由 API 层从 session 派生。
+	ActorRole        string // 发布成绩的角色快照，由 API 层从 session 派生。
 }
 
 type AddTargetInput struct {
@@ -239,6 +297,57 @@ type ListInput struct {
 	PageSize int     // 每页数量。
 }
 
+// ListOperationLogsInput 表示管理端操作日志分页查询条件。
+// SpaceID 为空时读取整场考试日志，非空时只读取该空间精确关联的日志。
+type ListOperationLogsInput struct {
+	TenantID      uint64  // 所属租户 ID。
+	ExamID        uint64  // 考试 ID。
+	SpaceID       *uint64 // 可见空间范围；nil 表示租户管理员全考试范围。
+	OperationType string  // 操作类型筛选，空字符串表示不过滤。
+	Page          int     // 页码，从 1 开始。
+	PageSize      int     // 每页数量。
+}
+
+// CandidateSourceTarget 表示应考考生来自哪类考试投放目标。
+// 同一考生可能同时来自空间投放和用户直投，前端据此解释名单来源，避免重复显示多行。
+type CandidateSourceTarget struct {
+	TargetType string // 来源目标类型：space / user。
+	TargetID   uint64 // 来源目标 ID。
+	SpaceID    uint64 // 来源关联空间 ID；用户直投时表示该用户当前命中的授权空间。
+	SpaceName  string // 来源关联空间名称。
+}
+
+// ExamCandidate 表示考生管理 tab 的一行应考考生。
+// attempt 相关字段只返回摘要，答卷详情必须通过后续答卷接口按权限单独读取。
+type ExamCandidate struct {
+	UserID           uint64                  // 考生用户 ID。
+	Username         string                  // 登录名或学号。
+	RealName         string                  // 考生姓名。
+	SpaceID          uint64                  // 展示用空间 ID，多空间命中时取排序最靠前的授权空间。
+	SpaceName        string                  // 展示用空间名称。
+	Status           string                  // 考试状态：not_started / in_progress / submitted。
+	StartedAt        *int64                  // 当前进行中作答开始时间，或结果作答开始时间。
+	SubmittedAt      *int64                  // 结果作答提交时间。
+	TotalScore       string                  // 结果作答总分，未提交时为空。
+	AttemptCount     int                     // 当前授权范围内该考生的作答次数。
+	CurrentAttemptID *uint64                 // 最新进行中作答 ID；没有进行中作答时为空。
+	ResultAttemptID  *uint64                 // 按 result_strategy 选出的结果作答 ID；未提交时为空。
+	SourceTargets    []CandidateSourceTarget // 去重后的名单来源。
+}
+
+// ListExamCandidatesInput 表示管理端考生列表查询条件。
+// SpaceIDs 必须是详情 service 裁剪后的授权空间范围，仓储层据此做最终数据过滤。
+type ListExamCandidatesInput struct {
+	TenantID       uint64   // 所属租户 ID。
+	ExamID         uint64   // 考试 ID。
+	SpaceIDs       []uint64 // 当前管理者可见的考试投放空间范围。
+	Keyword        string   // 姓名、用户名或空间名搜索关键字。
+	Status         string   // 状态筛选；空字符串表示不过滤。
+	ResultStrategy string   // 多次作答成绩策略。
+	Page           int      // 页码，从 1 开始。
+	PageSize       int      // 每页数量。
+}
+
 type Repository interface {
 	ListExams(ctx context.Context, input ListInput) (pagination.Result[Exam], error)
 	CreateExam(ctx context.Context, exam Exam) (Exam, error)
@@ -246,7 +355,8 @@ type Repository interface {
 	InviteCodeExists(ctx context.Context, tenantID uint64, code string) (bool, error)
 	ListRuleLiveCandidates(ctx context.Context, tenantID uint64, paperID uint64) ([]LivePoolItem, error)
 	PublishExamAndFreezeLivePool(ctx context.Context, exam Exam, pool []LivePoolItem) (Exam, error)
-	CreatePublishedExamWithTarget(ctx context.Context, exam Exam, pool []LivePoolItem, target Target) (Exam, error)
+	CreatePublishedExamWithTarget(ctx context.Context, exam Exam, pool []LivePoolItem, target Target, log *OperationLog) (Exam, error)
+	CreatePublishedExamWithTargets(ctx context.Context, exam Exam, pool []LivePoolItem, targets []Target, log *OperationLog) (Exam, error)
 	TargetExists(ctx context.Context, tenantID uint64, examID uint64, targetType string, targetID uint64) (bool, error)
 	AddTarget(ctx context.Context, target Target) error
 	FindExamByInviteCode(ctx context.Context, inviteCode string) (Exam, error)
@@ -260,7 +370,7 @@ type Repository interface {
 	ListFixedSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]SnapshotSourceQuestion, error)
 	ListFrozenLiveSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]SnapshotSourceQuestion, error)
 	SaveAttemptQuestions(ctx context.Context, questions []AttemptQuestion) ([]AttemptQuestion, error)
-	UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64) (Exam, error)
+	UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64, log *OperationLog) (Exam, error)
 }
 
 type CodeGenerator interface {
@@ -348,6 +458,10 @@ func (s *Service) Publish(ctx context.Context, input PublishInput) (Exam, error)
 }
 
 func (s *Service) PublishWithTarget(ctx context.Context, input PublishWithTargetInput) (Exam, error) {
+	targets, err := normalizePublishTargets(input)
+	if err != nil {
+		return Exam{}, err
+	}
 	exam, pool, err := s.buildPublishedExam(ctx, publishSettingsInput{
 		TenantID:         input.TenantID,
 		PaperID:          input.PaperID,
@@ -363,11 +477,51 @@ func (s *Service) PublishWithTarget(ctx context.Context, input PublishWithTarget
 	if err != nil {
 		return Exam{}, err
 	}
-	return s.repo.CreatePublishedExamWithTarget(ctx, exam, pool, Target{
-		TenantID:   input.TenantID,
-		TargetType: input.TargetType,
-		TargetID:   input.TargetID,
-	})
+	log := OperationLog{
+		TenantID:        input.TenantID,
+		OperationType:   OperationTypePublishExam,
+		OperationTitle:  "发布考试",
+		OperationDetail: "发布考试到 " + strconv.Itoa(len(targets)) + " 个目标",
+		ActorID:         input.ActorID,
+		ActorType:       input.ActorType,
+		ActorRole:       input.ActorRole,
+		CreatedAt:       s.now(),
+		CreatedBy:       input.ActorID,
+		CreatedByType:   input.ActorType,
+	}
+	return s.repo.CreatePublishedExamWithTargets(ctx, exam, pool, targets, &log)
+}
+
+// normalizePublishTargets 归一化发布目标，保证 service 之后只处理去重后的多目标列表。
+// 旧客户端仍可继续传 TargetType 和 TargetID，新客户端传 Targets 时会完全覆盖旧字段。
+func normalizePublishTargets(input PublishWithTargetInput) ([]Target, error) {
+	candidates := input.Targets
+	if len(candidates) == 0 && input.TargetType != "" && input.TargetID != 0 {
+		candidates = []Target{{TargetType: input.TargetType, TargetID: input.TargetID}}
+	}
+	if len(candidates) == 0 {
+		return nil, ErrExamTargetRequired
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	targets := make([]Target, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.TargetType == "" || candidate.TargetID == 0 {
+			return nil, ErrExamTargetRequired
+		}
+		key := candidate.TargetType + ":" + strconv.FormatUint(candidate.TargetID, 10)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, Target{
+			TenantID:      input.TenantID,
+			TargetType:    candidate.TargetType,
+			TargetID:      candidate.TargetID,
+			ScopeSpaceIDs: append([]uint64(nil), candidate.ScopeSpaceIDs...),
+		})
+	}
+	return targets, nil
 }
 
 type publishSettingsInput struct {
@@ -564,7 +718,20 @@ func (s *Service) SaveAttemptQuestions(ctx context.Context, questions []AttemptQ
 }
 
 func (s *Service) UpdateScorePublishConfig(ctx context.Context, input UpdateScorePublishConfigInput) (Exam, error) {
-	return s.repo.UpdateScorePublishConfig(ctx, input.TenantID, input.ExamID, input.PublishMode, input.ScorePublishTime)
+	log := OperationLog{
+		TenantID:        input.TenantID,
+		ExamID:          input.ExamID,
+		OperationType:   OperationTypePublishResults,
+		OperationTitle:  "发布成绩",
+		OperationDetail: "更新成绩发布配置",
+		ActorID:         input.ActorID,
+		ActorType:       input.ActorType,
+		ActorRole:       input.ActorRole,
+		CreatedAt:       s.now(),
+		CreatedBy:       input.ActorID,
+		CreatedByType:   input.ActorType,
+	}
+	return s.repo.UpdateScorePublishConfig(ctx, input.TenantID, input.ExamID, input.PublishMode, input.ScorePublishTime, &log)
 }
 
 func (s *Service) ValidateExamToken(ctx context.Context, token string, attemptID uint64) (Attempt, error) {

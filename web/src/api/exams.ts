@@ -17,12 +17,22 @@ export type ExamRow = {
   durationMinutes: number;
 };
 
+// PublishExamTargetInput 表示一次考试发布中的单个投放目标。
+//
+// 后端会逐个目标做权限校验，因此前端只负责把用户选择的空间/个人目标
+// 原样传递，不在浏览器里推导额外权限。
+export type PublishExamTargetInput = {
+  targetType: "space" | "user";
+  targetID: number;
+};
+
 export type PublishExamInput = {
   tenantID: number;
   paperID: number;
   name: string;
-  targetType: "space" | "user";
-  targetID: number;
+  targetType?: "space" | "user";
+  targetID?: number;
+  targets?: PublishExamTargetInput[];
   startTime: number;
   endTime: number;
   durationMinutes: number;
@@ -37,11 +47,16 @@ export type ResolveExamInviteInput = {
 
 export type ExamListResult = {
   items: ExamRow[];
+  page: number;
+  pageSize: number;
+  total: number;
 };
 
 export type ListExamsInput = {
   tenantID: number;
   spaceID?: number;
+  page?: number;
+  pageSize?: number;
 };
 
 export type ExamManagementAPI = {
@@ -142,6 +157,10 @@ type ExamAPIResponse = {
   status: ExamStatus;
   target_type?: "space" | "user";
   target_id?: number;
+  targets?: Array<{
+    target_type: "space" | "user";
+    target_id: number;
+  }>;
 };
 
 type StartAttemptAPIResponse = {
@@ -196,18 +215,32 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
       if (input.spaceID !== undefined) {
         params.set("space_id", String(input.spaceID));
       }
+      if (input.page !== undefined) {
+        params.set("page", String(input.page));
+      }
+      if (input.pageSize !== undefined) {
+        params.set("page_size", String(input.pageSize));
+      }
       const data = await apiClient.get<PageData<ExamAPIResponse>>(`/api/v1/exams?${params.toString()}`);
       return {
         items: data.items.map(mapExamResponse),
+        page: data.page,
+        pageSize: data.page_size,
+        total: data.total,
       };
     },
     async publishExam(input) {
+      const targets = normalizePublishTargets(input);
       const data = await apiClient.post<ExamAPIResponse>("/api/v1/exams", {
         tenant_id: input.tenantID,
         paper_id: input.paperID,
         name: input.name,
-        target_type: input.targetType,
-        target_id: input.targetID,
+        target_type: targets[0]?.targetType,
+        target_id: targets[0]?.targetID,
+        targets: targets.map((target) => ({
+          target_type: target.targetType,
+          target_id: target.targetID,
+        })),
         start_time: input.startTime,
         end_time: input.endTime,
         duration_minutes: input.durationMinutes,
@@ -291,6 +324,20 @@ function mapAttemptQuestionResponse(row: AttemptQuestionAPIResponse): StudentExa
   };
 }
 
+// normalizePublishTargets 兼容旧版单目标调用和新版多目标调用。
+//
+// 页面会优先传 targets；保留 targetType/targetID 是为了让当前测试和其他潜在
+// 调用点在后端升级期间不必一次性全部迁移。
+function normalizePublishTargets(input: PublishExamInput): PublishExamTargetInput[] {
+  if (input.targets !== undefined && input.targets.length > 0) {
+    return input.targets;
+  }
+  if (input.targetType !== undefined && input.targetID !== undefined) {
+    return [{ targetType: input.targetType, targetID: input.targetID }];
+  }
+  return [];
+}
+
 function mapExamResponse(row: ExamAPIResponse): ExamRow {
   return {
     id: row.id,
@@ -299,7 +346,7 @@ function mapExamResponse(row: ExamAPIResponse): ExamRow {
     name: row.name,
     paperName: "试卷 " + row.paper_id,
     inviteCode: row.invite_code,
-    target: formatTarget(row.target_type, row.target_id),
+    target: formatTargets(row.targets, row.target_type, row.target_id),
     status: row.status,
     startAt: formatDateTime(row.start_time),
     endAt: formatDateTime(row.end_time),
@@ -315,6 +362,17 @@ function formatTarget(targetType: "space" | "user" | undefined, targetID: number
     return "空间 " + targetID;
   }
   return "用户 " + targetID;
+}
+
+function formatTargets(
+  targets: ExamAPIResponse["targets"],
+  targetType: "space" | "user" | undefined,
+  targetID: number | undefined,
+) {
+  if (targets !== undefined && targets.length > 0) {
+    return targets.map((target) => formatTarget(target.target_type, target.target_id)).join("、");
+  }
+  return formatTarget(targetType, targetID);
 }
 
 function formatDateTime(value: number) {

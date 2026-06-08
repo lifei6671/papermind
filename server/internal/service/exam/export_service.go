@@ -16,15 +16,16 @@ import (
 )
 
 type ScoreExportRow struct {
-	StudentName     string   // 考生姓名。
-	SpaceID         uint64   // 考生所属空间 ID，用于权限范围判断。
-	SpaceName       string   // 空间名称。
-	SpaceIDs        []uint64 // 本次考试实际命中的空间 ID 集合，用于多空间考生成绩权限判断。
-	AttemptNo       int      // attempt 次数。
-	ObjectiveScore  string   // 客观题分。
-	SubjectiveScore string   // 主观题分。
-	TotalScore      string   // 总分。
-	SubmittedAt     int64    // 提交时间，Unix 毫秒时间戳。
+	StudentName     string            // 考生姓名。
+	SpaceID         uint64            // 考生所属空间 ID，用于权限范围判断。
+	SpaceName       string            // 空间名称。
+	SpaceIDs        []uint64          // 本次考试实际命中的空间 ID 集合，用于多空间考生成绩权限判断。
+	SpaceNames      map[uint64]string // 命中空间 ID 到名称的映射，用于按授权空间裁剪导出展示。
+	AttemptNo       int               // attempt 次数。
+	ObjectiveScore  string            // 客观题分。
+	SubjectiveScore string            // 主观题分。
+	TotalScore      string            // 总分。
+	SubmittedAt     int64             // 提交时间，Unix 毫秒时间戳。
 }
 
 type ExportExamScoresInput struct {
@@ -45,6 +46,7 @@ type ExportResult struct {
 type ExportRepository interface {
 	ListScoreExportRows(ctx context.Context, tenantID uint64, examID uint64) ([]ScoreExportRow, error)
 	ExamTargetSpaceIDs(ctx context.Context, tenantID uint64, examID uint64) ([]uint64, error)
+	AppendExportOperationLog(ctx context.Context, log OperationLog, spaceIDs []uint64) error
 }
 
 type ExportServiceOptions struct {
@@ -77,7 +79,8 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 	if err := os.MkdirAll(s.exportDir, 0o755); err != nil {
 		return ExportResult{}, err
 	}
-	filePath := filepath.Join(s.exportDir, fmt.Sprintf("tenant-%d-exam-%d-scores-%s-%d.csv", input.TenantID, input.ExamID, exportFileScope(input.Permission), s.now()))
+	now := s.now()
+	filePath := filepath.Join(s.exportDir, fmt.Sprintf("tenant-%d-exam-%d-scores-%s-%d.csv", input.TenantID, input.ExamID, exportFileScope(input.Permission), now))
 	file, err := os.Create(filePath)
 	if err != nil {
 		return ExportResult{}, err
@@ -85,6 +88,25 @@ func (s *ExportService) ExportExamScores(ctx context.Context, input ExportExamSc
 	defer file.Close()
 
 	if err := writeScoreExportCSV(csv.NewWriter(file), rows); err != nil {
+		return ExportResult{}, err
+	}
+	spaceIDs, err := s.exportOperationSpaceIDs(ctx, input, rows)
+	if err != nil {
+		return ExportResult{}, err
+	}
+	if err := s.repo.AppendExportOperationLog(ctx, OperationLog{
+		TenantID:        input.TenantID,
+		ExamID:          input.ExamID,
+		OperationType:   OperationTypeExportResults,
+		OperationTitle:  "导出成绩",
+		OperationDetail: "导出 " + strconv.Itoa(len(rows)) + " 条成绩记录",
+		ActorID:         input.Permission.UserID,
+		ActorType:       input.Permission.SubjectType,
+		ActorRole:       input.Permission.Role,
+		CreatedAt:       now,
+		CreatedBy:       input.Permission.UserID,
+		CreatedByType:   input.Permission.SubjectType,
+	}, spaceIDs); err != nil {
 		return ExportResult{}, err
 	}
 	return ExportResult{FilePath: filePath, RowCount: len(rows)}, nil
@@ -157,13 +179,48 @@ func (s *ExportService) listExamScoresByPermission(ctx context.Context, input Li
 	allowed := make([]ScoreExportRow, 0, len(rows))
 	for _, row := range rows {
 		if allow(input.Permission, input.ExamID, scoreExportSpaceIDs(row)) {
-			allowed = append(allowed, row)
+			allowed = append(allowed, scopeScoreExportRow(input.Permission, input.ExamID, row, allow))
 		}
 	}
 	if len(allowed) == 0 {
 		return nil, permission.ErrForbidden
 	}
 	return allowed, nil
+}
+
+func (s *ExportService) exportOperationSpaceIDs(ctx context.Context, input ExportExamScoresInput, rows []ScoreExportRow) ([]uint64, error) {
+	spaceIDs := make([]uint64, 0, len(rows))
+	for _, row := range rows {
+		spaceIDs = append(spaceIDs, scoreExportSpaceIDs(row)...)
+	}
+	if len(spaceIDs) == 0 {
+		targetSpaceIDs, err := s.repo.ExamTargetSpaceIDs(ctx, input.TenantID, input.ExamID)
+		if err != nil {
+			return nil, err
+		}
+		spaceIDs = targetSpaceIDs
+	}
+	return s.exportPermissionSpaceIDs(input.Permission, input.ExamID, spaceIDs), nil
+}
+
+func (s *ExportService) exportPermissionSpaceIDs(ctx permission.PermissionContext, examID uint64, spaceIDs []uint64) []uint64 {
+	seen := make(map[uint64]struct{}, len(spaceIDs))
+	allowed := make([]uint64, 0, len(spaceIDs))
+	for _, spaceID := range spaceIDs {
+		if spaceID == 0 {
+			continue
+		}
+		if _, ok := seen[spaceID]; ok {
+			continue
+		}
+		if err := s.permissionChecker.CanExportExamResults(permissionWithExamScope(ctx, examID, spaceID), examID); err != nil {
+			continue
+		}
+		seen[spaceID] = struct{}{}
+		allowed = append(allowed, spaceID)
+	}
+	sort.Slice(allowed, func(i int, j int) bool { return allowed[i] < allowed[j] })
+	return allowed
 }
 
 func (s *ExportService) canViewExamResultsInAnySpace(ctx permission.PermissionContext, examID uint64, spaces []uint64) bool {
@@ -189,6 +246,26 @@ func scoreExportSpaceIDs(row ScoreExportRow) []uint64 {
 		return row.SpaceIDs
 	}
 	return []uint64{row.SpaceID}
+}
+
+func scopeScoreExportRow(ctx permission.PermissionContext, examID uint64, row ScoreExportRow, allow func(permission.PermissionContext, uint64, []uint64) bool) ScoreExportRow {
+	spaces := scoreExportSpaceIDs(row)
+	allowedSpaces := make([]uint64, 0, len(spaces))
+	for _, spaceID := range spaces {
+		if allow(ctx, examID, []uint64{spaceID}) {
+			allowedSpaces = append(allowedSpaces, spaceID)
+		}
+	}
+	if len(allowedSpaces) == 0 {
+		return row
+	}
+	sort.Slice(allowedSpaces, func(i int, j int) bool { return allowedSpaces[i] < allowedSpaces[j] })
+	row.SpaceIDs = allowedSpaces
+	row.SpaceID = allowedSpaces[0]
+	if row.SpaceNames != nil {
+		row.SpaceName = row.SpaceNames[row.SpaceID]
+	}
+	return row
 }
 
 func writeScoreExportCSV(writer *csv.Writer, rows []ScoreExportRow) error {

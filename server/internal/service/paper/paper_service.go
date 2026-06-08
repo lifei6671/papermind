@@ -71,13 +71,17 @@ type Section struct {
 }
 
 type SectionQuestion struct {
-	TenantID       uint64 // 所属租户 ID。
-	SectionID      uint64 // 大题 ID。
-	PaperID        uint64 // 试卷 ID。
-	QuestionID     uint64 // 题目 ID。
-	SortOrder      int    // 题目在大题中的排序。
-	Score          string // 该题在本试卷中的分值。
-	ShuffleOptions *bool  // 是否随机选项，nil 表示回退题库默认值。
+	TenantID       uint64   // 所属租户 ID。
+	SectionID      uint64   // 大题 ID。
+	PaperID        uint64   // 试卷 ID。
+	QuestionID     uint64   // 题目 ID。
+	SortOrder      int      // 题目在大题中的排序。
+	Score          string   // 该题在本试卷中的分值。
+	ShuffleOptions *bool    // 是否随机选项，nil 表示回退题库默认值。
+	QuestionType   string   // 题型，仅用于学生预览展示，不包含答案信息。
+	Title          string   // 题干，仅用于学生预览展示。
+	Options        []string // 选择题选项内容，仅用于学生预览展示，不包含正确答案标记。
+	BlankCount     int      // 填空题空位数，仅用于学生预览展示。
 }
 
 type MatchedQuestion struct {

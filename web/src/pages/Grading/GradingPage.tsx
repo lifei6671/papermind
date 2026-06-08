@@ -5,7 +5,7 @@ import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { PenLine, Search } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
 import { gradingApi } from "../../api/grading";
@@ -31,8 +31,10 @@ export function GradingPage({
   const [searchParams] = useSearchParams();
   const effectiveSpaceID = spaceID ?? positiveID(searchParams.get("space_id"));
   const effectiveExamID = examID ?? positiveID(searchParams.get("exam_id"));
+  const selectedAttemptID = positiveID(searchParams.get("attempt_id"));
   const [attempts, setAttempts] = useState<PendingReviewRow[]>([]);
   const [selectedAttempt, setSelectedAttempt] = useState<PendingReviewRow | null>(null);
+  const autoOpenedAttemptID = useRef<number | null>(null);
   const [score, setScore] = useState("7");
   const [comment, setComment] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
@@ -91,6 +93,18 @@ export function GradingPage({
       ignore = true;
     };
   }, [api, tenantID, effectiveExamID, actorID, actorRole, effectiveSpaceID, teacherNeedsSpace]);
+
+  useEffect(() => {
+    if (!selectedAttemptID || autoOpenedAttemptID.current === selectedAttemptID) {
+      return;
+    }
+    const matched = attempts.find((attempt) => attempt.attemptID === selectedAttemptID);
+    if (!matched) {
+      return;
+    }
+    openGradingDialog(matched);
+    autoOpenedAttemptID.current = selectedAttemptID;
+  }, [attempts, selectedAttemptID]);
 
   function openGradingDialog(attempt: PendingReviewRow) {
     setSelectedAttempt(attempt);

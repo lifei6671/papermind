@@ -32,14 +32,18 @@ type PendingAttempt struct {
 }
 
 type ShortTextGrade struct {
-	TenantID          uint64 // 所属租户 ID。
-	AttemptID         uint64 // 作答 ID。
-	AttemptQuestionID uint64 // 考生题目快照 ID。
-	AnswerVersion     int64  // 答案版本号，用于乐观锁。
-	Score             string // 简答题得分。
-	Comment           string // 阅卷评语。
-	GradedBy          uint64 // 阅卷人用户 ID。
-	GradedAt          int64  // 阅卷时间，Unix 毫秒时间戳。
+	TenantID          uint64   // 所属租户 ID。
+	ExamID            uint64   // 考试 ID，用于写入管理端阅卷操作日志。
+	AttemptID         uint64   // 作答 ID。
+	AttemptQuestionID uint64   // 考生题目快照 ID。
+	AnswerVersion     int64    // 答案版本号，用于乐观锁。
+	Score             string   // 简答题得分。
+	Comment           string   // 阅卷评语。
+	GradedBy          uint64   // 阅卷人用户 ID。
+	GraderType        string   // 阅卷人主体类型。
+	GraderRole        string   // 阅卷人角色快照。
+	SpaceIDs          []uint64 // 本次作答命中的全部空间 ID，用于多空间日志裁剪。
+	GradedAt          int64    // 阅卷时间，Unix 毫秒时间戳。
 }
 
 type ListPendingAttemptsInput struct {
@@ -51,6 +55,7 @@ type ListPendingAttemptsInput struct {
 type GradeShortTextInput struct {
 	Permission        permission.PermissionContext // 当前阅卷人权限上下文。
 	TenantID          uint64                       // 所属租户 ID。
+	ExamID            uint64                       // 考试 ID。
 	AttemptID         uint64                       // 作答 ID。
 	AttemptQuestionID uint64                       // 考生题目快照 ID。
 	AnswerVersion     int64                        // 答案版本号。
@@ -117,34 +122,45 @@ func (s *ReviewService) GradeShortText(ctx context.Context, input GradeShortText
 	if err != nil {
 		return err
 	}
-	if !s.canGradeAttemptInAnySpace(input.Permission, input.AttemptID, spaces) {
+	logSpaceIDs, allowed := s.gradeLogSpaceIDs(input.Permission, input.AttemptID, spaces)
+	if !allowed {
 		return permission.ErrForbidden
 	}
 	// 简答题阅卷和主观题/总分重算必须由仓储在同一事务内完成，避免成绩短暂不一致。
 	return s.repo.GradeShortTextAndRecalculate(ctx, ShortTextGrade{
 		TenantID:          input.TenantID,
+		ExamID:            input.ExamID,
 		AttemptID:         input.AttemptID,
 		AttemptQuestionID: input.AttemptQuestionID,
 		AnswerVersion:     input.AnswerVersion,
 		Score:             input.Score,
 		Comment:           input.Comment,
 		GradedBy:          input.Permission.UserID,
+		GraderType:        input.Permission.SubjectType,
+		GraderRole:        input.Permission.Role,
+		SpaceIDs:          logSpaceIDs,
 		GradedAt:          s.now(),
 	})
 }
 
 func (s *ReviewService) canGradeAttemptInAnySpace(ctx permission.PermissionContext, attemptID uint64, spaces []uint64) bool {
+	_, allowed := s.gradeLogSpaceIDs(ctx, attemptID, spaces)
+	return allowed
+}
+
+func (s *ReviewService) gradeLogSpaceIDs(ctx permission.PermissionContext, attemptID uint64, spaces []uint64) ([]uint64, bool) {
 	for _, spaceID := range spaces {
 		if err := s.permissionChecker.CanGradeAttempt(permissionWithAttemptScope(ctx, attemptID, spaceID), attemptID); err == nil {
-			return true
+			// 只要当前阅卷人能命中其中一个授权空间，就需要把这次作答的全部目标空间都记入日志。
+			return append([]uint64(nil), spaces...), true
 		}
 	}
 	if len(spaces) == 0 {
 		if err := s.permissionChecker.CanGradeAttempt(permissionWithAttemptScope(ctx, attemptID, 0), attemptID); err == nil {
-			return true
+			return nil, true
 		}
 	}
-	return false
+	return nil, false
 }
 
 func permissionWithAttemptScope(ctx permission.PermissionContext, attemptID uint64, spaceID uint64) permission.PermissionContext {

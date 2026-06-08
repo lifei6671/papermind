@@ -87,6 +87,140 @@ test("租户管理员导航不保留 URL 中陈旧的空间 ID", () => {
   expect(screen.getByRole("link", { name: /试卷/ })).toHaveAttribute("href", "/papers");
 });
 
+test("旧试卷预览 fallback 页左侧菜单归属试卷", () => {
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "青藤一中",
+        spaceID: 301,
+        role: "teacher",
+        status: "enabled",
+      }],
+      user: { displayName: "阅卷教师", role: "teacher", tenantID: 10, userID: 3 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/papers/100/preview?space_id=301"]}>
+        <Routes>
+          <Route element={<AdminShell routes={buildAdminRoutes({
+            displayName: "阅卷教师",
+            role: "teacher",
+            tenantID: 10,
+            userID: 3,
+          }, 301, [{
+            id: 1,
+            tenantID: 10,
+            tenantName: "青藤一中",
+            spaceID: 301,
+            role: "teacher",
+            status: "enabled",
+          }])} />}>
+            <Route path="/papers/:paperID/preview" element={<div>试卷预览页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  expect(screen.getByRole("link", { name: "试卷" })).toHaveClass("menu-link--active");
+  expect(screen.getByRole("link", { name: "试卷" })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("link", { name: "考试列表" })).not.toHaveClass("menu-link--active");
+  expect(screen.getByRole("link", { name: "考试列表" })).not.toHaveAttribute("aria-current");
+  expect(screen.getByRole("main")).toHaveClass("workspace__content--paper-preview");
+});
+
+test("考试详情页使用试卷预览宽度容器", () => {
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "青藤一中",
+        spaceID: 301,
+        role: "teacher",
+        status: "enabled",
+      }],
+      user: { displayName: "阅卷教师", role: "teacher", tenantID: 10, userID: 3 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/exams/8?space_id=301"]}>
+        <Routes>
+          <Route element={<AdminShell routes={buildAdminRoutes({
+            displayName: "阅卷教师",
+            role: "teacher",
+            tenantID: 10,
+            userID: 3,
+          }, 301, [{
+            id: 1,
+            tenantID: 10,
+            tenantName: "青藤一中",
+            spaceID: 301,
+            role: "teacher",
+            status: "enabled",
+          }])} />}>
+            <Route path="/exams/:examID" element={<div>考试详情页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  expect(screen.getByRole("main")).toHaveClass("workspace__content--paper-preview");
+});
+
+test("考试详情兼容预览路由同样使用试卷预览宽度容器", () => {
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "青藤一中",
+        spaceID: 301,
+        role: "teacher",
+        status: "enabled",
+      }],
+      user: { displayName: "阅卷教师", role: "teacher", tenantID: 10, userID: 3 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/exams/8/preview?space_id=301"]}>
+        <Routes>
+          <Route element={<AdminShell routes={buildAdminRoutes({
+            displayName: "阅卷教师",
+            role: "teacher",
+            tenantID: 10,
+            userID: 3,
+          }, 301, [{
+            id: 1,
+            tenantID: 10,
+            tenantName: "青藤一中",
+            spaceID: 301,
+            role: "teacher",
+            status: "enabled",
+          }])} />}>
+            <Route path="/exams/:examID/preview" element={<div>考试详情兼容预览页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  expect(screen.getByRole("main")).toHaveClass("workspace__content--paper-preview");
+  expect(screen.getByRole("link", { name: "考试列表" })).toHaveClass("menu-link--active");
+});
+
 test("阅卷和成绩导航保留当前考试 ID", () => {
   window.localStorage.setItem(
     SESSION_STORAGE_KEY,
@@ -133,6 +267,56 @@ test("阅卷和成绩导航保留当前考试 ID", () => {
   expect(screen.getByRole("link", { name: /成绩/ })).toHaveAttribute(
     "href",
     "/results?tenant_id=10&space_id=301&exam_id=42",
+  );
+});
+
+test("考试详情页阅卷和成绩导航从路径保留当前考试 ID", () => {
+  window.localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      profileSpaces: [{
+        id: 1,
+        tenantID: 10,
+        tenantName: "青藤一中",
+        spaceID: 301,
+        role: "teacher",
+        status: "enabled",
+      }],
+      user: { displayName: "阅卷教师", role: "teacher", tenantID: 10, userID: 3 },
+    }),
+  );
+
+  render(
+    <SessionProvider>
+      <MemoryRouter initialEntries={["/exams/8?space_id=301"]}>
+        <Routes>
+          <Route element={<AdminShell routes={buildAdminRoutes({
+            displayName: "阅卷教师",
+            role: "teacher",
+            tenantID: 10,
+            userID: 3,
+          }, 301, [{
+            id: 1,
+            tenantID: 10,
+            tenantName: "青藤一中",
+            spaceID: 301,
+            role: "teacher",
+            status: "enabled",
+          }], 8)} />}>
+            <Route path="/exams/:examID" element={<div>考试详情页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  );
+
+  expect(screen.getByRole("link", { name: /阅卷中心/ })).toHaveAttribute(
+    "href",
+    "/grading?space_id=301&exam_id=8",
+  );
+  expect(screen.getByRole("link", { name: /成绩/ })).toHaveAttribute(
+    "href",
+    "/results?space_id=301&exam_id=8",
   );
 });
 

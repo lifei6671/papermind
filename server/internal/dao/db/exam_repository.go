@@ -2,11 +2,15 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -30,6 +34,8 @@ type ExamRepository struct {
 	db  *gorm.DB
 	now func() int64
 }
+
+var operationGroupSequence uint64
 
 // ExamRepositoryOptions 提供仓储层可替换的运行时依赖。
 // Now 主要用于测试中固定毫秒时间戳，避免考试发布、作答和评分用例受真实时间影响。
@@ -55,7 +61,7 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 		Where(ExamColumns.TenantID+" = ?", input.TenantID).
 		Where(ExamColumns.DeletedAt+" = ?", 0)
 	if input.SpaceID != nil {
-		query = query.Where(`
+		query = query.Where(fmt.Sprintf(`
 			EXISTS (
 				SELECT 1 FROM exam_targets AS et
 				WHERE et.tenant_id = exams.tenant_id
@@ -77,10 +83,11 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 								and sm.user_id = et.target_id
 								and sm.status = ?
 								and sm.deleted_at = 0
+								and %s
 						))
 					)
 			)
-		`, serviceexam.TargetTypeSpace, *input.SpaceID, serviceexam.TargetTypeUser, servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled, *input.SpaceID, servicespace.StatusEnabled)
+		`, r.userTargetScopedSpacePredicate("et", "sm.space_id")), serviceexam.TargetTypeSpace, *input.SpaceID, serviceexam.TargetTypeUser, servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled, *input.SpaceID, servicespace.StatusEnabled)
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -94,9 +101,69 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 		Find(&rows).Error; err != nil {
 		return pagination.Result[serviceexam.Exam]{}, err
 	}
+	targetGroups := make(map[uint64][]serviceexam.Target, len(rows))
+	if len(rows) > 0 {
+		examIDs := make([]uint64, 0, len(rows))
+		for _, row := range rows {
+			examIDs = append(examIDs, row.ID)
+		}
+		var targetRows []ExamTargetDO
+		targetQuery := r.db.WithContext(ctx).
+			Where(ExamTargetColumns.TenantID+" = ?", input.TenantID).
+			Where(ExamTargetColumns.ExamID+" IN ?", examIDs)
+		if input.SpaceID != nil {
+			targetQuery = targetQuery.Where(fmt.Sprintf(`
+				(
+					exam_targets.target_type = ? and exam_targets.target_id = ?
+				)
+				or (
+					exam_targets.target_type = ? and EXISTS (
+						SELECT 1 FROM space_members AS sm
+						JOIN tenant_user_memberships AS tum
+							ON tum.tenant_id = sm.tenant_id
+							and tum.user_id = sm.user_id
+							and tum.status = ?
+						JOIN users AS u
+							ON u.id = sm.user_id
+							and u.status = ?
+							and u.deleted_at = 0
+						WHERE sm.tenant_id = exam_targets.tenant_id
+							and sm.space_id = ?
+							and sm.user_id = exam_targets.target_id
+							and sm.status = ?
+							and sm.deleted_at = 0
+							and %s
+					)
+				)
+			`, r.userTargetScopedSpacePredicate("exam_targets", "sm.space_id")),
+				serviceexam.TargetTypeSpace, *input.SpaceID,
+				serviceexam.TargetTypeUser, servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled, *input.SpaceID, servicespace.StatusEnabled,
+			)
+		}
+		if err := targetQuery.
+			Order(ExamTargetColumns.ExamID + " ASC").
+			Order(ExamTargetColumns.ID + " ASC").
+			Find(&targetRows).Error; err != nil {
+			return pagination.Result[serviceexam.Exam]{}, err
+		}
+		for _, row := range targetRows {
+			targetGroups[row.ExamID] = append(targetGroups[row.ExamID], serviceexam.Target{
+				TenantID:   row.TenantID,
+				ExamID:     row.ExamID,
+				TargetType: row.TargetType,
+				TargetID:   row.TargetID,
+			})
+		}
+	}
 	exams := make([]serviceexam.Exam, 0, len(rows))
 	for _, row := range rows {
-		exams = append(exams, examFromDO(row, ""))
+		exam := examFromDO(row, "")
+		if targets, ok := targetGroups[row.ID]; ok {
+			exam.Targets = append([]serviceexam.Target(nil), targets...)
+			exam.TargetType = targets[0].TargetType
+			exam.TargetID = targets[0].TargetID
+		}
+		exams = append(exams, exam)
 	}
 	return pagination.Result[serviceexam.Exam]{
 		Items:    exams,
@@ -323,7 +390,13 @@ func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam 
 
 // CreatePublishedExamWithTarget 创建已发布考试，并在同一个事务内写入动态题池和首个投放目标。
 // API 的“发布考试”入口使用该方法，避免校验或目标写入失败后留下草稿或无目标考试。
-func (r *ExamRepository) CreatePublishedExamWithTarget(ctx context.Context, exam serviceexam.Exam, pool []serviceexam.LivePoolItem, target serviceexam.Target) (serviceexam.Exam, error) {
+func (r *ExamRepository) CreatePublishedExamWithTarget(ctx context.Context, exam serviceexam.Exam, pool []serviceexam.LivePoolItem, target serviceexam.Target, log *serviceexam.OperationLog) (serviceexam.Exam, error) {
+	return r.CreatePublishedExamWithTargets(ctx, exam, pool, []serviceexam.Target{target}, log)
+}
+
+// CreatePublishedExamWithTargets 创建已发布考试，并在同一个事务内写入动态题池和多个投放目标。
+// 任一目标或题池写入失败都会回滚整场考试，避免出现“已发布但没有完整投放范围”的中间状态。
+func (r *ExamRepository) CreatePublishedExamWithTargets(ctx context.Context, exam serviceexam.Exam, pool []serviceexam.LivePoolItem, targets []serviceexam.Target, log *serviceexam.OperationLog) (serviceexam.Exam, error) {
 	var createdID uint64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := r.now()
@@ -370,18 +443,39 @@ func (r *ExamRepository) CreatePublishedExamWithTarget(ctx context.Context, exam
 				return err
 			}
 		}
-		targetRow := ExamTargetDO{
-			RelationFields: RelationFields{
-				CreatedAt:     now,
-				CreatedByType: AuditActorTenantUser,
-				ExtJSON:       datatypes.JSON([]byte("{}")),
-			},
-			TenantID:   target.TenantID,
-			ExamID:     row.ID,
-			TargetType: target.TargetType,
-			TargetID:   target.TargetID,
+		for _, target := range targets {
+			targetRow := ExamTargetDO{
+				RelationFields: RelationFields{
+					CreatedAt:     now,
+					CreatedByType: AuditActorTenantUser,
+					ExtJSON:       datatypes.JSON([]byte("{}")),
+				},
+				TenantID:   target.TenantID,
+				ExamID:     row.ID,
+				TargetType: target.TargetType,
+				TargetID:   target.TargetID,
+			}
+			if err := tx.Create(&targetRow).Error; err != nil {
+				return err
+			}
+			if err := r.createTargetScopeSpacesInTx(tx, targetRow, target, now); err != nil {
+				return err
+			}
 		}
-		return tx.Create(&targetRow).Error
+		if log != nil {
+			publishLog := *log
+			publishLog.TenantID = exam.TenantID
+			publishLog.ExamID = row.ID
+			spaceIDs, err := r.operationTargetSpaceIDsInTx(tx, exam.TenantID, targets)
+			if err != nil {
+				return err
+			}
+			// 发布日志必须和考试、冻结题池、投放目标在同一事务提交，避免管理端审计缺失。
+			if err := r.appendOperationLogsForSpacesInTx(tx, publishLog, spaceIDs); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return serviceexam.Exam{}, err
@@ -407,18 +501,224 @@ func (r *ExamRepository) TargetExists(ctx context.Context, tenantID uint64, exam
 // AddTarget 为考试添加一个投放目标。
 // targetType 区分直投用户和投放空间，targetID 的含义由 targetType 决定。
 func (r *ExamRepository) AddTarget(ctx context.Context, target serviceexam.Target) error {
-	row := ExamTargetDO{
-		RelationFields: RelationFields{
-			CreatedAt:     r.now(),
-			CreatedByType: AuditActorTenantUser,
-			ExtJSON:       datatypes.JSON([]byte("{}")),
-		},
-		TenantID:   target.TenantID,
-		ExamID:     target.ExamID,
-		TargetType: target.TargetType,
-		TargetID:   target.TargetID,
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := r.now()
+		row := ExamTargetDO{
+			RelationFields: RelationFields{
+				CreatedAt:     now,
+				CreatedByType: AuditActorTenantUser,
+				ExtJSON:       datatypes.JSON([]byte("{}")),
+			},
+			TenantID:   target.TenantID,
+			ExamID:     target.ExamID,
+			TargetType: target.TargetType,
+			TargetID:   target.TargetID,
+		}
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+		return r.createTargetScopeSpacesInTx(tx, row, target, now)
+	})
+}
+
+// ImportCandidateTargets 批量把授权范围内的启用学生追加为用户直投目标。
+// 目标写入和操作日志写入必须处于同一事务，避免导入成功但审计日志缺失。
+func (r *ExamRepository) ImportCandidateTargets(ctx context.Context, input serviceexam.ImportCandidateTargetsInput) (serviceexam.ImportCandidateTargetsResult, error) {
+	result := serviceexam.ImportCandidateTargetsResult{SkippedCount: len(input.UserIDs)}
+	if len(input.UserIDs) == 0 {
+		return result, nil
 	}
-	return r.db.WithContext(ctx).Create(&row).Error
+	if len(input.AllowedSpaceIDs) == 0 {
+		return result, nil
+	}
+
+	validUserIDs, err := r.validImportCandidateUserIDs(ctx, input.TenantID, input.UserIDs, input.AllowedSpaceIDs)
+	if err != nil {
+		return serviceexam.ImportCandidateTargetsResult{}, err
+	}
+	if len(validUserIDs) == 0 {
+		return result, nil
+	}
+	existingUserIDs, err := r.existingExamUserTargetIDs(ctx, input.TenantID, input.ExamID, validUserIDs)
+	if err != nil {
+		return serviceexam.ImportCandidateTargetsResult{}, err
+	}
+
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := r.now()
+		validSet := uint64Set(validUserIDs)
+		existingSet := uint64Set(existingUserIDs)
+		imported := make([]serviceexam.Target, 0, len(validUserIDs))
+		for _, userID := range input.UserIDs {
+			if _, ok := validSet[userID]; !ok {
+				continue
+			}
+			if _, ok := existingSet[userID]; ok {
+				continue
+			}
+			scopeSpaceIDs, err := r.operationUserSpaceIDsInTx(tx, input.TenantID, []uint64{userID}, input.AllowedSpaceIDs)
+			if err != nil {
+				return err
+			}
+			row := ExamTargetDO{
+				RelationFields: RelationFields{
+					CreatedAt:     now,
+					CreatedByType: AuditActorTenantUser,
+					ExtJSON:       datatypes.JSON([]byte("{}")),
+				},
+				TenantID:   input.TenantID,
+				ExamID:     input.ExamID,
+				TargetType: serviceexam.TargetTypeUser,
+				TargetID:   userID,
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+			target := serviceexam.Target{
+				TenantID:      input.TenantID,
+				ExamID:        input.ExamID,
+				TargetType:    serviceexam.TargetTypeUser,
+				TargetID:      userID,
+				ScopeSpaceIDs: scopeSpaceIDs,
+			}
+			if err := r.createTargetScopeSpacesInTx(tx, row, target, now); err != nil {
+				return err
+			}
+			existingSet[userID] = struct{}{}
+			imported = append(imported, target)
+		}
+		importedUserIDs := targetUserIDs(imported)
+		result.ImportedTargets = imported
+		result.ImportedCount = len(imported)
+		result.SkippedCount = len(input.UserIDs) - result.ImportedCount
+		if result.ImportedCount == 0 {
+			return nil
+		}
+		spaceIDs, err := r.operationUserSpaceIDsInTx(tx, input.TenantID, importedUserIDs, input.AllowedSpaceIDs)
+		if err != nil {
+			return err
+		}
+		if err := r.appendOperationLogsForSpacesInTx(tx, input.Log, spaceIDs); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return serviceexam.ImportCandidateTargetsResult{}, err
+	}
+	return result, nil
+}
+
+// validImportCandidateUserIDs 返回既在授权空间内、又是当前租户启用学生的用户 ID。
+// 查询只返回去重 ID，实际插入顺序仍按调用方传入顺序处理，保证结果稳定可解释。
+func (r *ExamRepository) validImportCandidateUserIDs(ctx context.Context, tenantID uint64, userIDs []uint64, allowedSpaceIDs []uint64) ([]uint64, error) {
+	var ids []uint64
+	if err := r.db.WithContext(ctx).Table("space_members AS members").
+		Select("DISTINCT members.user_id").
+		Joins("JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.status = ? AND spaces.deleted_at = 0", servicespace.StatusEnabled).
+		Joins("JOIN users ON users.id = members.user_id AND users.status = ? AND users.deleted_at = 0", servicetenantuser.StatusEnabled).
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id AND tum.user_id = members.user_id AND tum.role = ? AND tum.status = ?", constant.RoleStudent, servicetenantuser.StatusEnabled).
+		Where("members.tenant_id = ?", tenantID).
+		Where("members.user_id IN ?", userIDs).
+		Where("members.space_id IN ?", allowedSpaceIDs).
+		Where("members.role_in_space = ?", constant.RoleStudent).
+		Where("members.status = ?", servicespace.StatusEnabled).
+		Where("members.deleted_at = ?", 0).
+		Order("members.user_id ASC").
+		Scan(&ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// existingExamUserTargetIDs 返回考试下已经存在的用户直投目标，避免重复写入唯一目标。
+func (r *ExamRepository) existingExamUserTargetIDs(ctx context.Context, tenantID uint64, examID uint64, userIDs []uint64) ([]uint64, error) {
+	var ids []uint64
+	if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
+		Select(ExamTargetColumns.TargetID).
+		Where(ExamTargetColumns.TenantID+" = ?", tenantID).
+		Where(ExamTargetColumns.ExamID+" = ?", examID).
+		Where(ExamTargetColumns.TargetType+" = ?", serviceexam.TargetTypeUser).
+		Where(ExamTargetColumns.TargetID+" IN ?", userIDs).
+		Order(ExamTargetColumns.TargetID + " ASC").
+		Scan(&ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// ResendInvitations 校验本次重发目标是否仍属于当前授权范围内的应考名单，并写入操作日志。
+// 当前系统没有外部通知表或短信/邮件通道，因此仓储层只负责“可发送目标过滤 + 审计落库”的原子性。
+func (r *ExamRepository) ResendInvitations(ctx context.Context, input serviceexam.ResendInvitationsRepositoryInput) (serviceexam.ResendInvitationsRepositoryResult, error) {
+	result := serviceexam.ResendInvitationsRepositoryResult{SkippedCount: len(input.UserIDs)}
+	if len(input.UserIDs) == 0 {
+		return result, nil
+	}
+	if len(input.AllowedSpaceIDs) == 0 {
+		return result, nil
+	}
+
+	validUserIDs, err := r.validInvitationCandidateUserIDs(ctx, input.TenantID, input.ExamID, input.UserIDs, input.AllowedSpaceIDs)
+	if err != nil {
+		return serviceexam.ResendInvitationsRepositoryResult{}, err
+	}
+	validSet := uint64Set(validUserIDs)
+	sentUserIDs := make([]uint64, 0, len(validUserIDs))
+	seenSent := make(map[uint64]struct{}, len(validUserIDs))
+	for _, userID := range input.UserIDs {
+		if _, ok := validSet[userID]; !ok {
+			continue
+		}
+		if _, ok := seenSent[userID]; ok {
+			continue
+		}
+		seenSent[userID] = struct{}{}
+		sentUserIDs = append(sentUserIDs, userID)
+	}
+	if len(sentUserIDs) == 0 {
+		return result, nil
+	}
+
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		spaceIDs, err := r.operationUserSpaceIDsInTx(tx, input.TenantID, sentUserIDs, input.AllowedSpaceIDs)
+		if err != nil {
+			return err
+		}
+		return r.appendOperationLogsForSpacesInTx(tx, input.Log, spaceIDs)
+	})
+	if err != nil {
+		return serviceexam.ResendInvitationsRepositoryResult{}, err
+	}
+	result.SentUserIDs = sentUserIDs
+	result.SentCount = len(sentUserIDs)
+	result.SkippedCount = len(input.UserIDs) - result.SentCount
+	return result, nil
+}
+
+// validInvitationCandidateUserIDs 返回输入用户中真实属于该考试、且命中授权空间的应考用户。
+// 查询复用考生列表的 CTE，确保空间投放和用户直投的口径与考生管理 tab 完全一致。
+func (r *ExamRepository) validInvitationCandidateUserIDs(ctx context.Context, tenantID uint64, examID uint64, userIDs []uint64, allowedSpaceIDs []uint64) ([]uint64, error) {
+	var ids []uint64
+	sql := r.examCandidateExpandedSQL(`
+		SELECT DISTINCT candidate_id
+		FROM expanded_candidates
+		WHERE candidate_id IN ?
+		ORDER BY candidate_id ASC
+	`)
+	args := append(examCandidateExpandedArgs(tenantID, examID, allowedSpaceIDs), userIDs)
+	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// uint64Set 把 ID 列表转换为集合，供批量过滤使用。
+func uint64Set(values []uint64) map[uint64]struct{} {
+	items := make(map[uint64]struct{}, len(values))
+	for _, value := range values {
+		items[value] = struct{}{}
+	}
+	return items
 }
 
 // FindExamByInviteCode 通过邀请码读取考试。
@@ -449,20 +749,39 @@ func (r *ExamRepository) GetExam(ctx context.Context, tenantID uint64, examID ui
 	if err != nil {
 		return serviceexam.Exam{}, err
 	}
-	return examFromDO(row, paper.BuildMode), nil
+	exam := examFromDO(row, paper.BuildMode)
+	targets, err := r.ListTargets(ctx, tenantID, examID)
+	if err != nil {
+		return serviceexam.Exam{}, err
+	}
+	if len(targets) > 0 {
+		exam.Targets = append([]serviceexam.Target(nil), targets...)
+		exam.TargetType = targets[0].TargetType
+		exam.TargetID = targets[0].TargetID
+	}
+	return exam, nil
 }
 
 // ListTargets 读取考试已配置的投放目标，用于从真实资源范围重建管理权限。
 func (r *ExamRepository) ListTargets(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.Target, error) {
+	return r.listTargetsInDB(r.db.WithContext(ctx), tenantID, examID)
+}
+
+func (r *ExamRepository) listTargetsInDB(db *gorm.DB, tenantID uint64, examID uint64) ([]serviceexam.Target, error) {
 	var rows []ExamTargetDO
-	if err := r.db.WithContext(ctx).
+	if err := db.
 		Where(ExamTargetColumns.TenantID+" = ?", tenantID).
 		Where(ExamTargetColumns.ExamID+" = ?", examID).
+		Order(ExamTargetColumns.ID + " ASC").
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	targets := make([]serviceexam.Target, 0, len(rows))
+	targetRowIDs := make([]uint64, 0, len(rows))
+	targetIndex := make(map[uint64]int, len(rows))
 	for _, row := range rows {
+		targetIndex[row.ID] = len(targets)
+		targetRowIDs = append(targetRowIDs, row.ID)
 		targets = append(targets, serviceexam.Target{
 			TenantID:   row.TenantID,
 			ExamID:     row.ExamID,
@@ -470,58 +789,785 @@ func (r *ExamRepository) ListTargets(ctx context.Context, tenantID uint64, examI
 			TargetID:   row.TargetID,
 		})
 	}
+	if err := r.fillTargetScopeSpaceIDs(db, tenantID, targetRowIDs, targetIndex, targets); err != nil {
+		return nil, err
+	}
 	return targets, nil
+}
+
+func (r *ExamRepository) fillTargetScopeSpaceIDs(db *gorm.DB, tenantID uint64, targetRowIDs []uint64, targetIndex map[uint64]int, targets []serviceexam.Target) error {
+	if len(targetRowIDs) == 0 {
+		return nil
+	}
+	var rows []ExamTargetScopeSpaceDO
+	if err := db.
+		Where(ExamTargetScopeSpaceColumns.TenantID+" = ?", tenantID).
+		Where(ExamTargetScopeSpaceColumns.ExamTargetID+" IN ?", targetRowIDs).
+		Order(ExamTargetScopeSpaceColumns.ExamTargetID + " ASC, " + ExamTargetScopeSpaceColumns.SpaceID + " ASC").
+		Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		index, ok := targetIndex[row.ExamTargetID]
+		if !ok {
+			continue
+		}
+		if targets[index].TargetType != serviceexam.TargetTypeUser {
+			continue
+		}
+		targets[index].ScopeSpaceIDs = append(targets[index].ScopeSpaceIDs, row.SpaceID)
+	}
+	for index := range targets {
+		targets[index].ScopeSpaceIDs = uniqueSortedOperationSpaceIDs(targets[index].ScopeSpaceIDs)
+	}
+	return nil
+}
+
+// AppendOperationLog 追加写入管理端操作日志。
+// 操作人字段必须由 service 层从 session 派生后传入，仓储层只负责持久化并补齐创建字段。
+func (r *ExamRepository) AppendOperationLog(ctx context.Context, log serviceexam.OperationLog) error {
+	return r.appendOperationLogInTx(r.db.WithContext(ctx), log)
+}
+
+// appendOperationLogInTx 在给定事务或连接上追加操作日志。
+// 导入考生等关键写操作会传入事务对象，确保业务数据和审计日志一起提交或一起回滚。
+func (r *ExamRepository) appendOperationLogInTx(tx *gorm.DB, log serviceexam.OperationLog) error {
+	now := r.now()
+	extJSON := log.ExtJSON
+	if strings.TrimSpace(extJSON) == "" {
+		extJSON = "{}"
+	}
+	createdByType := log.CreatedByType
+	if createdByType == "" {
+		createdByType = log.ActorType
+	}
+	createdBy := log.CreatedBy
+	if createdBy == 0 {
+		createdBy = log.ActorID
+	}
+	row := ExamOperationLogDO{
+		EventFields: EventFields{
+			CreatedAt:     now,
+			CreatedBy:     createdBy,
+			CreatedByType: createdByType,
+			ExtJSON:       datatypes.JSON([]byte(extJSON)),
+		},
+		TenantID:        log.TenantID,
+		ExamID:          log.ExamID,
+		OperationType:   log.OperationType,
+		OperationTitle:  log.OperationTitle,
+		OperationDetail: log.OperationDetail,
+		ActorID:         log.ActorID,
+		ActorType:       log.ActorType,
+		ActorRole:       log.ActorRole,
+		SpaceID:         log.SpaceID,
+	}
+	return tx.Create(&row).Error
+}
+
+// appendOperationLogsForSpacesInTx 按受影响空间拆分同一次管理操作。
+// 租户管理员需要通过 operation_group_id 聚合同一次操作；空间角色只能按自己的 space_id 精确看到对应日志。
+func (r *ExamRepository) appendOperationLogsForSpacesInTx(tx *gorm.DB, log serviceexam.OperationLog, spaceIDs []uint64) error {
+	scopedSpaceIDs := uniqueSortedOperationSpaceIDs(spaceIDs)
+	if len(scopedSpaceIDs) == 0 {
+		return r.appendOperationLogInTx(tx, log)
+	}
+	groupExtJSON := operationGroupExtJSON(log, r.now())
+	for _, spaceID := range scopedSpaceIDs {
+		scopedSpaceID := spaceID
+		scopedLog := log
+		scopedLog.SpaceID = &scopedSpaceID
+		scopedLog.ExtJSON = groupExtJSON
+		if err := r.appendOperationLogInTx(tx, scopedLog); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// operationGroupExtJSON 在日志扩展字段中补齐 operation_group_id。
+// 这里保留调用方已有扩展字段，只在缺少组 ID 时写入当前操作生成的稳定审计组。
+func operationGroupExtJSON(log serviceexam.OperationLog, now int64) string {
+	ext := map[string]any{}
+	if strings.TrimSpace(log.ExtJSON) != "" {
+		_ = json.Unmarshal([]byte(log.ExtJSON), &ext)
+	}
+	if groupID, ok := ext["operation_group_id"].(string); !ok || groupID == "" {
+		ext["operation_group_id"] = newOperationGroupID(log, now)
+	}
+	payload, err := json.Marshal(ext)
+	if err != nil {
+		return `{}`
+	}
+	return string(payload)
+}
+
+func newOperationGroupID(log serviceexam.OperationLog, now int64) string {
+	var entropy [16]byte
+	if _, err := rand.Read(entropy[:]); err == nil {
+		return fmt.Sprintf("%s-%d-%d-%d-%d-%x", log.OperationType, log.TenantID, log.ExamID, log.ActorID, now, entropy)
+	}
+	sequence := atomic.AddUint64(&operationGroupSequence, 1)
+	return fmt.Sprintf("%s-%d-%d-%d-%d-%d", log.OperationType, log.TenantID, log.ExamID, log.ActorID, now, sequence)
+}
+
+func (r *ExamRepository) createTargetScopeSpacesInTx(tx *gorm.DB, targetRow ExamTargetDO, target serviceexam.Target, now int64) error {
+	scopeSpaceIDs := targetScopeSpaceIDsForStorage(target)
+	for _, spaceID := range scopeSpaceIDs {
+		scopeRow := ExamTargetScopeSpaceDO{
+			RelationFields: RelationFields{
+				CreatedAt:     now,
+				CreatedByType: AuditActorTenantUser,
+				ExtJSON:       datatypes.JSON([]byte("{}")),
+			},
+			TenantID:     targetRow.TenantID,
+			ExamID:       targetRow.ExamID,
+			ExamTargetID: targetRow.ID,
+			SpaceID:      spaceID,
+		}
+		if err := tx.Create(&scopeRow).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func targetScopeSpaceIDsForStorage(target serviceexam.Target) []uint64 {
+	switch target.TargetType {
+	case serviceexam.TargetTypeSpace:
+		if target.TargetID == 0 {
+			return nil
+		}
+		return []uint64{target.TargetID}
+	case serviceexam.TargetTypeUser:
+		return uniqueSortedOperationSpaceIDs(target.ScopeSpaceIDs)
+	default:
+		return nil
+	}
+}
+
+// operationTargetSpaceIDsInTx 把发布目标展开为可见空间范围。
+// 空间目标直接使用空间 ID；用户直投目标按用户当前启用空间展开，满足操作日志空间过滤规则。
+func (r *ExamRepository) operationTargetSpaceIDsInTx(tx *gorm.DB, tenantID uint64, targets []serviceexam.Target) ([]uint64, error) {
+	spaceIDs := make([]uint64, 0, len(targets))
+	for _, target := range targets {
+		switch target.TargetType {
+		case serviceexam.TargetTypeSpace:
+			spaceIDs = append(spaceIDs, target.TargetID)
+		case serviceexam.TargetTypeUser:
+			userSpaceIDs, err := r.operationUserSpaceIDsInTx(tx, tenantID, []uint64{target.TargetID}, target.ScopeSpaceIDs)
+			if err != nil {
+				return nil, err
+			}
+			spaceIDs = append(spaceIDs, userSpaceIDs...)
+		}
+	}
+	return uniqueSortedOperationSpaceIDs(spaceIDs), nil
+}
+
+// operationUserSpaceIDsInTx 返回用户当前所在的启用空间。
+// allowedSpaceIDs 非空时会进一步收窄到当前管理者授权范围，避免越权写入其它空间可见日志。
+func (r *ExamRepository) operationUserSpaceIDsInTx(tx *gorm.DB, tenantID uint64, userIDs []uint64, allowedSpaceIDs []uint64) ([]uint64, error) {
+	userIDs = uniqueSortedOperationSpaceIDs(userIDs)
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	query := tx.Table("space_members AS members").
+		Select("DISTINCT members.space_id").
+		Joins("JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.status = ? AND spaces.deleted_at = 0", servicespace.StatusEnabled).
+		Joins("JOIN users ON users.id = members.user_id AND users.status = ? AND users.deleted_at = 0", servicetenantuser.StatusEnabled).
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id AND tum.user_id = members.user_id AND tum.role = ? AND tum.status = ?", constant.RoleStudent, servicetenantuser.StatusEnabled).
+		Where("members.tenant_id = ?", tenantID).
+		Where("members.user_id IN ?", userIDs).
+		Where("members.role_in_space = ?", constant.RoleStudent).
+		Where("members.status = ?", servicespace.StatusEnabled).
+		Where("members.deleted_at = ?", 0)
+	if len(allowedSpaceIDs) > 0 {
+		query = query.Where("members.space_id IN ?", uniqueSortedOperationSpaceIDs(allowedSpaceIDs))
+	}
+	var spaceIDs []uint64
+	if err := query.Order("members.space_id ASC").Scan(&spaceIDs).Error; err != nil {
+		return nil, err
+	}
+	return uniqueSortedOperationSpaceIDs(spaceIDs), nil
+}
+
+func targetUserIDs(targets []serviceexam.Target) []uint64 {
+	userIDs := make([]uint64, 0, len(targets))
+	for _, target := range targets {
+		if target.TargetType == serviceexam.TargetTypeUser {
+			userIDs = append(userIDs, target.TargetID)
+		}
+	}
+	return userIDs
+}
+
+func uniqueSortedOperationSpaceIDs(values []uint64) []uint64 {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[uint64]struct{}, len(values))
+	items := make([]uint64, 0, len(values))
+	for _, value := range values {
+		if value == 0 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		items = append(items, value)
+	}
+	sort.Slice(items, func(left, right int) bool {
+		return items[left] < items[right]
+	})
+	return items
+}
+
+// ListOperationLogs 按考试分页读取管理端操作日志。
+// space_id 过滤采用精确匹配，避免空间管理员或教师看到租户级或其它空间的审计记录。
+func (r *ExamRepository) ListOperationLogs(ctx context.Context, input serviceexam.ListOperationLogsInput) (pagination.Result[serviceexam.OperationLog], error) {
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
+	query := r.db.WithContext(ctx).Model(&ExamOperationLogDO{}).
+		Where(ExamOperationLogColumns.TenantID+" = ?", input.TenantID).
+		Where(ExamOperationLogColumns.ExamID+" = ?", input.ExamID)
+	if input.SpaceID != nil {
+		query = query.Where(ExamOperationLogColumns.SpaceID+" = ?", *input.SpaceID)
+	}
+	if input.OperationType != "" {
+		query = query.Where(ExamOperationLogColumns.OperationType+" = ?", input.OperationType)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return pagination.Result[serviceexam.OperationLog]{}, err
+	}
+	var rows []ExamOperationLogDO
+	if err := query.
+		Order(EventColumns.CreatedAt + " DESC").
+		Order(EventColumns.ID + " DESC").
+		Limit(page.PageSize).
+		Offset(pagination.Offset(page)).
+		Find(&rows).Error; err != nil {
+		return pagination.Result[serviceexam.OperationLog]{}, err
+	}
+	logs := make([]serviceexam.OperationLog, 0, len(rows))
+	for _, row := range rows {
+		logs = append(logs, operationLogFromDO(row))
+	}
+	return pagination.Result[serviceexam.OperationLog]{
+		Items:    logs,
+		Page:     page.Page,
+		PageSize: page.PageSize,
+		Total:    total,
+	}, nil
 }
 
 // ExamTargetSpaceIDs 读取考试目标覆盖到的有效空间，用于无成绩时仍按真实考试范围鉴权。
 func (r *ExamRepository) ExamTargetSpaceIDs(ctx context.Context, tenantID uint64, examID uint64) ([]uint64, error) {
-	var rows []attemptTargetSpaceRow
-	if err := r.db.WithContext(ctx).Raw(`
-		SELECT DISTINCT spaces.id AS space_id, spaces.name AS space_name
-		FROM exam_targets AS targets
-		JOIN spaces ON spaces.tenant_id = targets.tenant_id
-			AND spaces.id = targets.target_id
-			AND spaces.status = ?
-			AND spaces.deleted_at = 0
-		WHERE targets.tenant_id = ?
-			AND targets.exam_id = ?
-			AND targets.target_type = ?
-		UNION
-		SELECT DISTINCT spaces.id AS space_id, spaces.name AS space_name
-		FROM exam_targets AS targets
-		JOIN space_members AS members ON members.tenant_id = targets.tenant_id
-			AND members.user_id = targets.target_id
-			AND members.status = ?
-			AND members.deleted_at = 0
-		JOIN spaces ON spaces.tenant_id = members.tenant_id
-			AND spaces.id = members.space_id
-			AND spaces.status = ?
-			AND spaces.deleted_at = 0
-		JOIN users ON users.id = members.user_id
-			AND users.status = ?
-			AND users.deleted_at = 0
-		JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id
-			AND tum.user_id = members.user_id
-			AND tum.status = ?
-		WHERE targets.tenant_id = ?
-			AND targets.exam_id = ?
-			AND targets.target_type = ?
-		ORDER BY space_id ASC
-	`,
-		servicespace.StatusEnabled, tenantID, examID, serviceexam.TargetTypeSpace,
-		servicespace.StatusEnabled, servicespace.StatusEnabled, servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled,
-		tenantID, examID, serviceexam.TargetTypeUser,
-	).Scan(&rows).Error; err != nil {
+	targets, err := r.ListTargets(ctx, tenantID, examID)
+	if err != nil {
 		return nil, err
 	}
-	return targetSpaceIDs(rows), nil
+	return r.targetSpaceIDsForTargets(ctx, tenantID, targets)
+}
+
+func (r *ExamRepository) targetSpaceIDsForTargets(ctx context.Context, tenantID uint64, targets []serviceexam.Target) ([]uint64, error) {
+	spaceIDs := make([]uint64, 0, len(targets))
+	for _, target := range targets {
+		switch target.TargetType {
+		case serviceexam.TargetTypeSpace:
+			spaceIDs = append(spaceIDs, target.TargetID)
+		case serviceexam.TargetTypeUser:
+			userSpaceIDs, err := r.operationUserSpaceIDsInTx(r.db.WithContext(ctx), tenantID, []uint64{target.TargetID}, target.ScopeSpaceIDs)
+			if err != nil {
+				return nil, err
+			}
+			spaceIDs = append(spaceIDs, userSpaceIDs...)
+		}
+	}
+	return uniqueSortedOperationSpaceIDs(spaceIDs), nil
+}
+
+// CountExamCandidates 按考试目标和授权空间统计当前有效应考人数。
+// 空间投放从启用目标空间成员展开，用户直投按该用户当前启用空间成员关系与授权空间求交集。
+func (r *ExamRepository) CountExamCandidates(ctx context.Context, tenantID uint64, examID uint64, spaceIDs []uint64) (int, error) {
+	if len(spaceIDs) == 0 {
+		return 0, nil
+	}
+	userTargetScopePredicate := r.userTargetScopedSpacePredicate("targets", "members.space_id")
+	var total int64
+	if err := r.db.WithContext(ctx).Raw(fmt.Sprintf(`
+		SELECT COUNT(DISTINCT candidate_id)
+		FROM (
+			SELECT members.user_id AS candidate_id
+			FROM exam_targets AS targets
+			JOIN spaces ON spaces.tenant_id = targets.tenant_id
+				AND spaces.id = targets.target_id
+				AND spaces.status = ?
+				AND spaces.deleted_at = 0
+				JOIN space_members AS members ON members.tenant_id = targets.tenant_id
+					AND members.space_id = targets.target_id
+					AND members.role_in_space = ?
+					AND members.status = ?
+					AND members.deleted_at = 0
+			JOIN users ON users.id = members.user_id
+				AND users.status = ?
+				AND users.deleted_at = 0
+			JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id
+				AND tum.user_id = members.user_id
+				AND tum.role = ?
+				AND tum.status = ?
+			WHERE targets.tenant_id = ?
+				AND targets.exam_id = ?
+				AND targets.target_type = ?
+				AND targets.target_id IN ?
+			UNION
+			SELECT targets.target_id AS candidate_id
+			FROM exam_targets AS targets
+			JOIN users ON users.id = targets.target_id
+				AND users.status = ?
+				AND users.deleted_at = 0
+			JOIN tenant_user_memberships AS tum ON tum.tenant_id = targets.tenant_id
+				AND tum.user_id = targets.target_id
+				AND tum.role = ?
+				AND tum.status = ?
+				JOIN space_members AS members ON members.tenant_id = targets.tenant_id
+					AND members.user_id = targets.target_id
+					AND members.space_id IN ?
+					AND members.role_in_space = ?
+					AND members.status = ?
+					AND members.deleted_at = 0
+				AND %s
+			JOIN spaces ON spaces.tenant_id = members.tenant_id
+				AND spaces.id = members.space_id
+				AND spaces.status = ?
+				AND spaces.deleted_at = 0
+			WHERE targets.tenant_id = ?
+				AND targets.exam_id = ?
+				AND targets.target_type = ?
+		) AS candidates
+	`, userTargetScopePredicate),
+		servicespace.StatusEnabled, constant.RoleStudent, servicespace.StatusEnabled, servicetenantuser.StatusEnabled, constant.RoleStudent, servicetenantuser.StatusEnabled,
+		tenantID, examID, serviceexam.TargetTypeSpace, spaceIDs,
+		servicetenantuser.StatusEnabled, constant.RoleStudent, servicetenantuser.StatusEnabled, spaceIDs, constant.RoleStudent, servicespace.StatusEnabled, servicespace.StatusEnabled,
+		tenantID, examID, serviceexam.TargetTypeUser,
+	).Scan(&total).Error; err != nil {
+		return 0, err
+	}
+	return int(total), nil
+}
+
+// ListExamCandidates 动态展开考试目标形成当前页应考名单。
+// 查询先按授权空间求出候选 user_id 页，再补充来源和作答摘要，避免大考试一次性加载全量考生。
+func (r *ExamRepository) ListExamCandidates(ctx context.Context, input serviceexam.ListExamCandidatesInput) (pagination.Result[serviceexam.ExamCandidate], error) {
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
+	if len(input.SpaceIDs) == 0 {
+		return pagination.Result[serviceexam.ExamCandidate]{Items: []serviceexam.ExamCandidate{}, Page: page.Page, PageSize: page.PageSize}, nil
+	}
+	keyword := strings.TrimSpace(input.Keyword)
+	var total int64
+	countSQL := r.examCandidateExpandedSQL(`
+		SELECT COUNT(*)
+		FROM (
+			SELECT candidate_id
+			FROM expanded_candidates
+			LEFT JOIN candidate_attempt_status ON candidate_attempt_status.user_id = expanded_candidates.candidate_id
+			WHERE (? = ''
+				OR username LIKE ?
+				OR real_name LIKE ?
+				OR space_name LIKE ?)
+			GROUP BY candidate_id
+			HAVING (? = '' OR ? = CASE
+				WHEN MAX(COALESCE(has_submitted, 0)) = 1 THEN 'submitted'
+				WHEN MAX(COALESCE(has_in_progress, 0)) = 1 THEN 'in_progress'
+				ELSE 'not_started'
+			END)
+		) AS filtered_candidates
+	`)
+	keywordLike := "%" + keyword + "%"
+	searchArgs := []any{keyword, keywordLike, keywordLike, keywordLike}
+	filterArgs := append(searchArgs, input.Status, input.Status)
+	if err := r.db.WithContext(ctx).Raw(countSQL, examCandidateExpandedArgs(input.TenantID, input.ExamID, input.SpaceIDs, filterArgs...)...).Scan(&total).Error; err != nil {
+		return pagination.Result[serviceexam.ExamCandidate]{}, err
+	}
+	if total == 0 {
+		return pagination.Result[serviceexam.ExamCandidate]{Items: []serviceexam.ExamCandidate{}, Page: page.Page, PageSize: page.PageSize, Total: total}, nil
+	}
+
+	var rows []examCandidatePageRow
+	pageSQL := r.examCandidateExpandedSQL(`
+		SELECT candidate_id AS user_id,
+			MIN(username) AS username,
+			MIN(real_name) AS real_name,
+			MIN(source_space_id) AS space_id,
+			MIN(space_name) AS space_name
+		FROM expanded_candidates
+		LEFT JOIN candidate_attempt_status ON candidate_attempt_status.user_id = expanded_candidates.candidate_id
+		WHERE (? = ''
+			OR username LIKE ?
+			OR real_name LIKE ?
+			OR space_name LIKE ?)
+		GROUP BY candidate_id
+		HAVING (? = '' OR ? = CASE
+			WHEN MAX(COALESCE(has_submitted, 0)) = 1 THEN 'submitted'
+			WHEN MAX(COALESCE(has_in_progress, 0)) = 1 THEN 'in_progress'
+			ELSE 'not_started'
+		END)
+		ORDER BY MIN(real_name) ASC, candidate_id ASC
+		LIMIT ? OFFSET ?
+	`)
+	pageArgs := append(examCandidateExpandedArgs(input.TenantID, input.ExamID, input.SpaceIDs, filterArgs...), page.PageSize, pagination.Offset(page))
+	if err := r.db.WithContext(ctx).Raw(pageSQL, pageArgs...).Scan(&rows).Error; err != nil {
+		return pagination.Result[serviceexam.ExamCandidate]{}, err
+	}
+	items := make([]serviceexam.ExamCandidate, 0, len(rows))
+	userIDs := make([]uint64, 0, len(rows))
+	for _, row := range rows {
+		userIDs = append(userIDs, row.UserID)
+		items = append(items, serviceexam.ExamCandidate{
+			UserID:    row.UserID,
+			Username:  row.Username,
+			RealName:  row.RealName,
+			SpaceID:   row.SpaceID,
+			SpaceName: row.SpaceName,
+			Status:    serviceexam.CandidateStatusNotStarted,
+		})
+	}
+	sources, err := r.examCandidateSources(ctx, input.TenantID, input.ExamID, input.SpaceIDs, userIDs)
+	if err != nil {
+		return pagination.Result[serviceexam.ExamCandidate]{}, err
+	}
+	attempts, err := r.examCandidateAttempts(ctx, input.TenantID, input.ExamID, userIDs)
+	if err != nil {
+		return pagination.Result[serviceexam.ExamCandidate]{}, err
+	}
+	for index := range items {
+		items[index].SourceTargets = sources[items[index].UserID]
+		applyCandidateAttemptSummary(&items[index], attempts[items[index].UserID], input.ResultStrategy)
+	}
+	return pagination.Result[serviceexam.ExamCandidate]{Items: items, Page: page.Page, PageSize: page.PageSize, Total: total}, nil
+}
+
+func (r *ExamRepository) examCandidateExpandedSQL(selectSQL string) string {
+	return examCandidateExpandedSQL(r.userTargetScopedSpacePredicate("targets", "members.space_id"), selectSQL)
+}
+
+type examCandidatePageRow struct {
+	UserID    uint64 // 考生用户 ID。
+	Username  string // 登录名或学号。
+	RealName  string // 考生姓名。
+	SpaceID   uint64 // 展示用空间 ID。
+	SpaceName string // 展示用空间名称。
+}
+
+type examCandidateSourceRow struct {
+	CandidateID   uint64 // 考生用户 ID。
+	TargetType    string // 来源目标类型。
+	TargetID      uint64 // 来源目标 ID。
+	SourceSpaceID uint64 // 来源命中的空间 ID。
+	SpaceName     string // 来源命中的空间名称。
+}
+
+type examCandidateAttemptRow struct {
+	ID          uint64 // 作答 ID。
+	UserID      uint64 // 考生用户 ID。
+	Status      string // 作答状态。
+	StartedAt   int64  // 开始作答时间。
+	SubmittedAt *int64 // 提交时间。
+	TotalScore  string // 总分。
+	AttemptNo   int    // 第几次作答。
+}
+
+// examCandidateExpandedSQL 构建考生动态展开 CTE，保证 count、分页和来源查询使用同一套有效性条件。
+func examCandidateExpandedSQL(userTargetScopePredicate string, selectSQL string) string {
+	return fmt.Sprintf(`
+		WITH expanded_candidates AS (
+			SELECT members.user_id AS candidate_id,
+				users.username AS username,
+				users.real_name AS real_name,
+				targets.target_type AS target_type,
+				targets.target_id AS target_id,
+				members.space_id AS source_space_id,
+				spaces.name AS space_name
+			FROM exam_targets AS targets
+			JOIN spaces ON spaces.tenant_id = targets.tenant_id
+				AND spaces.id = targets.target_id
+				AND spaces.status = ?
+				AND spaces.deleted_at = 0
+			JOIN space_members AS members ON members.tenant_id = targets.tenant_id
+				AND members.space_id = targets.target_id
+				AND members.space_id IN ?
+				AND members.role_in_space = ?
+				AND members.status = ?
+				AND members.deleted_at = 0
+			JOIN users ON users.id = members.user_id
+				AND users.status = ?
+				AND users.deleted_at = 0
+			JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id
+				AND tum.user_id = members.user_id
+				AND tum.role = ?
+				AND tum.status = ?
+			WHERE targets.tenant_id = ?
+				AND targets.exam_id = ?
+				AND targets.target_type = ?
+			UNION ALL
+			SELECT targets.target_id AS candidate_id,
+				users.username AS username,
+				users.real_name AS real_name,
+				targets.target_type AS target_type,
+				targets.target_id AS target_id,
+				members.space_id AS source_space_id,
+				spaces.name AS space_name
+			FROM exam_targets AS targets
+			JOIN users ON users.id = targets.target_id
+				AND users.status = ?
+				AND users.deleted_at = 0
+			JOIN tenant_user_memberships AS tum ON tum.tenant_id = targets.tenant_id
+				AND tum.user_id = targets.target_id
+				AND tum.role = ?
+				AND tum.status = ?
+			JOIN space_members AS members ON members.tenant_id = targets.tenant_id
+				AND members.user_id = targets.target_id
+				AND members.space_id IN ?
+				AND members.role_in_space = ?
+				AND members.status = ?
+				AND members.deleted_at = 0
+				AND %s
+			JOIN spaces ON spaces.tenant_id = members.tenant_id
+				AND spaces.id = members.space_id
+				AND spaces.status = ?
+				AND spaces.deleted_at = 0
+			WHERE targets.tenant_id = ?
+				AND targets.exam_id = ?
+				AND targets.target_type = ?
+		),
+		candidate_attempt_status AS (
+			SELECT user_id,
+				MAX(CASE WHEN submitted_at IS NOT NULL OR status = ? THEN 1 ELSE 0 END) AS has_submitted,
+				MAX(CASE WHEN submitted_at IS NULL AND status = ? THEN 1 ELSE 0 END) AS has_in_progress
+			FROM exam_attempts
+			WHERE tenant_id = ?
+				AND exam_id = ?
+			GROUP BY user_id
+		)
+	`, userTargetScopePredicate) + selectSQL
+}
+
+// examCandidateExpandedArgs 返回 expanded_candidates 和 candidate_attempt_status 两个 CTE 的公共参数。
+func examCandidateExpandedArgs(tenantID uint64, examID uint64, spaceIDs []uint64, extra ...any) []any {
+	args := []any{
+		servicespace.StatusEnabled, spaceIDs, constant.RoleStudent, servicespace.StatusEnabled, servicetenantuser.StatusEnabled, constant.RoleStudent, servicetenantuser.StatusEnabled,
+		tenantID, examID, serviceexam.TargetTypeSpace,
+		servicetenantuser.StatusEnabled, constant.RoleStudent, servicetenantuser.StatusEnabled, spaceIDs, constant.RoleStudent, servicespace.StatusEnabled, servicespace.StatusEnabled,
+		tenantID, examID, serviceexam.TargetTypeUser,
+		serviceexam.AttemptStatusSubmitted, serviceexam.AttemptStatusInProgress, tenantID, examID,
+	}
+	return append(args, extra...)
+}
+
+// userTargetScopedSpacePredicate 让用户直投优先命中发布时持久化的 scoped spaces。
+// 历史目标若未写入映射表，则继续回退到用户当前有效成员空间。
+func (r *ExamRepository) userTargetScopedSpacePredicate(targetAlias string, memberSpaceColumn string) string {
+	return fmt.Sprintf(`(
+		NOT EXISTS (
+			SELECT 1
+			FROM exam_target_scope_spaces AS target_scope_absence
+			WHERE target_scope_absence.tenant_id = %s.tenant_id
+				AND target_scope_absence.exam_id = %s.exam_id
+				AND target_scope_absence.exam_target_id = %s.id
+		)
+		OR EXISTS (
+			SELECT 1
+			FROM exam_target_scope_spaces AS target_scope_match
+			WHERE target_scope_match.tenant_id = %s.tenant_id
+				AND target_scope_match.exam_id = %s.exam_id
+				AND target_scope_match.exam_target_id = %s.id
+				AND target_scope_match.space_id = %s
+		)
+	)`, targetAlias, targetAlias, targetAlias, targetAlias, targetAlias, targetAlias, memberSpaceColumn)
+}
+
+// examCandidateSources 返回当前页考生的来源摘要，空间投放和用户直投都保留，供前端解释去重来源。
+func (r *ExamRepository) examCandidateSources(ctx context.Context, tenantID uint64, examID uint64, spaceIDs []uint64, userIDs []uint64) (map[uint64][]serviceexam.CandidateSourceTarget, error) {
+	var rows []examCandidateSourceRow
+	sql := r.examCandidateExpandedSQL(`
+		SELECT DISTINCT candidate_id,
+			target_type,
+			target_id,
+			source_space_id,
+			space_name
+		FROM expanded_candidates
+		WHERE candidate_id IN ?
+		ORDER BY candidate_id ASC, target_type ASC, target_id ASC, source_space_id ASC
+	`)
+	args := append(examCandidateExpandedArgs(tenantID, examID, spaceIDs), userIDs)
+	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[uint64][]serviceexam.CandidateSourceTarget, len(userIDs))
+	for _, row := range rows {
+		result[row.CandidateID] = append(result[row.CandidateID], serviceexam.CandidateSourceTarget{
+			TargetType: row.TargetType,
+			TargetID:   row.TargetID,
+			SpaceID:    row.SourceSpaceID,
+			SpaceName:  row.SpaceName,
+		})
+	}
+	return result, nil
+}
+
+// examCandidateAttempts 批量读取当前页考生作答记录，后续在内存中按 result_strategy 选择展示作答。
+func (r *ExamRepository) examCandidateAttempts(ctx context.Context, tenantID uint64, examID uint64, userIDs []uint64) (map[uint64][]examCandidateAttemptRow, error) {
+	var rows []examCandidateAttemptRow
+	if err := r.db.WithContext(ctx).Table("exam_attempts").
+		Select("id, user_id, status, started_at, submitted_at, total_score, attempt_no").
+		Where("tenant_id = ?", tenantID).
+		Where("exam_id = ?", examID).
+		Where("user_id IN ?", userIDs).
+		Order("user_id ASC, id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[uint64][]examCandidateAttemptRow, len(userIDs))
+	for _, row := range rows {
+		result[row.UserID] = append(result[row.UserID], row)
+	}
+	return result, nil
+}
+
+// applyCandidateAttemptSummary 根据作答记录生成考生管理行的状态和结果作答摘要。
+func applyCandidateAttemptSummary(candidate *serviceexam.ExamCandidate, attempts []examCandidateAttemptRow, resultStrategy string) {
+	candidate.AttemptCount = len(attempts)
+	var current *examCandidateAttemptRow
+	var result *examCandidateAttemptRow
+	for index := range attempts {
+		attempt := &attempts[index]
+		if attempt.SubmittedAt == nil && attempt.Status == serviceexam.AttemptStatusInProgress {
+			if current == nil || attempt.ID > current.ID {
+				current = attempt
+			}
+			continue
+		}
+		if attempt.SubmittedAt != nil || attempt.Status == serviceexam.AttemptStatusSubmitted {
+			if result == nil || candidateResultAttemptLess(*result, *attempt, resultStrategy) {
+				result = attempt
+			}
+		}
+	}
+	if current != nil {
+		candidate.Status = serviceexam.CandidateStatusInProgress
+		candidate.CurrentAttemptID = uint64Ptr(current.ID)
+		candidate.StartedAt = int64Ptr(current.StartedAt)
+	}
+	if result != nil {
+		candidate.Status = serviceexam.CandidateStatusSubmitted
+		candidate.ResultAttemptID = uint64Ptr(result.ID)
+		candidate.CurrentAttemptID = nil
+		candidate.StartedAt = int64Ptr(result.StartedAt)
+		candidate.SubmittedAt = result.SubmittedAt
+		candidate.TotalScore = result.TotalScore
+	}
+}
+
+// candidateResultAttemptLess 判断 right 是否比 left 更适合作为最终结果作答。
+func candidateResultAttemptLess(left examCandidateAttemptRow, right examCandidateAttemptRow, resultStrategy string) bool {
+	if resultStrategy == serviceexam.ResultStrategyHighest {
+		leftScore, _ := strconv.ParseFloat(left.TotalScore, 64)
+		rightScore, _ := strconv.ParseFloat(right.TotalScore, 64)
+		if leftScore != rightScore {
+			return leftScore < rightScore
+		}
+	}
+	leftSubmittedAt := int64(0)
+	if left.SubmittedAt != nil {
+		leftSubmittedAt = *left.SubmittedAt
+	}
+	rightSubmittedAt := int64(0)
+	if right.SubmittedAt != nil {
+		rightSubmittedAt = *right.SubmittedAt
+	}
+	if leftSubmittedAt != rightSubmittedAt {
+		return leftSubmittedAt < rightSubmittedAt
+	}
+	return left.ID < right.ID
+}
+
+// uint64Ptr 返回 uint64 指针，避免在循环里直接取临时变量地址。
+func uint64Ptr(value uint64) *uint64 {
+	next := value
+	return &next
+}
+
+// int64Ptr 返回 int64 指针，避免在循环里直接取临时变量地址。
+func int64Ptr(value int64) *int64 {
+	next := value
+	return &next
+}
+
+// CountExamAttemptStats 按授权且仍启用的空间统计已开始、进行中和已交卷人数。
+// 统计使用 distinct user_id，避免同一考生多次作答时把人数放大。
+func (r *ExamRepository) CountExamAttemptStats(ctx context.Context, tenantID uint64, examID uint64, spaceIDs []uint64) (serviceexam.AttemptOverviewStats, error) {
+	if len(spaceIDs) == 0 {
+		return serviceexam.AttemptOverviewStats{}, nil
+	}
+	userTargetScopePredicate := r.userTargetScopedSpacePredicate("targets", "members.space_id")
+	var rows []struct {
+		UserID      uint64
+		Status      string
+		SubmittedAt *int64
+	}
+	if err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
+		Select("DISTINCT attempts.user_id AS user_id, attempts.status AS status, attempts.submitted_at AS submitted_at").
+		Joins("JOIN exam_targets AS targets ON targets.tenant_id = attempts.tenant_id AND targets.exam_id = attempts.exam_id").
+		Joins(fmt.Sprintf(`
+					JOIN space_members AS members ON members.tenant_id = attempts.tenant_id
+						AND members.user_id = attempts.user_id
+						AND members.space_id IN ?
+						AND members.role_in_space = ?
+						AND members.status = ?
+						AND members.deleted_at = 0
+					AND (
+						(targets.target_type = ? AND targets.target_id = members.space_id)
+						OR (targets.target_type = ? AND targets.target_id = attempts.user_id AND %s)
+					)
+				`, userTargetScopePredicate), spaceIDs, constant.RoleStudent, servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser).
+		Joins("JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.status = ? AND spaces.deleted_at = 0", servicespace.StatusEnabled).
+		Joins("JOIN users ON users.id = attempts.user_id AND users.status = ? AND users.deleted_at = 0", servicetenantuser.StatusEnabled).
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = attempts.tenant_id AND tum.user_id = attempts.user_id AND tum.role = ? AND tum.status = ?", constant.RoleStudent, servicetenantuser.StatusEnabled).
+		Where("attempts.tenant_id = ?", tenantID).
+		Where("attempts.exam_id = ?", examID).
+		Scan(&rows).Error; err != nil {
+		return serviceexam.AttemptOverviewStats{}, err
+	}
+	joined := map[uint64]struct{}{}
+	submitted := map[uint64]struct{}{}
+	inProgress := map[uint64]struct{}{}
+	for _, row := range rows {
+		joined[row.UserID] = struct{}{}
+		if row.SubmittedAt != nil || row.Status == serviceexam.AttemptStatusSubmitted {
+			submitted[row.UserID] = struct{}{}
+			delete(inProgress, row.UserID)
+			continue
+		}
+		if row.Status == serviceexam.AttemptStatusInProgress {
+			if _, ok := submitted[row.UserID]; !ok {
+				inProgress[row.UserID] = struct{}{}
+			}
+		}
+	}
+	return serviceexam.AttemptOverviewStats{
+		Joined:     len(joined),
+		Submitted:  len(submitted),
+		InProgress: len(inProgress),
+	}, nil
 }
 
 // IsEligible 判断用户是否具备参加考试的资格。
 // 资格来源包括考试直投给用户，以及考试投放到用户所在的有效学生空间。
 func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID uint64, userID uint64) (bool, error) {
 	var directCount int64
-	// 直投用户必须仍是启用状态，并且拥有 student 角色，避免被禁用或非学生用户进入考试。
+	// 直投用户除了启用学生身份，还必须仍属于至少一个启用学生空间，和管理端考生展开口径保持一致。
 	if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
 		Joins("JOIN users ON users."+UserColumns.ID+" = exam_targets."+ExamTargetColumns.TargetID+
 			" AND users."+UserColumns.ID+" = ?"+
@@ -531,10 +1577,20 @@ func (r *ExamRepository) IsEligible(ctx context.Context, tenantID uint64, examID
 			" AND tum."+UserRoleColumns.UserID+" = users."+UserColumns.ID+
 			" AND tum."+UserRoleColumns.Role+" = ?"+
 			" AND tum."+UserRoleColumns.Status+" = ?", "student", "enabled").
+		Joins("JOIN space_members ON space_members."+SpaceMemberColumns.TenantID+" = exam_targets."+ExamTargetColumns.TenantID+
+			" AND space_members."+SpaceMemberColumns.UserID+" = users."+UserColumns.ID+
+			" AND space_members."+SpaceMemberColumns.RoleInSpace+" = ?"+
+			" AND space_members."+SpaceMemberColumns.Status+" = ?"+
+			" AND space_members."+SpaceMemberColumns.DeletedAt+" = ?", "student", "enabled", 0).
+		Joins("JOIN spaces ON spaces."+SpaceColumns.TenantID+" = space_members."+SpaceMemberColumns.TenantID+
+			" AND spaces."+SpaceColumns.ID+" = space_members."+SpaceMemberColumns.SpaceID+
+			" AND spaces."+SpaceColumns.Status+" = ?"+
+			" AND spaces."+SpaceColumns.DeletedAt+" = ?", "enabled", 0).
 		Where("exam_targets."+ExamTargetColumns.TenantID+" = ?", tenantID).
 		Where("exam_targets."+ExamTargetColumns.ExamID+" = ?", examID).
 		Where("exam_targets."+ExamTargetColumns.TargetType+" = ?", serviceexam.TargetTypeUser).
 		Where("exam_targets."+ExamTargetColumns.TargetID+" = ?", userID).
+		Where(r.userTargetScopedSpacePredicate("exam_targets", "space_members."+SpaceMemberColumns.SpaceID)).
 		Count(&directCount).Error; err != nil {
 		return false, err
 	}
@@ -930,13 +1986,14 @@ func (r *ExamRepository) cachedAttemptTargetSpaces(ctx context.Context, tenantID
 }
 
 // listAttemptTargetSpaces 查找作答实际命中的考试投放空间。
-// 空间投放只命中目标空间；用户直投则映射到考生当前有效空间成员关系。
+// 空间投放只命中目标空间；用户直投优先命中发布时持久化的 scoped spaces。
 func (r *ExamRepository) listAttemptTargetSpaces(ctx context.Context, tenantID uint64, attemptID uint64) ([]attemptTargetSpaceRow, error) {
 	var rows []attemptTargetSpaceRow
+	userTargetScopePredicate := r.userTargetScopedSpacePredicate("targets", "members.space_id")
 	if err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
 		Select("DISTINCT spaces.id AS space_id, spaces.name AS space_name").
 		Joins("JOIN exam_targets AS targets ON targets.tenant_id = attempts.tenant_id AND targets.exam_id = attempts.exam_id").
-		Joins(`
+		Joins(fmt.Sprintf(`
 			JOIN space_members AS members
 				ON members.tenant_id = attempts.tenant_id
 				AND members.user_id = attempts.user_id
@@ -944,9 +2001,9 @@ func (r *ExamRepository) listAttemptTargetSpaces(ctx context.Context, tenantID u
 				AND members.deleted_at = 0
 				AND (
 					(targets.target_type = ? AND members.space_id = targets.target_id)
-					OR (targets.target_type = ? AND targets.target_id = attempts.user_id)
+					OR (targets.target_type = ? AND targets.target_id = attempts.user_id AND %s)
 				)
-		`, servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser).
+		`, userTargetScopePredicate), servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser).
 		Joins("JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.status = ? AND spaces.deleted_at = 0", servicespace.StatusEnabled).
 		Joins("JOIN users ON users.id = members.user_id AND users.status = ? AND users.deleted_at = 0", servicetenantuser.StatusEnabled).
 		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id AND tum.user_id = members.user_id AND tum.status = ?", servicetenantuser.StatusEnabled).
@@ -955,6 +2012,43 @@ func (r *ExamRepository) listAttemptTargetSpaces(ctx context.Context, tenantID u
 		Order("spaces.id ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
+	}
+	if len(rows) > 0 {
+		return rows, nil
+	}
+	// 历史已交卷记录不能因为考生后来退空间就失去展示空间。
+	// 这里只允许“整场考试只有一个显式空间目标且不存在任何用户直投目标”时回退，
+	// 避免混合投放下把用户直投考生错误归到某个空间目标。
+	return r.listAttemptSingleTargetSpaceFallback(ctx, tenantID, attemptID)
+}
+
+func (r *ExamRepository) listAttemptSingleTargetSpaceFallback(ctx context.Context, tenantID uint64, attemptID uint64) ([]attemptTargetSpaceRow, error) {
+	var rows []attemptTargetSpaceRow
+	if err := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
+		Select("DISTINCT spaces.id AS space_id, spaces.name AS space_name").
+		Joins(`
+			JOIN exam_targets AS targets ON targets.tenant_id = attempts.tenant_id
+				AND targets.exam_id = attempts.exam_id
+				AND targets.target_type = ?
+		`, serviceexam.TargetTypeSpace).
+		Joins("JOIN spaces ON spaces.tenant_id = targets.tenant_id AND spaces.id = targets.target_id AND spaces.status = ? AND spaces.deleted_at = 0", servicespace.StatusEnabled).
+		Where("attempts.tenant_id = ?", tenantID).
+		Where("attempts.id = ?", attemptID).
+		Where(`
+			NOT EXISTS (
+				SELECT 1
+				FROM exam_targets AS user_targets
+				WHERE user_targets.tenant_id = attempts.tenant_id
+					and user_targets.exam_id = attempts.exam_id
+					and user_targets.target_type = ?
+			)
+		`, serviceexam.TargetTypeUser).
+		Order("spaces.id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) != 1 {
+		return nil, nil
 	}
 	return rows, nil
 }
@@ -966,12 +2060,36 @@ func firstAttemptTargetSpace(spaces []attemptTargetSpaceRow) (uint64, string) {
 	return spaces[0].SpaceID, spaces[0].SpaceName
 }
 
+func firstAttemptTargetSpaceInScope(spaces []attemptTargetSpaceRow, scopeSpaceIDs []uint64) (uint64, string) {
+	if len(scopeSpaceIDs) == 0 {
+		return firstAttemptTargetSpace(spaces)
+	}
+	scope := make(map[uint64]struct{}, len(scopeSpaceIDs))
+	for _, spaceID := range scopeSpaceIDs {
+		scope[spaceID] = struct{}{}
+	}
+	for _, space := range spaces {
+		if _, ok := scope[space.SpaceID]; ok {
+			return space.SpaceID, space.SpaceName
+		}
+	}
+	return 0, ""
+}
+
 func targetSpaceIDs(spaces []attemptTargetSpaceRow) []uint64 {
 	ids := make([]uint64, 0, len(spaces))
 	for _, space := range spaces {
 		ids = append(ids, space.SpaceID)
 	}
 	return ids
+}
+
+func targetSpaceNames(spaces []attemptTargetSpaceRow) map[uint64]string {
+	names := make(map[uint64]string, len(spaces))
+	for _, space := range spaces {
+		names[space.SpaceID] = space.SpaceName
+	}
+	return names
 }
 
 // GradeShortTextAndRecalculate 保存简答题人工评分并重算总分。
@@ -993,6 +2111,15 @@ func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade
 		maxScore, err := parseScoreString(attemptQuestion.Score)
 		if err != nil || math.IsNaN(maxScore) || math.IsInf(maxScore, 0) || maxScore < 0 || gradeScore > maxScore {
 			return serviceexam.ErrInvalidGradeScore
+		}
+		var attempt ExamAttemptDO
+		if err := tx.Where(ExamAttemptColumns.TenantID+" = ?", grade.TenantID).
+			Where(ExamAttemptColumns.ID+" = ?", grade.AttemptID).
+			First(&attempt).Error; err != nil {
+			return err
+		}
+		if grade.ExamID != 0 && grade.ExamID != attempt.ExamID {
+			return gorm.ErrRecordNotFound
 		}
 
 		// 简答题评分使用答案 version 乐观锁，避免两个教师同时覆盖同一题评分。
@@ -1023,18 +2150,12 @@ func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade
 		if err != nil {
 			return err
 		}
-		var attempt ExamAttemptDO
-		if err := tx.Where(ExamAttemptColumns.TenantID+" = ?", grade.TenantID).
-			Where(ExamAttemptColumns.ID+" = ?", grade.AttemptID).
-			First(&attempt).Error; err != nil {
-			return err
-		}
 		objectiveScore, err := parseScoreString(attempt.ObjectiveScore)
 		if err != nil {
 			return err
 		}
 		// 总分由提交时的客观题分加上当前已完成评分的主观题分组成。
-		return tx.Model(&ExamAttemptDO{}).
+		if err := tx.Model(&ExamAttemptDO{}).
 			Where(ExamAttemptColumns.TenantID+" = ?", grade.TenantID).
 			Where(ExamAttemptColumns.ID+" = ?", grade.AttemptID).
 			Updates(map[string]any{
@@ -1043,7 +2164,26 @@ func (r *ExamRepository) GradeShortTextAndRecalculate(ctx context.Context, grade
 				BaseColumns.UpdatedAt:              now,
 				BaseColumns.UpdatedByType:          AuditActorTenantUser,
 				BaseColumns.Version:                gorm.Expr(BaseColumns.Version + " + 1"),
-			}).Error
+			}).Error; err != nil {
+			return err
+		}
+		if grade.ExamID == 0 {
+			return nil
+		}
+		// 阅卷日志必须和答案评分、总分重算同事务提交，避免成绩变化缺少可追溯记录。
+		return r.appendOperationLogsForSpacesInTx(tx, serviceexam.OperationLog{
+			TenantID:        grade.TenantID,
+			ExamID:          attempt.ExamID,
+			OperationType:   serviceexam.OperationTypeGradeAnswer,
+			OperationTitle:  "人工阅卷",
+			OperationDetail: "保存主观题评分",
+			ActorID:         grade.GradedBy,
+			ActorType:       grade.GraderType,
+			ActorRole:       grade.GraderRole,
+			CreatedAt:       grade.GradedAt,
+			CreatedBy:       grade.GradedBy,
+			CreatedByType:   grade.GraderType,
+		}, grade.SpaceIDs)
 	})
 }
 
@@ -1084,6 +2224,7 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 			SpaceID:         spaceID,
 			SpaceName:       spaceName,
 			SpaceIDs:        targetSpaceIDs(spaces),
+			SpaceNames:      targetSpaceNames(spaces),
 			AttemptNo:       row.AttemptNo,
 			ObjectiveScore:  row.ObjectiveScore,
 			SubjectiveScore: row.SubjectiveScore,
@@ -1092,6 +2233,558 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 		})
 	}
 	return items, nil
+}
+
+// SummarizeExamResults 聚合管理端成绩摘要。
+// 聚合在数据库侧完成，避免前端或 service 拉全量成绩后再计算统计卡片。
+func (r *ExamRepository) SummarizeExamResults(ctx context.Context, input serviceexam.ResultSummaryRepositoryInput) (serviceexam.ResultSummaryRepositoryResult, error) {
+	var row examResultSummaryRow
+	if err := r.managementResultBaseQuery(ctx, input.TenantID, input.ExamID, input.SpaceIDs).
+		Select(`
+			COUNT(*) AS submitted,
+			COALESCE(AVG(CAST(attempts.total_score AS REAL)), 0) AS average_score,
+			COALESCE(MAX(CAST(attempts.total_score AS REAL)), 0) AS highest_score,
+			COALESCE(SUM(CASE WHEN CAST(attempts.total_score AS REAL) >= ? THEN 1 ELSE 0 END), 0) AS passed
+		`, input.PassScore).
+		Scan(&row).Error; err != nil {
+		return serviceexam.ResultSummaryRepositoryResult{}, err
+	}
+	var pendingSubjective int64
+	if err := r.managementResultBaseQuery(ctx, input.TenantID, input.ExamID, input.SpaceIDs).
+		Where(`
+			EXISTS (
+					SELECT 1 FROM exam_answers AS answers
+					WHERE answers.tenant_id = attempts.tenant_id
+						and answers.attempt_id = attempts.id
+						and answers.grading_status = ?
+				)
+			`, constant.GradingStatusPending).
+		Count(&pendingSubjective).Error; err != nil {
+		return serviceexam.ResultSummaryRepositoryResult{}, err
+	}
+	scoreDistribution, err := r.summarizeResultScoreDistribution(ctx, input)
+	if err != nil {
+		return serviceexam.ResultSummaryRepositoryResult{}, err
+	}
+	questionTypeRates, err := r.summarizeResultQuestionTypeRates(ctx, input)
+	if err != nil {
+		return serviceexam.ResultSummaryRepositoryResult{}, err
+	}
+	return serviceexam.ResultSummaryRepositoryResult{
+		Submitted:         int(row.Submitted),
+		AverageScore:      formatExamRepositoryScore(row.AverageScore),
+		HighestScore:      formatExamRepositoryScore(row.HighestScore),
+		Passed:            int(row.Passed),
+		PendingSubjective: int(pendingSubjective),
+		ScoreDistribution: scoreDistribution,
+		QuestionTypeRates: questionTypeRates,
+	}, nil
+}
+
+// summarizeResultScoreDistribution 按授权范围内真实已交卷成绩聚合分数段。
+// 这里读取的是 attempt.total_score，不依赖前端页内数据，避免分页列表缺行导致图表统计失真。
+func (r *ExamRepository) summarizeResultScoreDistribution(ctx context.Context, input serviceexam.ResultSummaryRepositoryInput) ([]serviceexam.ResultScoreDistribution, error) {
+	var rows []managementResultScoreRow
+	if err := r.managementResultBaseQuery(ctx, input.TenantID, input.ExamID, input.SpaceIDs).
+		Select("CAST(attempts.total_score AS REAL) AS total_score").
+		Order("CAST(attempts.total_score AS REAL) ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return []serviceexam.ResultScoreDistribution{}, nil
+	}
+	distribution := make([]serviceexam.ResultScoreDistribution, 0, len(rows))
+	indexByLabel := make(map[string]int, len(rows))
+	for _, row := range rows {
+		label := resultScoreBucketLabel(row.TotalScore, input.TotalScore)
+		index, ok := indexByLabel[label]
+		if !ok {
+			indexByLabel[label] = len(distribution)
+			distribution = append(distribution, serviceexam.ResultScoreDistribution{Label: label})
+			index = len(distribution) - 1
+		}
+		distribution[index].Count++
+	}
+	return distribution, nil
+}
+
+// summarizeResultQuestionTypeRates 按题目快照和答案得分计算题型平均得分率。
+// 题型来自 exam_attempt_questions.question_snapshot，确保考试后题库类型被编辑也不会影响历史统计。
+func (r *ExamRepository) summarizeResultQuestionTypeRates(ctx context.Context, input serviceexam.ResultSummaryRepositoryInput) ([]serviceexam.ResultQuestionTypeRate, error) {
+	var rows []managementResultQuestionScoreRow
+	submittedAttempts := r.managementResultBaseQuery(ctx, input.TenantID, input.ExamID, input.SpaceIDs).
+		Select("attempts.id AS id")
+	if err := r.db.WithContext(ctx).Table("exam_attempt_questions AS attempt_questions").
+		Select(`
+			attempt_questions.question_snapshot AS question_snapshot,
+			attempt_questions.score AS max_score,
+			COALESCE(answers.score, '') AS earned_score
+		`).
+		Joins("JOIN (?) AS submitted_attempts ON submitted_attempts.id = attempt_questions.attempt_id", submittedAttempts).
+		Joins(`
+			LEFT JOIN exam_answers AS answers ON answers.tenant_id = attempt_questions.tenant_id
+				AND answers.attempt_id = attempt_questions.attempt_id
+				AND answers.attempt_question_id = attempt_questions.id
+		`).
+		Where("attempt_questions.tenant_id = ?", input.TenantID).
+		Order("attempt_questions.sort_order ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	type aggregate struct {
+		earned   float64
+		possible float64
+	}
+	order := make([]string, 0)
+	aggregates := make(map[string]*aggregate)
+	for _, row := range rows {
+		questionType, err := parseQuestionSnapshotType(datatypes.JSON(row.QuestionSnapshot))
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := aggregates[questionType]; !ok {
+			order = append(order, questionType)
+			aggregates[questionType] = &aggregate{}
+		}
+		possible, err := parseScoreString(row.MaxScore)
+		if err != nil {
+			return nil, err
+		}
+		earned, err := parseScoreString(row.EarnedScore)
+		if err != nil {
+			return nil, err
+		}
+		aggregates[questionType].possible += possible
+		aggregates[questionType].earned += earned
+	}
+	items := make([]serviceexam.ResultQuestionTypeRate, 0, len(order))
+	for _, questionType := range order {
+		item := aggregates[questionType]
+		averageRate := 0
+		if item.possible > 0 {
+			averageRate = int(math.Round(item.earned / item.possible * 100))
+		}
+		items = append(items, serviceexam.ResultQuestionTypeRate{
+			QuestionType:      questionType,
+			QuestionTypeLabel: resultQuestionTypeLabel(questionType),
+			AverageRate:       averageRate,
+		})
+	}
+	return items, nil
+}
+
+// ListExamResults 按授权范围分页读取成绩管理列表。
+// 排名基于同一授权范围下的稳定排序和分页 offset 生成，不能在 handler 里用当前页下标重置。
+func (r *ExamRepository) ListExamResults(ctx context.Context, input serviceexam.ListExamResultsInput) (pagination.Result[serviceexam.ExamResult], error) {
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
+	exam, err := r.GetExam(ctx, input.TenantID, input.ExamID)
+	if err != nil {
+		return pagination.Result[serviceexam.ExamResult]{}, err
+	}
+	resultsVisible := examResultsVisibleForManagement(exam, r.now())
+	query := r.managementResultBaseQuery(ctx, input.TenantID, input.ExamID, input.SpaceIDs)
+	if strings.TrimSpace(input.Keyword) != "" {
+		keyword := "%" + strings.TrimSpace(input.Keyword) + "%"
+		userTargetScopePredicate := r.userTargetScopedSpacePredicate("targets", "members.space_id")
+		query = query.Where(fmt.Sprintf(`
+			(
+				users.username LIKE ?
+				OR users.real_name LIKE ?
+				OR EXISTS (
+					SELECT 1
+					FROM exam_targets AS targets
+					JOIN space_members AS members
+							ON members.tenant_id = attempts.tenant_id
+							and members.user_id = attempts.user_id
+							and members.space_id IN ?
+							and members.status = ?
+							and members.deleted_at = 0
+							and (
+								(targets.target_type = ? and members.space_id = targets.target_id)
+								OR (targets.target_type = ? and targets.target_id = attempts.user_id and %s)
+							)
+					JOIN spaces
+							ON spaces.tenant_id = members.tenant_id
+							and spaces.id = members.space_id
+							and spaces.status = ?
+							and spaces.deleted_at = 0
+					WHERE targets.tenant_id = attempts.tenant_id
+						and targets.exam_id = attempts.exam_id
+						and spaces.name LIKE ?
+				)
+			)
+		`, userTargetScopePredicate), keyword, keyword, input.SpaceIDs, servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, servicespace.StatusEnabled, keyword)
+	}
+	switch input.Status {
+	case "pending_review":
+		query = query.Where(`
+			EXISTS (
+					SELECT 1 FROM exam_answers AS answers
+					WHERE answers.tenant_id = attempts.tenant_id
+						and answers.attempt_id = attempts.id
+						and answers.grading_status = ?
+				)
+			`, constant.GradingStatusPending)
+	case "published":
+		query = query.Where(`
+			NOT EXISTS (
+					SELECT 1 FROM exam_answers AS answers
+					WHERE answers.tenant_id = attempts.tenant_id
+						and answers.attempt_id = attempts.id
+						and answers.grading_status = ?
+				)
+			`, constant.GradingStatusPending)
+		if !resultsVisible {
+			query = query.Where("1 = 0")
+		}
+	case "pending_publish":
+		query = query.Where(`
+			NOT EXISTS (
+					SELECT 1 FROM exam_answers AS answers
+					WHERE answers.tenant_id = attempts.tenant_id
+						and answers.attempt_id = attempts.id
+						and answers.grading_status = ?
+				)
+			`, constant.GradingStatusPending)
+		if resultsVisible {
+			query = query.Where("1 = 0")
+		}
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return pagination.Result[serviceexam.ExamResult]{}, err
+	}
+	var rows []managementResultRow
+	if err := query.
+		Select(`
+			attempts.id AS attempt_id,
+			attempts.user_id AS user_id,
+			users.username AS username,
+			users.real_name AS real_name,
+			attempts.objective_score AS objective_score,
+			attempts.subjective_score AS subjective_score,
+			attempts.total_score AS total_score,
+			attempts.submitted_at AS submitted_at,
+			(
+				SELECT COUNT(1) FROM exam_answers AS answers
+				WHERE answers.tenant_id = attempts.tenant_id
+					AND answers.attempt_id = attempts.id
+					AND answers.grading_status = ?
+			) AS pending_subjective_count
+		`, constant.GradingStatusPending).
+		Order("CAST(attempts.total_score AS REAL) DESC").
+		Order("attempts.submitted_at ASC").
+		Order("attempts.id ASC").
+		Limit(page.PageSize).
+		Offset(pagination.Offset(page)).
+		Scan(&rows).Error; err != nil {
+		return pagination.Result[serviceexam.ExamResult]{}, err
+	}
+	items := make([]serviceexam.ExamResult, 0, len(rows))
+	spaceCache := make(map[uint64][]attemptTargetSpaceRow)
+	offset := pagination.Offset(page)
+	for index, row := range rows {
+		spaces, err := r.cachedAttemptTargetSpaces(ctx, input.TenantID, row.AttemptID, spaceCache)
+		if err != nil {
+			return pagination.Result[serviceexam.ExamResult]{}, err
+		}
+		spaceID, spaceName := firstAttemptTargetSpaceInScope(spaces, input.SpaceIDs)
+		status := "published"
+		if row.PendingSubjectiveCount > 0 {
+			status = "pending_review"
+		} else if !resultsVisible {
+			status = "pending_publish"
+		}
+		items = append(items, serviceexam.ExamResult{
+			Rank:            uint64(offset + index + 1),
+			AttemptID:       row.AttemptID,
+			UserID:          row.UserID,
+			Username:        row.Username,
+			RealName:        row.RealName,
+			SpaceID:         spaceID,
+			SpaceName:       spaceName,
+			ObjectiveScore:  row.ObjectiveScore,
+			SubjectiveScore: row.SubjectiveScore,
+			TotalScore:      row.TotalScore,
+			Status:          status,
+			SubmittedAt:     row.SubmittedAtValue(),
+		})
+	}
+	return pagination.Result[serviceexam.ExamResult]{
+		Items:    items,
+		Page:     page.Page,
+		PageSize: page.PageSize,
+		Total:    total,
+	}, nil
+}
+
+func examResultsVisibleForManagement(exam serviceexam.Exam, now int64) bool {
+	if exam.PublishMode != serviceexam.PublishModeManualPublish {
+		return true
+	}
+	return exam.ScorePublishTime != nil && now >= *exam.ScorePublishTime
+}
+
+// GetAnswerSheet 按 examID + attemptID 双重定位管理端答卷详情。
+// 基础作答查询复用成绩列表授权范围，避免空间管理员或教师跨空间读取其它考生答卷。
+func (r *ExamRepository) GetAnswerSheet(ctx context.Context, input serviceexam.AnswerSheetRepositoryInput) (serviceexam.AnswerSheetRepositoryResult, error) {
+	var attemptRow managementAnswerSheetAttemptRow
+	if err := r.managementResultBaseQuery(ctx, input.TenantID, input.ExamID, input.SpaceIDs).
+		Where("attempts.id = ?", input.AttemptID).
+		Select(`
+			attempts.id AS attempt_id,
+			attempts.exam_id AS exam_id,
+			attempts.user_id AS user_id,
+			users.username AS username,
+			users.real_name AS real_name,
+			attempts.objective_score AS objective_score,
+			attempts.subjective_score AS subjective_score,
+			attempts.total_score AS total_score,
+			attempts.submitted_at AS submitted_at
+		`).
+		Scan(&attemptRow).Error; err != nil {
+		return serviceexam.AnswerSheetRepositoryResult{}, err
+	}
+	if attemptRow.AttemptID == 0 {
+		return serviceexam.AnswerSheetRepositoryResult{}, gorm.ErrRecordNotFound
+	}
+	items, err := r.listManagementAnswerSheetItems(ctx, input.TenantID, input.AttemptID)
+	if err != nil {
+		return serviceexam.AnswerSheetRepositoryResult{}, err
+	}
+	return serviceexam.AnswerSheetRepositoryResult{
+		Attempt: serviceexam.AnswerSheetAttempt{
+			AttemptID:       attemptRow.AttemptID,
+			ExamID:          attemptRow.ExamID,
+			UserID:          attemptRow.UserID,
+			Username:        attemptRow.Username,
+			RealName:        attemptRow.RealName,
+			ObjectiveScore:  attemptRow.ObjectiveScore,
+			SubjectiveScore: attemptRow.SubjectiveScore,
+			TotalScore:      attemptRow.TotalScore,
+			SubmittedAt:     attemptRow.SubmittedAtValue(),
+		},
+		Items: items,
+	}, nil
+}
+
+// listManagementAnswerSheetItems 读取单次作答的题目快照和答案。
+// 答卷详情必须展示历史快照，因此不回查 questions 或 question_options 当前状态。
+func (r *ExamRepository) listManagementAnswerSheetItems(ctx context.Context, tenantID uint64, attemptID uint64) ([]serviceexam.AnswerSheetItem, error) {
+	var rows []managementAnswerSheetItemRow
+	if err := r.db.WithContext(ctx).Table("exam_attempt_questions AS attempt_questions").
+		Select(`
+			attempt_questions.id AS attempt_question_id,
+			attempt_questions.section_id AS section_id,
+			attempt_questions.question_id AS question_id,
+			attempt_questions.sort_order AS sort_order,
+			attempt_questions.section_snapshot AS section_snapshot,
+			attempt_questions.question_snapshot AS question_snapshot,
+			attempt_questions.option_snapshot AS option_snapshot,
+			attempt_questions.correct_answer_snapshot AS correct_answer_snapshot,
+			attempt_questions.score AS score,
+			COALESCE(answers.answer_content, '') AS answer_content,
+			COALESCE(answers.score, '') AS answer_score,
+			COALESCE(answers.grading_status, '') AS grading_status,
+			COALESCE(answers.grader_comment, '') AS grader_comment,
+			COALESCE(answers.graded_by, 0) AS graded_by,
+			answers.graded_at AS graded_at
+		`).
+		Joins(`
+			LEFT JOIN exam_answers AS answers ON answers.tenant_id = attempt_questions.tenant_id
+				AND answers.attempt_id = attempt_questions.attempt_id
+				AND answers.attempt_question_id = attempt_questions.id
+		`).
+		Where("attempt_questions.tenant_id = ?", tenantID).
+		Where("attempt_questions.attempt_id = ?", attemptID).
+		Order("attempt_questions.sort_order ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	items := make([]serviceexam.AnswerSheetItem, 0, len(rows))
+	for _, row := range rows {
+		questionType, err := parseQuestionSnapshotType(datatypes.JSON(row.QuestionSnapshot))
+		if err != nil {
+			return nil, err
+		}
+		questionTitle, err := parseQuestionSnapshotTitle(row.QuestionSnapshot)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, serviceexam.AnswerSheetItem{
+			AttemptQuestionID:     row.AttemptQuestionID,
+			SectionID:             row.SectionID,
+			QuestionID:            row.QuestionID,
+			SortOrder:             row.SortOrder,
+			SectionSnapshot:       row.SectionSnapshot,
+			QuestionSnapshot:      row.QuestionSnapshot,
+			QuestionType:          questionType,
+			QuestionTitle:         questionTitle,
+			OptionSnapshot:        row.OptionSnapshot,
+			CorrectAnswerSnapshot: row.CorrectAnswerSnapshot,
+			Score:                 row.Score,
+			AnswerContent:         row.AnswerContent,
+			AnswerScore:           row.AnswerScore,
+			GradingStatus:         row.GradingStatus,
+			GraderComment:         row.GraderComment,
+			GradedBy:              row.GradedBy,
+			GradedAt:              row.GradedAt,
+		})
+	}
+	return items, nil
+}
+
+func (r *ExamRepository) managementResultBaseQuery(ctx context.Context, tenantID uint64, examID uint64, spaceIDs []uint64) *gorm.DB {
+	query := r.db.WithContext(ctx).Table("exam_attempts AS attempts").
+		Joins("JOIN users ON users.id = attempts.user_id AND users.deleted_at = 0").
+		Where("attempts.tenant_id = ?", tenantID).
+		Where("attempts.exam_id = ?", examID).
+		Where("attempts.submitted_at IS NOT NULL")
+	if len(spaceIDs) > 0 {
+		query = query.Where(fmt.Sprintf(`
+			EXISTS (
+				SELECT 1
+				FROM exam_targets AS targets
+				JOIN space_members AS members
+						ON members.tenant_id = attempts.tenant_id
+						and members.user_id = attempts.user_id
+						and members.status = ?
+						and members.deleted_at = 0
+						and (
+							(targets.target_type = ? and members.space_id = targets.target_id)
+							or (targets.target_type = ? and targets.target_id = attempts.user_id and %s)
+						)
+					JOIN spaces
+						ON spaces.tenant_id = members.tenant_id
+						and spaces.id = members.space_id
+						and spaces.status = ?
+						and spaces.deleted_at = 0
+					WHERE targets.tenant_id = attempts.tenant_id
+						and targets.exam_id = attempts.exam_id
+						and members.space_id IN ?
+				)
+				OR (
+					NOT EXISTS (
+						SELECT 1
+						FROM exam_targets AS targets
+						JOIN space_members AS members
+								ON members.tenant_id = attempts.tenant_id
+								and members.user_id = attempts.user_id
+								and members.status = ?
+								and members.deleted_at = 0
+								and (
+									(targets.target_type = ? and members.space_id = targets.target_id)
+									or (targets.target_type = ? and targets.target_id = attempts.user_id and %s)
+								)
+						JOIN spaces
+								ON spaces.tenant_id = members.tenant_id
+								and spaces.id = members.space_id
+								and spaces.status = ?
+								and spaces.deleted_at = 0
+						WHERE targets.tenant_id = attempts.tenant_id
+							and targets.exam_id = attempts.exam_id
+					)
+					and NOT EXISTS (
+						SELECT 1
+						FROM exam_targets AS user_targets
+						WHERE user_targets.tenant_id = attempts.tenant_id
+							and user_targets.exam_id = attempts.exam_id
+							and user_targets.target_type = ?
+					)
+						and (
+							SELECT COUNT(DISTINCT targets.target_id)
+							FROM exam_targets AS targets
+							JOIN spaces
+									ON spaces.tenant_id = targets.tenant_id
+									and spaces.id = targets.target_id
+									and spaces.status = ?
+									and spaces.deleted_at = 0
+							WHERE targets.tenant_id = attempts.tenant_id
+								and targets.exam_id = attempts.exam_id
+								and targets.target_type = ?
+						) = 1
+						and EXISTS (
+							SELECT 1
+							FROM exam_targets AS targets
+							JOIN spaces
+									ON spaces.tenant_id = targets.tenant_id
+									and spaces.id = targets.target_id
+									and spaces.status = ?
+									and spaces.deleted_at = 0
+							WHERE targets.tenant_id = attempts.tenant_id
+								and targets.exam_id = attempts.exam_id
+								and targets.target_type = ?
+								and targets.target_id IN ?
+						)
+					)
+					`,
+			r.userTargetScopedSpacePredicate("targets", "members.space_id"),
+			r.userTargetScopedSpacePredicate("targets", "members.space_id")),
+			servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, servicespace.StatusEnabled, spaceIDs,
+			servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, servicespace.StatusEnabled,
+			serviceexam.TargetTypeUser,
+			servicespace.StatusEnabled, serviceexam.TargetTypeSpace,
+			servicespace.StatusEnabled, serviceexam.TargetTypeSpace, spaceIDs,
+		)
+	}
+	return query
+}
+
+// resultScoreBucketLabel 根据试卷总分生成成绩图表的分数段标签。
+// 低总分试卷如果继续使用 10 分段会全部挤在 0-9，因此按真实得分聚合；高总分试卷保持常见成绩段。
+func resultScoreBucketLabel(score float64, totalScore float64) string {
+	if totalScore <= 10 {
+		return formatExamRepositoryScore(score)
+	}
+	if totalScore > 100 {
+		switch {
+		case score < 60:
+			return "0-59"
+		case score < 70:
+			return "60-69"
+		case score < 80:
+			return "70-79"
+		case score < 90:
+			return "80-89"
+		case score < 100:
+			return "90-99"
+		default:
+			return "100-" + formatExamRepositoryScore(totalScore)
+		}
+	}
+	bucketStart := int(score/10) * 10
+	bucketEnd := bucketStart + 9
+	if totalScore > 0 && float64(bucketEnd) > totalScore {
+		bucketEnd = int(math.Ceil(totalScore))
+	}
+	return strconv.Itoa(bucketStart) + "-" + strconv.Itoa(bucketEnd)
+}
+
+// resultQuestionTypeLabel 返回成绩管理图表展示用的题型中文名。
+// DAO 已经按快照解析题型，这里只做稳定展示映射，不参与权限或评分判断。
+func resultQuestionTypeLabel(questionType string) string {
+	switch questionType {
+	case constant.QuestionTypeSingle:
+		return "单选题"
+	case constant.QuestionTypeMultiple:
+		return "多选题"
+	case constant.QuestionTypeJudge:
+		return "判断题"
+	case constant.QuestionTypeFillBlank:
+		return "填空题"
+	case constant.QuestionTypeShortText:
+		return "解答题"
+	default:
+		return questionType
+	}
+}
+
+func formatExamRepositoryScore(score float64) string {
+	if math.Abs(score-math.Round(score)) < 0.0000001 {
+		return strconv.FormatInt(int64(math.Round(score)), 10)
+	}
+	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(score, 'f', 2, 64), "0"), ".")
 }
 
 // GetResultSnapshot 读取单次作答成绩，并带出考试发布策略和试卷解析开关。
@@ -1204,22 +2897,91 @@ func (r *ExamRepository) ListUserResultSnapshots(ctx context.Context, tenantID u
 }
 
 // UpdateScorePublishConfig 更新考试成绩发布方式。
-// 修改后重新读取考试，确保调用方拿到包含最新发布配置和试卷组卷模式的业务对象。
-func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64) (serviceexam.Exam, error) {
-	if err := r.db.WithContext(ctx).Model(&ExamDO{}).
-		Where(ExamColumns.TenantID+" = ?", tenantID).
-		Where(ExamColumns.ID+" = ?", examID).
-		Where(ExamColumns.DeletedAt+" = ?", 0).
-		Updates(map[string]any{
-			ExamColumns.PublishMode:      publishMode,
-			ExamColumns.ScorePublishTime: scorePublishTime,
-			BaseColumns.UpdatedAt:        r.now(),
-			BaseColumns.UpdatedByType:    AuditActorTenantUser,
-			BaseColumns.Version:          gorm.Expr(BaseColumns.Version + " + 1"),
-		}).Error; err != nil {
+// 发布配置和操作日志必须同事务写入，避免成绩已可见但管理端日志缺失。
+func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64, log *serviceexam.OperationLog) (serviceexam.Exam, error) {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&ExamDO{}).
+			Where(ExamColumns.TenantID+" = ?", tenantID).
+			Where(ExamColumns.ID+" = ?", examID).
+			Where(ExamColumns.DeletedAt+" = ?", 0).
+			Updates(map[string]any{
+				ExamColumns.PublishMode:      publishMode,
+				ExamColumns.ScorePublishTime: scorePublishTime,
+				BaseColumns.UpdatedAt:        r.now(),
+				BaseColumns.UpdatedByType:    AuditActorTenantUser,
+				BaseColumns.Version:          gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if log == nil {
+			return nil
+		}
+		publishLog := *log
+		publishLog.TenantID = tenantID
+		publishLog.ExamID = examID
+		targets, err := r.listTargetsInDB(tx, tenantID, examID)
+		if err != nil {
+			return err
+		}
+		spaceIDs, err := r.operationTargetSpaceIDsInTx(tx, tenantID, targets)
+		if err != nil {
+			return err
+		}
+		return r.appendOperationLogsForSpacesInTx(tx, publishLog, spaceIDs)
+	})
+	if err != nil {
 		return serviceexam.Exam{}, err
 	}
 	return r.GetExam(ctx, tenantID, examID)
+}
+
+// AppendExportOperationLog 写入成绩导出审计日志。
+// 导出文件属于外部副作用；调用方会在文件生成成功后调用本方法，并在日志失败时向外传播错误。
+func (r *ExamRepository) AppendExportOperationLog(ctx context.Context, log serviceexam.OperationLog, spaceIDs []uint64) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.appendOperationLogsForSpacesInTx(tx, log, spaceIDs)
+	})
+}
+
+// UpdateManagementSettings 更新考试详情页设置，并在同一事务中写入管理端操作日志。
+// 当前设置接口只负责成绩发布配置；其它影响公平性的字段不在该方法入参中，避免被前端绕过修改。
+func (r *ExamRepository) UpdateManagementSettings(ctx context.Context, input serviceexam.UpdateManagementSettingsRepositoryInput) (serviceexam.Exam, error) {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&ExamDO{}).
+			Where(ExamColumns.TenantID+" = ?", input.TenantID).
+			Where(ExamColumns.ID+" = ?", input.ExamID).
+			Where(ExamColumns.DeletedAt+" = ?", 0).
+			Updates(map[string]any{
+				ExamColumns.PublishMode:      input.PublishMode,
+				ExamColumns.ScorePublishTime: input.ScorePublishTime,
+				BaseColumns.UpdatedAt:        r.now(),
+				BaseColumns.UpdatedByType:    AuditActorTenantUser,
+				BaseColumns.Version:          gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		targets, err := r.listTargetsInDB(tx, input.TenantID, input.ExamID)
+		if err != nil {
+			return err
+		}
+		spaceIDs, err := r.operationTargetSpaceIDsInTx(tx, input.TenantID, targets)
+		if err != nil {
+			return err
+		}
+		return r.appendOperationLogsForSpacesInTx(tx, input.Log, spaceIDs)
+	})
+	if err != nil {
+		return serviceexam.Exam{}, err
+	}
+	return r.GetExam(ctx, input.TenantID, input.ExamID)
 }
 
 // GetAttemptQuestion 读取一次作答中的单题快照。
@@ -1639,6 +3401,27 @@ func examFromDO(row ExamDO, buildMode string) serviceexam.Exam {
 	}
 }
 
+// operationLogFromDO 将操作日志表记录转换为服务层对象。
+// JSON 扩展字段以字符串传出，避免 service 和 API 层依赖 GORM 的 datatypes.JSON 类型。
+func operationLogFromDO(row ExamOperationLogDO) serviceexam.OperationLog {
+	return serviceexam.OperationLog{
+		ID:              row.ID,
+		TenantID:        row.TenantID,
+		ExamID:          row.ExamID,
+		OperationType:   row.OperationType,
+		OperationTitle:  row.OperationTitle,
+		OperationDetail: row.OperationDetail,
+		ActorID:         row.ActorID,
+		ActorType:       row.ActorType,
+		ActorRole:       row.ActorRole,
+		SpaceID:         row.SpaceID,
+		CreatedAt:       row.CreatedAt,
+		CreatedBy:       row.CreatedBy,
+		CreatedByType:   row.CreatedByType,
+		ExtJSON:         string(row.ExtJSON),
+	}
+}
+
 // attemptFromDO 将作答表记录转换为服务层作答对象。
 // Version 会暴露给提交接口，用于防止重复提交或旧页面覆盖新状态。
 func attemptFromDO(row ExamAttemptDO) serviceexam.Attempt {
@@ -1714,6 +3497,83 @@ type scoreExportRow struct {
 	SubjectiveScore string
 	TotalScore      string
 	SubmittedAt     *int64
+}
+
+type examResultSummaryRow struct {
+	Submitted    int64
+	AverageScore float64
+	HighestScore float64
+	Passed       int64
+}
+
+type managementResultRow struct {
+	AttemptID              uint64
+	UserID                 uint64
+	Username               string
+	RealName               string
+	ObjectiveScore         string
+	SubjectiveScore        string
+	TotalScore             string
+	SubmittedAt            *int64
+	PendingSubjectiveCount int64
+}
+
+type managementResultScoreRow struct {
+	TotalScore float64
+}
+
+type managementResultQuestionScoreRow struct {
+	QuestionSnapshot string
+	MaxScore         string
+	EarnedScore      string
+}
+
+type managementAnswerSheetAttemptRow struct {
+	AttemptID       uint64
+	ExamID          uint64
+	UserID          uint64
+	Username        string
+	RealName        string
+	ObjectiveScore  string
+	SubjectiveScore string
+	TotalScore      string
+	SubmittedAt     *int64
+}
+
+type managementAnswerSheetItemRow struct {
+	AttemptQuestionID     uint64
+	SectionID             uint64
+	QuestionID            uint64
+	SortOrder             int
+	SectionSnapshot       string
+	QuestionSnapshot      string
+	OptionSnapshot        string
+	CorrectAnswerSnapshot string
+	Score                 string
+	AnswerContent         string
+	AnswerScore           string
+	GradingStatus         string
+	GraderComment         string
+	GradedBy              uint64
+	GradedAt              *int64
+}
+
+// SubmittedAtValue 将答卷详情作答摘要中的可空提交时间转换为服务层默认值。
+// 答卷详情入口只允许已提交作答，这里保留空值安全以兼容历史异常数据。
+func (r managementAnswerSheetAttemptRow) SubmittedAtValue() int64 {
+	if r.SubmittedAt == nil {
+		return 0
+	}
+	return *r.SubmittedAt
+}
+
+// SubmittedAtValue 将成绩管理列表中的可空提交时间转换为服务层默认值。
+// 列表查询已过滤 submitted_at 非空，这里保留空值安全以兼容历史异常数据。
+func (r managementResultRow) SubmittedAtValue() int64 {
+	if r.SubmittedAt == nil {
+		return 0
+	}
+	return *r.SubmittedAt
 }
 
 // SubmittedAtValue 将成绩导出中的可空提交时间转换为服务层默认值。
