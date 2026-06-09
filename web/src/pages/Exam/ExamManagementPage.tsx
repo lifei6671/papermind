@@ -1,7 +1,13 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
+import { PlatformDrawer } from "../../components/ui/PlatformDrawer";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import AutoComplete from "antd/es/auto-complete";
+import DatePicker from "antd/es/date-picker";
+import TimePicker from "antd/es/time-picker";
+import dayjs from "dayjs";
+import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ApiError } from "../../api/client";
 import { useFeedback } from "../../app/feedback-context";
@@ -32,6 +38,10 @@ type TargetOption = {
 };
 
 type PublishScopeMode = "space" | "users";
+type ExamTimeMode = "fixed" | "window";
+
+const dateFormat = "YYYY-MM-DD";
+const timeFormat = "HH:mm";
 
 export function ExamManagementPage({
   api = examApi,
@@ -53,10 +63,13 @@ export function ExamManagementPage({
   const [scopeMode, setScopeMode] = useState<PublishScopeMode>("space");
   const [selectedSpaceTargetValue, setSelectedSpaceTargetValue] = useState("");
   const [selectedUserTargetValues, setSelectedUserTargetValues] = useState<string[]>([]);
-  const [isUserPickerOpen, setIsUserPickerOpen] = useState(false);
+  const [userTargetQuery, setUserTargetQuery] = useState("");
+  const [examTimeMode, setExamTimeMode] = useState<ExamTimeMode>("fixed");
   const [examDate, setExamDate] = useState("");
   const [startTimeText, setStartTimeText] = useState("");
   const [endTimeText, setEndTimeText] = useState("");
+  const [windowStartText, setWindowStartText] = useState("");
+  const [windowEndText, setWindowEndText] = useState("");
   const [durationMinutes, setDurationMinutes] = useState("120");
   const [publishMessage, setPublishMessage] = useState("");
 
@@ -162,7 +175,7 @@ export function ExamManagementPage({
           setSelectedSpaceTargetValue("");
           setSelectedUserTargetValues([]);
           setScopeMode("space");
-          setIsUserPickerOpen(false);
+          setUserTargetQuery("");
           showError("发布选项加载失败");
         }
       });
@@ -175,9 +188,20 @@ export function ExamManagementPage({
   const spaceTargetOptions = targetOptions.filter((option) => option.type === "space");
   const userTargetOptions = targetOptions.filter((option) => option.type === "user");
   const selectedUserTargetSet = new Set(selectedUserTargetValues);
-  const selectedUserLabels = userTargetOptions
-    .filter((option) => selectedUserTargetSet.has(option.value))
-    .map((option) => option.label);
+  const selectedUserTargets = userTargetOptions.filter((option) => selectedUserTargetSet.has(option.value));
+  const userAutocompleteOptions = userTargetOptions
+    .filter((option) => !selectedUserTargetSet.has(option.value))
+    .filter((option) => {
+      const keyword = userTargetQuery.trim().toLowerCase();
+      if (!keyword) {
+        return true;
+      }
+      return option.label.toLowerCase().includes(keyword);
+    })
+    .map((option) => ({
+      label: renderUserTargetOption(option),
+      value: option.value,
+    }));
 
   async function handlePublishExam(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -191,20 +215,20 @@ export function ExamManagementPage({
       return;
     }
 
-    const startTime = combineDateAndTime(examDate, startTimeText);
-    const endTime = combineDateAndTime(examDate, endTimeText);
-    const duration = Number(durationMinutes);
-    if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || !Number.isFinite(duration)) {
+    const timeSettings = examTimeMode === "fixed"
+      ? buildFixedExamTime(examDate, startTimeText, endTimeText)
+      : buildWindowExamTime(windowStartText, windowEndText, durationMinutes);
+    if (!timeSettings.isValid) {
       showError("请选择有效的考试日期和时间");
       return;
     }
-    if (endTime <= startTime) {
+    if (timeSettings.endTime <= timeSettings.startTime) {
       showError("考试结束时间必须晚于开始时间");
       return;
     }
-    const windowMinutes = (endTime - startTime) / 60000;
+    const windowMinutes = (timeSettings.endTime - timeSettings.startTime) / 60000;
 
-    if (duration > windowMinutes) {
+    if (timeSettings.durationMinutes > windowMinutes) {
       showError("作答时长不能超过考试时间窗口");
       return;
     }
@@ -220,9 +244,9 @@ export function ExamManagementPage({
         })),
         targetType: selectedTargets[0].type,
         targetID: selectedTargets[0].id,
-        startTime,
-        endTime,
-        durationMinutes: duration,
+        startTime: timeSettings.startTime,
+        endTime: timeSettings.endTime,
+        durationMinutes: timeSettings.durationMinutes,
         maxAttempts: 1,
         resultStrategy: "latest",
         publishMode: "manual_publish",
@@ -242,6 +266,20 @@ export function ExamManagementPage({
         ? current.filter((item) => item !== value)
         : [...current, value],
     );
+  }
+
+  function selectUserTarget(value: string) {
+    if (userTargetOptions.some((option) => option.value === value)) {
+      toggleUserTarget(value);
+      setUserTargetQuery("");
+    }
+  }
+
+  function changeUserTargetQuery(value: string) {
+    if (userTargetOptions.some((option) => option.value === value)) {
+      return;
+    }
+    setUserTargetQuery(value);
   }
 
   return (
@@ -302,9 +340,21 @@ export function ExamManagementPage({
       </Panel>
 
       {isPublishDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="发布考试弹窗">
-          <div className="platform-dialog__card">
-            <h2>发布考试</h2>
+        <PlatformDrawer ariaLabel="发布考试抽屉" onClose={() => setIsPublishDialogOpen(false)} open={isPublishDialogOpen}>
+          <header className="tenant-resource-drawer__head tenant-resource-drawer__head--inline">
+            <div className="tenant-resource-drawer__title">
+              <span>考试列表</span>
+              <h2>发布考试</h2>
+            </div>
+            <button
+              aria-label="关闭抽屉"
+              className="tenant-resource-drawer__icon"
+              onClick={() => setIsPublishDialogOpen(false)}
+              type="button"
+            >
+              <X aria-hidden="true" size={16} />
+            </button>
+          </header>
             <form className="platform-form" onSubmit={handlePublishExam}>
               <label className="field">
                 <RequiredLabel>发布试卷</RequiredLabel>
@@ -314,31 +364,120 @@ export function ExamManagementPage({
                   ))}
                 </select>
               </label>
-              <label className="field">
-                <RequiredLabel>考试日期</RequiredLabel>
-                <input aria-label="考试日期" onChange={(event) => setExamDate(event.target.value)} required type="date" value={examDate} />
-              </label>
-              <div className="exam-time-range">
-                <label className="field">
-                  <RequiredLabel>开始时间</RequiredLabel>
-                  <input aria-label="开始时间" onChange={(event) => setStartTimeText(event.target.value)} required type="time" value={startTimeText} />
-                </label>
-                <label className="field">
-                  <RequiredLabel>结束时间</RequiredLabel>
-                  <input aria-label="结束时间" onChange={(event) => setEndTimeText(event.target.value)} required type="time" value={endTimeText} />
-                </label>
-              </div>
-              <label className="field">
-                <RequiredLabel>单次作答时长</RequiredLabel>
-                <input
-                  aria-label="单次作答时长"
-                  min={1}
-                  onChange={(event) => setDurationMinutes(event.target.value)}
-                  required
-                  type="number"
-                  value={durationMinutes}
-                />
-              </label>
+              <fieldset className="exam-publish-scope">
+                <legend>
+                  <RequiredLabel>考试时间</RequiredLabel>
+                </legend>
+                <div aria-label="考试时间类型" className="exam-scope-mode" role="radiogroup">
+                  <label className="exam-scope-mode__item">
+                    <input
+                      checked={examTimeMode === "fixed"}
+                      onChange={() => setExamTimeMode("fixed")}
+                      type="radio"
+                    />
+                    <span>固定场次</span>
+                  </label>
+                  <label className="exam-scope-mode__item">
+                    <input
+                      checked={examTimeMode === "window"}
+                      onChange={() => setExamTimeMode("window")}
+                      type="radio"
+                    />
+                    <span>开放时间窗</span>
+                  </label>
+                </div>
+                {examTimeMode === "fixed" ? (
+                  <>
+                    <label className="field">
+                      <RequiredLabel>考试日期</RequiredLabel>
+                      <DatePicker
+                        aria-label="考试日期"
+                        className="exam-ant-picker"
+                        format={dateFormat}
+                        getPopupContainer={getDrawerPopupContainer}
+                        inputReadOnly={false}
+                        onBlur={(event) => setExamDate(normalizeDateInput(inputValue(event.currentTarget)))}
+                        onChange={(value) => setExamDate(value?.format(dateFormat) ?? "")}
+                        placeholder="选择考试日期"
+                        value={parseDate(examDate)}
+                      />
+                    </label>
+                    <div className="exam-time-range">
+                      <label className="field">
+                        <RequiredLabel>开始时间</RequiredLabel>
+                        <TimePicker
+                          aria-label="开始时间"
+                          className="exam-ant-picker"
+                          format={timeFormat}
+                          getPopupContainer={getDrawerPopupContainer}
+                          inputReadOnly={false}
+                          onBlur={(event) => setStartTimeText(normalizeTimeInput(inputValue(event.currentTarget)))}
+                          onChange={(value) => setStartTimeText(value?.format(timeFormat) ?? "")}
+                          placeholder="选择开始时间"
+                          value={parseTime(startTimeText)}
+                        />
+                      </label>
+                      <label className="field">
+                        <RequiredLabel>结束时间</RequiredLabel>
+                        <TimePicker
+                          aria-label="结束时间"
+                          className="exam-ant-picker"
+                          format={timeFormat}
+                          getPopupContainer={getDrawerPopupContainer}
+                          inputReadOnly={false}
+                          onBlur={(event) => setEndTimeText(normalizeTimeInput(inputValue(event.currentTarget)))}
+                          onChange={(value) => setEndTimeText(value?.format(timeFormat) ?? "")}
+                          placeholder="选择结束时间"
+                          value={parseTime(endTimeText)}
+                        />
+                      </label>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div aria-label="考试开放范围" className="field" role="group">
+                      <RequiredLabel>考试开放范围</RequiredLabel>
+                      <DatePicker.RangePicker
+                        className="exam-ant-picker"
+                        format={dateFormat}
+                        getPopupContainer={getDrawerPopupContainer}
+                        inputReadOnly={false}
+                        onBlur={(event, info) => {
+                          const value = normalizeDateInput(inputValue(event.currentTarget));
+                          if (info.range === "start") {
+                            setWindowStartText(value);
+                          } else {
+                            setWindowEndText(value);
+                          }
+                        }}
+                        onChange={(value) => {
+                          setWindowStartText(value?.[0]?.format(dateFormat) ?? "");
+                          setWindowEndText(value?.[1]?.format(dateFormat) ?? "");
+                        }}
+                        order={false}
+                        panelRender={(panel) => (
+                          <div aria-label="考试开放范围日期面板" role="dialog">
+                            {panel}
+                          </div>
+                        )}
+                        placeholder={["开始日期", "结束日期"]}
+                        value={[parseDate(windowStartText), parseDate(windowEndText)]}
+                      />
+                    </div>
+                    <label className="field">
+                      <RequiredLabel>单次作答时长</RequiredLabel>
+                      <input
+                        aria-label="单次作答时长"
+                        min={1}
+                        onChange={(event) => setDurationMinutes(event.target.value)}
+                        required
+                        type="number"
+                        value={durationMinutes}
+                      />
+                    </label>
+                  </>
+                )}
+              </fieldset>
               <fieldset className="exam-publish-scope">
                 <legend>
                   <RequiredLabel>发布范围</RequiredLabel>
@@ -378,32 +517,42 @@ export function ExamManagementPage({
                 ) : (
                   <div className="field exam-user-picker">
                     <span className="field-label">指定同学</span>
-                    <button
-                      aria-expanded={isUserPickerOpen}
+                    <AutoComplete
                       aria-label="指定同学"
-                      className="exam-user-picker__trigger"
-                      onClick={() => setIsUserPickerOpen((current) => !current)}
-                      type="button"
-                    >
-                      {selectedUserLabels.length > 0 ? selectedUserLabels.join("、") : "请选择指定同学"}
-                    </button>
-                    {isUserPickerOpen && (
-                      <div aria-label="指定同学列表" className="exam-user-picker__menu" role="group">
-                        {userTargetOptions.length === 0 && (
-                          <div className="exam-user-picker__empty">暂无可选学生</div>
-                        )}
-                        {userTargetOptions.map((option) => (
-                          <label className="exam-user-picker__option" key={option.value}>
-                            <input
-                              checked={selectedUserTargetSet.has(option.value)}
-                              onChange={() => toggleUserTarget(option.value)}
-                              type="checkbox"
-                            />
-                            <span>{option.label}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                      className="exam-user-autocomplete"
+                      filterOption={false}
+                      getPopupContainer={getDrawerPopupContainer}
+                      notFoundContent="暂无可选学生"
+                      onChange={changeUserTargetQuery}
+                      onSelect={selectUserTarget}
+                      open={userTargetQuery.trim() !== ""}
+                      options={userAutocompleteOptions}
+                      placeholder="输入姓名筛选学生"
+                      popupRender={(menu) => (
+                        <div aria-label="指定同学列表" role="listbox">
+                          {menu}
+                        </div>
+                      )}
+                      value={userTargetQuery}
+                      virtual={false}
+                    />
+                    <div aria-label="已选指定同学" className="exam-user-picker__selected" role="list">
+                      {selectedUserTargets.length === 0 ? (
+                        <span className="exam-user-picker__empty">暂未选择同学</span>
+                      ) : selectedUserTargets.map((option) => {
+                        return (
+                          <button
+                            className="exam-user-picker__tag"
+                            key={option.value}
+                            onClick={() => toggleUserTarget(option.value)}
+                            type="button"
+                          >
+                            {option.label}
+                            <X aria-hidden="true" size={13} />
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </fieldset>
@@ -417,11 +566,34 @@ export function ExamManagementPage({
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
+        </PlatformDrawer>
       )}
     </section>
   );
+}
+
+function buildFixedExamTime(dateValue: string, startTimeValue: string, endTimeValue: string) {
+  const startTime = combineDateAndTime(dateValue, startTimeValue);
+  const endTime = combineDateAndTime(dateValue, endTimeValue);
+  const durationMinutes = (endTime - startTime) / 60000;
+  return {
+    durationMinutes,
+    endTime,
+    isValid: Number.isFinite(startTime) && Number.isFinite(endTime) && Number.isFinite(durationMinutes),
+    startTime,
+  };
+}
+
+function buildWindowExamTime(startValue: string, endValue: string, durationValue: string) {
+  const startTime = combineDateAndTime(startValue, "00:00");
+  const endTime = combineDateAndTime(endValue, "23:59");
+  const durationMinutes = Number(durationValue);
+  return {
+    durationMinutes,
+    endTime,
+    isValid: Number.isFinite(startTime) && Number.isFinite(endTime) && Number.isFinite(durationMinutes) && durationMinutes > 0,
+    startTime,
+  };
 }
 
 function combineDateAndTime(dateValue: string, timeValue: string): number {
@@ -429,6 +601,30 @@ function combineDateAndTime(dateValue: string, timeValue: string): number {
     return Number.NaN;
   }
   return new Date(`${dateValue}T${timeValue}`).getTime();
+}
+
+function parseDate(value: string) {
+  return value ? dayjs(value, dateFormat) : null;
+}
+
+function parseTime(value: string) {
+  return value ? dayjs(`2000-01-01T${value}`) : null;
+}
+
+function normalizeDateInput(value: string) {
+  return parseDate(value)?.format(dateFormat) ?? "";
+}
+
+function normalizeTimeInput(value: string) {
+  return parseTime(value)?.format(timeFormat) ?? "";
+}
+
+function inputValue(target: EventTarget & HTMLElement) {
+  return target instanceof HTMLInputElement ? target.value : "";
+}
+
+function getDrawerPopupContainer(trigger: HTMLElement) {
+  return trigger.parentElement ?? trigger.closest(".ant-drawer") ?? document.body;
 }
 
 function RequiredLabel({ children }: { children: string }) {
@@ -466,6 +662,14 @@ function buildTargetOptions(spaces: SpaceRow[], users: TenantUserRow[]): TargetO
         value: `user:${user.id}`,
       })),
   ];
+}
+
+function renderUserTargetOption(option: TargetOption) {
+  return (
+    <div className="exam-user-autocomplete__option">
+      <span>{option.label}</span>
+    </div>
+  );
 }
 
 // buildSpaceMemberTargetOptions 将当前空间内启用学生转换成个人发布目标。

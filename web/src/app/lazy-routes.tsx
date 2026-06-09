@@ -1,0 +1,22 @@
+import { lazy } from "react";
+
+export const DashboardPage = lazy(() => import("../pages/Dashboard/DashboardPage").then(({ DashboardPage }) => ({ default: DashboardPage })));
+export const ExamEntryPage = lazy(() => import("../pages/Exam/ExamEntryPage").then(({ ExamEntryPage }) => ({ default: ExamEntryPage })));
+export const ExamManagementPage = lazy(() => import("../pages/Exam/ExamManagementPage").then(({ ExamManagementPage }) => ({ default: ExamManagementPage })));
+export const PaperAssemblyPage = lazy(() => import("../pages/Exam/PaperAssemblyPage").then(({ PaperAssemblyPage }) => ({ default: PaperAssemblyPage })));
+export const PaperEditRoute = lazy(() => import("../pages/Exam/PaperEditRoute").then(({ PaperEditRoute }) => ({ default: PaperEditRoute })));
+export const PaperEditorPage = lazy(() => import("../pages/Exam/PaperEditorPage").then(({ PaperEditorPage }) => ({ default: PaperEditorPage })));
+export const PaperPreviewRoute = lazy(() => import("../pages/Exam/PaperPreviewRoute").then(({ PaperPreviewRoute }) => ({ default: PaperPreviewRoute })));
+export const ExamPreviewRoute = lazy(() => import("../pages/Exam/PaperPreviewRoute").then(({ ExamPreviewRoute }) => ({ default: ExamPreviewRoute })));
+export const QuestionBankPage = lazy(() => import("../pages/Exam/QuestionBankPage").then(({ QuestionBankPage }) => ({ default: QuestionBankPage })));
+export const QuestionCreatePage = lazy(() => import("../pages/Exam/QuestionCreatePage").then(({ QuestionCreatePage }) => ({ default: QuestionCreatePage })));
+export const QuestionEditRoute = lazy(() => import("../pages/Exam/QuestionEditRoute").then(({ QuestionEditRoute }) => ({ default: QuestionEditRoute })));
+export const GradingPage = lazy(() => import("../pages/Grading/GradingPage").then(({ GradingPage }) => ({ default: GradingPage })));
+export const PlatformSettingsPage = lazy(() => import("../pages/Platform/PlatformSettingsPage").then(({ PlatformSettingsPage }) => ({ default: PlatformSettingsPage })));
+export const TenantManagementPage = lazy(() => import("../pages/Platform/TenantManagementPage").then(({ TenantManagementPage }) => ({ default: TenantManagementPage })));
+export const ProfileSettingsPage = lazy(() => import("../pages/Profile/ProfileSettingsPage").then(({ ProfileSettingsPage }) => ({ default: ProfileSettingsPage })));
+export const ResultsPage = lazy(() => import("../pages/Results/ResultsPage").then(({ ResultsPage }) => ({ default: ResultsPage })));
+export const SpaceConfigPage = lazy(() => import("../pages/Tenant/SpaceConfigPage").then(({ SpaceConfigPage }) => ({ default: SpaceConfigPage })));
+export const SpaceManagementPage = lazy(() => import("../pages/Tenant/SpaceManagementPage").then(({ SpaceManagementPage }) => ({ default: SpaceManagementPage })));
+export const SpaceMemberManagementPage = lazy(() => import("../pages/Tenant/SpaceMemberManagementPage").then(({ SpaceMemberManagementPage }) => ({ default: SpaceMemberManagementPage })));
+export const UserManagementPage = lazy(() => import("../pages/Tenant/UserManagementPage").then(({ UserManagementPage }) => ({ default: UserManagementPage })));

@@ -1,10 +1,19 @@
+import AutoComplete from "antd/es/auto-complete";
+import MDEditor from "@uiw/react-md-editor/nohighlight";
+import "@uiw/react-md-editor/markdown-editor.css";
+import "@uiw/react-markdown-preview/markdown.css";
+import "katex/dist/katex.min.css";
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Pagination } from "../../components/ui/Pagination";
-import { ArrowLeft, Maximize2, Minimize2, Search, X } from "lucide-react";
-import { useEffect, useState, type TransitionEvent } from "react";
+import { ArrowLeft, Maximize2, Minimize2, Plus, Search, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import rehypeKatex from "rehype-katex";
+import remarkMath from "remark-math";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
+import { PlatformDrawer } from "../../components/ui/PlatformDrawer";
+import { PlatformModal } from "../../components/ui/PlatformModal";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -33,13 +42,6 @@ const statusLabels: Record<SpaceMember["status"], string> = {
 const memberPageSize = 5;
 const spacePageSize = 5;
 const addUserSuggestionDebounceMs = 300;
-
-const registerMethodLabels: Record<string, string> = {
-  tenant_account: "租户账号",
-  tenant_register: "租户自注册",
-  admin_created: "管理员创建",
-  import: "批量导入",
-};
 
 type SpacePageAPI = SpaceManagementAPI & Pick<SpaceMemberAPI, "createSpaceMember" | "listSpaceMembers" | "updateSpaceMember">;
 
@@ -229,11 +231,11 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     setIsCreateDialogOpen(true);
   }
 
-  function openAddUserDialog() {
+  function openAddUserDialog(spaceID?: number) {
     setAddUserQuery("");
     setDebouncedAddUserQuery("");
     setSelectedAddUserName("");
-    setAddUserSpaceID("");
+    setAddUserSpaceID(spaceID === undefined ? "" : String(spaceID));
     setAddUserRole("");
     setIsAddUserInputFocused(false);
     setIsAddUserDialogOpen(true);
@@ -386,83 +388,6 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
     setIsEditingAdminInputFocused(false);
   }
 
-  function downgradeMember(memberID: number) {
-    if (!selectedMemberSpace) {
-      return;
-    }
-
-    const adminCount = selectedMemberSpace.members.filter(
-      (member) => member.role === "space_admin" && member.status === "enabled",
-    ).length;
-
-    if (adminCount <= 1) {
-      showError("空间至少保留一个启用状态的空间管理员");
-      return;
-    }
-
-    // 空间成员降级只影响当前子页面对应空间，避免误操作其他空间的管理员。
-    setSpaces((items) =>
-      items.map((space) =>
-        space.id === selectedMemberSpace.id
-          ? {
-              ...space,
-              members: space.members.map((member) =>
-                member.id === memberID ? { ...member, role: "teacher" } : member,
-              ),
-            }
-          : space,
-      ),
-    );
-  }
-  async function updateMemberStatus(targetMember: SpaceMember, status: SpaceMember["status"]) {
-    if (!selectedMemberSpace || !isPositiveInteger(tenantID)) {
-      return;
-    }
-
-    const adminCount = selectedMemberSpace.members.filter(
-      (member) => member.role === "space_admin" && member.status === "enabled",
-    ).length;
-
-    if (status === "disabled" && targetMember.role === "space_admin" && targetMember.status === "enabled" && adminCount <= 1) {
-      showError("空间至少保留一个启用状态的空间管理员");
-      return;
-    }
-
-    try {
-      const updatedMember = await api.updateSpaceMember({
-        tenantID,
-        spaceID: selectedMemberSpace.id,
-        userID: targetMember.userID,
-        status,
-      });
-      // 后端更新接口只保证返回成员关系字段，详情字段沿用当前列表快照。
-      setSpaces((items) =>
-        items.map((space) =>
-          space.id === selectedMemberSpace.id
-            ? {
-                ...space,
-                members: space.members.map((member) =>
-                  member.userID === targetMember.userID
-                    ? {
-                        ...member,
-                        ...updatedMember,
-                        username: updatedMember.username ?? member.username,
-                        phone: updatedMember.phone ?? member.phone,
-                        email: updatedMember.email ?? member.email,
-                        registeredAt: updatedMember.registeredAt ?? member.registeredAt,
-                        registerMethod: updatedMember.registerMethod ?? member.registerMethod,
-                      }
-                    : member,
-                ),
-              }
-            : space,
-        ),
-      );
-    } catch {
-      showError(status === "enabled" ? "启用成员失败" : "禁用成员失败");
-    }
-  }
-
   function openMemberManager(spaceID: number) {
     setSelectedMemberSpaceID(spaceID);
   }
@@ -549,7 +474,7 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
               </Button>
               <Button
                 variant="toolbarSecondary"
-                onClick={openAddUserDialog}
+                onClick={() => openAddUserDialog()}
                 type="button"
               >
                 添加用户
@@ -642,18 +567,13 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
           onClose={() => {
             setSelectedMemberSpaceID(null);
           }}
-          onDisableMember={(member) => updateMemberStatus(member, "disabled")}
-          onDowngradeMember={downgradeMember}
-          onEnableMember={(member) => updateMemberStatus(member, "enabled")}
+          onAddMember={() => openAddUserDialog(selectedMemberSpace.id)}
           onRefreshMembers={refreshSpaceMembers}
           space={selectedMemberSpace}
         />
       )}
 
-      {isCreateDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="创建空间弹窗">
-          <div className="platform-dialog__card">
-            <h2>创建空间</h2>
+      <PlatformModal open={isCreateDialogOpen} onClose={() => setIsCreateDialogOpen(false)} title="创建空间弹窗">
             <form className="platform-form" onSubmit={handleCreateSpace}>
               <label className="field">
                 <span className="field-label">
@@ -766,14 +686,9 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </PlatformModal>
 
-      {isAddUserDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="添加用户到空间弹窗">
-          <div className="platform-dialog__card">
-            <h2>添加用户到空间</h2>
+      <PlatformModal open={isAddUserDialogOpen} onClose={() => setIsAddUserDialogOpen(false)} title="添加用户到空间弹窗">
             <form className="platform-form" onSubmit={(event) => void handleAddUserToSpace(event)}>
               <label className="field">
                 <span className="field-label">
@@ -891,189 +806,198 @@ export function SpaceManagementPage({ api = spaceApi, userApi = defaultUserApi, 
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </PlatformModal>
 
       {editingSpace && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="编辑空间弹窗">
-          <div className="platform-dialog__card">
-            <h2>编辑空间</h2>
-            <form className="platform-form" onSubmit={(event) => {
-              event.preventDefault();
-              void saveSpaceProfile();
-            }}>
-              <label className="field">
-                <span className="field-label">
-                  空间名称
-                  <span className="required-marker" aria-hidden="true">*</span>
-                </span>
-                <input
-                  aria-label="编辑空间名称"
-                  onChange={(event) => setEditingName(event.target.value)}
-                  required
-                  value={editingName}
-                />
-              </label>
-              <label className="field">
-                <span className="field-label">
-                  空间描述
-                  <span className="required-marker" aria-hidden="true">*</span>
-                </span>
-                <textarea
-                  aria-label="编辑空间描述"
-                  onChange={(event) => setEditingDescription(event.target.value)}
-                  required
-                  value={editingDescription}
-                />
-              </label>
-              <label className="field">
-                <span className="field-label">
-                  空间管理员
-                  <span className="required-marker" aria-hidden="true">*</span>
-                </span>
-                <div
-                  className={[
-                    "add-user-identity-field",
-                    selectedEditingAdminName ? "add-user-identity-field--selected" : "",
-                  ].filter(Boolean).join(" ")}
-                >
-                  <input
-                    aria-label="编辑空间管理员"
-                    aria-autocomplete="list"
-                    aria-controls="editing-space-admin-suggestions"
-                    aria-expanded={shouldShowEditingAdminSuggestions}
-                    className="add-user-identity-input"
-                    onBlur={() => setIsEditingAdminInputFocused(false)}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setEditingAdminQuery(value);
-                      setEditingAdminUserID("");
-                      setSelectedEditingAdminName("");
-                      if (value.trim() === "") {
-                        setDebouncedEditingAdminQuery("");
-                      }
-                    }}
-                    onFocus={() => setIsEditingAdminInputFocused(true)}
-                    placeholder="输入管理员账号或姓名"
-                    required
-                    style={
-                      selectedEditingAdminName ? { width: `${Math.max(editingAdminQuery.length + 1, 8)}ch` } : undefined
-                    }
-                    value={editingAdminQuery}
-                  />
-                  {selectedEditingAdminName && (
-                    <small className="add-user-identity-name" aria-label="已选编辑空间管理员真实姓名">
-                      {selectedEditingAdminName}
-                    </small>
-                  )}
-                </div>
-              </label>
-              {shouldShowEditingAdminSuggestions && (
-                <div
-                  aria-label="编辑空间管理员候选"
-                  className="user-suggestion-list"
-                  id="editing-space-admin-suggestions"
-                  role="listbox"
-                >
-                  {editingAdminSuggestions.map((user) => (
-                    <button
-                      className="user-suggestion-option"
-                      key={user.id}
-                      onClick={() => {
-                        setEditingAdminUserID(String(user.id));
-                        setEditingAdminQuery(user.username);
-                        setSelectedEditingAdminName(user.name);
-                        setIsEditingAdminInputFocused(false);
-                      }}
-                      onMouseDown={(event) => event.preventDefault()}
-                      role="option"
-                      type="button"
-                    >
-                      <span>{user.name}</span>
-                      <small>
-                        {user.username} · {userRoleSuggestionLabels[user.role]}
-                      </small>
-                    </button>
-                  ))}
-                </div>
+        <PlatformDrawer ariaLabel="编辑空间抽屉" onClose={closeSpaceEditor} open={editingSpace !== null}>
+          <header className="tenant-resource-drawer__head tenant-resource-drawer__head--inline">
+            <div className="tenant-resource-drawer__title">
+              <span>编辑空间</span>
+              <h2>{editingSpace.name}</h2>
+            </div>
+            <button
+              aria-label="关闭抽屉"
+              className="tenant-resource-drawer__icon"
+              onClick={closeSpaceEditor}
+              type="button"
+            >
+              <X aria-hidden="true" size={16} />
+            </button>
+          </header>
+          <form className="platform-form space-editor-drawer-form" onSubmit={(event) => {
+            event.preventDefault();
+            void saveSpaceProfile();
+          }}>
+            <label className="field">
+              <span className="field-label">
+                空间名称
+                <span className="required-marker" aria-hidden="true">*</span>
+              </span>
+              <input
+                aria-label="编辑空间名称"
+                onChange={(event) => setEditingName(event.target.value)}
+                required
+                value={editingName}
+              />
+            </label>
+            <SpaceMarkdownEditor
+              label="编辑空间描述"
+              onChange={setEditingDescription}
+              required
+              value={editingDescription}
+            />
+            <label className="field">
+              <span className="field-label">
+                空间管理员
+                <span className="required-marker" aria-hidden="true">*</span>
+              </span>
+              <AutoComplete
+                aria-label="编辑空间管理员"
+                className={[
+                  "space-admin-autocomplete",
+                  selectedEditingAdminName ? "space-admin-autocomplete--selected" : "",
+                ].filter(Boolean).join(" ")}
+                getPopupContainer={(trigger) => trigger.parentElement ?? document.body}
+                onBlur={() => setIsEditingAdminInputFocused(false)}
+                onChange={(value) => {
+                  setEditingAdminQuery(value);
+                  setEditingAdminUserID("");
+                  setSelectedEditingAdminName("");
+                  if (value.trim() === "") {
+                    setDebouncedEditingAdminQuery("");
+                  }
+                }}
+                onFocus={() => setIsEditingAdminInputFocused(true)}
+                onSelect={(value) => {
+                  const selectedUser = users.find((user) => user.username === value);
+                  setEditingAdminUserID(selectedUser ? String(selectedUser.id) : "");
+                  setEditingAdminQuery(value);
+                  setSelectedEditingAdminName(selectedUser?.name ?? "");
+                  setIsEditingAdminInputFocused(false);
+                }}
+                open={shouldShowEditingAdminSuggestions}
+                options={editingAdminSuggestions.map((user) => ({
+                  label: renderUserSuggestionOption(user),
+                  value: user.username,
+                }))}
+                placeholder="输入管理员账号或姓名"
+                popupRender={(menu) => (
+                  <div aria-label="编辑空间管理员候选" role="listbox">
+                    {menu}
+                  </div>
+                )}
+                value={editingAdminQuery}
+                virtual={false}
+              />
+              {selectedEditingAdminName && (
+                <small className="add-user-identity-name" aria-label="已选编辑空间管理员真实姓名">
+                  {selectedEditingAdminName}
+                </small>
               )}
-              <label className="field">
-                <span>空间 Logo</span>
-                <input
-                  aria-label="编辑空间 Logo"
-                  onChange={(event) => setEditingLogoFileName(event.target.value)}
-                  placeholder="输入 Logo 文件名或留空为未上传"
-                  value={editingLogoFileName}
-                />
-              </label>
-              <div className="platform-dialog__actions">
-                <Button variant="secondary" onClick={closeSpaceEditor} type="button">
-                  取消
-                </Button>
-                <Button variant="primary" type="submit">
-                  保存空间信息
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
+            </label>
+            <FileUploadField
+              accept={["image/png", "image/jpeg"]}
+              label="编辑空间 Logo"
+              maxSizeBytes={1024 * 1024}
+              onFileAccepted={(file) => setEditingLogoFileName(file.name)}
+              previewSrc={editingLogoFileName ? resolveSpaceLogoSrc(editingLogoFileName) : undefined}
+              selectedLabel={editingLogoFileName ? editingLogoFileName : undefined}
+            />
+            <div className="platform-dialog__actions">
+              <Button variant="secondary" onClick={closeSpaceEditor} type="button">
+                取消
+              </Button>
+              <Button variant="primary" type="submit">
+                保存空间信息
+              </Button>
+            </div>
+          </form>
+        </PlatformDrawer>
       )}
     </section>
   );
 }
 
+function SpaceMarkdownEditor({
+  label,
+  onChange,
+  required = false,
+  value,
+}: {
+  label: string;
+  onChange(value: string): void;
+  required?: boolean;
+  value: string;
+}) {
+  return (
+    <div className="field markdown-editor space-editor-markdown" data-color-mode="light">
+      <span className="field-label">
+        空间描述
+        {required && <span className="required-marker" aria-hidden="true">*</span>}
+      </span>
+      <MDEditor
+        height="auto"
+        onChange={(nextValue) => onChange(nextValue ?? "")}
+        preview="live"
+        previewOptions={{
+          // 空间描述按 Markdown 原文存储，预览阶段复用题干编辑器的公式渲染能力。
+          rehypePlugins: [rehypeKatex],
+          remarkPlugins: [remarkMath],
+        }}
+        textareaProps={{
+          "aria-label": label,
+          required,
+        }}
+        value={value}
+        visibleDragbar={false}
+      />
+    </div>
+  );
+}
+
+function renderUserSuggestionOption(user: TenantUserRow) {
+  return (
+    <div className="user-suggestion-option">
+      <span>{user.name}</span>
+      <small>
+        {user.username} · {userRoleSuggestionLabels[user.role]}
+      </small>
+    </div>
+  );
+}
+
+function resolveSpaceLogoSrc(logoURL: string) {
+  if (!logoURL.startsWith("/uploads")) {
+    return logoURL;
+  }
+
+  const apiBaseURL = import.meta.env.VITE_API_BASE_URL ?? "";
+  if (!apiBaseURL) {
+    return logoURL;
+  }
+
+  return `${apiBaseURL.replace(/\/$/, "")}/${logoURL.replace(/^\//, "")}`;
+}
+
 type SpaceMemberDrawerProps = {
+  onAddMember: () => void;
   onClose: () => void;
-  onDisableMember: (member: SpaceMember) => Promise<void>;
-  onDowngradeMember: (memberID: number) => void;
-  onEnableMember: (member: SpaceMember) => Promise<void>;
   onRefreshMembers: (spaceID: number) => Promise<void>;
   space: SpaceRow;
 };
 
 function SpaceMemberDrawer({
-  onDisableMember,
+  onAddMember,
   onClose,
-  onDowngradeMember,
-  onEnableMember,
   onRefreshMembers,
   space,
 }: SpaceMemberDrawerProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isOpen, setIsOpen] = useState(false);
-  const [isClosing, setIsClosing] = useState(false);
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [appliedMemberSearchQuery, setAppliedMemberSearchQuery] = useState("");
   const [memberPage, setMemberPage] = useState(1);
-  const [detailMember, setDetailMember] = useState<SpaceMember | null>(null);
-  const [pendingMemberAction, setPendingMemberAction] = useState<{ userID: number; status: SpaceMember["status"] } | null>(null);
   const [isMemberListRefreshing, setIsMemberListRefreshing] = useState(false);
-  const drawerClassName = [
-    "tenant-resource-drawer",
-    isFullscreen ? "tenant-resource-drawer--fullscreen" : "tenant-resource-drawer--half",
-    isOpen ? "tenant-resource-drawer--open" : "",
-  ].filter(Boolean).join(" ");
-  const layerClassName = [
-    "tenant-resource-drawer-layer",
-    "tenant-resource-drawer-layer--overlay",
-    isOpen ? "tenant-resource-drawer-layer--visible" : "",
-  ].filter(Boolean).join(" ");
-
-  useEffect(() => {
-    const openTimer = window.setTimeout(() => setIsOpen(true), 0);
-    return () => window.clearTimeout(openTimer);
-  }, []);
-
   const closeDrawer = () => {
-    setIsClosing(true);
-    setIsOpen(false);
-  };
-
-  const finishClose = (event: TransitionEvent<HTMLElement>) => {
-    if (event.currentTarget !== event.target || event.propertyName !== "transform" || !isClosing) {
-      return;
-    }
     onClose();
   };
   const filteredMembers = space.members.filter((member) => {
@@ -1109,35 +1033,9 @@ function SpaceMemberDrawer({
       setIsMemberListRefreshing(false);
     }
   };
-  const runMemberStatusAction = async (member: SpaceMember, status: SpaceMember["status"]) => {
-    if (pendingMemberAction) {
-      return;
-    }
-
-    setPendingMemberAction({ userID: member.userID, status });
-    try {
-      if (status === "disabled") {
-        await onDisableMember(member);
-      } else {
-        await onEnableMember(member);
-      }
-    } finally {
-      setPendingMemberAction((current) =>
-        current?.userID === member.userID && current.status === status ? null : current,
-      );
-    }
-  };
 
   return (
-    <div className={layerClassName} data-testid="tenant-resource-drawer-layer">
-      <div aria-hidden="true" className="tenant-resource-drawer-backdrop" data-testid="tenant-resource-drawer-backdrop" />
-      <aside
-        aria-label={`${space.name}成员抽屉`}
-        aria-modal="true"
-        className={drawerClassName}
-        onTransitionEnd={finishClose}
-        role="dialog"
-      >
+    <PlatformDrawer ariaLabel={`${space.name}成员抽屉`} fullscreen={isFullscreen} onClose={closeDrawer} open>
         <header
           className="tenant-resource-drawer__head tenant-resource-drawer__head--inline"
           data-testid="space-member-drawer-header"
@@ -1180,7 +1078,14 @@ function SpaceMemberDrawer({
         </header>
 
         <div className="tenant-resource-drawer__body" data-testid="space-member-drawer-body">
-          <div className="tenant-resource-drawer__toolbar" data-testid="space-member-toolbar">
+          <div
+            className="tenant-resource-drawer__toolbar tenant-resource-drawer__toolbar--member-search"
+            data-testid="space-member-toolbar"
+          >
+            <Button onClick={onAddMember} type="button" variant="toolbarPrimary">
+              <Plus aria-hidden="true" size={15} />
+              添加成员
+            </Button>
             <div className="tenant-search-actions">
               <label className="tenant-search-field">
                 <span className="sr-only">成员检索关键词</span>
@@ -1219,63 +1124,21 @@ function SpaceMemberDrawer({
                   <th scope="col">成员</th>
                   <th scope="col">角色</th>
                   <th scope="col">状态</th>
-                  <th scope="col">操作</th>
                 </tr>
               </thead>
               <tbody>
-                {pagedMembers.length === 0 && <EmptyTableRow colSpan={4} />}
-                {pagedMembers.map((member) => {
-                  const isCurrentMemberAction = pendingMemberAction?.userID === member.userID;
-                  const isDisabling = isCurrentMemberAction && pendingMemberAction?.status === "disabled";
-                  const isEnabling = isCurrentMemberAction && pendingMemberAction?.status === "enabled";
-
-                  return (
-                    <tr key={member.id}>
-                      <td>{member.name}</td>
-                      <td>{roleLabels[member.role]}</td>
-                      <td>
-                        <StatusBadge tone={member.status === "enabled" ? "success" : "warning"}>
-                          {statusLabels[member.status]}
-                        </StatusBadge>
-                      </td>
-                      <td>
-                        <div className="tenant-actions">
-                          <Button variant="actionEdit" onClick={() => setDetailMember(member)} type="button">
-                            查看详情
-                          </Button>
-                          {member.status === "enabled" ? (
-                            <Button
-                              variant="actionClose"
-                              className={isDisabling ? "tenant-action-button--pending" : ""}
-                              disabled={Boolean(pendingMemberAction)}
-                              onClick={() => void runMemberStatusAction(member, "disabled")}
-                              type="button"
-                            >
-                              {isDisabling && <span aria-hidden="true" className="tenant-action-spinner" />}
-                              {isDisabling ? "禁用中..." : "禁用"}
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="actionOpen"
-                              className={isEnabling ? "tenant-action-button--pending" : ""}
-                              disabled={Boolean(pendingMemberAction)}
-                              onClick={() => void runMemberStatusAction(member, "enabled")}
-                              type="button"
-                            >
-                              {isEnabling && <span aria-hidden="true" className="tenant-action-spinner" />}
-                              {isEnabling ? "启用中..." : "启用"}
-                            </Button>
-                          )}
-                          {member.role === "space_admin" && member.status === "enabled" && (
-                            <Button variant="actionReset" onClick={() => onDowngradeMember(member.id)} type="button">
-                              降级为教师
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {pagedMembers.length === 0 && <EmptyTableRow colSpan={3} />}
+                {pagedMembers.map((member) => (
+                  <tr key={member.id}>
+                    <td>{member.name}</td>
+                    <td>{roleLabels[member.role]}</td>
+                    <td>
+                      <StatusBadge tone={member.status === "enabled" ? "success" : "warning"}>
+                        {statusLabels[member.status]}
+                      </StatusBadge>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -1286,123 +1149,10 @@ function SpaceMemberDrawer({
             onPageChange={setMemberPage}
           />
         </div>
-      </aside>
-      {detailMember && (
-        <aside
-          aria-label={`${detailMember.name}成员详情抽屉`}
-          aria-modal="true"
-          className="tenant-resource-drawer tenant-resource-drawer--half tenant-resource-drawer--open tenant-resource-drawer--nested"
-          role="dialog"
-        >
-          <header className="tenant-resource-drawer__head">
-            <button
-              aria-label="返回成员列表"
-              className="tenant-resource-drawer__icon"
-              onClick={() => setDetailMember(null)}
-              type="button"
-            >
-              <ArrowLeft aria-hidden="true" size={19} />
-            </button>
-            <div className="tenant-resource-drawer__title">
-              <span>成员详情</span>
-              <h2>{detailMember.name}</h2>
-            </div>
-            <div className="tenant-resource-drawer__tools">
-              <button
-                aria-label="关闭成员详情"
-                className="tenant-resource-drawer__icon"
-                onClick={() => setDetailMember(null)}
-                type="button"
-              >
-                <X aria-hidden="true" size={19} />
-              </button>
-            </div>
-          </header>
-          <div className="tenant-resource-drawer__body">
-            <dl className="tenant-member-detail">
-              <div>
-                <dt>成员 ID</dt>
-                <dd>成员 ID：{detailMember.id}</dd>
-              </div>
-              <div>
-                <dt>用户 ID</dt>
-                <dd>用户 ID：{detailMember.userID ?? detailMember.id}</dd>
-              </div>
-              <div>
-                <dt>登录账号</dt>
-                <dd>登录账号：{displayValue(detailMember.username)}</dd>
-              </div>
-              <div>
-                <dt>注册方式</dt>
-                <dd>注册方式：{displayRegisterMethod(detailMember.registerMethod)}</dd>
-              </div>
-              <div>
-                <dt>注册时间</dt>
-                <dd>注册时间：{formatTimestamp(detailMember.registeredAt)}</dd>
-              </div>
-              <div>
-                <dt>邮箱</dt>
-                <dd>邮箱：{displayValue(detailMember.email)}</dd>
-              </div>
-              <div>
-                <dt>手机号</dt>
-                <dd>手机号：{maskPhone(detailMember.phone)}</dd>
-              </div>
-              <div>
-                <dt>空间角色</dt>
-                <dd>空间角色：{roleLabels[detailMember.role]}</dd>
-              </div>
-              <div>
-                <dt>成员状态</dt>
-                <dd>成员状态：{statusLabels[detailMember.status]}</dd>
-              </div>
-            </dl>
-          </div>
-        </aside>
-      )}
-
-    </div>
+      </PlatformDrawer>
   );
 }
 
-
-function displayValue(value: string | undefined) {
-  const normalized = value?.trim();
-  return normalized || "未记录";
-}
-
-function displayRegisterMethod(value: string | undefined) {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return "未记录";
-  }
-  return registerMethodLabels[normalized] ?? normalized;
-}
-
-function formatTimestamp(value: number | undefined) {
-  if (!value) {
-    return "未记录";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "未记录";
-  }
-  const pad = (part: number) => String(part).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(
-    date.getMinutes(),
-  )}`;
-}
-
-function maskPhone(value: string | undefined) {
-  const phone = value?.trim();
-  if (!phone) {
-    return "未记录";
-  }
-  if (phone.length < 7) {
-    return phone;
-  }
-  return `${phone.slice(0, 3)}****${phone.slice(7)}`;
-}
 
 function isPositiveInteger(value: number | undefined): value is number {
   return Number.isInteger(value) && Number(value) > 0;

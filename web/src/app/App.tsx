@@ -1,14 +1,15 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { useEffect, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, type ReactElement, type ReactNode } from "react";
 import { AdminShell } from "../layouts/AdminShell/AdminShell";
-import { PlatformLoginPage } from "../pages/Login/PlatformLoginPage";
-import { ExamEntryPage } from "../pages/Exam/ExamEntryPage";
-import { PaperStudentPreviewRoute } from "../pages/Exam/PaperPreviewRoute";
-import { StudentExamPage } from "../pages/StudentExam/StudentExamPage";
-import { TenantEntryPage } from "../pages/Tenant/TenantEntryPage";
 import { useSession } from "../auth/session-context";
 import { pageTitleForPathname } from "./page-title";
 import { buildAdminRoutes, routeVisibleForRole } from "./routes";
+
+const PlatformLoginPage = lazy(() => import("../pages/Login/PlatformLoginPage").then(({ PlatformLoginPage }) => ({ default: PlatformLoginPage })));
+const ExamEntryPage = lazy(() => import("../pages/Exam/ExamEntryPage").then(({ ExamEntryPage }) => ({ default: ExamEntryPage })));
+const PaperStudentPreviewRoute = lazy(() => import("../pages/Exam/PaperPreviewRoute").then(({ PaperStudentPreviewRoute }) => ({ default: PaperStudentPreviewRoute })));
+const StudentExamPage = lazy(() => import("../pages/StudentExam/StudentExamPage").then(({ StudentExamPage }) => ({ default: StudentExamPage })));
+const TenantEntryPage = lazy(() => import("../pages/Tenant/TenantEntryPage").then(({ TenantEntryPage }) => ({ default: TenantEntryPage })));
 
 export function App() {
   const { session } = useSession();
@@ -24,15 +25,15 @@ export function App() {
 
   return (
     <Routes>
-      <Route path="/login" element={<PlatformLoginPage />} />
-      <Route path="/tenant-entry" element={<RequireSession allowTenantUser><TenantEntryPage /></RequireSession>} />
-      <Route path="/exam-entry" element={<ExamEntryPage />} />
-      <Route path="/student/exam" element={<StudentExamPage />} />
+      <Route path="/login" element={withRouteSuspense(<PlatformLoginPage />)} />
+      <Route path="/tenant-entry" element={<RequireSession allowTenantUser>{withRouteSuspense(<TenantEntryPage />)}</RequireSession>} />
+      <Route path="/exam-entry" element={withRouteSuspense(<ExamEntryPage />)} />
+      <Route path="/student/exam" element={withRouteSuspense(<StudentExamPage />)} />
       <Route
         path="/papers/:paperID/student-preview"
         element={(
           <RequireSession>
-            <PaperStudentPreviewRoute tenantID={session?.user.tenantID ?? 0} spaceID={scopedSpaceID} />
+            {withRouteSuspense(<PaperStudentPreviewRoute tenantID={session?.user.tenantID ?? 0} spaceID={scopedSpaceID} />)}
           </RequireSession>
         )}
       />
@@ -46,7 +47,7 @@ export function App() {
                 spaceID: scopedSpaceID,
               })
                 ? <Navigate to="/" replace />
-                : route.element
+                : withRouteSuspense(route.element)
             }
             key={route.path}
             path={route.path}
@@ -56,6 +57,18 @@ export function App() {
       </Route>
     </Routes>
   );
+}
+
+function withRouteSuspense(element: ReactElement) {
+  return (
+    <Suspense fallback={<RouteLoadingFallback />}>
+      {element}
+    </Suspense>
+  );
+}
+
+function RouteLoadingFallback() {
+  return <div className="tenant-admin-status" role="status">正在加载页面</div>;
 }
 
 function positiveID(value: string | null) {

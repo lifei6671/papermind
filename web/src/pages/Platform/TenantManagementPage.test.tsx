@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { TenantManagementPage } from "./TenantManagementPage";
@@ -150,11 +150,10 @@ test("租户管理页通过右侧抽屉查看租户空间", async () => {
 
   expect(api.listTenantSpaces).toHaveBeenCalledWith(1);
   const drawer = await screen.findByRole("dialog", { name: "青藤一中空间抽屉" });
-  const drawerLayer = screen.getByTestId("tenant-resource-drawer-layer");
-  expect(drawerLayer).toHaveClass("tenant-resource-drawer-layer--overlay");
+  expect(drawer.closest(".ant-drawer")).toBeInTheDocument();
+  expect(document.querySelector(".ant-drawer-mask")).toBeInTheDocument();
   expect(drawer).toHaveClass("tenant-resource-drawer--half");
   await waitFor(() => expect(drawer).toHaveClass("tenant-resource-drawer--open"));
-  await waitFor(() => expect(drawerLayer).toHaveClass("tenant-resource-drawer-layer--visible"));
   expect(within(drawer).queryByRole("tablist")).not.toBeInTheDocument();
   expect(within(drawer).getByRole("button", { name: "返回租户列表" })).toBeInTheDocument();
   expect(within(drawer).getByRole("button", { name: "全屏抽屉" })).toBeInTheDocument();
@@ -169,9 +168,6 @@ test("租户管理页通过右侧抽屉查看租户空间", async () => {
   expect(within(drawer).getByText("月考统一空间")).toBeInTheDocument();
   expect(within(drawer).getByText("林老师")).toBeInTheDocument();
 
-  await user.click(screen.getByTestId("tenant-resource-drawer-backdrop"));
-  expect(screen.getByRole("dialog", { name: "青藤一中空间抽屉" })).toBeInTheDocument();
-
   await user.click(within(drawer).getByRole("button", { name: "全屏抽屉" }));
   expect(drawer).toHaveClass("tenant-resource-drawer--fullscreen");
   expect(within(drawer).getByRole("button", { name: "退出全屏抽屉" })).toBeInTheDocument();
@@ -180,15 +176,11 @@ test("租户管理页通过右侧抽屉查看租户空间", async () => {
   expect(drawer).toHaveClass("tenant-resource-drawer--half");
   expect(drawer).not.toHaveClass("tenant-resource-drawer--fullscreen");
 
-  await user.click(within(drawer).getByRole("button", { name: "返回租户列表" }));
+  await user.click(document.querySelector(".ant-drawer-mask") as HTMLElement);
 
-  expect(drawer).not.toHaveClass("tenant-resource-drawer--open");
-  expect(drawerLayer).not.toHaveClass("tenant-resource-drawer-layer--visible");
-  expect(screen.getByRole("dialog", { name: "青藤一中空间抽屉" })).toBeInTheDocument();
-
-  fireEvent.transitionEnd(drawer, { propertyName: "transform" });
-
-  expect(screen.queryByRole("dialog", { name: "青藤一中空间抽屉" })).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "青藤一中空间抽屉" })).not.toBeInTheDocument();
+  });
 });
 
 test("租户管理页通过右侧抽屉查看租户用户", async () => {
@@ -200,9 +192,8 @@ test("租户管理页通过右侧抽屉查看租户用户", async () => {
 
   expect(api.listTenantUsers).toHaveBeenCalledWith(1);
   const drawer = await screen.findByRole("dialog", { name: "青藤一中用户抽屉" });
-  const drawerLayer = screen.getByTestId("tenant-resource-drawer-layer");
+  expect(document.querySelector(".ant-drawer-mask")).toBeInTheDocument();
   expect(drawer).toHaveClass("tenant-resource-drawer--half");
-  await waitFor(() => expect(drawerLayer).toHaveClass("tenant-resource-drawer-layer--visible"));
   expect(within(drawer).queryByRole("tablist")).not.toBeInTheDocument();
   expect(within(drawer).getByRole("columnheader", { name: "用户" })).toBeInTheDocument();
   expect(within(drawer).getByRole("columnheader", { name: "账号" })).toBeInTheDocument();
@@ -218,13 +209,9 @@ test("租户管理页通过右侧抽屉查看租户用户", async () => {
 
   await user.click(within(drawer).getByRole("button", { name: "关闭抽屉" }));
 
-  expect(drawer).not.toHaveClass("tenant-resource-drawer--open");
-  expect(drawerLayer).not.toHaveClass("tenant-resource-drawer-layer--visible");
-  expect(screen.getByRole("dialog", { name: "青藤一中用户抽屉" })).toBeInTheDocument();
-
-  fireEvent.transitionEnd(drawer, { propertyName: "transform" });
-
-  expect(screen.queryByRole("dialog", { name: "青藤一中用户抽屉" })).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "青藤一中用户抽屉" })).not.toBeInTheDocument();
+  });
 });
 
 test("租户 Logo 使用后端资源域名展示", async () => {

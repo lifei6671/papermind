@@ -2,10 +2,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router-dom";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import type { ActorRole } from "../../api/grading";
 import { FeedbackProvider } from "../../app/feedback";
 import type { QuestionImportAPI } from "../../api/questions";
+import type { SpaceManagementAPI } from "../../api/spaces";
 import { QuestionImportPage } from "./QuestionImportPage";
 
 function renderWithFeedback(page: ReactElement) {
@@ -18,6 +19,36 @@ function renderWithFeedback(page: ReactElement) {
 
 function renderImportPage(api: QuestionImportAPI, actorRole?: ActorRole) {
   renderWithFeedback(<QuestionImportPage actorRole={actorRole} api={api} tenantID={10} spaceID={301} />);
+}
+
+function createSpaceAPI(): Pick<SpaceManagementAPI, "listSpaces"> {
+  return {
+    listSpaces: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 301,
+          tenantID: 10,
+          name: "高一一班",
+          description: "高一一班空间",
+          logoFileName: "class-a.png",
+          members: [],
+        },
+        {
+          id: 302,
+          tenantID: 10,
+          name: "高一二班",
+          description: "高一二班空间",
+          logoFileName: "class-b.png",
+          members: [],
+        },
+      ],
+    }),
+  };
+}
+
+function renderTenantAdminImportPage(api: QuestionImportAPI, spaceApi = createSpaceAPI()) {
+  renderWithFeedback(<QuestionImportPage actorRole="tenant_admin" api={api} spaceApi={spaceApi} tenantID={10} />);
+  return spaceApi;
 }
 
 test("题目导入页可以上传文件并展示解析结果", async () => {
@@ -60,7 +91,7 @@ test("题目导入页可以上传文件并展示解析结果", async () => {
   expect(alert).toHaveTextContent("questions.csv");
   expect(alert).toHaveTextContent("已导入 1 道题，1 行失败");
   expect(alert).toHaveTextContent("第 3 行");
-  expect(alert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(alert.closest(".ant-message")).toBeInTheDocument();
   expect(document.querySelector(".tenant-admin-status")).not.toBeInTheDocument();
 });
 
@@ -78,6 +109,31 @@ test("题目导入页可以选择导入到公共题库", async () => {
 
   await user.click(screen.getByRole("button", { name: "导入题目" }));
   await user.selectOptions(screen.getByLabelText("导入所属空间"), "public");
+  await user.upload(screen.getByLabelText("题目导入文件"), new File(["title,type"], "questions.csv", { type: "text/csv" }));
+  await user.click(screen.getByRole("button", { name: "确认导入" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("已导入 1 道题");
+});
+
+test("租户管理员可以在题目导入页选择导入到具体空间", async () => {
+  const user = userEvent.setup();
+  const api: QuestionImportAPI = {
+    importQuestions: async (input) => {
+      expect(input.tenantID).toBe(10);
+      expect(input.spaceID).toBe(302);
+      expect(input.file.name).toBe("questions.csv");
+      return { successCount: 1, duplicateCount: 0, errors: [] };
+    },
+  };
+  const spaceApi = renderTenantAdminImportPage(api);
+
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+
+  expect(screen.getByLabelText("导入所属空间").closest(".question-import-scope-field")).not.toBeNull();
+  await screen.findByRole("option", { name: "高一二班" });
+  expect(spaceApi.listSpaces).toHaveBeenCalledWith(10);
+
+  await user.selectOptions(screen.getByLabelText("导入所属空间"), "space:302");
   await user.upload(screen.getByLabelText("题目导入文件"), new File(["title,type"], "questions.csv", { type: "text/csv" }));
   await user.click(screen.getByRole("button", { name: "确认导入" }));
 
@@ -143,6 +199,6 @@ test("取消导入后不会保留上一次选择的文件", async () => {
 
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("请选择题目导入文件");
-  expect(alert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(alert.closest(".ant-message")).toBeInTheDocument();
   expect(document.querySelector(".tenant-admin-status")).not.toBeInTheDocument();
 });

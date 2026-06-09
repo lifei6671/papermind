@@ -1,5 +1,4 @@
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DateRangePicker, type DateRangePickerValue } from "./DateRangePicker";
 
@@ -12,71 +11,29 @@ const defaultValue: DateRangePickerValue = {
 };
 
 describe("DateRangePicker", () => {
-  it("点击上一月和下一月时真实切换日历月份", async () => {
-    const user = userEvent.setup();
-
-    render(<DateRangePicker defaultValue={defaultValue} />);
-
-    await user.click(screen.getByRole("button", { name: /最近48小时/ }));
-    expect(screen.getByText("2026年5月")).toBeInTheDocument();
-    expect(screen.getByText("2026年6月")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "上个月" }));
-    expect(screen.getByText("2026年4月")).toBeInTheDocument();
-    expect(screen.getByText("2026年5月")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "下个月" }));
-    expect(screen.getByText("2026年6月")).toBeInTheDocument();
-  });
-
-  it("月份切换支持跨年", async () => {
-    const user = userEvent.setup();
-
-    render(
-      <DateRangePicker
-        defaultValue={{
-          startDate: "2026-01-05",
-          startTime: "09:30",
-          endDate: "2026-01-08",
-          endTime: "18:45",
-          label: "自定义",
-        }}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: /自定义/ }));
-    await user.click(screen.getByRole("button", { name: "上个月" }));
-
-    expect(screen.getByText("2025年12月")).toBeInTheDocument();
-    expect(screen.getByText("2026年1月")).toBeInTheDocument();
-  });
-
-  it("每个月固定渲染六行日期格以避免切换月份时跳动", async () => {
-    const user = userEvent.setup();
+  it("使用 Ant Design RangePicker 展示默认时间区间", () => {
     const { container } = render(<DateRangePicker defaultValue={defaultValue} />);
 
-    await user.click(screen.getByRole("button", { name: /最近48小时/ }));
-
-    const monthDayGrids = container.querySelectorAll(".date-range-days");
-
-    expect(monthDayGrids).toHaveLength(2);
-    monthDayGrids.forEach((grid) => {
-      expect(grid.children).toHaveLength(42);
-    });
+    expect(screen.getByText("按时间筛选")).toBeInTheDocument();
+    expect(container.querySelector(".ant-picker-range")).toBeInTheDocument();
+    expect(container.querySelector("input[value='2026-05-06 16:17']")).toBeInTheDocument();
+    expect(container.querySelector("input[value='2026-05-08 16:17']")).toBeInTheDocument();
   });
 
-  it("修改起止时间并确认后触发 onChange", async () => {
-    const user = userEvent.setup();
+  it("修改时间区间后需要确认才触发 onChange", () => {
     const handleChange = vi.fn();
+    const { container } = render(<DateRangePicker defaultValue={defaultValue} onChange={handleChange} />);
+    const inputs = container.querySelectorAll("input");
 
-    render(<DateRangePicker defaultValue={defaultValue} onChange={handleChange} />);
+    expect(inputs).toHaveLength(2);
+    fireEvent.change(inputs[0], { target: { value: "2026-05-06 08:30" } });
+    fireEvent.blur(inputs[0]);
+    fireEvent.change(inputs[1], { target: { value: "2026-05-08 21:15" } });
+    fireEvent.blur(inputs[1]);
 
-    await user.click(screen.getByRole("button", { name: /最近48小时/ }));
-    await user.clear(screen.getByLabelText("开始时间"));
-    await user.type(screen.getByLabelText("开始时间"), "08:30");
-    await user.clear(screen.getByLabelText("结束时间"));
-    await user.type(screen.getByLabelText("结束时间"), "21:15");
-    await user.click(screen.getByRole("button", { name: "确认查询" }));
+    expect(handleChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认查询" }));
 
     expect(handleChange).toHaveBeenCalledWith({
       startDate: "2026-05-06",
@@ -85,6 +42,32 @@ describe("DateRangePicker", () => {
       endTime: "21:15",
       label: "2026-05-06 08:30 至 2026-05-08 21:15",
     });
-    expect(screen.getByRole("button", { name: /2026-05-06 08:30 至 2026-05-08 21:15/ })).toBeInTheDocument();
+  });
+
+  it("确认查询时会归一化反向时间区间", () => {
+    const handleChange = vi.fn();
+    const { container } = render(<DateRangePicker defaultValue={defaultValue} onChange={handleChange} />);
+    const inputs = container.querySelectorAll("input");
+
+    fireEvent.change(inputs[0], { target: { value: "2026-05-09 10:00" } });
+    fireEvent.blur(inputs[0]);
+    fireEvent.change(inputs[1], { target: { value: "2026-05-08 09:00" } });
+    fireEvent.blur(inputs[1]);
+    fireEvent.click(screen.getByRole("button", { name: "确认查询" }));
+
+    expect(handleChange).toHaveBeenCalledWith({
+      startDate: "2026-05-08",
+      startTime: "09:00",
+      endDate: "2026-05-09",
+      endTime: "10:00",
+      label: "2026-05-08 09:00 至 2026-05-09 10:00",
+    });
+  });
+
+  it("不允许通过清空按钮恢复旧查询范围", () => {
+    const handleChange = vi.fn();
+    const { container } = render(<DateRangePicker defaultValue={defaultValue} onChange={handleChange} />);
+
+    expect(container.querySelector(".ant-picker-clear")).not.toBeInTheDocument();
   });
 });

@@ -1,9 +1,11 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { ArrowLeft, Maximize2, Minimize2, Search, X } from "lucide-react";
-import { useEffect, useState, type TransitionEvent } from "react";
+import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
+import { PlatformDrawer } from "../../components/ui/PlatformDrawer";
+import { PlatformModal } from "../../components/ui/PlatformModal";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -392,10 +394,7 @@ export function TenantManagementPage({
         </Panel>
       </div>
 
-      {isCreateDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="创建租户弹窗">
-          <div className="platform-dialog__card">
-            <h2>创建租户</h2>
+      <PlatformModal open={isCreateDialogOpen} onClose={() => setIsCreateDialogOpen(false)} title="创建租户弹窗">
             <p>创建后生成租户码，并初始化首个租户管理员；班级空间需要后续手动创建。</p>
             <form className="platform-form" onSubmit={handleCreateTenant}>
               <label className="field">
@@ -460,14 +459,10 @@ export function TenantManagementPage({
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </PlatformModal>
 
       {resetConfirmTenant && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="重置租户码确认">
-          <div className="platform-dialog__card">
-            <h2>重置租户码</h2>
+        <PlatformModal open={resetConfirmTenant !== null} onClose={() => setResetConfirmTenant(null)} title="重置租户码确认">
             <p>你正在重置租户「{resetConfirmTenant.name}」的租户码。</p>
             <div className="platform-dialog__warning">
               <p>当前租户码 {resetConfirmTenant.code} 将立即失效。</p>
@@ -481,14 +476,11 @@ export function TenantManagementPage({
                 确认重置
               </Button>
             </div>
-          </div>
-        </div>
+        </PlatformModal>
       )}
 
       {closeRegisterConfirmTenant && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="关闭注册确认">
-          <div className="platform-dialog__card">
-            <h2>关闭注册</h2>
+        <PlatformModal open={closeRegisterConfirmTenant !== null} onClose={() => setCloseRegisterConfirmTenant(null)} title="关闭注册确认">
             <p>你正在关闭租户「{closeRegisterConfirmTenant.name}」的自注册入口。</p>
             <div className="platform-dialog__warning">
               <p>关闭后，新的租户用户将无法通过注册链接或手动输入租户码自注册。</p>
@@ -502,13 +494,11 @@ export function TenantManagementPage({
                 确认关闭
               </Button>
             </div>
-          </div>
-        </div>
+        </PlatformModal>
       )}
 
       {editingTenant && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="租户资料弹窗">
-          <div className="platform-dialog__card">
+        <PlatformModal open={editingTenant !== null} onClose={() => setEditingTenant(null)} title="租户资料弹窗">
             <h2>{editingTenant.name}</h2>
             <label className="field">
               <span>编辑租户名称</span>
@@ -543,8 +533,7 @@ export function TenantManagementPage({
                 {isLogoUploading ? "上传中" : "保存资料"}
               </Button>
             </div>
-          </div>
-        </div>
+        </PlatformModal>
       )}
 
       {resourceDrawer && (
@@ -579,47 +568,14 @@ function TenantResourceDrawerView({
   users,
 }: TenantResourceDrawerViewProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isOpen, setIsOpen] = useState(false);
-  const [isClosing, setIsClosing] = useState(false);
   const title = drawer.kind === "spaces" ? `${drawer.tenant.name}空间` : `${drawer.tenant.name}用户`;
-  const drawerClassName = [
-    "tenant-resource-drawer",
-    isFullscreen ? "tenant-resource-drawer--fullscreen" : "tenant-resource-drawer--half",
-    isOpen ? "tenant-resource-drawer--open" : "",
-  ].filter(Boolean).join(" ");
-  const layerClassName = [
-    "tenant-resource-drawer-layer",
-    "tenant-resource-drawer-layer--overlay",
-    isOpen ? "tenant-resource-drawer-layer--visible" : "",
-  ].filter(Boolean).join(" ");
-
-  useEffect(() => {
-    const openTimer = window.setTimeout(() => setIsOpen(true), 0);
-    return () => window.clearTimeout(openTimer);
-  }, []);
 
   const closeDrawer = () => {
-    setIsClosing(true);
-    setIsOpen(false);
-  };
-
-  const finishClose = (event: TransitionEvent<HTMLElement>) => {
-    if (event.currentTarget !== event.target || event.propertyName !== "transform" || !isClosing) {
-      return;
-    }
     onClose();
   };
 
   return (
-    <div className={layerClassName} data-testid="tenant-resource-drawer-layer">
-      <div aria-hidden="true" className="tenant-resource-drawer-backdrop" data-testid="tenant-resource-drawer-backdrop" />
-      <aside
-        aria-label={`${title}抽屉`}
-        aria-modal="true"
-        className={drawerClassName}
-        onTransitionEnd={finishClose}
-        role="dialog"
-      >
+    <PlatformDrawer ariaLabel={`${title}抽屉`} fullscreen={isFullscreen} onClose={closeDrawer} open>
         <header className="tenant-resource-drawer__head">
           <button
             aria-label="返回租户列表"
@@ -662,8 +618,7 @@ function TenantResourceDrawerView({
             ? <TenantSpaceDrawerTable spaces={spaces} />
             : <TenantUserDrawerTable users={users} />
         )}
-      </aside>
-    </div>
+    </PlatformDrawer>
   );
 }
 

@@ -13,29 +13,32 @@ import {
   Trophy,
   Users,
 } from "lucide-react";
-import { DashboardPage } from "../pages/Dashboard/DashboardPage";
-import { ExamEntryPage } from "../pages/Exam/ExamEntryPage";
-import { ExamManagementPage } from "../pages/Exam/ExamManagementPage";
-import { PaperAssemblyPage } from "../pages/Exam/PaperAssemblyPage";
-import { PaperEditRoute } from "../pages/Exam/PaperEditRoute";
-import { PaperEditorPage } from "../pages/Exam/PaperEditorPage";
-import { ExamPreviewRoute, PaperPreviewRoute } from "../pages/Exam/PaperPreviewRoute";
-import { QuestionBankPage } from "../pages/Exam/QuestionBankPage";
-import { QuestionCreatePage } from "../pages/Exam/QuestionCreatePage";
-import { QuestionEditRoute } from "../pages/Exam/QuestionEditRoute";
-import { GradingPage } from "../pages/Grading/GradingPage";
-import { PlatformSettingsPage } from "../pages/Platform/PlatformSettingsPage";
-import { TenantManagementPage } from "../pages/Platform/TenantManagementPage";
-import { ProfileSettingsPage } from "../pages/Profile/ProfileSettingsPage";
-import { ResultsPage } from "../pages/Results/ResultsPage";
-import { SpaceConfigPage } from "../pages/Tenant/SpaceConfigPage";
-import { SpaceManagementPage } from "../pages/Tenant/SpaceManagementPage";
-import { SpaceMemberManagementPage } from "../pages/Tenant/SpaceMemberManagementPage";
-import { UserManagementPage } from "../pages/Tenant/UserManagementPage";
 import type { ActorRole } from "../api/grading";
 import type { ProfileSpaceAuthorization, SessionUser } from "../auth/session-context";
 import { EmptyState } from "../components/ui/EmptyState";
 import { Panel } from "../components/ui/Panel";
+import {
+  DashboardPage,
+  ExamEntryPage,
+  ExamManagementPage,
+  ExamPreviewRoute,
+  GradingPage,
+  PaperAssemblyPage,
+  PaperEditRoute,
+  PaperEditorPage,
+  PaperPreviewRoute,
+  PlatformSettingsPage,
+  ProfileSettingsPage,
+  QuestionBankPage,
+  QuestionCreatePage,
+  QuestionEditRoute,
+  ResultsPage,
+  SpaceConfigPage,
+  SpaceManagementPage,
+  SpaceMemberManagementPage,
+  TenantManagementPage,
+  UserManagementPage,
+} from "./lazy-routes";
 import { TenantScopedRoute } from "./TenantScopedRoute";
 
 export type AdminRouteGroup = "overview" | "platform" | "tenant" | "exam" | "hidden";

@@ -92,7 +92,11 @@ test("教师新建试卷需要先填写基础信息再进入组卷页", async ()
   await screen.findByRole("row", { name: /高一语文月考试卷/ });
   await user.click(screen.getByRole("button", { name: "新建试卷" }));
 
-  expect(screen.getByRole("dialog", { name: "新建试卷" })).toBeInTheDocument();
+  expect(screen.getAllByText("新建试卷").some((node) => node.classList.contains("ant-modal-title"))).toBe(true);
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toBeInTheDocument();
+  expect(dialog).toHaveClass("ant-modal");
+  expect(document.querySelector(".platform-dialog")).not.toBeInTheDocument();
   await user.type(screen.getByLabelText("试卷名称"), "高一数学周测");
   await user.selectOptions(screen.getByLabelText("组卷方式"), "rule_fixed");
   await user.clear(screen.getByLabelText("考试时长"));
@@ -280,7 +284,7 @@ test("切换试卷启用状态失败时使用 toast 提示并透出后端错误"
   await user.click(screen.getByRole("button", { name: "启用试卷 高一语文月考试卷" }));
 
   const alert = await screen.findByText("无权执行当前操作");
-  expect(alert.closest(".feedback-toast-stack")).toBeInTheDocument();
+  expect(alert.closest(".ant-message")).toBeInTheDocument();
   expect(document.querySelector(".tenant-admin-warning")).not.toBeInTheDocument();
 });
 

@@ -1,6 +1,13 @@
+import MDEditor from "@uiw/react-md-editor/nohighlight";
+import "@uiw/react-md-editor/markdown-editor.css";
+import "@uiw/react-markdown-preview/markdown.css";
+import "katex/dist/katex.min.css";
 import { Eye, FilePlus2, GripVertical, LoaderCircle, Trash2 } from "lucide-react";
+import Empty from "antd/es/empty";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import rehypeKatex from "rehype-katex";
+import remarkMath from "remark-math";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
 import type { ActorRole } from "../../api/grading";
@@ -18,6 +25,8 @@ import { paperApi } from "../../api/papers";
 import { useFeedback } from "../../app/feedback-context";
 import type { QuestionAPI, QuestionDifficulty, QuestionRow, QuestionType } from "../../api/questions";
 import { questionApi } from "../../api/questions";
+import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
+import { spaceApi } from "../../api/spaces";
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
@@ -32,6 +41,7 @@ type PaperEditorPageProps = {
   actorRole?: ActorRole;
   paperApi?: PaperAPI;
   questionApi?: QuestionAPI;
+  spaceApi?: Pick<SpaceManagementAPI, "listSpaces">;
   paperID?: number;
   tenantID?: number;
   spaceID?: number;
@@ -88,6 +98,8 @@ const sectionTemplates: Record<QuestionType, { name: string; instructions: strin
 };
 
 const AUTO_SAVE_DRAFT_DELAY_MS = 30_000;
+const DRAG_AUTO_SCROLL_EDGE_PX = 72;
+const DRAG_AUTO_SCROLL_STEP_PX = 36;
 const READ_ONLY_PUBLIC_PAPER_MESSAGE = "你没有权限编辑该公共试卷，仅可查看。";
 const READ_ONLY_PUBLISHED_PAPER_MESSAGE = "已发布试卷仅可预览。";
 
@@ -102,6 +114,7 @@ export function PaperEditorPage({
   actorRole,
   paperApi: providedPaperApi = paperApi,
   questionApi: providedQuestionApi = questionApi,
+  spaceApi: providedSpaceApi = spaceApi,
   paperID,
   tenantID = 10,
   spaceID,
@@ -118,6 +131,8 @@ export function PaperEditorPage({
   const [sectionQuestions, setSectionQuestions] = useState<ManualQuestionRow[]>([]);
   const [persistedSectionQuestions, setPersistedSectionQuestions] = useState<ManualQuestionRow[]>([]);
   const [questionPool, setQuestionPool] = useState<QuestionRow[]>([]);
+  const [tenantSpaces, setTenantSpaces] = useState<SpaceRow[]>([]);
+  const [selectedPaperSpaceID, setSelectedPaperSpaceID] = useState<number | null>(spaceID ?? null);
   const [paperName, setPaperName] = useState("");
   const [paperDescription, setPaperDescription] = useState("");
   const [gradeText, setGradeText] = useState("高一");
@@ -144,6 +159,7 @@ export function PaperEditorPage({
   const [page, setPage] = useState(1);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isGeneratingSmartPaper, setIsGeneratingSmartPaper] = useState(false);
+  const [isPublishingPaper, setIsPublishingPaper] = useState(false);
   const [isRefreshingWorkspace, setIsRefreshingWorkspace] = useState(false);
   const [draggingSectionID, setDraggingSectionID] = useState<number | null>(null);
   const [draggingQuestion, setDraggingQuestion] = useState<DraggedQuestion | null>(null);
@@ -152,9 +168,8 @@ export function PaperEditorPage({
   const [questionDropTargetKey, setQuestionDropTargetKey] = useState<string | null>(null);
   const [questionDropDirection, setQuestionDropDirection] = useState<DropIndicatorDirection | null>(null);
   const [editingScores, setEditingScores] = useState<Record<string, string>>({});
-  const [selectedPaperSpaceID, setSelectedPaperSpaceID] = useState<number | null>(spaceID ?? null);
 
-  const loadQuestionPool = useCallback(async () => {
+  const loadQuestionPool = useCallback(async (paperSpaceID: number | null = spaceID ?? null) => {
     const pageSize = 100;
     const allItems: QuestionRow[] = [];
     let page = 1;
@@ -164,7 +179,7 @@ export function PaperEditorPage({
     while (page === 1 || loadedCount < total) {
       const data = await providedQuestionApi.listQuestions({
         tenantID,
-        ...(spaceID === undefined ? {} : { spaceID }),
+        ...(paperSpaceID === null ? {} : { spaceID: paperSpaceID }),
         page,
         pageSize,
       });
@@ -244,9 +259,7 @@ export function PaperEditorPage({
     nextSections: PaperSectionRow[],
     nextSectionQuestions: ManualQuestionRow[],
     nextRules: PaperRuleRow[],
-    nextQuestionPool: QuestionRow[],
   ) => {
-    setQuestionPool(nextQuestionPool);
     setPaper(currentPaper);
     setSelectedPaperSpaceID(currentPaper === null ? (spaceID ?? null) : (currentPaper.spaceID ?? null));
     setPaperName(currentPaper?.name ?? "");
@@ -268,10 +281,7 @@ export function PaperEditorPage({
 
     void (async () => {
       try {
-        const [nextQuestionPool, snapshot] = await Promise.all([
-          loadQuestionPool(),
-          loadWorkspaceSnapshot(),
-        ]);
+        const snapshot = await loadWorkspaceSnapshot();
         if (ignore) {
           return;
         }
@@ -280,7 +290,6 @@ export function PaperEditorPage({
           snapshot.nextSections,
           snapshot.nextSectionQuestions,
           snapshot.nextRules,
-          nextQuestionPool,
         );
       } catch (error) {
         if (!ignore) {
@@ -292,7 +301,51 @@ export function PaperEditorPage({
     return () => {
       ignore = true;
     };
-  }, [applyWorkspaceSnapshot, loadQuestionPool, loadWorkspaceSnapshot, paperID, showError]);
+  }, [applyWorkspaceSnapshot, loadWorkspaceSnapshot, paperID, showError]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    void loadQuestionPool(selectedPaperSpaceID)
+      .then((nextQuestionPool) => {
+        if (!ignore) {
+          setQuestionPool(nextQuestionPool);
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          showError(formatApiErrorMessage(error, "题库候选题加载失败"));
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [loadQuestionPool, selectedPaperSpaceID, showError]);
+
+  useEffect(() => {
+    if (actorRole !== "tenant_admin") {
+      return undefined;
+    }
+
+    let ignore = false;
+    void providedSpaceApi.listSpaces(tenantID)
+      .then((result) => {
+        if (!ignore) {
+          setTenantSpaces(result.items);
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setTenantSpaces([]);
+          showError(formatApiErrorMessage(error, "空间列表加载失败"));
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [actorRole, providedSpaceApi, showError, tenantID]);
 
   const questionMap = useMemo(() => new Map(questionPool.map((item) => [item.id, item])), [questionPool]);
   const blockedSmartQuestions = useMemo(() => blockedSmartQuestionIDs.map((questionID) => {
@@ -470,13 +523,26 @@ export function PaperEditorPage({
   const canChangeBuildMode = paper === null;
   const paperScopeLabel = paperScopeQuestionBankLabel(selectedPaperSpaceID ?? undefined);
   const canAssignPublicPaperToCurrentSpace = actorRole === "space_admin" && selectedPaperSpaceID === null && spaceID !== undefined;
-  const canShowPublicScopeOption = canSelectPublicScope || selectedPaperSpaceID === null;
   const isScopeTransferOnly = paper?.spaceID === undefined && actorRole === "space_admin" && spaceID !== undefined && !canSelectPublicScope;
+  const canShowPublicScopeOption = canSelectPublicScope || (selectedPaperSpaceID === null && !isScopeTransferOnly);
+  const paperScopeOptions = [
+    ...(canShowPublicScopeOption ? [{ value: "public", label: "公共试卷" }] : []),
+    ...(actorRole === "tenant_admin"
+      ? tenantSpaces.map((space) => ({ value: `space:${space.id}`, label: space.name || `空间 ${space.id}` }))
+      : spaceID === undefined
+        ? []
+        : [{ value: `space:${spaceID}`, label: "当前空间试卷" }]),
+  ];
+  const selectedPaperScopeValue = selectedPaperSpaceID === null
+    ? canShowPublicScopeOption ? "public" : undefined
+    : `space:${selectedPaperSpaceID}`;
+  const selectedPaperScopeLabel = formatPaperScopeLabel(selectedPaperSpaceID, tenantSpaces, spaceID);
   const isReadOnlyPublicPaper = selectedPaperSpaceID === null && !canSelectPublicScope && !canAssignPublicPaperToCurrentSpace;
   const isReadOnlyPublishedPaper = paper?.status === "enabled";
   const isReadOnlyPaper = isReadOnlyPublicPaper || isReadOnlyPublishedPaper;
   const readOnlyPaperMessage = isReadOnlyPublishedPaper ? READ_ONLY_PUBLISHED_PAPER_MESSAGE : READ_ONLY_PUBLIC_PAPER_MESSAGE;
   const isContentReadOnly = isReadOnlyPaper || isScopeTransferOnly;
+  const canPublishPaper = !isContentReadOnly && !isSavingDraft && !isGeneratingSmartPaper && !isPublishingPaper && canAssemble && selectedQuestionCount > 0;
   const contentReadOnlyMessage = isScopeTransferOnly ? "请先将公共试卷归属到当前空间后再编辑。" : readOnlyPaperMessage;
 
   function navigateToPreviewPage() {
@@ -484,6 +550,19 @@ export function PaperEditorPage({
       return;
     }
     window.open(`/papers/${paper.id}/student-preview${pageSearch}`, "_blank", "noopener,noreferrer");
+  }
+
+  function handlePaperScopeChange(value: string) {
+    if (value === "public") {
+      setSelectedPaperSpaceID(null);
+      return;
+    }
+    if (value.startsWith("space:")) {
+      const nextSpaceID = Number(value.slice("space:".length));
+      if (Number.isInteger(nextSpaceID)) {
+        setSelectedPaperSpaceID(nextSpaceID);
+      }
+    }
   }
 
   const sectionOrderDirty = serializeSections(sections) !== serializeSections(persistedSections);
@@ -653,7 +732,7 @@ export function PaperEditorPage({
             buildModeSyncError = error;
           }
         }
-        navigate(`/papers/${nextPaper.id}/edit${pageSearch}`, { replace: true });
+        navigate(`/papers/${nextPaper.id}/edit${paperSearchForScope(location.search, selectedPaperSpaceID)}`, { replace: true });
         if (buildModeSyncError !== null) {
           showError(`试卷草稿已创建，${formatApiErrorMessage(buildModeSyncError, "切换组卷方式失败")}`);
         } else if (notifySuccess) {
@@ -737,8 +816,8 @@ export function PaperEditorPage({
     buildMode,
     durationText,
     gradeText,
+    location.search,
     navigate,
-    pageSearch,
     paper,
     paperDescription,
     paperName,
@@ -760,6 +839,33 @@ export function PaperEditorPage({
   async function handleSaveDraft(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await saveDraft({ notifySuccess: true });
+  }
+
+  async function handlePublishPaper() {
+    if (paper === null) {
+      showError("请先保存试卷基础信息后再发布");
+      return;
+    }
+    if (selectedQuestionCount === 0) {
+      showError("请先加入试题后再发布试卷");
+      return;
+    }
+
+    const savedPaper = await saveDraft({ notifySuccess: false });
+    if (savedPaper === null) {
+      return;
+    }
+
+    setIsPublishingPaper(true);
+    try {
+      const nextPaper = await providedPaperApi.enablePaper({ tenantID, paperID: savedPaper.id });
+      setPaper(nextPaper);
+      showSuccess("试卷已发布。");
+    } catch (error) {
+      showError(formatApiErrorMessage(error, "发布试卷失败"));
+    } finally {
+      setIsPublishingPaper(false);
+    }
   }
 
   useEffect(() => {
@@ -794,7 +900,7 @@ export function PaperEditorPage({
       }
       await providedPaperApi.generateRuleFixed({ tenantID, paperID: savedPaper.id, blockedQuestionIDs: blockedSmartQuestionIDs });
       const [nextQuestionPool, snapshot] = await withRefreshFeedback(Promise.all([
-        loadQuestionPool(),
+        loadQuestionPool(selectedPaperSpaceID),
         loadWorkspaceSnapshot(),
       ]));
       applyWorkspaceSnapshot(
@@ -802,8 +908,8 @@ export function PaperEditorPage({
         snapshot.nextSections,
         snapshot.nextSectionQuestions,
         snapshot.nextRules,
-        nextQuestionPool,
       );
+      setQuestionPool(nextQuestionPool);
       showSuccess("智能组卷已生成。");
     } catch (error) {
       showError(formatApiErrorMessage(error, "智能组卷生成失败"));
@@ -858,7 +964,7 @@ export function PaperEditorPage({
     setIsRefreshingWorkspace(true);
     try {
       const [nextQuestionPool, snapshot] = await withRefreshFeedback(Promise.all([
-        loadQuestionPool(),
+        loadQuestionPool(selectedPaperSpaceID),
         loadWorkspaceSnapshot(),
       ]));
       applyWorkspaceSnapshot(
@@ -866,8 +972,8 @@ export function PaperEditorPage({
         snapshot.nextSections,
         snapshot.nextSectionQuestions,
         snapshot.nextRules,
-        nextQuestionPool,
       );
+      setQuestionPool(nextQuestionPool);
       clearDragState();
     } catch (error) {
       showError(formatApiErrorMessage(error, "组卷数据刷新失败"));
@@ -1021,7 +1127,8 @@ export function PaperEditorPage({
     configureDragPreview(event, event.currentTarget.closest(".exam-paper-editor__selected-section, .exam-paper-editor__rule-row"));
   }
 
-  function handleSectionDragOver(targetSectionID: number) {
+  function handleSectionDragOver(event: React.DragEvent<HTMLElement>, targetSectionID: number) {
+    autoScrollDragContainer(event.currentTarget, event.clientY);
     if (draggingSectionID === null || draggingSectionID === targetSectionID) {
       setSectionDropTargetID(null);
       setSectionDropDirection(null);
@@ -1069,7 +1176,8 @@ export function PaperEditorPage({
     configureDragPreview(event, event.currentTarget.closest("tr"));
   }
 
-  function handleQuestionDragOver(target: ManualQuestionRow) {
+  function handleQuestionDragOver(event: React.DragEvent<HTMLElement>, target: ManualQuestionRow) {
+    autoScrollDragContainer(event.currentTarget, event.clientY);
     if (draggingQuestion === null || draggingQuestion.sectionID !== target.sectionID || draggingQuestion.questionID === target.questionID) {
       setQuestionDropTargetKey(null);
       setQuestionDropDirection(null);
@@ -1140,7 +1248,7 @@ export function PaperEditorPage({
 
           <div className="exam-paper-editor__summarybar exam-paper-editor__summarybar--responsive">
             <label className="exam-paper-editor__summary-item exam-paper-editor__summary-item--name">
-              <span>试卷名称：</span>
+              <RequiredLabel>试卷名称：</RequiredLabel>
               <input
                 aria-label="试卷名称"
                 disabled={isContentReadOnly}
@@ -1150,27 +1258,25 @@ export function PaperEditorPage({
               />
             </label>
             <div className="exam-paper-editor__summary-item exam-paper-editor__summary-item--scope">
-              <span>归属：</span>
+              <RequiredLabel>归属：</RequiredLabel>
               <div className="exam-paper-editor__summary-scope-select">
                 {isReadOnlyPublicPaper || isReadOnlyPublishedPaper ? (
                   <span className="ui-select-trigger" aria-label="试卷归属">
-                    {selectedPaperSpaceID === null ? "公共试卷" : "当前空间试卷"}
+                    {selectedPaperScopeLabel}
                   </span>
                 ) : (
                   <Select
                     ariaLabel="试卷归属"
-                    onChange={(value) => setSelectedPaperSpaceID(value === "public" ? null : spaceID ?? null)}
-                    options={[
-                      ...(canShowPublicScopeOption ? [{ value: "public", label: "公共试卷" }] : []),
-                      ...(spaceID === undefined ? [] : [{ value: "space", label: "当前空间试卷" }]),
-                    ]}
-                    value={selectedPaperSpaceID === null ? "public" : "space"}
+                    onChange={handlePaperScopeChange}
+                    options={paperScopeOptions}
+                    placeholder={selectedPaperSpaceID === null && !canShowPublicScopeOption ? "公共试卷" : undefined}
+                    value={selectedPaperScopeValue}
                   />
                 )}
               </div>
             </div>
             <label className="exam-paper-editor__summary-item exam-paper-editor__summary-item--duration">
-              <span>考试时长：</span>
+              <RequiredLabel>考试时长：</RequiredLabel>
               <input
                 aria-label="考试时长"
                 className="exam-paper-editor__summary-input--compact exam-paper-editor__summary-input--duration"
@@ -1187,7 +1293,7 @@ export function PaperEditorPage({
               <em>分</em>
             </div>
             <label className="exam-paper-editor__summary-item exam-paper-editor__summary-item--grade">
-              <span>适用年级：</span>
+              <RequiredLabel>适用年级：</RequiredLabel>
               <input
                 aria-label="适用年级"
                 className="exam-paper-editor__summary-input--compact exam-paper-editor__summary-input--grade"
@@ -1198,7 +1304,7 @@ export function PaperEditorPage({
               />
             </label>
             <div className="exam-paper-editor__summary-item exam-paper-editor__summary-item--modes">
-              <span>组卷方式：</span>
+              <RequiredLabel>组卷方式：</RequiredLabel>
               {canChangeBuildMode ? (
                 <SegmentTabs
                   active={buildMode === "manual" ? "手动组卷" : "智能组卷"}
@@ -1221,15 +1327,12 @@ export function PaperEditorPage({
               </span>
             </div>
           </div>
-          <label className="sr-only">
-            <span>试卷说明</span>
-            <input
-              aria-label="试卷说明"
-              disabled={isContentReadOnly}
-              onChange={(event) => setPaperDescription(event.target.value)}
-              value={paperDescription}
-            />
-          </label>
+          <PaperDescriptionMarkdownEditor
+            disabled={isContentReadOnly}
+            label="试卷说明"
+            onChange={setPaperDescription}
+            value={paperDescription}
+          />
           {!isSmartPaper ? (
           <div className="exam-paper-editor__workspace">
             <section className="exam-paper-editor__panel">
@@ -1380,7 +1483,11 @@ export function PaperEditorPage({
 
               {groupedSelectedQuestions.length === 0 ? (
                 <div className="exam-paper-editor__selected-empty">
-                  {canAssemble ? "当前还没有加入试题，先从左侧题库加入。" : "请先保存试卷基础信息后再开始组卷"}
+                  <Empty
+                    className="exam-empty-state"
+                    description={canAssemble ? "当前还没有加入试题，先从左侧题库加入。" : "请先保存试卷基础信息后再开始组卷"}
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  />
                 </div>
               ) : (
                 <div className="exam-paper-editor__selected-groups">
@@ -1395,7 +1502,7 @@ export function PaperEditorPage({
                       key={group.section.id}
                       onDragOver={(event) => {
                         event.preventDefault();
-                        handleSectionDragOver(group.section.id);
+                        handleSectionDragOver(event, group.section.id);
                       }}
                       onDrop={() => handleSectionDrop(group.section.id)}
                     >
@@ -1421,6 +1528,7 @@ export function PaperEditorPage({
                           <colgroup>
                             <col className="exam-paper-editor__selected-col exam-paper-editor__selected-col--question" />
                             <col className="exam-paper-editor__selected-col exam-paper-editor__selected-col--source" />
+                            <col className="exam-paper-editor__selected-col exam-paper-editor__selected-col--difficulty" />
                             <col className="exam-paper-editor__selected-col exam-paper-editor__selected-col--score" />
                             <col className="exam-paper-editor__selected-col exam-paper-editor__selected-col--actions" />
                           </colgroup>
@@ -1428,6 +1536,7 @@ export function PaperEditorPage({
                             <tr>
                               <th scope="col">题目</th>
                               <th scope="col">来源题库</th>
+                              <th scope="col">难度</th>
                               <th scope="col">分值</th>
                               <th scope="col">操作</th>
                             </tr>
@@ -1449,7 +1558,7 @@ export function PaperEditorPage({
                                   key={`${item.sectionID}-${item.questionID}`}
                                   onDragOver={(event) => {
                                     event.preventDefault();
-                                    handleQuestionDragOver(item);
+                                    handleQuestionDragOver(event, item);
                                   }}
                                   onDrop={() => handleQuestionDrop(item)}
                                 >
@@ -1474,6 +1583,13 @@ export function PaperEditorPage({
                                     </div>
                                   </td>
                                   <td>{(item.question?.tags.length ?? 0) > 0 ? item.question?.tags.join(" / ") : item.question?.tag ?? "-"}</td>
+                                  <td>
+                                    {item.question === null ? "-" : (
+                                      <span className={`exam-paper-editor__difficulty exam-paper-editor__difficulty--${item.question.difficulty}`}>
+                                        {difficultyLabels[item.question.difficulty]}
+                                      </span>
+                                    )}
+                                  </td>
                                   <td>
                                     <input
                                       aria-label={`题目 ${item.questionID} 分值`}
@@ -1723,7 +1839,7 @@ export function PaperEditorPage({
                         key={section.id}
                         onDragOver={(event) => {
                           event.preventDefault();
-                          handleSectionDragOver(section.id);
+                          handleSectionDragOver(event, section.id);
                         }}
                         onDrop={() => handleSectionDrop(section.id)}
                       >
@@ -1843,7 +1959,11 @@ export function PaperEditorPage({
 
               {groupedSelectedQuestions.length === 0 ? (
                 <div className="exam-paper-editor__selected-empty">
-                  {canAssemble ? "配置规则后点击一键智能组卷生成试题。" : "请先保存试卷基础信息后再智能组卷"}
+                  <Empty
+                    className="exam-empty-state"
+                    description={canAssemble ? "配置规则后点击一键智能组卷生成试题。" : "请先保存试卷基础信息后再智能组卷"}
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  />
                 </div>
               ) : (
                 <div className="exam-paper-editor__selected-groups">
@@ -1917,11 +2037,11 @@ export function PaperEditorPage({
               <p>发布能力将与考试发布流程联动，当前版本先完成真实组卷与预览。</p>
             </div>
             <div className="exam-paper-editor__footer-actions">
-              <Button disabled={isReadOnlyPaper || isSavingDraft || isGeneratingSmartPaper} type="submit" variant="secondary">
+              <Button disabled={isReadOnlyPaper || isSavingDraft || isGeneratingSmartPaper || isPublishingPaper} type="submit" variant="secondary">
                 保存草稿
               </Button>
               <Button
-                disabled={isContentReadOnly || isSavingDraft || isGeneratingSmartPaper || !canAssemble || (!isSmartPaper && selectedQuestionCount === 0)}
+                disabled={isContentReadOnly || isSavingDraft || isGeneratingSmartPaper || isPublishingPaper || !canAssemble || (!isSmartPaper && selectedQuestionCount === 0)}
                 onClick={() => {
                   if (isSmartPaper) {
                     void handleGenerateSmartPaper();
@@ -1945,7 +2065,7 @@ export function PaperEditorPage({
                   )
                   : "生成预览"}
               </Button>
-              <Button disabled variant="toolbarPrimary" type="button">
+              <Button disabled={!canPublishPaper} onClick={() => void handlePublishPaper()} variant="toolbarPrimary" type="button">
                 发布试卷
               </Button>
             </div>
@@ -1953,6 +2073,49 @@ export function PaperEditorPage({
         </form>
       </Panel>
     </section>
+  );
+}
+
+function RequiredLabel({ children }: { children: string }) {
+  return (
+    <span className="field-label">
+      {children}
+      <span aria-hidden="true" className="required-marker">*</span>
+    </span>
+  );
+}
+
+function PaperDescriptionMarkdownEditor({
+  disabled,
+  label,
+  onChange,
+  value,
+}: {
+  disabled: boolean;
+  label: string;
+  onChange(value: string): void;
+  value: string;
+}) {
+  return (
+    <div className="field markdown-editor exam-paper-editor__description" data-color-mode="light">
+      <span>{label}</span>
+      <MDEditor
+        height="auto"
+        onChange={(nextValue) => onChange(nextValue ?? "")}
+        preview="live"
+        previewOptions={{
+          // 试卷说明按 Markdown 原文保存，预览阶段补公式渲染能力。
+          rehypePlugins: [rehypeKatex],
+          remarkPlugins: [remarkMath],
+        }}
+        textareaProps={{
+          "aria-label": label,
+          disabled,
+        }}
+        value={value}
+        visibleDragbar={false}
+      />
+    </div>
   );
 }
 
@@ -2248,6 +2411,57 @@ function paperScopeQuestionBankLabel(paperSpaceID?: number) {
   return paperSpaceID === undefined ? "公共题库" : "本空间全部题库";
 }
 
+function autoScrollDragContainer(target: HTMLElement, clientY: number) {
+  const scrollContainer = findVerticalScrollContainer(target);
+  if (scrollContainer === null) {
+    return;
+  }
+
+  const rect = scrollContainer === target.ownerDocument.scrollingElement
+    ? {
+        top: 0,
+        bottom: target.ownerDocument.defaultView?.innerHeight ?? scrollContainer.clientHeight,
+      }
+    : scrollContainer.getBoundingClientRect();
+  const distanceToTop = clientY - rect.top;
+  const distanceToBottom = rect.bottom - clientY;
+  const maxScrollTop = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+
+  if (distanceToTop < DRAG_AUTO_SCROLL_EDGE_PX) {
+    scrollContainer.scrollTop = Math.max(0, scrollContainer.scrollTop - DRAG_AUTO_SCROLL_STEP_PX);
+    return;
+  }
+  if (distanceToBottom < DRAG_AUTO_SCROLL_EDGE_PX) {
+    scrollContainer.scrollTop = Math.min(maxScrollTop, scrollContainer.scrollTop + DRAG_AUTO_SCROLL_STEP_PX);
+  }
+}
+
+function findVerticalScrollContainer(target: HTMLElement) {
+  let current = target.parentElement;
+  while (current !== null) {
+    if (current.scrollHeight > current.clientHeight) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+
+  const scrollingElement = target.ownerDocument.scrollingElement;
+  return scrollingElement instanceof HTMLElement && scrollingElement.scrollHeight > scrollingElement.clientHeight
+    ? scrollingElement
+    : null;
+}
+
+function formatPaperScopeLabel(paperSpaceID: number | null, spaces: SpaceRow[], currentSpaceID?: number) {
+  if (paperSpaceID === null) {
+    return "公共试卷";
+  }
+  const matchedSpace = spaces.find((space) => space.id === paperSpaceID);
+  if (matchedSpace !== undefined) {
+    return matchedSpace.name || `空间 ${paperSpaceID}`;
+  }
+  return paperSpaceID === currentSpaceID ? "当前空间试卷" : `空间 ${paperSpaceID}`;
+}
+
 function questionVisibleForPaperScope(question: QuestionRow, paperSpaceID?: number) {
   if (paperSpaceID === undefined) {
     return question.spaceID === undefined;
@@ -2415,6 +2629,17 @@ function scopedPaperSearch(currentSearch: string, spaceID: number | undefined) {
   }
   const params = new URLSearchParams(currentSearch);
   params.delete("space_id");
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function paperSearchForScope(currentSearch: string, paperSpaceID: number | null) {
+  const params = new URLSearchParams(currentSearch);
+  if (paperSpaceID === null) {
+    params.delete("space_id");
+  } else {
+    params.set("space_id", String(paperSpaceID));
+  }
   const query = params.toString();
   return query ? `?${query}` : "";
 }

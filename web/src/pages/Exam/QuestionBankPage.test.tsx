@@ -6,6 +6,7 @@ import { expect, test, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { FeedbackProvider } from "../../app/feedback";
 import type { QuestionAPI } from "../../api/questions";
+import type { SpaceManagementAPI } from "../../api/spaces";
 import { QuestionBankPage } from "./QuestionBankPage";
 
 const longQuestionTitle = "【资料】根据下列文字资料回答：2005年10月份，我国煤炭出口605万吨，同比增长25.9%，煤炭进口453万吨，同比下降28.7%。";
@@ -194,6 +195,31 @@ function createQuestionAPI() {
         errors: [],
       });
       return () => undefined;
+    }),
+  };
+}
+
+function createSpaceAPI(): Pick<SpaceManagementAPI, "listSpaces"> {
+  return {
+    listSpaces: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 301,
+          tenantID: 10,
+          name: "高一一班",
+          description: "高一一班空间",
+          logoFileName: "class-a.png",
+          members: [],
+        },
+        {
+          id: 302,
+          tenantID: 10,
+          name: "高一二班",
+          description: "高一二班空间",
+          logoFileName: "class-b.png",
+          members: [],
+        },
+      ],
     }),
   };
 }
@@ -557,14 +583,14 @@ test("教师可以在题库列表禁用和删除题目，并展示引用校验�
   expect(api.disableQuestion).toHaveBeenCalledWith({ tenantID: 10, questionID: 100 });
   const successAlert = await screen.findByRole("alert");
   expect(successAlert).toHaveTextContent("题目已禁用");
-  expect(successAlert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(successAlert.closest(".ant-message")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: `启用 ${longQuestionTitle}` })).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: `删除 ${longQuestionTitle}` }));
 
   expect(api.deleteQuestion).toHaveBeenCalledWith({ tenantID: 10, questionID: 100 });
   const errorText = await screen.findByText("题目已被试卷或考试引用，不能删除");
-  expect(errorText.closest(".feedback-toast-stack")).toBeInTheDocument();
+  expect(errorText.closest(".ant-message")).toBeInTheDocument();
   expect(document.querySelector(".tenant-admin-warning")).not.toBeInTheDocument();
   expect(document.querySelector(".tenant-admin-success")).not.toBeInTheDocument();
 });
@@ -579,12 +605,14 @@ test("教师可以在题库右侧抽屉导入题目", async () => {
   await user.click(screen.getByRole("button", { name: "导入题目" }));
 
   const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
+  expect(drawer.closest(".ant-drawer")).toBeInTheDocument();
   expect(drawer).toHaveClass("tenant-resource-drawer--open");
   expect(within(drawer).queryByLabelText("题目导入文件预览")).not.toBeInTheDocument();
   const templateLink = within(drawer).getByRole("link", { name: "下载 CSV 模板" });
   expect(templateLink).toHaveAttribute("download", "question-import-template.csv");
   expect(templateLink).toHaveAttribute("href", expect.stringContaining("data:text/csv"));
-  expect(within(drawer).getByLabelText("导入所属空间")).toHaveValue("space");
+  expect(within(drawer).getByLabelText("导入所属空间")).toHaveValue("space:301");
+  expect(within(drawer).getByLabelText("导入所属空间").closest(".question-import-scope-field")).not.toBeNull();
   expect(within(drawer).getByLabelText("题目导入文件")).toHaveAttribute("accept", "text/csv");
   expect(within(drawer).queryByRole("combobox", { name: "导入后题目状态" })).not.toBeInTheDocument();
   expect(within(drawer).getByRole("radio", { name: "草稿" })).toBeChecked();
@@ -601,7 +629,7 @@ test("教师可以在题库右侧抽屉导入题目", async () => {
   expect(api.subscribeQuestionImportJob).toHaveBeenCalledWith({ jobID: "job-1" }, expect.any(Function), expect.any(Function));
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("导入完成 2 条");
-  expect(alert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(alert.closest(".ant-message")).toBeInTheDocument();
   expect(within(drawer).getAllByText("questions.csv").length).toBeGreaterThan(0);
 });
 
@@ -620,6 +648,39 @@ test("题库导入抽屉可以选择导入到公共题库", async () => {
   await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
 
   expect(api.startQuestionImportJob).toHaveBeenCalledWith({ tenantID: 10, spaceID: null, file, status: "draft" });
+});
+
+test("租户管理员可以在题库导入抽屉选择导入到具体空间且导入后刷新当前列表范围", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  const spaceApi = createSpaceAPI();
+  renderWithFeedback(
+    <QuestionBankPage actorRole="tenant_admin" api={api} spaceApi={spaceApi} tenantID={10} />,
+    "/questions?space_id=301",
+  );
+
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+
+  const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
+  await within(drawer).findByRole("option", { name: "高一二班" });
+  expect(spaceApi.listSpaces).toHaveBeenCalledWith(10);
+  await user.selectOptions(within(drawer).getByLabelText("导入所属空间"), "space:302");
+
+  const file = new File(["type,title"], "tenant-space-questions.csv", { type: "text/csv" });
+  await user.upload(within(drawer).getByLabelText("题目导入文件"), file);
+  await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
+
+  expect(api.startQuestionImportJob).toHaveBeenCalledWith({ tenantID: 10, spaceID: 302, file, status: "draft" });
+  await waitFor(() => {
+    expect(api.listQuestions).toHaveBeenLastCalledWith({
+      tenantID: 10,
+      spaceID: 301,
+      page: 1,
+      pageSize: 20,
+      search: "",
+    });
+  });
 });
 
 test("空间管理员在题库导入抽屉中看不到公共题库选项", async () => {
@@ -827,7 +888,7 @@ test("长题干在悬停时通过 tooltip 展示完整内容", async () => {
 
   const tooltip = await screen.findByRole("tooltip");
   expect(tooltip).toHaveTextContent(longQuestionTitle);
-  expect(tooltip.firstElementChild).toHaveClass("ui-tooltip-content__inner", "ui-tooltip-content__inner--plain");
+  expect(tooltip).toHaveClass("ant-tooltip-container");
 });
 
 test("题库列表加载和导入校验失败时使用 toast 提示", async () => {
@@ -838,7 +899,7 @@ test("题库列表加载和导入校验失败时使用 toast 提示", async () =
 
   const loadAlert = await screen.findByRole("alert");
   expect(loadAlert).toHaveTextContent("题目列表加载失败");
-  expect(loadAlert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(loadAlert.closest(".ant-message")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "导入题目" }));
   await user.click(screen.getByRole("button", { name: "确认导入" }));

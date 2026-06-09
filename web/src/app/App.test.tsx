@@ -221,7 +221,7 @@ function createAttemptQuestion(
   };
 }
 
-test("渲染 Papermind 管理端基础骨架", () => {
+test("渲染 Papermind 管理端基础骨架", async () => {
   storePlatformSession();
 
   renderApp(["/"]);
@@ -229,7 +229,7 @@ test("渲染 Papermind 管理端基础骨架", () => {
   expect(screen.getByText("Papermind")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /租户管理/ })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /阅卷中心/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
 });
 
 test("页面 title 根据当前后台子菜单和独立页面切换", () => {
@@ -256,12 +256,12 @@ test("App 挂载后同步浏览器 title", async () => {
   await waitFor(() => expect(document.title).toBe("租户管理 - PaperMind"));
 });
 
-test("未登录访问后台路由会跳转登录页", () => {
+test("未登录访问后台路由会跳转登录页", async () => {
   window.localStorage.removeItem("papermind.session.v1");
 
   renderApp(["/tenants"]);
 
-  expect(screen.getByRole("heading", { name: "平台管理员登录" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "平台管理员登录" })).toBeInTheDocument();
 });
 
 test("后台接口返回未认证时自动退出并跳转登录页", async () => {
@@ -279,44 +279,44 @@ test("后台接口返回未认证时自动退出并跳转登录页", async () =>
   expect(window.localStorage.getItem("papermind.session.v1")).toBeNull();
 });
 
-test("平台管理员直接访问空间管理会回到概览且不请求租户接口", () => {
+test("平台管理员直接访问空间管理会回到概览且不请求租户接口", async () => {
   storePlatformSession();
   const fetchMock = vi.spyOn(globalThis, "fetch");
 
   renderApp(["/spaces?tenant_id=10"]);
 
-  expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-test("平台管理员直接访问用户管理会回到概览且不请求租户接口", () => {
+test("平台管理员直接访问用户管理会回到概览且不请求租户接口", async () => {
   storePlatformSession();
   const fetchMock = vi.spyOn(globalThis, "fetch");
 
   renderApp(["/users?tenant_id=10"]);
 
-  expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-test("平台管理员直接访问考试业务路由会回到概览", () => {
+test("平台管理员直接访问考试业务路由会回到概览", async () => {
   storePlatformSession();
   const fetchMock = vi.spyOn(globalThis, "fetch");
 
   renderApp(["/grading?space_id=301&exam_id=1"]);
 
-  expect(screen.getByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "考试平台概览" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "阅卷中心" })).not.toBeInTheDocument();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-test("租户用户直接访问平台治理路由会回到概览且不触发平台 API", () => {
+test("租户用户直接访问平台治理路由会回到概览且不触发平台 API", async () => {
   storeTenantTeacherSession();
   const fetchMock = vi.spyOn(globalThis, "fetch");
 
   renderApp(["/tenants"]);
 
-  expect(screen.getByRole("heading", { name: "教师工作概览" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "教师工作概览" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "租户管理" })).not.toBeInTheDocument();
   expect(fetchMock).not.toHaveBeenCalled();
 });
@@ -336,7 +336,7 @@ test("学生考试端与管理员后台路由隔离", async () => {
   mockStudentExamFetch();
   renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
-  expect(screen.getByRole("heading", { name: "在线考试" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "在线考试" })).toBeInTheDocument();
   expect(screen.getByText("PaperMind")).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "考生" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "退出考试" })).toBeInTheDocument();
@@ -469,7 +469,7 @@ test("H5 窄屏考试端直接使用真实 API 作答页", async () => {
 
   renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
-  expect(screen.getByRole("heading", { name: "在线考试" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "在线考试" })).toBeInTheDocument();
   expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
   expect(screen.queryByLabelText("开考前说明")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "考试信息与答题卡" })).toBeInTheDocument();
@@ -514,10 +514,11 @@ test("确认交卷通过交互弹窗展示", async () => {
   expect(screen.queryByRole("dialog", { name: "确认交卷" })).not.toBeInTheDocument();
 });
 
-test("自动保存提示不作为页面正文静态展示", () => {
+test("自动保存提示不作为页面正文静态展示", async () => {
   mockStudentExamFetch();
   renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
+  expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
   expect(screen.queryByRole("status", { name: "自动保存提示" })).not.toBeInTheDocument();
   expect(screen.queryByText("答案已自动保存")).not.toBeInTheDocument();
 });
@@ -574,10 +575,11 @@ test("考试端上报切屏事件并在交卷后展示成绩和解析", async ()
   expect(screen.getByText("题目解析已开放，可在成绩公布页查看解析内容。")).toBeInTheDocument();
 });
 
-test("简答题作答效果不作为当前考试页面正文展示", () => {
+test("简答题作答效果不作为当前考试页面正文展示", async () => {
   mockStudentExamFetch();
   renderApp(["/student/exam?tenant_id=10&exam_id=1&user_id=20"]);
 
+  expect(await screen.findByText("服务端题干 1")).toBeInTheDocument();
   expect(screen.queryByText("四、简答题（共30分）")).not.toBeInTheDocument();
   expect(screen.queryByPlaceholderText("请输入作答内容...")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "保存" })).not.toBeInTheDocument();
@@ -639,7 +641,7 @@ test("考试入口支持邀请码进入并跳转到考试端", async () => {
 
   renderApp(["/exam-entry"]);
 
-  expect(screen.getByRole("heading", { name: "考试入口" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "考试入口" })).toBeInTheDocument();
   expect(screen.getByLabelText("邀请码")).toBeInTheDocument();
   expect(screen.getByText("考试说明")).toBeInTheDocument();
   await user.type(screen.getByLabelText("邀请码"), "PM2026");
@@ -693,7 +695,7 @@ test("阅卷中心支持待阅卷列表、保存评分和完成阅卷", async ()
 
   renderApp(["/grading?space_id=301&exam_id=1"]);
 
-  expect(screen.getByRole("heading", { name: "阅卷中心" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "阅卷中心" })).toBeInTheDocument();
   expect(await screen.findByText("张三")).toBeInTheDocument();
   expect(screen.getByText("岳阳楼记思想内涵")).toBeInTheDocument();
 
@@ -992,7 +994,7 @@ test("空间管理员直达成绩页时使用当前空间授权身份", async ()
 
   renderApp(["/results?space_id=301&exam_id=1"]);
 
-  expect(screen.getByRole("heading", { name: "成绩" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "成绩" })).toBeInTheDocument();
   await waitFor(() => expect(resultsURL).toContain("actor_role=space_admin"));
   expect(resultsURL).toContain("space_id=301");
   await userEvent.click(screen.getByRole("button", { name: "导出成绩" }));
@@ -1040,7 +1042,7 @@ test("成绩页支持发布配置和成绩导出", async () => {
 
   renderApp(["/results?exam_id=1"]);
 
-  expect(screen.getByRole("heading", { name: "成绩" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "成绩" })).toBeInTheDocument();
   expect(screen.getByText("成绩发布配置")).toBeInTheDocument();
   expect(await screen.findByText("张三")).toBeInTheDocument();
   expect(screen.getByText("客观题分")).toBeInTheDocument();

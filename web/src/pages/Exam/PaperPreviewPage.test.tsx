@@ -34,6 +34,10 @@ vi.mock("../../api/results", async () => {
   };
 });
 
+function expectSelectText(element: HTMLElement, text: string) {
+  expect(element.closest(".ui-select-trigger")).toHaveTextContent(text);
+}
+
 test("试卷统计区在窄视口下有媒体查询兜底避免右侧裁切", () => {
   const css = readFileSync(join(process.cwd(), "src/styles/global.css"), "utf8");
   const summaryCardRule = css.match(/\.paper-preview-summary-card\s*\{[\s\S]*?\}/)?.[0] ?? "";
@@ -107,7 +111,7 @@ test("试卷预览页按考试预览布局展示试卷结构和题目", async ()
   expect(screen.getByRole("button", { name: "填空题" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "解答题" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "应用题" })).not.toBeInTheDocument();
-  expect(screen.getByLabelText("每页题数")).toHaveTextContent("1");
+  expectSelectText(screen.getByLabelText("每页题数"), "1");
   expect(screen.getByText("1 / 33 题")).toBeInTheDocument();
 
   const firstQuestion = screen.getByRole("article", { name: "第 1 题" });
@@ -672,8 +676,10 @@ test("考试详情无权限时展示 toast 和无权限提示面板", async () =
     </FeedbackProvider>,
   );
 
-  expect(await screen.findAllByText("没有权限查看该考试")).toHaveLength(2);
-  expect(screen.getByRole("heading", { name: "没有权限查看该考试" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "没有权限查看该考试" })).toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.getAllByText("没有权限查看该考试").some((node) => node.closest(".ant-message") !== null)).toBe(true);
+  });
   expect(screen.getByText("请确认当前账号是否拥有该考试所在空间的管理权限。")).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "试卷统计" })).not.toBeInTheDocument();
 });
@@ -920,8 +926,8 @@ test("考生管理标签页展示考生列表和批量操作", async () => {
   expect(within(panel).getByRole("button", { name: "批量导入考生" })).toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "发送邀请码" })).toBeInTheDocument();
   expect(within(panel).getByPlaceholderText("搜索姓名、学号或班级")).toBeInTheDocument();
-  expect(within(panel).getByLabelText("考试状态筛选")).toHaveTextContent("全部状态");
-  expect(within(panel).getByLabelText("班级筛选")).toHaveTextContent("高一全年级");
+  expectSelectText(within(panel).getByLabelText("考试状态筛选"), "全部状态");
+  expectSelectText(within(panel).getByLabelText("班级筛选"), "高一全年级");
 
   const table = within(panel).getByRole("table", { name: "考生列表" });
   expect(table).toHaveTextContent("姓名");
@@ -936,7 +942,7 @@ test("考生管理标签页展示考生列表和批量操作", async () => {
 
   expect(within(panel).getByText("共 128 条")).toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "第 1 页" })).toHaveAttribute("aria-current", "page");
-  expect(within(panel).getByLabelText("考生分页")).toHaveTextContent("1 / 4 页");
+  expectSelectText(within(panel).getByLabelText("考生分页"), "1 / 4 页");
 });
 
 test("考试详情考生管理标签页接入真实考生列表接口", async () => {
@@ -1053,7 +1059,7 @@ test("考试详情考生分页下拉会触发真实翻页请求", async () => {
     page: 2,
     pageSize: 20,
   });
-  expect(screen.getByLabelText("考生分页")).toHaveTextContent("2 / 3 页");
+  expectSelectText(screen.getByLabelText("考生分页"), "2 / 3 页");
 });
 
 test("考试详情考生管理的班级筛选会收窄当前表格和发送邀请码目标", async () => {
@@ -1376,7 +1382,7 @@ test("考试详情操作日志分页控件会触发真实翻页请求", async ()
     page: 2,
     pageSize: 20,
   });
-  expect(within(panel).getByLabelText("操作日志分页")).toHaveTextContent("2 / 3 页");
+  expectSelectText(within(panel).getByLabelText("操作日志分页"), "2 / 3 页");
 });
 
 test("考试详情操作日志加载失败会清空上一页日志", async () => {
@@ -1778,7 +1784,7 @@ test("成绩管理标签页展示成绩分析和成绩列表", async () => {
   expect(within(panel).getByRole("button", { name: "配置成绩发布" })).toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "导出成绩" })).toBeInTheDocument();
   expect(within(panel).getByPlaceholderText("搜索姓名、学号或班级")).toBeInTheDocument();
-  expect(within(panel).getByLabelText("成绩状态筛选")).toHaveTextContent("全部成绩状态");
+  expectSelectText(within(panel).getByLabelText("成绩状态筛选"), "全部成绩状态");
 
   const table = within(panel).getByRole("table", { name: "成绩列表" });
   expect(table).toHaveTextContent("排名");
@@ -1794,7 +1800,7 @@ test("成绩管理标签页展示成绩分析和成绩列表", async () => {
   expect(table).toHaveTextContent("已发布");
   expect(within(table).getAllByRole("button", { name: "查看成绩" })).toHaveLength(1);
   expect(within(table).getAllByRole("button", { name: "查看答卷" })).toHaveLength(1);
-  expect(within(panel).getByLabelText("成绩分页")).toHaveTextContent("1 / 1 页");
+  expectSelectText(within(panel).getByLabelText("成绩分页"), "1 / 1 页");
 });
 
 test("成绩管理标签页按后端权限隐藏发布和导出入口", async () => {

@@ -1,4 +1,5 @@
-import type { ButtonHTMLAttributes } from "react";
+import AntButton from "antd/es/button";
+import type { ButtonHTMLAttributes, ComponentProps } from "react";
 
 type ButtonVariant =
   | "primary"
@@ -13,7 +14,11 @@ type ButtonVariant =
   | "actionOpen"
   | "custom";
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+type AntButtonProps = ComponentProps<typeof AntButton>;
+
+type NativeButtonProps = ButtonHTMLAttributes<HTMLButtonElement>;
+
+type ButtonProps = NativeButtonProps & {
   variant?: ButtonVariant;
 };
 
@@ -31,8 +36,33 @@ const variantClassNames: Record<ButtonVariant, string> = {
   custom: "",
 };
 
-export function Button({ className = "", type = "button", variant = "custom", ...props }: ButtonProps) {
+export function Button({ children, className = "", type = "button", variant = "custom", ...props }: ButtonProps) {
   const buttonClassName = [variantClassNames[variant], className].filter(Boolean).join(" ");
 
-  return <button className={buttonClassName || undefined} type={type} {...props} />;
+  if (variant === "custom") {
+    return <button className={buttonClassName || undefined} type={type} {...props}>{children}</button>;
+  }
+
+  if (variant === "icon") {
+    return (
+      <AntButton
+        autoInsertSpace={false}
+        className={buttonClassName || undefined}
+        htmlType={type}
+        icon={children}
+        {...(props as Omit<AntButtonProps, "autoInsertSpace" | "className" | "htmlType" | "icon" | "type">)}
+      />
+    );
+  }
+
+  return (
+    <AntButton
+      autoInsertSpace={false}
+      className={buttonClassName || undefined}
+      htmlType={type}
+      {...(props as Omit<AntButtonProps, "autoInsertSpace" | "className" | "htmlType" | "type">)}
+    >
+      {children}
+    </AntButton>
+  );
 }

@@ -1,4 +1,4 @@
-import MDEditor from "@uiw/react-md-editor";
+import MDEditor from "@uiw/react-md-editor/nohighlight";
 import "@uiw/react-md-editor/markdown-editor.css";
 import "@uiw/react-markdown-preview/markdown.css";
 import "katex/dist/katex.min.css";
@@ -12,6 +12,8 @@ import type { ActorRole } from "../../api/grading";
 import { useFeedback } from "../../app/feedback-context";
 import { questionApi } from "../../api/questions";
 import type { QuestionAPI, QuestionDifficulty, QuestionType } from "../../api/questions";
+import { spaceApi as defaultSpaceApi } from "../../api/spaces";
+import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
 import { Button } from "../../components/ui/Button";
 import { Panel } from "../../components/ui/Panel";
 import { canWritePublicQuestionScope } from "./questionScopePermissions";
@@ -20,6 +22,7 @@ type QuestionCreatePageProps = {
   api?: QuestionAPI;
   actorRole?: ActorRole;
   questionID?: number;
+  spaceApi?: Pick<SpaceManagementAPI, "listSpaces">;
   tenantID?: number;
   spaceID?: number;
 };
@@ -38,16 +41,25 @@ const questionDifficultyLabels: Record<QuestionDifficulty, string> = {
   hard: "困难",
 };
 
-const defaultChoiceOptions = ["选项 A", "选项 B"];
+const defaultChoiceOptions = ["", ""];
 
-export function QuestionCreatePage({ api = questionApi, actorRole, questionID, tenantID = 10, spaceID }: QuestionCreatePageProps) {
+export function QuestionCreatePage({
+  api = questionApi,
+  actorRole,
+  questionID,
+  spaceApi = defaultSpaceApi,
+  tenantID = 10,
+  spaceID,
+}: QuestionCreatePageProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { showError } = useFeedback();
   const isEditMode = questionID !== undefined;
   const currentSpaceID = spaceID ?? readSpaceIDFromSearch(location.search);
   const canSelectPublicScope = canWritePublicQuestionScope(actorRole);
+  const canSelectTenantSpaceScope = actorRole === "tenant_admin";
   const [tags, setTags] = useState(["选择题", "语言文字"]);
+  const [questionSpaces, setQuestionSpaces] = useState<SpaceRow[]>([]);
   const [questionType, setQuestionType] = useState<QuestionType>("single");
   const [difficulty, setDifficulty] = useState<QuestionDifficulty>("medium");
   const [scoreDefault, setScoreDefault] = useState("2");
@@ -69,7 +81,13 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
     .filter((item) => !selectedQuestionTags.includes(item))
     .slice(0, 10);
   const shouldShowQuestionTagSuggestions = isQuestionTagInputFocused && questionTagQuery.trim() !== "" && questionTagSuggestions.length > 0;
-  const questionListPath = `/questions${location.search}`;
+  const questionListPath = `/questions${questionSearchForScope(location.search, selectedQuestionSpaceID)}`;
+  const questionScopeSpaceOptions = buildQuestionScopeSpaceOptions(currentSpaceID, canSelectTenantSpaceScope ? questionSpaces : [], selectedQuestionSpaceID);
+  const selectedQuestionScopeValue = selectedQuestionSpaceID === null && canSelectPublicScope
+    ? "public"
+    : selectedQuestionSpaceID === null
+      ? ""
+      : `space:${selectedQuestionSpaceID}`;
 
   useEffect(() => {
     let ignore = false;
@@ -90,6 +108,31 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
       ignore = true;
     };
   }, [api, tenantID, currentSpaceID]);
+
+  useEffect(() => {
+    if (!canSelectTenantSpaceScope) {
+      return;
+    }
+
+    let ignore = false;
+
+    spaceApi.listSpaces(tenantID)
+      .then((data) => {
+        if (!ignore) {
+          setQuestionSpaces(data.items);
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setQuestionSpaces([]);
+          showError("空间列表加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [canSelectTenantSpaceScope, showError, spaceApi, tenantID]);
 
   useEffect(() => {
     if (questionID === undefined) {
@@ -176,7 +219,7 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
   }
 
   function handleAddChoiceOption() {
-    setOptionValues((items) => [...items, `选项 ${optionLabelByIndex(items.length)}`]);
+    setOptionValues((items) => [...items, ""]);
   }
 
   function handleRemoveChoiceOption(index: number) {
@@ -237,21 +280,27 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
         <form className="platform-form exam-question-page-form" onSubmit={handleSaveQuestion}>
           <div className="exam-question-form-grid">
             <label className="field">
-              <span>所属空间</span>
+              <RequiredLabel>所属空间</RequiredLabel>
               <select
                 aria-label="所属空间"
-                onChange={(event) => setSelectedQuestionSpaceID(event.target.value === "public" ? null : currentSpaceID ?? null)}
-                value={selectedQuestionSpaceID === null && canSelectPublicScope ? "public" : "space"}
+                onChange={(event) => setSelectedQuestionSpaceID(readQuestionScopeSpaceID(event.target.value))}
+                required
+                value={selectedQuestionScopeValue}
               >
                 {canSelectPublicScope && <option value="public">公共题库</option>}
-                {currentSpaceID !== undefined && <option value="space">当前空间题库</option>}
+                {questionScopeSpaceOptions.map((space) => (
+                  <option key={space.id} value={`space:${space.id}`}>
+                    {space.label}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="field">
-              <span>题型</span>
+              <RequiredLabel>题型</RequiredLabel>
               <select
                 aria-label="题型"
                 onChange={(event) => setQuestionType(event.target.value as QuestionType)}
+                required
                 value={questionType}
               >
                 {Object.entries(questionTypeLabels).map(([value, label]) => (
@@ -262,10 +311,11 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
               </select>
             </label>
             <label className="field">
-              <span>题目难度</span>
+              <RequiredLabel>题目难度</RequiredLabel>
               <select
                 aria-label="题目难度"
                 onChange={(event) => setDifficulty(event.target.value as QuestionDifficulty)}
+                required
                 value={difficulty}
               >
                 {Object.entries(questionDifficultyLabels).map(([value, label]) => (
@@ -276,7 +326,7 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
               </select>
             </label>
             <label className="field">
-              <span>默认分值</span>
+              <RequiredLabel>默认分值</RequiredLabel>
               <input
                 aria-label="默认分值"
                 min="0"
@@ -305,7 +355,7 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
                 return (
                   <div className="exam-option-item" key={index}>
                     <label className="field">
-                      <span>{`选项 ${optionLabel}`}</span>
+                      {index < 2 ? <RequiredLabel>{`选项 ${optionLabel}`}</RequiredLabel> : <span>{`选项 ${optionLabel}`}</span>}
                       <input
                         aria-label={`选项 ${optionLabel}`}
                         onChange={(event) => setOptionValues((items) =>
@@ -361,7 +411,7 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
 
           {questionType === "judge" && (
             <label className="field">
-              <span>正确答案</span>
+              <RequiredLabel>正确答案</RequiredLabel>
               <select aria-label="判断题正确答案" onChange={(event) => setJudgeAnswer(event.target.value)} value={judgeAnswer}>
                 <option value="true">正确</option>
                 <option value="false">错误</option>
@@ -379,7 +429,7 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
               {fillBlankAnswers.map((value, index) => (
                 <div className="exam-option-item" key={index}>
                   <label className="field">
-                    <span>{`第 ${index + 1} 空标准答案`}</span>
+                    <RequiredLabel>{`第 ${index + 1} 空标准答案`}</RequiredLabel>
                     <input
                       aria-label={`第 ${index + 1} 空标准答案`}
                       onChange={(event) => setFillBlankAnswers((items) =>
@@ -407,7 +457,7 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
           )}
           {questionType === "short_text" && (
             <label className="field">
-              <span>参考答案</span>
+              <RequiredLabel>参考答案</RequiredLabel>
               <textarea
                 aria-label="简答题参考答案"
                 onChange={(event) => setReferenceAnswer(event.target.value)}
@@ -493,6 +543,15 @@ export function QuestionCreatePage({ api = questionApi, actorRole, questionID, t
   );
 }
 
+function RequiredLabel({ children }: { children: string }) {
+  return (
+    <span className="field-label">
+      {children}
+      <span aria-hidden="true" className="required-marker">*</span>
+    </span>
+  );
+}
+
 function MarkdownEditor({
   label,
   onChange,
@@ -506,7 +565,7 @@ function MarkdownEditor({
 }) {
   return (
     <div className="field markdown-editor" data-color-mode="light">
-      <span>{label}</span>
+      {required ? <RequiredLabel>{label}</RequiredLabel> : <span>{label}</span>}
       <MDEditor
         height="auto"
         onChange={(nextValue) => onChange(nextValue ?? "")}
@@ -527,6 +586,30 @@ function MarkdownEditor({
   );
 }
 
+function buildQuestionScopeSpaceOptions(currentSpaceID: number | undefined, spaces: SpaceRow[], selectedSpaceID: number | null) {
+  const options = spaces.map((space) => ({
+    id: space.id,
+    label: space.name,
+  }));
+  for (const fallbackSpaceID of [currentSpaceID, selectedSpaceID]) {
+    if (fallbackSpaceID !== undefined && fallbackSpaceID !== null && !options.some((space) => space.id === fallbackSpaceID)) {
+      options.push({
+        id: fallbackSpaceID,
+        label: fallbackSpaceID === currentSpaceID ? "当前空间题库" : `空间 ${fallbackSpaceID}`,
+      });
+    }
+  }
+  return options;
+}
+
+function readQuestionScopeSpaceID(value: string) {
+  if (value === "public") {
+    return null;
+  }
+  const parsed = Number.parseInt(value.replace("space:", ""), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function readSpaceIDFromSearch(search: string) {
   const value = new URLSearchParams(search).get("space_id");
   if (value === null) {
@@ -534,6 +617,17 @@ function readSpaceIDFromSearch(search: string) {
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function questionSearchForScope(currentSearch: string, questionSpaceID: number | null) {
+  const params = new URLSearchParams(currentSearch);
+  if (questionSpaceID === null) {
+    params.delete("space_id");
+  } else {
+    params.set("space_id", String(questionSpaceID));
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 function normalizeTags(tags: string[]) {

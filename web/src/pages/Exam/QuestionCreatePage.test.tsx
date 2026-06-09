@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { expect, test, vi } from "vitest";
 import type { ActorRole } from "../../api/grading";
 import { FeedbackProvider } from "../../app/feedback";
+import type { SpaceManagementAPI } from "../../api/spaces";
 import { QuestionCreatePage } from "./QuestionCreatePage";
 
 function renderWithFeedback(page: ReactElement) {
@@ -127,6 +128,46 @@ function renderCreatePageWithRole(actorRole: ActorRole, api = createQuestionAPI(
   return api;
 }
 
+function createSpaceAPI(): Pick<SpaceManagementAPI, "listSpaces"> {
+  return {
+    listSpaces: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 301,
+          tenantID: 10,
+          name: "高一一班",
+          description: "高一一班空间",
+          logoFileName: "class-a.png",
+          members: [],
+        },
+        {
+          id: 302,
+          tenantID: 10,
+          name: "高一二班",
+          description: "高一二班空间",
+          logoFileName: "class-b.png",
+          members: [],
+        },
+      ],
+    }),
+  };
+}
+
+function renderTenantAdminCreatePage(api = createQuestionAPI(), spacesApi = createSpaceAPI()) {
+  renderWithFeedback(
+    <MemoryRouter initialEntries={["/questions/new"]}>
+      <Routes>
+        <Route
+          path="/questions/new"
+          element={<QuestionCreatePage actorRole="tenant_admin" api={api} spaceApi={spacesApi} tenantID={10} />}
+        />
+        <Route path="/questions" element={<div>题库列表页</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  return { api, spacesApi };
+}
+
 function renderEditPage(api = createQuestionAPI()) {
   renderWithFeedback(
     <MemoryRouter initialEntries={["/questions/100/edit?space_id=301"]}>
@@ -223,6 +264,18 @@ test("教师可以在新增题目页面创建选择题并编辑选项和标签",
   expect(await screen.findByText("题库列表页")).toBeInTheDocument();
 });
 
+test("新增题目时选择题选项默认置空", async () => {
+  const user = userEvent.setup();
+  renderCreatePage();
+
+  expect(screen.getByLabelText("选项 A")).toHaveValue("");
+  expect(screen.getByLabelText("选项 B")).toHaveValue("");
+
+  await user.click(screen.getByRole("button", { name: "添加选项" }));
+
+  expect(screen.getByLabelText("选项 C")).toHaveValue("");
+});
+
 test("新增题目可以选择归属到公共题库", async () => {
   const user = userEvent.setup();
   const api = renderCreatePage();
@@ -230,6 +283,8 @@ test("新增题目可以选择归属到公共题库", async () => {
   await user.selectOptions(screen.getByLabelText("所属空间"), "public");
   await user.clear(screen.getByLabelText("题干"));
   await user.type(screen.getByLabelText("题干"), "公共题库题目");
+  await user.type(screen.getByLabelText("选项 A"), "公共选项 A");
+  await user.type(screen.getByLabelText("选项 B"), "公共选项 B");
   await user.clear(screen.getByLabelText("题目解析"));
   await user.type(screen.getByLabelText("题目解析"), "公共题库解析");
   await user.click(screen.getByRole("button", { name: "确认新增" }));
@@ -241,6 +296,64 @@ test("新增题目可以选择归属到公共题库", async () => {
     analysis: "公共题库解析",
   }));
 });
+
+test("租户管理员新增题目时可以选择归属到具体空间", async () => {
+  const user = userEvent.setup();
+  const { api, spacesApi } = renderTenantAdminCreatePage();
+
+  await waitFor(() => {
+    expect(spacesApi.listSpaces).toHaveBeenCalledWith(10);
+  });
+  await user.selectOptions(screen.getByLabelText("所属空间"), "space:302");
+  await user.clear(screen.getByLabelText("题干"));
+  await user.type(screen.getByLabelText("题干"), "空间题库题目");
+  await user.type(screen.getByLabelText("选项 A"), "空间选项 A");
+  await user.type(screen.getByLabelText("选项 B"), "空间选项 B");
+  await user.clear(screen.getByLabelText("题目解析"));
+  await user.type(screen.getByLabelText("题目解析"), "空间题库解析");
+  await user.click(screen.getByRole("button", { name: "确认新增" }));
+
+  expect(api.createQuestion).toHaveBeenCalledWith(expect.objectContaining({
+    tenantID: 10,
+    spaceID: 302,
+    title: "空间题库题目",
+    analysis: "空间题库解析",
+  }));
+});
+
+test("租户管理员从其他空间上下文新增题目后返回目标空间列表", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  const spacesApi = createSpaceAPI();
+  renderWithFeedback(
+    <MemoryRouter initialEntries={["/questions/new?space_id=301"]}>
+      <Routes>
+        <Route
+          path="/questions/new"
+          element={<QuestionCreatePage actorRole="tenant_admin" api={api} spaceApi={spacesApi} tenantID={10} />}
+        />
+        <Route path="/questions" element={<LocationProbe />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await waitFor(() => {
+    expect(spacesApi.listSpaces).toHaveBeenCalledWith(10);
+  });
+  await user.selectOptions(screen.getByLabelText("所属空间"), "space:302");
+  await user.type(screen.getByLabelText("题干"), "跨空间题目");
+  await user.type(screen.getByLabelText("选项 A"), "选项 A");
+  await user.type(screen.getByLabelText("选项 B"), "选项 B");
+  await user.type(screen.getByLabelText("题目解析"), "跨空间解析");
+  await user.click(screen.getByRole("button", { name: "确认新增" }));
+
+  expect(await screen.findByText(/题库列表页/)).toHaveTextContent("?space_id=302");
+});
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div>题库列表页 {location.search}</div>;
+}
 
 test("空间管理员在新增题目页面看不到公共题库选项", async () => {
   renderCreatePageWithRole("space_admin");
@@ -271,7 +384,7 @@ test("新增选择题时不能把空白选项设为正确答案", async () => {
 
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("正确答案选项不能为空");
-  expect(alert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(alert.closest(".ant-message")).toBeInTheDocument();
   expect(document.querySelector(".tenant-admin-warning")).not.toBeInTheDocument();
   expect(api.createQuestion).not.toHaveBeenCalled();
 });
@@ -316,7 +429,7 @@ test("编辑题目加载失败时使用 toast 提示", async () => {
 
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("题目加载失败");
-  expect(alert.parentElement).toHaveClass("feedback-toast-stack");
+  expect(alert.closest(".ant-message")).toBeInTheDocument();
   expect(document.querySelector(".tenant-admin-warning")).not.toBeInTheDocument();
 });
 
@@ -350,6 +463,18 @@ test("教师可以打开编辑题目页面并保存修改", async () => {
     blankCount: undefined,
   });
   expect(await screen.findByText("题库列表页")).toBeInTheDocument();
+});
+
+test("编辑题目页面必填项使用红色星号标记", async () => {
+  renderEditPage();
+
+  expect(await screen.findByRole("heading", { name: "编辑题目" })).toBeInTheDocument();
+
+  for (const label of ["题型", "题目难度", "默认分值", "题干", "题目解析", "选项 A", "选项 B"]) {
+    const field = screen.getByLabelText(label).closest(".field");
+    expect(field).not.toBeNull();
+    expect(within(field as HTMLElement).getByText("*")).toHaveClass("required-marker");
+  }
 });
 
 test("编辑填空题时会加载多个空答案", async () => {

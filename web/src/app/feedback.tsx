@@ -1,50 +1,42 @@
-import { Button } from "../components/ui/Button";
-import { AlertCircle, CheckCircle2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import message from "antd/es/message";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { FeedbackContext } from "./feedback-context";
-import type { FeedbackMessage, FeedbackTone } from "./feedback-context";
+import type { FeedbackTone } from "./feedback-context";
 
 type FeedbackProviderProps = {
   children: ReactNode;
 };
 
-const feedbackVisibleDuration = 5000;
-const feedbackToneLabels: Record<FeedbackTone, string> = {
-  error: "错误提示",
-  success: "成功提示",
-};
-
+const feedbackVisibleDurationSeconds = 5;
 export function FeedbackProvider({ children }: FeedbackProviderProps) {
-  const [messages, setMessages] = useState<FeedbackMessage[]>([]);
-  const nextMessageID = useRef(1);
-  const timers = useRef(new Map<number, number>());
-
-  const dismiss = useCallback((id: number) => {
-    const timer = timers.current.get(id);
-    if (timer) {
-      window.clearTimeout(timer);
-      timers.current.delete(id);
-    }
-    setMessages((items) => items.filter((item) => item.id !== id));
-  }, []);
+  const pendingTimers = useRef<number[]>([]);
+  const [messageApi, contextHolder] = message.useMessage({
+    duration: feedbackVisibleDurationSeconds,
+    top: 24,
+    transitionName: "",
+    classNames: {
+      root: "feedback-message-root",
+      title: "feedback-message-title",
+    },
+  });
 
   const show = useCallback((tone: FeedbackTone, text: string) => {
-    const id = nextMessageID.current;
-    nextMessageID.current += 1;
-    setMessages((items) => [...items, { id, tone, text }]);
     const timer = window.setTimeout(() => {
-      timers.current.delete(id);
-      setMessages((items) => items.filter((item) => item.id !== id));
-    }, feedbackVisibleDuration);
-    timers.current.set(id, timer);
-  }, []);
+      pendingTimers.current = pendingTimers.current.filter((item) => item !== timer);
+      messageApi.open({
+        content: <span>{text}</span>,
+        type: tone,
+      });
+    }, 0);
+    pendingTimers.current.push(timer);
+  }, [messageApi]);
 
   const clear = useCallback(() => {
-    timers.current.forEach((timer) => window.clearTimeout(timer));
-    timers.current.clear();
-    setMessages([]);
-  }, []);
+    pendingTimers.current.forEach((timer) => window.clearTimeout(timer));
+    pendingTimers.current = [];
+    messageApi.destroy();
+  }, [messageApi]);
 
   useEffect(() => clear, [clear]);
 
@@ -59,29 +51,8 @@ export function FeedbackProvider({ children }: FeedbackProviderProps) {
 
   return (
     <FeedbackContext.Provider value={value}>
+      {contextHolder}
       {children}
-      {messages.length > 0 && (
-        <div aria-live="polite" className="feedback-toast-stack">
-          {messages.map((message) => (
-            <div className={`feedback-toast feedback-toast--${message.tone}`} key={message.id} role="alert">
-              <span
-                aria-label={feedbackToneLabels[message.tone]}
-                className={`feedback-toast__icon feedback-toast__icon--${message.tone}`}
-              >
-                {message.tone === "error" ? (
-                  <AlertCircle aria-hidden="true" size={16} />
-                ) : (
-                  <CheckCircle2 aria-hidden="true" size={16} />
-                )}
-              </span>
-              <span className="feedback-toast__text">{message.text}</span>
-              <Button aria-label="关闭提示" onClick={() => dismiss(message.id)} type="button">
-                <X aria-hidden="true" size={16} />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
     </FeedbackContext.Provider>
   );
 }

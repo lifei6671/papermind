@@ -6,6 +6,7 @@ import { Link, useLocation } from "react-router-dom";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { Pagination } from "../../components/ui/Pagination";
+import { PlatformDrawer } from "../../components/ui/PlatformDrawer";
 import { RadioGroup, RadioGroupItem } from "../../components/ui/RadioGroup";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { Select } from "../../components/ui/Select";
@@ -17,12 +18,15 @@ import { useFeedback } from "../../app/feedback-context";
 import { questionApi } from "../../api/questions";
 import type { ActorRole } from "../../api/grading";
 import type { QuestionAPI, QuestionImportJobEvent, QuestionListResult, QuestionRow, QuestionType } from "../../api/questions";
+import { spaceApi as defaultSpaceApi } from "../../api/spaces";
+import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
 import { canWritePublicQuestionScope } from "./questionScopePermissions";
 import { questionImportTemplateFileName, questionImportTemplateHref } from "./questionImportTemplate";
 
 type QuestionBankPageProps = {
   api?: QuestionAPI;
   actorRole?: ActorRole;
+  spaceApi?: Pick<SpaceManagementAPI, "listSpaces">;
   tenantID?: number;
   spaceID?: number;
   spaceName?: string;
@@ -64,12 +68,21 @@ const questionStatusLabels: Record<QuestionRow["status"], string> = {
 
 const questionPageSizeOptions = [10, 20, 30, 40, 50];
 
-export function QuestionBankPage({ api = questionApi, actorRole, tenantID = 10, spaceID, spaceName }: QuestionBankPageProps) {
+export function QuestionBankPage({
+  api = questionApi,
+  actorRole,
+  spaceApi = defaultSpaceApi,
+  tenantID = 10,
+  spaceID,
+  spaceName,
+}: QuestionBankPageProps) {
   const location = useLocation();
   const { showError, showSuccess } = useFeedback();
   const currentSpaceID = spaceID ?? readSpaceIDFromSearch(location.search);
   const canSelectPublicScope = canWritePublicQuestionScope(actorRole);
+  const canSelectTenantSpaceScope = actorRole === "tenant_admin";
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
+  const [questionSpaces, setQuestionSpaces] = useState<SpaceRow[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
@@ -83,6 +96,12 @@ export function QuestionBankPage({ api = questionApi, actorRole, tenantID = 10, 
   const [pendingQuestionID, setPendingQuestionID] = useState<number | null>(null);
   const [isQuestionListRefreshing, setIsQuestionListRefreshing] = useState(false);
   const questionCreateHref = `/questions/new${location.search}`;
+  const importScopeSpaceOptions = buildQuestionScopeSpaceOptions(currentSpaceID, canSelectTenantSpaceScope ? questionSpaces : [], selectedImportSpaceID);
+  const selectedImportScopeValue = selectedImportSpaceID === null && canSelectPublicScope
+    ? "public"
+    : selectedImportSpaceID === null
+      ? ""
+      : `space:${selectedImportSpaceID}`;
 
   function applyQuestionPageData(data: QuestionListResult) {
     setQuestions(data.items);
@@ -110,6 +129,31 @@ export function QuestionBankPage({ api = questionApi, actorRole, tenantID = 10, 
       ignore = true;
     };
   }, [api, tenantID, currentSpaceID, page, pageSize, appliedSearchQuery, showError]);
+
+  useEffect(() => {
+    if (!canSelectTenantSpaceScope) {
+      return;
+    }
+
+    let ignore = false;
+
+    spaceApi.listSpaces(tenantID)
+      .then((data) => {
+        if (!ignore) {
+          setQuestionSpaces(data.items);
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setQuestionSpaces([]);
+          showError("空间列表加载失败");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [canSelectTenantSpaceScope, showError, spaceApi, tenantID]);
 
   const visibleQuestions = questions;
 
@@ -424,14 +468,7 @@ export function QuestionBankPage({ api = questionApi, actorRole, tenantID = 10, 
       </Panel>
 
       {isImportDrawerOpen && (
-        <div className="tenant-resource-drawer-layer tenant-resource-drawer-layer--overlay tenant-resource-drawer-layer--visible">
-          <div aria-hidden="true" className="tenant-resource-drawer-backdrop" />
-          <aside
-            aria-label="题目导入抽屉"
-            aria-modal="true"
-            className="tenant-resource-drawer tenant-resource-drawer--half tenant-resource-drawer--open"
-            role="dialog"
-          >
+        <PlatformDrawer ariaLabel="题目导入抽屉" onClose={() => setIsImportDrawerOpen(false)} open={isImportDrawerOpen}>
             <header className="tenant-resource-drawer__head tenant-resource-drawer__head--inline">
               <div className="tenant-resource-drawer__return-line">
                 <button
@@ -460,15 +497,19 @@ export function QuestionBankPage({ api = questionApi, actorRole, tenantID = 10, 
               </div>
             </header>
             <div className="tenant-resource-drawer__body">
-              <label className="field">
+              <label className="field question-import-scope-field">
                 <span>所属空间</span>
                 <select
                   aria-label="导入所属空间"
-                  onChange={(event) => setSelectedImportSpaceID(event.target.value === "public" ? null : currentSpaceID ?? null)}
-                  value={selectedImportSpaceID === null && canSelectPublicScope ? "public" : "space"}
+                  onChange={(event) => setSelectedImportSpaceID(readQuestionScopeSpaceID(event.target.value))}
+                  value={selectedImportScopeValue}
                 >
                   {canSelectPublicScope && <option value="public">公共题库</option>}
-                  {currentSpaceID !== undefined && <option value="space">当前空间题库</option>}
+                  {importScopeSpaceOptions.map((space) => (
+                    <option key={space.id} value={`space:${space.id}`}>
+                      {space.label}
+                    </option>
+                  ))}
                 </select>
               </label>
               <FileUploadField
@@ -539,8 +580,7 @@ export function QuestionBankPage({ api = questionApi, actorRole, tenantID = 10, 
                 </table>
               </div>
             </div>
-          </aside>
-        </div>
+        </PlatformDrawer>
       )}
 
     </section>
@@ -624,6 +664,30 @@ function canManageQuestion(question: QuestionRow, actorRole?: ActorRole) {
     return canWritePublicQuestionScope(actorRole);
   }
   return true;
+}
+
+function buildQuestionScopeSpaceOptions(currentSpaceID: number | undefined, spaces: SpaceRow[], selectedSpaceID: number | null) {
+  const options = spaces.map((space) => ({
+    id: space.id,
+    label: space.name,
+  }));
+  for (const fallbackSpaceID of [currentSpaceID, selectedSpaceID]) {
+    if (fallbackSpaceID !== undefined && fallbackSpaceID !== null && !options.some((space) => space.id === fallbackSpaceID)) {
+      options.push({
+        id: fallbackSpaceID,
+        label: fallbackSpaceID === currentSpaceID ? "当前空间题库" : `空间 ${fallbackSpaceID}`,
+      });
+    }
+  }
+  return options;
+}
+
+function readQuestionScopeSpaceID(value: string) {
+  if (value === "public") {
+    return null;
+  }
+  const parsed = Number.parseInt(value.replace("space:", ""), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function readSpaceIDFromSearch(search: string) {

@@ -10,6 +10,7 @@ import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Pagination } from "../../components/ui/Pagination";
 import { Panel } from "../../components/ui/Panel";
+import { PlatformModal } from "../../components/ui/PlatformModal";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { Select } from "../../components/ui/Select";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
@@ -763,10 +764,7 @@ export function PaperAssemblyPage({
         )}
       </Panel>
 
-      {isCreatePaperDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="新建试卷">
-          <div className="platform-dialog__card">
-            <h2>新建试卷</h2>
+      <PlatformModal open={isCreatePaperDialogOpen} onClose={() => setIsCreatePaperDialogOpen(false)} title="新建试卷">
             <form className="platform-form" onSubmit={handleCreatePaper}>
               <label className="field">
                 <span>试卷名称</span>
@@ -826,14 +824,9 @@ export function PaperAssemblyPage({
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </PlatformModal>
 
-      {isSectionDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="新增大题弹窗">
-          <div className="platform-dialog__card">
-            <h2>新增大题</h2>
+      <PlatformModal open={isSectionDialogOpen} onClose={() => setIsSectionDialogOpen(false)} title="新增大题弹窗">
             <form className="platform-form" onSubmit={handleAddSection}>
               <label className="field">
                 <span>大题名称</span>
@@ -852,14 +845,9 @@ export function PaperAssemblyPage({
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </PlatformModal>
 
-      {isFixedDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="rule_fixed 弹窗">
-          <div className="platform-dialog__card">
-            <h2>生成固定规则试卷</h2>
+      <PlatformModal open={isFixedDialogOpen} onClose={() => setIsFixedDialogOpen(false)} title="rule_fixed 弹窗">
             <form className="platform-form" onSubmit={handleGenerateFixedPaper}>
               <label className="field">
                 <span>固定规则题量</span>
@@ -881,14 +869,9 @@ export function PaperAssemblyPage({
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </PlatformModal>
 
-      {isLiveDialogOpen && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="rule_live 弹窗">
-          <div className="platform-dialog__card">
-            <h2>保存 rule_live 规则</h2>
+      <PlatformModal open={isLiveDialogOpen} onClose={() => setIsLiveDialogOpen(false)} title="rule_live 弹窗">
             <form className="platform-form" onSubmit={handleSaveLiveRule}>
               <label className="field">
                 <span>动态规则题量</span>
@@ -910,14 +893,10 @@ export function PaperAssemblyPage({
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </PlatformModal>
 
       {editableRule && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label={`编辑规则 ${editableRule.ruleID}`}>
-          <div className="platform-dialog__card">
-            <h2>编辑组卷规则</h2>
+        <PlatformModal open={editableRule !== null} onClose={() => setEditableRule(null)} title={`编辑规则 ${editableRule.ruleID}`}>
             <form className="platform-form" onSubmit={handleSaveEditableRule}>
               <label className="field">
                 <span>规则题量</span>
@@ -947,8 +926,7 @@ export function PaperAssemblyPage({
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
+        </PlatformModal>
       )}
     </section>
   );

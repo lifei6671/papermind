@@ -1,4 +1,5 @@
-import { Button } from "./Button";
+import AntPagination from "antd/es/pagination";
+
 type PaginationProps = {
   page: number;
   pageSize: number;
@@ -8,29 +9,30 @@ type PaginationProps = {
 
 export function Pagination({ page, pageSize, total, onPageChange }: PaginationProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const canGoPrevious = page > 1;
-  const canGoNext = page < totalPages;
 
   return (
-    <nav aria-label="分页" className="pagination">
-      <span>共 {total} 条</span>
-      <div className="pagination__controls">
-        <Button disabled={!canGoPrevious} onClick={() => onPageChange(1)} type="button">
-          首页
-        </Button>
-        <Button disabled={!canGoPrevious} onClick={() => onPageChange(page - 1)} type="button">
-          上一页
-        </Button>
-        <strong>
-          第 {page} / {totalPages} 页
-        </strong>
-        <Button disabled={!canGoNext} onClick={() => onPageChange(page + 1)} type="button">
-          下一页
-        </Button>
-        <Button disabled={!canGoNext} onClick={() => onPageChange(totalPages)} type="button">
-          尾页
-        </Button>
-      </div>
+    <nav aria-label="分页" className="pagination pagination--right">
+      <AntPagination
+        className="pagination__controls"
+        current={page}
+        itemRender={(_, type, originalElement) => {
+          if (type === "prev") {
+            return <button type="button">上一页</button>;
+          }
+          if (type === "next") {
+            return <button type="button">下一页</button>;
+          }
+          return originalElement;
+        }}
+        onChange={(nextPage) => onPageChange(nextPage)}
+        pageSize={pageSize}
+        showSizeChanger={false}
+        showTotal={(value) => `共 ${value} 条`}
+        total={total}
+      />
+      <strong className="pagination__current">
+        第 {page} / {totalPages} 页
+      </strong>
     </nav>
   );
 }

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import type { ReactElement } from "react";
@@ -122,6 +122,21 @@ function createUserAPI() {
 function createSpaceAPI() {
   return {
     listSpaces: vi.fn().mockResolvedValue({ items: [] }),
+    createSpaceMember: vi.fn().mockResolvedValue({
+      id: 1001,
+      userID: 27,
+      name: "钱同学",
+      role: "student",
+      status: "enabled",
+    }),
+    updateSpaceMember: vi.fn().mockResolvedValue({
+      id: 1001,
+      userID: 20,
+      name: "李老师",
+      role: "student",
+      status: "enabled",
+    }),
+    removeSpaceMember: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -149,8 +164,8 @@ test("用户管理页展示用户列表和角色状态", async () => {
 });
 
 test("用户管理页展示教师空间分配状态", async () => {
-  const spaceApi = {
-    listSpaces: vi.fn().mockResolvedValue({
+  const spaceApi = createSpaceAPI();
+  vi.mocked(spaceApi.listSpaces).mockResolvedValue({
       items: [{
         id: 301,
         tenantID: 10,
@@ -165,21 +180,20 @@ test("用户管理页展示教师空间分配状态", async () => {
           status: "enabled",
         }],
       }],
-    }),
-  };
+    });
 
   renderWithFeedback(<UserManagementPage api={createUserAPI()} spaceApi={spaceApi} tenantID={10} />);
 
   const teacherRow = await screen.findByRole("row", { name: /李老师/ });
   expect(within(teacherRow).getByText("已加入 1 个空间")).toBeInTheDocument();
-  expect(screen.getByRole("row", { name: /张同学/ })).toHaveTextContent("不适用");
+  expect(screen.getByRole("row", { name: /张同学/ })).toHaveTextContent("暂未分配空间");
   expect(spaceApi.listSpaces).toHaveBeenCalledWith(10);
 });
 
 test("用户详情展示教师空间分配状态", async () => {
   const user = userEvent.setup();
-  const spaceApi = {
-    listSpaces: vi.fn().mockResolvedValue({
+  const spaceApi = createSpaceAPI();
+  vi.mocked(spaceApi.listSpaces).mockResolvedValue({
       items: [{
         id: 301,
         tenantID: 10,
@@ -194,17 +208,20 @@ test("用户详情展示教师空间分配状态", async () => {
           status: "enabled",
         }],
       }],
-    }),
-  };
+    });
   renderWithFeedback(<UserManagementPage api={createUserAPI()} spaceApi={spaceApi} tenantID={10} />);
 
   const teacherRow = await screen.findByRole("row", { name: /李老师/ });
   await user.click(within(teacherRow).getByRole("button", { name: "查看详情" }));
 
   const dialog = screen.getByRole("dialog", { name: "用户详情" });
+  expect(dialog.closest(".ant-drawer")).toBeInTheDocument();
+  expect(dialog.querySelector(".ant-descriptions")).toBeInTheDocument();
   expect(dialog).toHaveTextContent("李老师");
   expect(dialog).toHaveTextContent("空间分配");
   expect(dialog).toHaveTextContent("已加入 1 个空间");
+  await user.click(within(dialog).getByRole("button", { name: "关闭抽屉" }));
+  expect(screen.queryByRole("dialog", { name: "用户详情" })).not.toBeInTheDocument();
 });
 
 test("缺少租户上下文时不请求用户接口", () => {
@@ -219,20 +236,48 @@ test("缺少租户上下文时不请求用户接口", () => {
 test("租户管理员可以创建用户", async () => {
   const user = userEvent.setup();
   const api = createUserAPI();
-  renderWithFeedback(<UserManagementPage api={api} spaceApi={createSpaceAPI()} tenantID={10} />);
+  const spaceApi = createSpaceAPI();
+  vi.mocked(spaceApi.listSpaces).mockResolvedValue({
+    items: [
+      {
+        id: 301,
+        tenantID: 10,
+        name: "高一一班",
+        description: "月考空间",
+        logoFileName: "class-a.png",
+        members: [],
+      },
+      {
+        id: 302,
+        tenantID: 10,
+        name: "高一二班",
+        description: "周考空间",
+        logoFileName: "class-b.png",
+        members: [],
+      },
+    ],
+  });
+  renderWithFeedback(<UserManagementPage api={api} spaceApi={spaceApi} tenantID={10} />);
 
   await screen.findByText("李老师");
 
   await user.click(screen.getByRole("button", { name: "创建用户" }));
 
-  expect(screen.getByRole("dialog", { name: "创建用户弹窗" })).toBeInTheDocument();
+  const drawer = screen.getByRole("dialog", { name: "创建用户抽屉" });
+  expect(drawer.closest(".ant-drawer")).toBeInTheDocument();
+  expect(within(drawer).getAllByText("*")).toHaveLength(4);
+  for (const marker of within(drawer).getAllByText("*")) {
+    expect(marker).toHaveClass("required-marker");
+  }
   expect(screen.queryByLabelText("用户头像")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("首次登录必须修改密码")).toBeChecked();
+  expect(within(drawer).getByLabelText("首次登录必须修改密码")).toBeChecked();
 
-  await user.type(screen.getByLabelText("姓名"), "钱同学");
-  await user.type(screen.getByLabelText("账号"), "qian.student");
-  await user.type(screen.getByLabelText("初始密码"), "student-secure-123");
-  await user.click(screen.getByRole("button", { name: "确认创建" }));
+  await user.type(within(drawer).getByLabelText("姓名"), "钱同学");
+  await user.type(within(drawer).getByLabelText("账号"), "qian.student");
+  await user.type(within(drawer).getByLabelText("初始密码"), "student-secure-123");
+  await user.click(within(drawer).getByLabelText("高一一班"));
+  await user.click(within(drawer).getByLabelText("高一二班"));
+  await user.click(within(drawer).getByRole("button", { name: "确认创建" }));
 
   expect(api.createUser).toHaveBeenCalledWith({
     tenantID: 10,
@@ -243,10 +288,145 @@ test("租户管理员可以创建用户", async () => {
     avatarFileName: "未上传",
     forcePasswordChange: true,
   });
+  expect(spaceApi.createSpaceMember).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, userID: 27, role: "student" });
+  expect(spaceApi.createSpaceMember).toHaveBeenCalledWith({ tenantID: 10, spaceID: 302, userID: 27, role: "student" });
   expect(await screen.findByText("钱同学")).toBeInTheDocument();
   expect(screen.getAllByRole("row")[1]).toHaveTextContent("钱同学");
   expect(screen.getByText("qian.student")).toBeInTheDocument();
   expect(screen.getByText("未上传")).toBeInTheDocument();
+});
+
+test("租户管理员编辑用户时只能维护空间归属不能变更角色", async () => {
+  const user = userEvent.setup();
+  const api = createUserAPI();
+  const spaceApi = createSpaceAPI();
+  vi.mocked(spaceApi.listSpaces).mockResolvedValue({
+    items: [
+      {
+        id: 301,
+        tenantID: 10,
+        name: "高一一班",
+        description: "月考空间",
+        logoFileName: "class-a.png",
+        members: [{ id: 1, userID: 20, name: "李老师", role: "teacher", status: "enabled" }],
+      },
+      {
+        id: 302,
+        tenantID: 10,
+        name: "高一二班",
+        description: "周考空间",
+        logoFileName: "class-b.png",
+        members: [],
+      },
+    ],
+  });
+  renderWithFeedback(<UserManagementPage api={api} spaceApi={spaceApi} tenantID={10} />);
+
+  const teacherRow = await screen.findByRole("row", { name: /李老师/ });
+  expect(within(teacherRow).getByText("已加入 1 个空间")).toBeInTheDocument();
+  await user.click(within(teacherRow).getByRole("button", { name: "编辑用户" }));
+
+  const drawer = screen.getByRole("dialog", { name: "编辑用户抽屉" });
+  expect(drawer.closest(".ant-drawer")).toBeInTheDocument();
+  expect(within(drawer).getByLabelText("角色")).toHaveValue("教师");
+  expect(within(drawer).getByLabelText("角色")).toHaveAttribute("readonly");
+  expect(within(drawer).getByLabelText("高一一班")).toBeChecked();
+  expect(within(drawer).getByLabelText("高一二班")).not.toBeChecked();
+
+  await user.click(within(drawer).getByLabelText("高一二班"));
+  await user.click(within(drawer).getByRole("button", { name: "保存用户" }));
+
+  expect(spaceApi.updateSpaceMember).not.toHaveBeenCalled();
+  expect(spaceApi.createSpaceMember).toHaveBeenCalledWith({ tenantID: 10, spaceID: 302, userID: 20, role: "teacher" });
+  expect(await within(teacherRow).findByText("教师")).toBeInTheDocument();
+  expect(within(teacherRow).getByText("已加入 2 个空间")).toBeInTheDocument();
+});
+
+test("编辑用户空间归属时会展示并保护空间管理员归属", async () => {
+  const user = userEvent.setup();
+  const api = createUserAPI();
+  const spaceApi = createSpaceAPI();
+  vi.mocked(spaceApi.listSpaces).mockResolvedValue({
+    items: [{
+      id: 301,
+      tenantID: 10,
+      name: "高一一班",
+      description: "月考空间",
+      logoFileName: "class-a.png",
+      members: [{ id: 1, userID: 20, name: "李老师", role: "space_admin", status: "enabled" }],
+    }],
+  });
+  renderWithFeedback(<UserManagementPage api={api} spaceApi={spaceApi} tenantID={10} />);
+
+  const teacherRow = await screen.findByRole("row", { name: /李老师/ });
+  expect(within(teacherRow).getByText("已加入 1 个空间")).toBeInTheDocument();
+  await user.click(within(teacherRow).getByRole("button", { name: "编辑用户" }));
+  const drawer = screen.getByRole("dialog", { name: "编辑用户抽屉" });
+  expect(within(drawer).getByLabelText("高一一班")).toBeChecked();
+  expect(within(drawer).getByLabelText("高一一班")).toBeDisabled();
+  await user.click(within(drawer).getByRole("button", { name: "保存用户" }));
+
+  expect(spaceApi.updateSpaceMember).not.toHaveBeenCalledWith(expect.objectContaining({
+    spaceID: 301,
+    userID: 20,
+    role: "teacher",
+  }));
+  expect(spaceApi.removeSpaceMember).not.toHaveBeenCalledWith(expect.objectContaining({
+    spaceID: 301,
+    userID: 20,
+  }));
+});
+
+test("编辑用户空间成员保存失败后刷新后端真实状态", async () => {
+  const user = userEvent.setup();
+  const api = createUserAPI();
+  const spaceApi = createSpaceAPI();
+  vi.mocked(api.listUsers).mockResolvedValue({
+    items: [{
+      id: 20,
+      tenantID: 10,
+      name: "李老师",
+      username: "li.teacher",
+      role: "teacher",
+      avatarFileName: "li.png",
+      status: "enabled",
+    }],
+  });
+  vi.mocked(spaceApi.listSpaces).mockResolvedValue({
+    items: [{
+      id: 301,
+      tenantID: 10,
+      name: "高一一班",
+      description: "月考空间",
+      logoFileName: "class-a.png",
+      members: [{ id: 1, userID: 20, name: "李老师", role: "teacher", status: "enabled" }],
+    }, {
+      id: 302,
+      tenantID: 10,
+      name: "高一二班",
+      description: "周考空间",
+      logoFileName: "class-b.png",
+      members: [],
+    }],
+  });
+  vi.mocked(spaceApi.createSpaceMember).mockRejectedValue(new ApiError("空间成员保存失败", 40001, 200, {
+    code: 40001,
+    message: "空间成员保存失败",
+    data: null,
+  }));
+  renderWithFeedback(<UserManagementPage api={api} spaceApi={spaceApi} tenantID={10} />);
+
+  await screen.findByRole("row", { name: /李老师/ });
+  await user.click(screen.getByRole("button", { name: "编辑用户" }));
+  const drawer = screen.getByRole("dialog", { name: "编辑用户抽屉" });
+  await user.click(within(drawer).getByLabelText("高一二班"));
+  await user.click(within(drawer).getByRole("button", { name: "保存用户" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("空间成员保存失败");
+  await waitFor(() => {
+    expect(api.listUsers).toHaveBeenCalledTimes(2);
+  });
+  expect(screen.getByRole("row", { name: /李老师/ })).toHaveTextContent("教师");
 });
 
 test("用户列表支持分页并在搜索后回到第一页", async () => {
@@ -255,6 +435,9 @@ test("用户列表支持分页并在搜索后回到第一页", async () => {
 
   await screen.findByText("李老师");
 
+  const pagination = screen.getByRole("navigation", { name: "分页" });
+  expect(pagination).toHaveClass("pagination--right");
+  expect(pagination.querySelector(".ant-pagination")).toBeInTheDocument();
   expect(screen.getByText("共 7 条")).toBeInTheDocument();
   expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
   expect(screen.getByText("刘老师")).toBeInTheDocument();

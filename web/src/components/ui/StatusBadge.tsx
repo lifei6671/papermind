@@ -1,9 +1,19 @@
+import Tag from "antd/es/tag";
+import type { ReactNode } from "react";
+
 type StatusTone = "success" | "warning" | "danger" | "info";
 
 type StatusBadgeProps = {
   tone: StatusTone;
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
+};
+
+const statusBadgeColorByTone: Record<StatusTone, string> = {
+  danger: "error",
+  info: "processing",
+  success: "success",
+  warning: "warning",
 };
 
 export function StatusBadge({ tone, children, className }: StatusBadgeProps) {
@@ -13,5 +23,9 @@ export function StatusBadge({ tone, children, className }: StatusBadgeProps) {
     classes.push(className);
   }
 
-  return <span className={classes.join(" ")}>{children}</span>;
+  return (
+    <Tag className={classes.join(" ")} color={statusBadgeColorByTone[tone]}>
+      {children}
+    </Tag>
+  );
 }

@@ -1,6 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
+import { PlatformModal } from "../../components/ui/PlatformModal";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -286,10 +287,14 @@ export function GradingPage({
         </div>
       </Panel>
 
-      {selectedAttempt && (
-        <div className="platform-dialog" role="dialog" aria-modal="true" aria-label="简答题阅卷弹窗">
-          <div className="platform-dialog__card grading-dialog">
-            <h2>简答题阅卷</h2>
+      <PlatformModal
+        onClose={() => setSelectedAttempt(null)}
+        open={selectedAttempt !== null}
+        title="简答题阅卷弹窗"
+        width={620}
+      >
+        {selectedAttempt && (
+          <>
             <div className="grading-answer-block">
               <strong>{selectedAttempt.studentName} · {selectedAttempt.questionTitle}</strong>
               <p>学生作答：{selectedAttempt.answerContent}</p>
@@ -331,9 +336,9 @@ export function GradingPage({
                 </Button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </PlatformModal>
     </section>
   );
 }
