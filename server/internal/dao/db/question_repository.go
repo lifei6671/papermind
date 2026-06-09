@@ -8,6 +8,7 @@ import (
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
 	servicequestion "github.com/lifei6671/papermind/server/internal/service/question"
+	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -116,16 +117,9 @@ func (r *QuestionRepository) GetQuestion(ctx context.Context, tenantID uint64, q
 
 func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input servicequestion.ListQuestionsInput) (pagination.Result[servicequestion.Question], error) {
 	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
-	query := r.db.WithContext(ctx).
-		Table(QuestionDO{}.TableName()+" AS questions").
-		Joins("LEFT JOIN users AS users ON users.id = questions."+BaseColumns.CreatedBy+" AND questions."+BaseColumns.CreatedByType+" = ? AND users.deleted_at = 0", AuditActorTenantUser).
-		Joins("LEFT JOIN tenant_user_memberships AS tum ON tum.tenant_id = questions.tenant_id AND tum.user_id = questions."+BaseColumns.CreatedBy).
-		Where("questions."+QuestionColumns.TenantID+" = ?", input.TenantID).
-		Where("questions."+QuestionColumns.DeletedAt+" = ?", 0)
-	if input.SpaceID != nil {
-		query = query.Where(r.db.Where("questions."+QuestionColumns.SpaceID+" IS NULL").Or("questions."+QuestionColumns.SpaceID+" = ?", *input.SpaceID))
-	}
+	query := r.visibleQuestionQuery(ctx, input.TenantID, input.SpaceID, input.Scope)
 	query = r.applyQuestionSearch(query, input.Search)
+	query = r.applyQuestionFilters(query, input)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return pagination.Result[servicequestion.Question]{}, err
@@ -162,12 +156,139 @@ func (r *QuestionRepository) ListVisibleQuestions(ctx context.Context, input ser
 	}, nil
 }
 
+func (r *QuestionRepository) ListVisibleQuestionTags(ctx context.Context, input servicequestion.QuestionTagListInput) ([]string, error) {
+	query := r.visibleQuestionQuery(ctx, input.TenantID, input.SpaceID, input.Scope).
+		Joins("JOIN question_tags AS qt ON qt.tenant_id = questions.tenant_id AND qt.question_id = questions.id").
+		Joins("JOIN tags AS tags ON tags.tenant_id = qt.tenant_id AND tags.id = qt.tag_id AND tags.deleted_at = 0")
+	query = r.applyQuestionFilters(query, servicequestion.ListQuestionsInput{Status: input.Status})
+	if keyword := strings.TrimSpace(input.Search); keyword != "" {
+		query = query.Where("LOWER(tags.name) LIKE ?", "%"+strings.ToLower(keyword)+"%")
+	}
+	var tags []string
+	if err := query.Distinct("tags.name").Order("tags.name ASC").Pluck("tags.name", &tags).Error; err != nil {
+		return nil, err
+	}
+	return tags, nil
+}
+
+func (r *QuestionRepository) CountVisibleQuestionsByType(ctx context.Context, input servicequestion.QuestionAvailabilityInput) (map[string]int64, error) {
+	query := r.visibleQuestionQuery(ctx, input.TenantID, input.SpaceID, input.Scope)
+	query = r.applyQuestionFilters(query, servicequestion.ListQuestionsInput{Status: input.Status})
+	query = r.applyQuestionRequiredTags(query, input.Tags)
+	if len(input.ExcludeQuestionIDs) > 0 {
+		query = query.Where("questions."+QuestionColumns.ID+" NOT IN ?", input.ExcludeQuestionIDs)
+	}
+	var rows []struct {
+		Type  string
+		Count int64
+	}
+	if err := query.Select("questions." + QuestionColumns.Type + " AS type, COUNT(*) AS count").
+		Group("questions." + QuestionColumns.Type).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.Type] = row.Count
+	}
+	return counts, nil
+}
+
+func (r *QuestionRepository) visibleQuestionQuery(ctx context.Context, tenantID uint64, spaceID *uint64, scope string) *gorm.DB {
+	query := r.db.WithContext(ctx).
+		Table(QuestionDO{}.TableName()+" AS questions").
+		Joins("LEFT JOIN users AS users ON users.id = questions."+BaseColumns.CreatedBy+" AND questions."+BaseColumns.CreatedByType+" = ? AND users.deleted_at = 0", AuditActorTenantUser).
+		Joins("LEFT JOIN tenant_user_memberships AS tum ON tum.tenant_id = questions.tenant_id AND tum.user_id = questions."+BaseColumns.CreatedBy).
+		Where("questions."+QuestionColumns.TenantID+" = ?", tenantID).
+		Where("questions."+QuestionColumns.DeletedAt+" = ?", 0)
+	query = r.applyEnabledQuestionSpace(query, "questions")
+	if strings.TrimSpace(scope) == "public" {
+		query = query.Where("questions." + QuestionColumns.SpaceID + " IS NULL")
+	} else if spaceID != nil {
+		query = query.Where(r.db.Where("questions."+QuestionColumns.SpaceID+" IS NULL").Or("questions."+QuestionColumns.SpaceID+" = ?", *spaceID))
+	}
+	return query
+}
+
+func (r *QuestionRepository) applyQuestionFilters(query *gorm.DB, input servicequestion.ListQuestionsInput) *gorm.DB {
+	if questionType := strings.TrimSpace(input.Type); questionType != "" {
+		query = query.Where("questions."+QuestionColumns.Type+" = ?", questionType)
+	}
+	if difficulty := strings.TrimSpace(input.Difficulty); difficulty != "" {
+		query = query.Where("questions."+QuestionColumns.Difficulty+" = ?", difficulty)
+	}
+	if status := normalizeQuestionStatusFilter(input.Status); status != "" {
+		query = query.Where("questions."+QuestionColumns.Status+" = ?", status)
+	}
+	if tag := strings.TrimSpace(input.Tag); tag != "" {
+		query = query.Where(
+			`EXISTS (
+				SELECT 1
+				FROM question_tags AS qt
+				JOIN tags AS tags ON tags.tenant_id = qt.tenant_id and tags.id = qt.tag_id and tags.deleted_at = 0
+				WHERE qt.tenant_id = questions.tenant_id
+					and qt.question_id = questions.id
+					and LOWER(tags.name) = ?
+			)`,
+			strings.ToLower(tag),
+		)
+	}
+	return query
+}
+
+func (r *QuestionRepository) applyQuestionRequiredTags(query *gorm.DB, tags []string) *gorm.DB {
+	for _, tag := range normalizeQuestionTagFilters(tags) {
+		query = query.Where(
+			`EXISTS (
+				SELECT 1
+				FROM question_tags AS qt
+				JOIN tags AS tags ON tags.tenant_id = qt.tenant_id and tags.id = qt.tag_id and tags.deleted_at = 0
+				WHERE qt.tenant_id = questions.tenant_id
+					and qt.question_id = questions.id
+					and LOWER(tags.name) = ?
+			)`,
+			strings.ToLower(tag),
+		)
+	}
+	return query
+}
+
+func normalizeQuestionTagFilters(tags []string) []string {
+	seen := make(map[string]struct{}, len(tags))
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		normalized := strings.TrimSpace(tag)
+		if normalized == "" {
+			continue
+		}
+		key := strings.ToLower(normalized)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, normalized)
+	}
+	return result
+}
+
+func normalizeQuestionStatusFilter(status string) string {
+	switch strings.TrimSpace(status) {
+	case "":
+		return ""
+	case "ready":
+		return servicequestion.QuestionStatusEnabled
+	default:
+		return strings.TrimSpace(status)
+	}
+}
+
 func (r *QuestionRepository) QuestionTitleExists(ctx context.Context, tenantID uint64, spaceID *uint64, title string) (bool, error) {
 	query := r.db.WithContext(ctx).
 		Table(QuestionDO{}.TableName()).
 		Where(QuestionColumns.TenantID+" = ?", tenantID).
 		Where(QuestionColumns.DeletedAt+" = ?", 0).
 		Where(QuestionColumns.Title+" = ?", title)
+	query = r.applyEnabledQuestionSpace(query, QuestionDO{}.TableName())
 	if spaceID == nil {
 		query = query.Where(QuestionColumns.SpaceID + " IS NULL")
 	} else {
@@ -178,6 +299,24 @@ func (r *QuestionRepository) QuestionTitleExists(ctx context.Context, tenantID u
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (r *QuestionRepository) applyEnabledQuestionSpace(query *gorm.DB, questionTable string) *gorm.DB {
+	spaceIDColumn := questionTable + "." + QuestionColumns.SpaceID
+	tenantIDColumn := questionTable + "." + QuestionColumns.TenantID
+	return query.Where(
+		r.db.Where(spaceIDColumn+" IS NULL").Or(
+			`EXISTS (
+				SELECT 1
+				FROM spaces
+				WHERE spaces.tenant_id = `+tenantIDColumn+`
+					and spaces.id = `+spaceIDColumn+`
+					and spaces.status = ?
+					and spaces.deleted_at = 0
+			)`,
+			servicespace.StatusEnabled,
+		),
+	)
 }
 
 func (r *QuestionRepository) applyQuestionSearch(query *gorm.DB, search string) *gorm.DB {
@@ -236,11 +375,12 @@ func (r *QuestionRepository) UpdateQuestion(ctx context.Context, item serviceque
 			BaseColumns.UpdatedByType:          AuditActorTenantUser,
 			BaseColumns.Version:                gorm.Expr(BaseColumns.Version + " + 1"),
 		}
-		result := tx.Model(&QuestionDO{}).
+		query := tx.Model(&QuestionDO{}).
 			Where(QuestionColumns.TenantID+" = ?", item.TenantID).
 			Where(QuestionColumns.ID+" = ?", item.ID).
-			Where(QuestionColumns.DeletedAt+" = ?", 0).
-			Updates(updates)
+			Where(QuestionColumns.DeletedAt+" = ?", 0)
+		query = r.applyEnabledQuestionSpace(query, QuestionDO{}.TableName())
+		result := query.Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -270,17 +410,18 @@ func (r *QuestionRepository) UpdateQuestion(ctx context.Context, item serviceque
 }
 
 func (r *QuestionRepository) UpdateQuestionStatus(ctx context.Context, tenantID uint64, questionID uint64, status string, actorID uint64) (servicequestion.Question, error) {
-	result := r.db.WithContext(ctx).Model(&QuestionDO{}).
+	query := r.db.WithContext(ctx).Model(&QuestionDO{}).
 		Where(QuestionColumns.TenantID+" = ?", tenantID).
 		Where(QuestionColumns.ID+" = ?", questionID).
-		Where(QuestionColumns.DeletedAt+" = ?", 0).
-		Updates(map[string]any{
-			QuestionColumns.Status:    status,
-			BaseColumns.UpdatedAt:     r.now(),
-			BaseColumns.UpdatedBy:     actorID,
-			BaseColumns.UpdatedByType: AuditActorTenantUser,
-			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
-		})
+		Where(QuestionColumns.DeletedAt+" = ?", 0)
+	query = r.applyEnabledQuestionSpace(query, QuestionDO{}.TableName())
+	result := query.Updates(map[string]any{
+		QuestionColumns.Status:    status,
+		BaseColumns.UpdatedAt:     r.now(),
+		BaseColumns.UpdatedBy:     actorID,
+		BaseColumns.UpdatedByType: AuditActorTenantUser,
+		BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+	})
 	if result.Error != nil {
 		return servicequestion.Question{}, result.Error
 	}
@@ -291,17 +432,18 @@ func (r *QuestionRepository) UpdateQuestionStatus(ctx context.Context, tenantID 
 }
 
 func (r *QuestionRepository) DeleteQuestion(ctx context.Context, tenantID uint64, questionID uint64, actorID uint64) error {
-	result := r.db.WithContext(ctx).Model(&QuestionDO{}).
+	query := r.db.WithContext(ctx).Model(&QuestionDO{}).
 		Where(QuestionColumns.TenantID+" = ?", tenantID).
 		Where(QuestionColumns.ID+" = ?", questionID).
-		Where(QuestionColumns.DeletedAt+" = ?", 0).
-		Updates(map[string]any{
-			QuestionColumns.DeletedAt: r.now(),
-			BaseColumns.UpdatedAt:     r.now(),
-			BaseColumns.UpdatedBy:     actorID,
-			BaseColumns.UpdatedByType: AuditActorTenantUser,
-			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
-		})
+		Where(QuestionColumns.DeletedAt+" = ?", 0)
+	query = r.applyEnabledQuestionSpace(query, QuestionDO{}.TableName())
+	result := query.Updates(map[string]any{
+		QuestionColumns.DeletedAt: r.now(),
+		BaseColumns.UpdatedAt:     r.now(),
+		BaseColumns.UpdatedBy:     actorID,
+		BaseColumns.UpdatedByType: AuditActorTenantUser,
+		BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+	})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -500,14 +642,15 @@ func questionFromListRow(row questionListRow) servicequestion.Question {
 
 func (r *QuestionRepository) findQuestionRow(ctx context.Context, tenantID uint64, questionID uint64) (questionListRow, error) {
 	var row questionListRow
-	err := r.db.WithContext(ctx).Table(QuestionDO{}.TableName()+" AS questions").
+	query := r.db.WithContext(ctx).Table(QuestionDO{}.TableName()+" AS questions").
 		Select(r.questionSelectColumns()).
 		Joins("LEFT JOIN users AS users ON users.id = questions."+BaseColumns.CreatedBy+" AND questions."+BaseColumns.CreatedByType+" = ? AND users.deleted_at = 0", AuditActorTenantUser).
 		Joins("LEFT JOIN tenant_user_memberships AS tum ON tum.tenant_id = questions.tenant_id AND tum.user_id = questions."+BaseColumns.CreatedBy).
 		Where("questions."+QuestionColumns.TenantID+" = ?", tenantID).
 		Where("questions."+QuestionColumns.ID+" = ?", questionID).
-		Where("questions."+QuestionColumns.DeletedAt+" = ?", 0).
-		First(&row).Error
+		Where("questions."+QuestionColumns.DeletedAt+" = ?", 0)
+	query = r.applyEnabledQuestionSpace(query, "questions")
+	err := query.First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return questionListRow{}, servicequestion.ErrQuestionNotFound
 	}

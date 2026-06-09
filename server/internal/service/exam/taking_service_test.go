@@ -10,7 +10,7 @@ import (
 
 func TestSaveAnswerValidatesExamTokenDeadlineAndNormalizesAnswers(t *testing.T) {
 	repo := newFakeTakingRepository()
-	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.exam = Exam{ID: 1, TenantID: 10, Status: StatusPublished, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
 	repo.attempt = Attempt{
 		ID:                 99,
 		TenantID:           10,
@@ -89,7 +89,7 @@ func TestSaveAnswerValidatesExamTokenDeadlineAndNormalizesAnswers(t *testing.T) 
 
 func TestSaveAnswerUsesAttemptQuestionSnapshotType(t *testing.T) {
 	repo := newFakeTakingRepository()
-	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.exam = Exam{ID: 1, TenantID: 10, Status: StatusPublished, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
 	repo.attempt = Attempt{
 		ID:                 99,
 		TenantID:           10,
@@ -127,6 +127,76 @@ func TestSaveAnswerUsesAttemptQuestionSnapshotType(t *testing.T) {
 	}
 }
 
+func TestTakingRejectsNonPublishedExamAfterAttemptStarted(t *testing.T) {
+	for _, status := range []string{StatusClosed, StatusDisabled} {
+		t.Run(status, func(t *testing.T) {
+			t.Run("save answer", func(t *testing.T) {
+				repo := newFakeTakingRepository()
+				repo.exam = Exam{ID: 1, TenantID: 10, Status: status, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+				repo.attempt = validTakingAttempt()
+				repo.attemptQuestions = map[uint64]AttemptQuestion{
+					9001: {ID: 9001, TenantID: 10, AttemptID: 99, QuestionSnapshot: `{"title":"简答题","type":"short_text"}`},
+				}
+				svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: repo.currentTime})
+
+				err := svc.SaveAnswer(context.Background(), SaveAnswerInput{
+					TenantID:          10,
+					AttemptID:         99,
+					AttemptQuestionID: 9001,
+					ExamToken:         "exam-token",
+					Text:              "已作答内容",
+				})
+				if !errors.Is(err, ErrExamNotEligible) {
+					t.Fatalf("expected ErrExamNotEligible, got %v", err)
+				}
+				if repo.savedAnswer.AttemptID != 0 {
+					t.Fatalf("expected no saved answer, got %#v", repo.savedAnswer)
+				}
+			})
+
+			t.Run("submit", func(t *testing.T) {
+				repo := newFakeTakingRepository()
+				repo.exam = Exam{ID: 1, TenantID: 10, Status: status, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+				repo.attempt = validTakingAttempt()
+				svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: repo.currentTime})
+
+				err := svc.Submit(context.Background(), SubmitInput{
+					TenantID:  10,
+					AttemptID: 99,
+					ExamToken: "exam-token",
+					EventType: EventTypeSubmit,
+				})
+				if !errors.Is(err, ErrExamNotEligible) {
+					t.Fatalf("expected ErrExamNotEligible, got %v", err)
+				}
+				if repo.submittedStatus != "" || len(repo.events) != 0 {
+					t.Fatalf("expected no submit side effects, status=%q events=%d", repo.submittedStatus, len(repo.events))
+				}
+			})
+
+			t.Run("record event", func(t *testing.T) {
+				repo := newFakeTakingRepository()
+				repo.exam = Exam{ID: 1, TenantID: 10, Status: status, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+				repo.attempt = validTakingAttempt()
+				svc := NewTakingService(TakingServiceOptions{Repo: repo, Now: repo.currentTime})
+
+				err := svc.RecordEvent(context.Background(), RecordEventInput{
+					TenantID:  10,
+					AttemptID: 99,
+					ExamToken: "exam-token",
+					EventType: EventTypeSubmit,
+				})
+				if !errors.Is(err, ErrExamNotEligible) {
+					t.Fatalf("expected ErrExamNotEligible, got %v", err)
+				}
+				if len(repo.events) != 0 {
+					t.Fatalf("expected no recorded events, got %d", len(repo.events))
+				}
+			})
+		})
+	}
+}
+
 func TestGradeAnswerSupportsMultiBlankJSONAnswers(t *testing.T) {
 	result, score, err := gradeAnswer(AnswerForGrading{
 		AttemptQuestionID:     1001,
@@ -159,7 +229,7 @@ func TestGradeAnswerSupportsMultiBlankJSONAnswers(t *testing.T) {
 
 func TestSubmitAttemptUsesVersionedIdempotentUpdateAndWritesCriticalEvent(t *testing.T) {
 	repo := newFakeTakingRepository()
-	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.exam = Exam{ID: 1, TenantID: 10, Status: StatusPublished, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
 	repo.attempt = Attempt{
 		ID:                 99,
 		TenantID:           10,
@@ -212,7 +282,7 @@ func TestSubmitAttemptUsesVersionedIdempotentUpdateAndWritesCriticalEvent(t *tes
 
 func TestSubmitDoesNotMarkAttemptSubmittedWhenObjectiveGradingCannotBePrepared(t *testing.T) {
 	repo := newFakeTakingRepository()
-	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.exam = Exam{ID: 1, TenantID: 10, Status: StatusPublished, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
 	repo.attempt = Attempt{
 		ID:                 99,
 		TenantID:           10,
@@ -254,7 +324,7 @@ func TestSubmitDoesNotMarkAttemptSubmittedWhenObjectiveGradingCannotBePrepared(t
 
 func TestExamEventsThrottleDropNonCriticalAndKeepCriticalReliable(t *testing.T) {
 	repo := newFakeTakingRepository()
-	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.exam = Exam{ID: 1, TenantID: 10, Status: StatusPublished, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
 	repo.attempt = Attempt{
 		ID:                 99,
 		TenantID:           10,
@@ -325,7 +395,7 @@ func TestTakingWriteAPIsRejectSubmittedAttemptAndExpiredAnswerWindow(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newFakeTakingRepository()
-			repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+			repo.exam = Exam{ID: 1, TenantID: 10, Status: StatusPublished, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
 			repo.attempt = Attempt{
 				ID:                 99,
 				TenantID:           10,
@@ -384,7 +454,7 @@ func TestTakingWriteAPIsRejectSubmittedAttemptAndExpiredAnswerWindow(t *testing.
 func TestStartEventConsumerPersistsQueuedEventsAsynchronously(t *testing.T) {
 	repo := newFakeTakingRepository()
 	repo.eventAppended = make(chan struct{}, 1)
-	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.exam = Exam{ID: 1, TenantID: 10, Status: StatusPublished, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
 	repo.attempt = Attempt{
 		ID:                 99,
 		TenantID:           10,
@@ -415,7 +485,7 @@ func TestStartEventConsumerPersistsQueuedEventsAsynchronously(t *testing.T) {
 
 func TestRecordEventConcurrentThrottleIsRaceFree(t *testing.T) {
 	repo := newFakeTakingRepository()
-	repo.exam = Exam{ID: 1, TenantID: 10, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
+	repo.exam = Exam{ID: 1, TenantID: 10, Status: StatusPublished, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30}
 	repo.attempt = Attempt{
 		ID:                 99,
 		TenantID:           10,
@@ -557,6 +627,19 @@ func newFakeTakingRepository() *fakeTakingRepository {
 	}
 }
 
+func validTakingAttempt() Attempt {
+	return Attempt{
+		ID:                 99,
+		TenantID:           10,
+		ExamID:             1,
+		UserID:             20,
+		Status:             AttemptStatusInProgress,
+		StartedAt:          fixedUnixMilli,
+		ExamTokenHash:      HashExamToken("exam-token"),
+		ExamTokenExpiresAt: fixedUnixMilli + 35*minuteMillis,
+	}
+}
+
 type fakeTakingRepository struct {
 	now int64
 
@@ -608,12 +691,12 @@ func (r *fakeTakingRepository) UpsertAnswer(ctx context.Context, answer Answer) 
 	return nil
 }
 
-func (r *fakeTakingRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, tenantID uint64, attemptID uint64, version int64, submittedAt int64, status string, grader ObjectiveGradingFunc, event ExamEvent) (int64, error) {
-	r.submittedStatus = status
-	r.submittedVersion = version
-	r.gradeAttemptID = attemptID
+func (r *fakeTakingRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, input SubmitAttemptAndGradeInput) (int64, error) {
+	r.submittedStatus = input.Status
+	r.submittedVersion = input.Version
+	r.gradeAttemptID = input.AttemptID
 	if r.updateRowsAffected > 0 {
-		grades, objectiveScore, err := grader(r.gradingItems)
+		grades, objectiveScore, err := input.Grader(r.gradingItems)
 		if err != nil {
 			r.submittedStatus = ""
 			r.submittedVersion = 0
@@ -623,7 +706,7 @@ func (r *fakeTakingRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx conte
 		r.savedObjectiveScore = objectiveScore
 		r.savedGradingCount++
 	}
-	r.events = append(r.events, event)
+	r.events = append(r.events, input.Event)
 	return r.updateRowsAffected, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 	"github.com/lifei6671/papermind/server/library/constant"
 )
 
@@ -657,11 +658,11 @@ type fakeRepository struct {
 	listActiveSectionsCalled    bool
 	currentBuildMode            string
 
-	createdPaper  Paper
-	updatedPaper  UpdatePaperInput
-	updatedStatus      string
-	updatedBy          uint64
-	paperReferenced   bool
+	createdPaper        Paper
+	updatedPaper        UpdatePaperInput
+	updatedStatus       string
+	updatedBy           uint64
+	paperReferenced     bool
 	currentPaperSpaceID *uint64
 
 	duplicatePaperQuestion                 bool
@@ -703,8 +704,8 @@ func (r *fakeRepository) SectionSortOrderExists(ctx context.Context, tenantID ui
 	return false, nil
 }
 
-func (r *fakeRepository) ListPapers(ctx context.Context, input ListPapersInput) ([]Paper, error) {
-	return nil, nil
+func (r *fakeRepository) ListPapers(ctx context.Context, input ListPapersInput) (pagination.Result[Paper], error) {
+	return pagination.Result[Paper]{}, nil
 }
 
 func (r *fakeRepository) GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (Paper, error) {

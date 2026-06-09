@@ -494,8 +494,8 @@ type fakeRepository struct {
 	profileInput UpdateProfileInput
 }
 
-func (r *fakeRepository) ListUsers(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[User], error) {
-	page = pagination.Normalize(page)
+func (r *fakeRepository) ListUsers(ctx context.Context, input ListInput) (pagination.Result[User], error) {
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
 	return pagination.Result[User]{
 		Items:    nil,
 		Page:     page.Page,

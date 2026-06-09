@@ -50,6 +50,7 @@ type ListPendingAttemptsInput struct {
 	Permission permission.PermissionContext // 当前阅卷人权限上下文。
 	TenantID   uint64                       // 所属租户 ID。
 	ExamID     uint64                       // 考试 ID。
+	Keyword    string                       // 考生、空间、考试或题目搜索词。
 }
 
 type GradeShortTextInput struct {
@@ -64,7 +65,7 @@ type GradeShortTextInput struct {
 }
 
 type ReviewRepository interface {
-	ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64) ([]PendingAttempt, error)
+	ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64, keyword string) ([]PendingAttempt, error)
 	AttemptSpaceIDs(ctx context.Context, tenantID uint64, attemptID uint64) ([]uint64, error)
 	GradeShortTextAndRecalculate(ctx context.Context, grade ShortTextGrade) error
 }
@@ -97,7 +98,7 @@ func (s *ReviewService) ListPendingAttempts(ctx context.Context, input ListPendi
 	if !hasPossibleGradeRole(input.Permission) {
 		return nil, permission.ErrForbidden
 	}
-	items, err := s.repo.ListPendingAttempts(ctx, input.TenantID, input.ExamID)
+	items, err := s.repo.ListPendingAttempts(ctx, input.TenantID, input.ExamID, input.Keyword)
 	if err != nil {
 		return nil, err
 	}

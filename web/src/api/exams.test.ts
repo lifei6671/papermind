@@ -6,7 +6,7 @@ describe("examApi", () => {
   test("考试列表请求携带分页参数并回填分页元数据", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe("GET");
-      expect(String(input)).toBe("/api/v1/exams?tenant_id=10&space_id=301&page=2&page_size=50");
+      expect(String(input)).toBe("/api/v1/exams?tenant_id=10&space_id=301&paper_id=100&page=2&page_size=50");
       return jsonResponse({
         items: [{
           id: 8,
@@ -35,6 +35,7 @@ describe("examApi", () => {
     const result = await api.listExams({
       tenantID: 10,
       spaceID: 301,
+      paperID: 100,
       page: 2,
       pageSize: 50,
     });
@@ -75,9 +76,11 @@ describe("examApi", () => {
         start_time: 1779792000000,
         end_time: 1779799200000,
         duration_minutes: 120,
-        max_attempts: 1,
-        result_strategy: "latest",
+        max_attempts: 2,
+        result_strategy: "highest",
         publish_mode: "manual_publish",
+        score_publish_time: 1779885600000,
+        status: "published",
       });
       return jsonResponse({
         id: 8,
@@ -110,9 +113,11 @@ describe("examApi", () => {
       startTime: 1779792000000,
       endTime: 1779799200000,
       durationMinutes: 120,
-      maxAttempts: 1,
-      resultStrategy: "latest",
+      maxAttempts: 2,
+      resultStrategy: "highest",
       publishMode: "manual_publish",
+      scorePublishTime: 1779885600000,
+      status: "published",
     });
 
     expect(fetcher).toHaveBeenCalledWith(
@@ -120,6 +125,39 @@ describe("examApi", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(result.target).toBe("空间 301、用户 501");
+  });
+
+  test("考试状态更新请求发送目标状态并回填考试", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/v1/exams/8/status");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        status: "closed",
+      });
+      return jsonResponse({
+        id: 8,
+        tenant_id: 10,
+        paper_id: 100,
+        name: "高一数学月考",
+        start_time: 1779792000000,
+        end_time: 1779799200000,
+        duration_minutes: 120,
+        invite_code: "PM8888",
+        status: "closed",
+        target_type: "space",
+        target_id: 301,
+      });
+    });
+    const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.updateExamStatus!({
+      tenantID: 10,
+      examID: 8,
+      status: "closed",
+    });
+
+    expect(result.status).toBe("closed");
   });
 
   test("考试入口按邀请码解析考试信息", async () => {

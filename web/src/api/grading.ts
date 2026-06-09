@@ -24,6 +24,7 @@ export type ListPendingReviewsInput = {
   actorID: number;
   actorRole: ActorRole;
   spaceID?: number;
+  search?: string;
 };
 
 export type GradeShortTextInput = ListPendingReviewsInput & {
@@ -92,6 +93,10 @@ function actorQuery(input: ListPendingReviewsInput) {
   });
   if (input.spaceID) {
     params.set("space_id", String(input.spaceID));
+  }
+  const search = input.search?.trim();
+  if (search) {
+    params.set("search", search);
   }
   return params.toString();
 }

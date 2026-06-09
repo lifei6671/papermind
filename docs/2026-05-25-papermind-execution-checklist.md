@@ -300,7 +300,7 @@ P0 文档与项目骨架
 ### P2.7 考试与答题表
 
 - [x] 创建 `exams`。
-- [x] `exams.max_attempts` 默认 1。
+- [x] `exams.max_attempts` 数据库默认 1；发布接口允许传 0 表示不限制作答次数。
 - [x] `exams.result_strategy` 支持 `latest`。
 - [x] `exams.result_strategy` 支持 `highest`。
 - [x] `exams.invite_code` 建立全局唯一约束。
@@ -592,12 +592,13 @@ P0 文档与项目骨架
 ### P6.1 考试创建与发布
 
 - [x] 创建考试草稿。
+- [x] 新建考试时由用户选择 `draft` 或 `published`，不再默认已发布。
 - [x] 设置考试开始时间。
 - [x] 设置考试结束时间。
 - [x] 设置单次作答时长。
 - [x] 发布前校验 `duration_minutes <= end_time - start_time`。
-- [x] 设置 `max_attempts`。
-- [x] 包含简答题时禁止 `max_attempts > 1`。
+- [x] 设置 `max_attempts`，其中 0 表示不限制作答次数。
+- [x] 包含简答题时 `max_attempts` 必须为 1。
 - [x] 设置 `result_strategy`。
 - [x] 设置成绩发布模式。
 - [x] 设置成绩公布时间。
@@ -605,6 +606,8 @@ P0 文档与项目骨架
 - [x] `invite_code` 全局唯一。
 - [x] 邀请码生成时全局避冲突，保证公开入口按邀请码解析不会跨租户误命中。
 - [x] `rule_live` 发布时冻结题池。
+- [x] 考试列表支持发布草稿、提前结束和禁用考试。
+- [x] 非 `published` 考试禁止邀请码解析和开始作答。
 
 ### P6.2 考试范围
 
@@ -620,7 +623,7 @@ P0 文档与项目骨架
 - [x] 开始考试按 `exam_targets` 校验直接用户目标和空间学生成员目标。
 - [x] 校验考试时间。
 - [x] 若存在 `in_progress` attempt，直接返回已有 attempt。
-- [x] 若无 `in_progress` attempt，校验未超过 `max_attempts`。
+- [x] 若无 `in_progress` attempt，且 `max_attempts > 0` 时校验未超过次数上限。
 - [x] 生成下一个 `attempt_no`。
 - [x] 插入 `exam_attempts`。
 - [x] 唯一冲突时只查询已有 `in_progress`，不能递增创建新 attempt。
@@ -743,7 +746,7 @@ P0 文档与项目骨架
 
 - [x] 纯客观题支持立即出分。
 - [x] 含简答题不允许立即出分。
-- [x] 含简答题不允许 `max_attempts > 1`。
+- [x] 含简答题要求 `max_attempts = 1`。
 - [x] 教师阅卷后发布模式支持统一公布时间。
 - [x] 未到公布时间不展示成绩。
 - [x] 到公布时间后展示成绩。

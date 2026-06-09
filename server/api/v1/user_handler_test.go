@@ -34,6 +34,15 @@ func TestUserAPIRoutesListCreateAndDisableWithSQLite(t *testing.T) {
 	if listBody.Data.Items[0].RealName != "租户管理员" || listBody.Data.Items[0].Role != "tenant_admin" {
 		t.Fatalf("unexpected first user: %#v", listBody.Data.Items[0])
 	}
+	if listBody.Data.Items[0].Phone != "13800001099" || listBody.Data.Items[0].Email != "admin-user@example.test" {
+		t.Fatalf("expected user contact fields, got %#v", listBody.Data.Items[0])
+	}
+	if listBody.Data.Items[0].CreatedAt != fixedAPINow || listBody.Data.Items[0].UpdatedAt == 0 {
+		t.Fatalf("expected user audit timestamps, got %#v", listBody.Data.Items[0])
+	}
+	if listBody.Data.Items[0].LastLoginAt != fixedAPINow {
+		t.Fatalf("expected user last login timestamp, got %#v", listBody.Data.Items[0])
+	}
 
 	payload := []byte(`{
 		"tenant_id": 10,
@@ -55,6 +64,28 @@ func TestUserAPIRoutesListCreateAndDisableWithSQLite(t *testing.T) {
 	}
 	if !createBody.Data.ForcePasswordChange {
 		t.Fatalf("expected created user to require password change: %#v", createBody.Data)
+	}
+	if createBody.Data.CreatedAt != fixedAPINow || createBody.Data.UpdatedAt != fixedAPINow {
+		t.Fatalf("expected created user audit timestamps, got %#v", createBody.Data)
+	}
+
+	updateProfileRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateProfileRecorder, authorizedRequest(http.MethodPut, "/api/v1/users/20/profile", []byte(`{
+		"tenant_id": 20,
+		"real_name": "李老师新",
+		"phone": "13800001022",
+		"email": "li-new@example.test"
+	}`), authHeader))
+	if updateProfileRecorder.Code != http.StatusOK {
+		t.Fatalf("update profile status = %d, body = %s", updateProfileRecorder.Code, updateProfileRecorder.Body.String())
+	}
+	updateProfileBody := decodeExamAPIResponse[userResponse](t, updateProfileRecorder.Body.Bytes())
+	if updateProfileBody.Data.TenantID != 10 ||
+		updateProfileBody.Data.RealName != "李老师新" ||
+		updateProfileBody.Data.AvatarURL != "li.png" ||
+		updateProfileBody.Data.Phone != "13800001022" ||
+		updateProfileBody.Data.Email != "li-new@example.test" {
+		t.Fatalf("unexpected updated user profile: %#v", updateProfileBody.Data)
 	}
 
 	temporaryLoginRecorder := httptest.NewRecorder()
@@ -192,6 +223,7 @@ func TestPlatformUserCannotEnterTenantUserRoutes(t *testing.T) {
 			"role": "student"
 		}`)},
 		{name: "disable user", method: http.MethodPost, target: "/api/v1/users/20/disable", body: []byte(`{"tenant_id":10}`)},
+		{name: "update profile", method: http.MethodPut, target: "/api/v1/users/20/profile", body: []byte(`{"tenant_id":10,"real_name":"越权修改"}`)},
 		{name: "delete user", method: http.MethodDelete, target: "/api/v1/users/20?tenant_id=10"},
 		{name: "update role", method: http.MethodPut, target: "/api/v1/users/20/role", body: []byte(`{"tenant_id":10,"role":"student"}`)},
 		{name: "import users", method: http.MethodPost, target: "/api/v1/users/import", body: []byte(`{"tenant_id":10,"users":[{"username":"x","real_name":"x","password":"import-secure-123","role":"student"}]}`)},
@@ -204,6 +236,7 @@ func TestPlatformUserCannotEnterTenantUserRoutes(t *testing.T) {
 			"role": "student"
 		}`)},
 		{name: "tenant-prefixed disable user", method: http.MethodPost, target: "/api/v1/tenant/users/20/disable", body: []byte(`{"tenant_id":10}`)},
+		{name: "tenant-prefixed update profile", method: http.MethodPut, target: "/api/v1/tenant/users/20/profile", body: []byte(`{"tenant_id":10,"real_name":"平台越权修改"}`)},
 		{name: "tenant-prefixed delete user", method: http.MethodDelete, target: "/api/v1/tenant/users/20?tenant_id=10"},
 		{name: "tenant-prefixed update role", method: http.MethodPut, target: "/api/v1/tenant/users/20/role", body: []byte(`{"tenant_id":10,"role":"student"}`)},
 		{name: "tenant-prefixed import users", method: http.MethodPost, target: "/api/v1/tenant/users/import", body: []byte(`{"tenant_id":10,"users":[{"username":"tenant.x","real_name":"x","password":"import-secure-123","role":"student"}]}`)},

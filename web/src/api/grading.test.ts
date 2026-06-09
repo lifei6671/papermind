@@ -35,6 +35,7 @@ describe("grading api", () => {
       actorID: 501,
       actorRole: "teacher",
       spaceID: 301,
+      search: "岳阳楼记",
     })).resolves.toEqual({
       items: [{
         attemptID: 900,
@@ -52,7 +53,7 @@ describe("grading api", () => {
       }],
     });
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/grading/pending?tenant_id=10&exam_id=1&actor_id=501&actor_role=teacher&space_id=301",
+      "/api/v1/grading/pending?tenant_id=10&exam_id=1&actor_id=501&actor_role=teacher&space_id=301&search=%E5%B2%B3%E9%98%B3%E6%A5%BC%E8%AE%B0",
       expect.objectContaining({ method: "GET" }),
     );
   });

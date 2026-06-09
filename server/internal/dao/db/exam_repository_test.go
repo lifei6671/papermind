@@ -60,7 +60,7 @@ func TestExamRepositoryRuleLiveFreezeAndSnapshot(t *testing.T) {
 		t.Fatalf("unexpected candidates: %#v", candidates)
 	}
 
-	exam, err := repo.PublishExamAndFreezeLivePool(t.Context(), serviceExamForRuleLive(), candidates)
+	exam, err := repo.PublishExamAndFreezeLivePool(t.Context(), serviceExamForRuleLive(), candidates, "", nil)
 	if err != nil {
 		t.Fatalf("PublishExamAndFreezeLivePool returned error: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestExamRepositoryReviewAndScoreRowsDoNotDuplicateMultiSpaceStudent(t *test
 	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
 	seedMultiSpaceAttemptData(t, gormDB)
 
-	pending, err := repo.ListPendingAttempts(t.Context(), 10, 900)
+	pending, err := repo.ListPendingAttempts(t.Context(), 10, 900, "")
 	if err != nil {
 		t.Fatalf("ListPendingAttempts returned error: %v", err)
 	}
@@ -246,6 +246,20 @@ func TestExamRepositoryReviewAndScoreRowsDoNotDuplicateMultiSpaceStudent(t *test
 	}
 	if pending[0].SpaceID != 302 {
 		t.Fatalf("expected pending review to use exam target space 302, got %#v", pending[0])
+	}
+	pending, err = repo.ListPendingAttempts(t.Context(), 10, 900, "语文培优班")
+	if err != nil {
+		t.Fatalf("ListPendingAttempts with keyword returned error: %v", err)
+	}
+	if len(pending) != 1 || pending[0].SpaceID != 302 {
+		t.Fatalf("expected keyword search to match target space without duplicating rows, got %#v", pending)
+	}
+	pending, err = repo.ListPendingAttempts(t.Context(), 10, 900, "不存在")
+	if err != nil {
+		t.Fatalf("ListPendingAttempts with missing keyword returned error: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("expected missing keyword to return no pending rows, got %#v", pending)
 	}
 
 	rows, err := repo.ListScoreExportRows(t.Context(), 10, 900)
@@ -268,6 +282,70 @@ func TestExamRepositoryReviewAndScoreRowsDoNotDuplicateMultiSpaceStudent(t *test
 	}
 }
 
+func TestExamRepositoryReviewAndResultRowsExcludeAttemptAfterStudentRoleRemoved(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
+	seedMultiSpaceAttemptData(t, gormDB)
+	if err := gormDB.Exec(`
+		UPDATE space_members
+		SET role_in_space = 'teacher'
+		WHERE tenant_id = 10 AND user_id = 21 AND space_id = 302
+	`).Error; err != nil {
+		t.Fatalf("switch space role: %v", err)
+	}
+	if err := gormDB.Exec(`
+		UPDATE tenant_user_memberships
+		SET role = 'teacher'
+		WHERE tenant_id = 10 AND user_id = 21
+	`).Error; err != nil {
+		t.Fatalf("switch tenant role: %v", err)
+	}
+
+	pending, err := repo.ListPendingAttempts(t.Context(), 10, 900, "语文培优班")
+	if err != nil {
+		t.Fatalf("ListPendingAttempts returned error: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("expected role-changed attempt to leave pending review scope, got %#v", pending)
+	}
+	rows, err := repo.ListScoreExportRows(t.Context(), 10, 900)
+	if err != nil {
+		t.Fatalf("ListScoreExportRows returned error: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected role-changed attempt to leave score export scope, got %#v", rows)
+	}
+	spaces, err := repo.AttemptSpaceIDs(t.Context(), 10, 700)
+	if err != nil {
+		t.Fatalf("AttemptSpaceIDs returned error: %v", err)
+	}
+	if len(spaces) != 0 {
+		t.Fatalf("expected role-changed attempt to have no review target spaces, got %#v", spaces)
+	}
+	results, err := repo.ListExamResults(t.Context(), serviceexam.ListExamResultsInput{
+		TenantID: 10,
+		ExamID:   900,
+		SpaceIDs: []uint64{302},
+		Page:     1,
+		PageSize: 20,
+	})
+	if err != nil {
+		t.Fatalf("ListExamResults returned error: %v", err)
+	}
+	if results.Total != 0 || len(results.Items) != 0 {
+		t.Fatalf("expected role-changed attempt to leave management result scope, got %#v", results)
+	}
+	_, err = repo.GetAnswerSheet(t.Context(), serviceexam.AnswerSheetRepositoryInput{
+		TenantID:  10,
+		ExamID:    900,
+		AttemptID: 700,
+		SpaceIDs:  []uint64{302},
+	})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected role-changed answer sheet to be hidden, got %v", err)
+	}
+}
+
 func TestExamRepositoryReviewAndScoreRowsResolveUserTargetSpaces(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
@@ -280,7 +358,7 @@ func TestExamRepositoryReviewAndScoreRowsResolveUserTargetSpaces(t *testing.T) {
 		t.Fatalf("switch exam target to user: %v", err)
 	}
 
-	pending, err := repo.ListPendingAttempts(t.Context(), 10, 900)
+	pending, err := repo.ListPendingAttempts(t.Context(), 10, 900, "")
 	if err != nil {
 		t.Fatalf("ListPendingAttempts returned error: %v", err)
 	}
@@ -1601,19 +1679,21 @@ func TestExamRepositoryUpdateScorePublishConfigRejectsMissingExamBeforeWritingLo
 
 	_, err := repo.UpdateScorePublishConfig(
 		t.Context(),
-		10,
-		999,
-		serviceexam.PublishModeImmediateScore,
-		nil,
-		&serviceexam.OperationLog{
-			TenantID:        10,
-			ExamID:          999,
-			OperationType:   serviceexam.OperationTypePublishResults,
-			OperationTitle:  "发布成绩",
-			OperationDetail: "发布成绩给考生",
-			ActorID:         11,
-			ActorType:       AuditActorTenantUser,
-			ActorRole:       "tenant_admin",
+		serviceexam.UpdateScorePublishConfigRepositoryInput{
+			TenantID:         10,
+			ExamID:           999,
+			PublishMode:      serviceexam.PublishModeImmediateScore,
+			ScorePublishTime: nil,
+			Log: &serviceexam.OperationLog{
+				TenantID:        10,
+				ExamID:          999,
+				OperationType:   serviceexam.OperationTypePublishResults,
+				OperationTitle:  "发布成绩",
+				OperationDetail: "发布成绩给考生",
+				ActorID:         11,
+				ActorType:       AuditActorTenantUser,
+				ActorRole:       "tenant_admin",
+			},
 		},
 	)
 	if !errors.Is(err, gorm.ErrRecordNotFound) {

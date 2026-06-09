@@ -106,6 +106,22 @@ func TestDeleteSpaceUsesTenantAndSpaceScope(t *testing.T) {
 	}
 }
 
+func TestDisableSpaceUsesTenantAndSpaceScope(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(ServiceOptions{Repo: repo})
+
+	disabled, err := svc.Disable(context.Background(), DisableInput{TenantID: 10, SpaceID: 100})
+	if err != nil {
+		t.Fatalf("Disable returned error: %v", err)
+	}
+	if repo.disabledSpaceTenantID != 10 || repo.disabledSpaceID != 100 {
+		t.Fatalf("expected disable tenant=10 space=100, got tenant=%d space=%d", repo.disabledSpaceTenantID, repo.disabledSpaceID)
+	}
+	if disabled.Status != StatusDisabled {
+		t.Fatalf("expected disabled status, got %#v", disabled)
+	}
+}
+
 func TestJoinMemberCreatesEnabledMember(t *testing.T) {
 	repo := &fakeRepository{}
 	svc := NewService(ServiceOptions{Repo: repo})
@@ -329,9 +345,11 @@ type fakeRepository struct {
 	createdSpace        Space
 	createdAdminUserIDs []uint64
 
-	updatedProfile  UpdateProfileInput
-	deletedTenantID uint64
-	deletedSpaceID  uint64
+	updatedProfile        UpdateProfileInput
+	deletedTenantID       uint64
+	deletedSpaceID        uint64
+	disabledSpaceTenantID uint64
+	disabledSpaceID       uint64
 
 	addedMember Member
 
@@ -353,8 +371,8 @@ type fakeRepository struct {
 	changedRoleUpdatedSpace uint64
 }
 
-func (r *fakeRepository) ListSpaces(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[Space], error) {
-	page = pagination.Normalize(page)
+func (r *fakeRepository) ListSpaces(ctx context.Context, input ListInput) (pagination.Result[Space], error) {
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
 	items := []Space{r.createdSpace}
 	return pagination.Result[Space]{
 		Items:    items,
@@ -388,6 +406,12 @@ func (r *fakeRepository) DeleteSpace(ctx context.Context, tenantID uint64, space
 	r.deletedTenantID = tenantID
 	r.deletedSpaceID = spaceID
 	return nil
+}
+
+func (r *fakeRepository) DisableSpace(ctx context.Context, tenantID uint64, spaceID uint64) (Space, error) {
+	r.disabledSpaceTenantID = tenantID
+	r.disabledSpaceID = spaceID
+	return Space{ID: spaceID, TenantID: tenantID, Status: StatusDisabled}, nil
 }
 
 func (r *fakeRepository) AddMember(ctx context.Context, member Member) (Member, error) {

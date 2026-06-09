@@ -66,6 +66,8 @@ type User struct {
 	ForcePasswordChange bool   // 是否要求用户下次登录后修改密码。
 	LastLoginIP         string // 最后登录 IP。
 	LastLoginAt         int64  // 最后登录时间，Unix 毫秒时间戳。
+	CreatedAt           int64  // 用户创建时间，Unix 毫秒时间戳。
+	UpdatedAt           int64  // 用户最后活跃时间，Unix 毫秒时间戳。
 	Role                string // 租户固定角色：tenant_admin / teacher / student。
 	Status              string // 用户状态：enabled / disabled。
 }
@@ -92,9 +94,13 @@ type CreateInput struct {
 }
 
 type ListInput struct {
-	TenantID uint64
-	Page     int
-	PageSize int
+	TenantID       uint64
+	Page           int
+	PageSize       int
+	Search         string
+	Role           string
+	Status         string
+	ExcludeSpaceID uint64
 }
 
 type LoginInput struct {
@@ -204,7 +210,7 @@ type DisableImpact struct {
 }
 
 type Repository interface {
-	ListUsers(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[User], error)
+	ListUsers(ctx context.Context, input ListInput) (pagination.Result[User], error)
 	FindUserByID(ctx context.Context, tenantID uint64, userID uint64) (User, error)
 	FindGlobalUserByID(ctx context.Context, userID uint64) (User, error)
 	FindTenantByCode(ctx context.Context, tenantCode string) (Tenant, error)
@@ -288,7 +294,7 @@ func NewService(options ServiceOptions) *Service {
 }
 
 func (s *Service) List(ctx context.Context, input ListInput) (pagination.Result[User], error) {
-	return s.repo.ListUsers(ctx, input.TenantID, pagination.Input{Page: input.Page, PageSize: input.PageSize})
+	return s.repo.ListUsers(ctx, input)
 }
 
 func (s *Service) Get(ctx context.Context, tenantID uint64, userID uint64) (User, error) {

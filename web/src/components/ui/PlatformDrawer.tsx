@@ -2,6 +2,7 @@ import AntDrawer from "antd/es/drawer";
 import type { ReactNode } from "react";
 
 type PlatformDrawerProps = {
+  afterOpenChange?: (open: boolean) => void;
   ariaLabel: string;
   children: ReactNode;
   fullscreen?: boolean;
@@ -11,6 +12,7 @@ type PlatformDrawerProps = {
 };
 
 export function PlatformDrawer({
+  afterOpenChange,
   ariaLabel,
   children,
   fullscreen = false,
@@ -36,6 +38,7 @@ export function PlatformDrawer({
       closable={false}
       getContainer={false}
       maskClosable
+      afterOpenChange={afterOpenChange}
       onClose={onClose}
       open={open}
       placement="right"

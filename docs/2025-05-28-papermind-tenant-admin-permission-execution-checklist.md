@@ -389,6 +389,7 @@ go test -tags json1 ./internal/service/permission
 ### P4.5 空间资料与空间成员接口拆分
 
 - [x] `PUT /api/v1/tenant/spaces/:id` 只允许 `tenant_admin`。
+- [x] `POST /api/v1/tenant/spaces/:id/disable` 只允许 `tenant_admin`。
 - [x] `DELETE /api/v1/tenant/spaces/:id` 只允许 `tenant_admin`。
 - [x] `GET /api/v1/tenant/spaces/:id/members` 允许 `tenant_admin` 或当前空间 `space_admin`。
 - [x] `POST /api/v1/tenant/spaces/:id/members` 允许 `tenant_admin` 或当前空间 `space_admin`。
@@ -412,6 +413,13 @@ go test -tags json1 ./internal/service/permission
 > 2026-05-29 进度：新增空间成员和修改空间成员角色会校验空间内角色枚举；
 > 新建空间初始管理员、添加空间成员和修改成员角色都会校验目标用户属于当前租户、
 > 启用且未删除，避免把不可用用户写入有效空间授权。
+>
+> 2026-06-09 进度：空间管理列表已补充“禁用空间”入口，前端在提交前展示题库、
+> 试卷、考试、阅卷和成绩等关联业务停止操作的风险确认；后端新增
+> `POST /api/v1/tenant/spaces/:id/disable`，仅允许当前租户 `tenant_admin`
+> 从 session 派生租户后禁用空间，`space_admin` 和平台账号调用均返回 403。
+> 题库可见、读取、更新、状态变更和删除路径已按启用空间过滤；试卷列表、
+> 详情、空间反查、状态变更和组卷选题可用性判断也已排除禁用空间。
 
 **验收标准**：
 

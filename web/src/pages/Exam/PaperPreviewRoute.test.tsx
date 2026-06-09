@@ -16,40 +16,33 @@ vi.mock("./PaperPreviewPage", () => ({
 test("旧试卷预览入口能唯一定位考试时跳转 canonical 考试详情", async () => {
   const examApi = createExamApiDouble([{ items: [
     createExamRow({ id: 8, paperID: 100 }),
-    createExamRow({ id: 9, paperID: 101 }),
-  ], page: 1, pageSize: 100, total: 2 }]);
+  ], page: 1, pageSize: 2, total: 1 }]);
 
   renderRoute(examApi, "/papers/100/preview?space_id=301");
 
   expect(await screen.findByTestId("location")).toHaveTextContent("/exams/8?space_id=301");
-  expect(examApi.listExams).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, page: 1, pageSize: 100 });
+  expect(examApi.listExams).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, paperID: 100, page: 1, pageSize: 2 });
 });
 
-test("旧试卷预览入口会继续翻页查找不在第一页的关联考试", async () => {
+test("旧试卷预览入口依赖后端 paper_id 过滤，不在浏览器端翻页扫描", async () => {
   const examApi = createExamApiDouble([
     {
-      items: [createExamRow({ id: 8, paperID: 101 })],
-      page: 1,
-      pageSize: 100,
-      total: 101,
-    },
-    {
       items: [createExamRow({ id: 109, paperID: 100 })],
-      page: 2,
-      pageSize: 100,
-      total: 101,
+      page: 1,
+      pageSize: 2,
+      total: 1,
     },
   ]);
 
   renderRoute(examApi, "/papers/100/preview?space_id=301");
 
   expect(await screen.findByTestId("location")).toHaveTextContent("/exams/109?space_id=301");
-  expect(examApi.listExams).toHaveBeenNthCalledWith(1, { tenantID: 10, spaceID: 301, page: 1, pageSize: 100 });
-  expect(examApi.listExams).toHaveBeenNthCalledWith(2, { tenantID: 10, spaceID: 301, page: 2, pageSize: 100 });
+  expect(examApi.listExams).toHaveBeenCalledTimes(1);
+  expect(examApi.listExams).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, paperID: 100, page: 1, pageSize: 2 });
 });
 
 test("旧试卷预览入口找不到关联考试时回退到旧试卷预览", async () => {
-  const examApi = createExamApiDouble([{ items: [createExamRow({ id: 9, paperID: 101 })], page: 1, pageSize: 100, total: 1 }]);
+  const examApi = createExamApiDouble([{ items: [], page: 1, pageSize: 2, total: 0 }]);
 
   renderRoute(examApi, "/papers/100/preview?space_id=301");
 
@@ -84,6 +77,7 @@ test("旧试卷预览入口匹配多场考试时回退到旧试卷预览避免�
 test("后台学生视角预览按试卷题目渲染学生答题界面", async () => {
   const paperApi = {
     ...createUnusedPaperApiDouble(),
+    getPaper: vi.fn(async () => createPaperRow({ id: 100, name: "高一语文月考试卷" })),
     listPapers: vi.fn(async () => ({
       items: [createPaperRow({ id: 100, name: "高一语文月考试卷" })],
     })),
@@ -214,7 +208,9 @@ function createUnusedPaperApiDouble(): PaperAPI {
     throw new Error("old paper preview route should resolve exams before loading paper preview");
   });
   return {
+    getPaper: fail,
     listPapers: fail,
+    listPublishPaperCandidates: fail,
     createPaper: fail,
     updatePaper: fail,
     enablePaper: fail,
@@ -254,5 +250,7 @@ function createUnusedQuestionApiDouble(): QuestionAPI {
     importQuestions: fail,
     startQuestionImportJob: fail,
     subscribeQuestionImportJob: vi.fn(() => () => undefined),
+    listQuestionTags: fail,
+    countAvailableQuestions: fail,
   };
 }

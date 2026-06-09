@@ -22,6 +22,7 @@ export type SpaceRow = {
   name: string;
   description: string;
   logoFileName: string;
+  status: "enabled" | "disabled";
   members: SpaceMember[];
 };
 
@@ -41,38 +42,72 @@ export type UpdateSpaceInput = {
   logoFileName: string;
 };
 
+export type DisableSpaceInput = {
+  tenantID: number;
+  spaceID: number;
+};
+
 export type SpaceListResult = {
   items: SpaceRow[];
+  page?: number;
+  pageSize?: number;
+  total?: number;
+};
+
+export type ListSpacesFilters = {
+  status?: SpaceRow["status"];
+};
+
+export type ListSpacesInput = {
+  tenantID: number;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  filters?: ListSpacesFilters;
 };
 
 export type SpaceMemberListInput = {
   tenantID: number;
   spaceID: number;
+  page: number;
+  pageSize: number;
+  search?: string;
+  role?: MemberRole;
+  status?: SpaceMember["status"];
 };
 
-export type SpaceMemberCreateInput = SpaceMemberListInput & {
+type SpaceMemberMutationInput = {
+  tenantID: number;
+  spaceID: number;
+};
+
+export type SpaceMemberCreateInput = SpaceMemberMutationInput & {
   userID: number;
   role: MemberRole;
 };
 
-export type SpaceMemberUpdateInput = SpaceMemberListInput & {
+export type SpaceMemberUpdateInput = SpaceMemberMutationInput & {
   userID: number;
   role?: MemberRole;
   status?: SpaceMember["status"];
 };
 
-export type SpaceMemberRemoveInput = SpaceMemberListInput & {
+export type SpaceMemberRemoveInput = SpaceMemberMutationInput & {
   userID: number;
 };
 
 export type SpaceMemberListResult = {
   items: SpaceMember[];
+  page?: number;
+  pageSize?: number;
+  total?: number;
 };
 
 export type SpaceManagementAPI = {
-  listSpaces(tenantID: number): Promise<SpaceListResult>;
+  listSpaces(input: ListSpacesInput): Promise<SpaceListResult>;
   createSpace(input: CreateSpaceInput): Promise<SpaceRow>;
   updateSpace(input: UpdateSpaceInput): Promise<SpaceRow>;
+  disableSpace(input: DisableSpaceInput): Promise<SpaceRow>;
 };
 
 export type SpaceMemberAPI = {
@@ -103,6 +138,7 @@ type SpaceAPIResponse = {
   name: string;
   logo_url: string;
   description: string;
+  status?: "enabled" | "disabled";
   members: SpaceMemberAPIResponse[];
 };
 
@@ -114,9 +150,28 @@ export const spaceApi = createSpaceAPI(defaultApiClient);
 
 export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI & SpaceMemberAPI {
   return {
-    async listSpaces(tenantID) {
-      const data = await apiClient.get<PageData<SpaceAPIResponse>>(`/api/v1/tenant/spaces?tenant_id=${tenantID}`);
-      return { items: data.items.map((row) => mapSpaceResponse(row)) };
+    async listSpaces(input) {
+      const params = new URLSearchParams({ tenant_id: String(input.tenantID) });
+      if (input.page !== undefined) {
+        params.set("page", String(input.page));
+      }
+      if (input.pageSize !== undefined) {
+        params.set("page_size", String(input.pageSize));
+      }
+      const keyword = input.search?.trim();
+      if (keyword) {
+        params.set("search", keyword);
+      }
+      if (input.filters?.status) {
+        params.set("status", input.filters.status);
+      }
+      const data = await apiClient.get<PageData<SpaceAPIResponse>>(`/api/v1/tenant/spaces?${params.toString()}`);
+      return {
+        items: data.items.map((row) => mapSpaceResponse(row)),
+        page: data.page,
+        pageSize: data.page_size,
+        total: data.total,
+      };
     },
     async createSpace(input) {
       const data = await apiClient.post<SpaceAPIResponse>("/api/v1/tenant/spaces", {
@@ -142,11 +197,37 @@ export function createSpaceAPI(apiClient: ApiClient): SpaceManagementAPI & Space
       });
       return mapSpaceResponse(data);
     },
+    async disableSpace(input) {
+      const data = await apiClient.post<SpaceAPIResponse>(`/api/v1/tenant/spaces/${input.spaceID}/disable`, {
+        tenant_id: input.tenantID,
+      });
+      return mapSpaceResponse(data);
+    },
     async listSpaceMembers(input) {
+      const params = new URLSearchParams({ tenant_id: String(input.tenantID) });
+      if (input.page !== undefined) {
+        params.set("page", String(input.page));
+      }
+      if (input.pageSize !== undefined) {
+        params.set("page_size", String(input.pageSize));
+      }
+      const keyword = input.search?.trim();
+      if (keyword) {
+        params.set("search", keyword);
+      }
+      if (input.role) {
+        params.set("role", input.role);
+      }
+      if (input.status) {
+        params.set("status", input.status);
+      }
       const data = await apiClient.get<SpaceMemberListAPIResponse>(
-        `/api/v1/tenant/spaces/${input.spaceID}/members?tenant_id=${input.tenantID}`,
+        `/api/v1/tenant/spaces/${input.spaceID}/members?${params.toString()}`,
       );
-      return { items: mapSpaceMemberListResponse(data) };
+      return {
+        items: mapSpaceMemberListResponse(data),
+        ...(Array.isArray(data) ? {} : { page: data.page, pageSize: data.page_size, total: data.total }),
+      };
     },
     async createSpaceMember(input) {
       const data = await apiClient.post<SpaceMemberAPIResponse>(`/api/v1/tenant/spaces/${input.spaceID}/members`, {
@@ -185,6 +266,7 @@ function mapSpaceResponse(row: SpaceAPIResponse): SpaceRow {
     name: row.name,
     description: row.description,
     logoFileName: row.logo_url || "未上传",
+    status: row.status ?? "enabled",
     members: row.members.map((member) => mapSpaceMemberResponse(member)),
   };
 }

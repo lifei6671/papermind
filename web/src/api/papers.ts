@@ -1,6 +1,6 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
-import type { QuestionType } from "./questions";
+import type { QuestionDifficulty, QuestionType } from "./questions";
 
 export type PaperRow = {
   id: number;
@@ -40,6 +40,21 @@ export type PaperSectionRow = {
 export type ListPapersInput = {
   tenantID: number;
   spaceID?: number;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: PaperRow["status"];
+};
+
+export type ListPublishPaperCandidatesInput = {
+  tenantID: number;
+  spaceID?: number;
+  search?: string;
+};
+
+export type GetPaperInput = {
+  tenantID: number;
+  paperID: number;
 };
 
 export type ListPaperSectionsInput = {
@@ -119,6 +134,8 @@ export type ManualQuestionRow = {
   sortOrder: number;
   score: string;
   questionType?: QuestionType;
+  difficulty?: QuestionDifficulty;
+  tagNames?: string[];
   title?: string;
   options?: string[];
   blankCount?: number;
@@ -230,6 +247,9 @@ export type RuleLivePrecheckResult = {
 
 export type PaperListResult = {
   items: PaperRow[];
+  page?: number;
+  pageSize?: number;
+  total?: number;
 };
 
 export type PaperSectionListResult = {
@@ -242,6 +262,8 @@ export type PaperRuleListResult = {
 
 export type PaperAPI = {
   listPapers(input: ListPapersInput): Promise<PaperListResult>;
+  listPublishPaperCandidates(input: ListPublishPaperCandidatesInput): Promise<PaperListResult>;
+  getPaper(input: GetPaperInput): Promise<PaperRow>;
   createPaper(input: CreatePaperInput): Promise<PaperRow>;
   updatePaper(input: UpdatePaperInput): Promise<PaperRow>;
   enablePaper(input: DisablePaperInput): Promise<PaperRow>;
@@ -302,6 +324,8 @@ type ManualQuestionAPIResponse = {
   sort_order: number;
   score: string;
   question_type?: QuestionType;
+  difficulty?: QuestionDifficulty;
+  tag_names?: string[];
   title?: string;
   options?: string[];
   blank_count?: number;
@@ -349,8 +373,47 @@ export function createPaperAPI(apiClient: ApiClient): PaperAPI {
       if (input.spaceID !== undefined) {
         params.set("space_id", String(input.spaceID));
       }
+      if (input.page !== undefined) {
+        params.set("page", String(input.page));
+      }
+      if (input.pageSize !== undefined) {
+        params.set("page_size", String(input.pageSize));
+      }
+      const keyword = input.search?.trim();
+      if (keyword) {
+        params.set("search", keyword);
+      }
+      if (input.status !== undefined) {
+        params.set("status", input.status);
+      }
       const data = await apiClient.get<PageData<PaperAPIResponse>>(`/api/v1/papers?${params.toString()}`);
-      return { items: data.items.map(mapPaperResponse) };
+      return {
+        items: data.items.map(mapPaperResponse),
+        page: data.page,
+        pageSize: data.page_size,
+        total: data.total,
+      };
+    },
+    async listPublishPaperCandidates(input) {
+      const params = new URLSearchParams({ tenant_id: String(input.tenantID) });
+      if (input.spaceID !== undefined) {
+        params.set("space_id", String(input.spaceID));
+      }
+      const keyword = input.search?.trim();
+      if (keyword) {
+        params.set("search", keyword);
+      }
+      const data = await apiClient.get<PageData<PaperAPIResponse>>(`/api/v1/papers/publish-candidates?${params.toString()}`);
+      return {
+        items: data.items.map(mapPaperResponse),
+        page: data.page,
+        pageSize: data.page_size,
+        total: data.total,
+      };
+    },
+    async getPaper(input) {
+      const data = await apiClient.get<PaperAPIResponse>(`/api/v1/papers/${input.paperID}?tenant_id=${input.tenantID}`);
+      return mapPaperResponse(data);
     },
     async createPaper(input) {
       const data = await apiClient.post<PaperAPIResponse>("/api/v1/papers", {
@@ -608,6 +671,8 @@ function mapManualQuestionResponse(row: ManualQuestionAPIResponse): ManualQuesti
     sortOrder: row.sort_order,
     score: row.score,
     ...(row.question_type === undefined ? {} : { questionType: row.question_type }),
+    ...(row.difficulty === undefined ? {} : { difficulty: row.difficulty }),
+    ...(row.tag_names === undefined ? {} : { tagNames: row.tag_names }),
     ...(row.title === undefined ? {} : { title: row.title }),
     ...(row.options === undefined ? {} : { options: row.options }),
     ...(row.blank_count === undefined ? {} : { blankCount: row.blank_count }),

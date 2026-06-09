@@ -1,7 +1,9 @@
 import { createApiClient } from "./client";
 import type { ApiClient, PageData } from "./client";
 
-export type ExamStatus = "draft" | "published";
+export type ExamStatus = "draft" | "published" | "closed" | "disabled";
+export type ExamCreationStatus = "draft" | "published";
+export type ExamStatusUpdate = "published" | "closed" | "disabled";
 
 export type ExamRow = {
   id: number;
@@ -39,6 +41,14 @@ export type PublishExamInput = {
   maxAttempts: number;
   resultStrategy: "latest" | "highest";
   publishMode: "immediate_score" | "manual_publish";
+  scorePublishTime?: number | null;
+  status: ExamCreationStatus;
+};
+
+export type UpdateExamStatusInput = {
+  tenantID: number;
+  examID: number;
+  status: ExamStatusUpdate;
 };
 
 export type ResolveExamInviteInput = {
@@ -55,6 +65,7 @@ export type ExamListResult = {
 export type ListExamsInput = {
   tenantID: number;
   spaceID?: number;
+  paperID?: number;
   page?: number;
   pageSize?: number;
 };
@@ -62,6 +73,7 @@ export type ListExamsInput = {
 export type ExamManagementAPI = {
   listExams(input: ListExamsInput): Promise<ExamListResult>;
   publishExam(input: PublishExamInput): Promise<ExamRow>;
+  updateExamStatus?(input: UpdateExamStatusInput): Promise<ExamRow>;
 };
 
 export type ExamEntryAPI = {
@@ -215,6 +227,9 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
       if (input.spaceID !== undefined) {
         params.set("space_id", String(input.spaceID));
       }
+      if (input.paperID !== undefined) {
+        params.set("paper_id", String(input.paperID));
+      }
       if (input.page !== undefined) {
         params.set("page", String(input.page));
       }
@@ -247,6 +262,15 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
         max_attempts: input.maxAttempts,
         result_strategy: input.resultStrategy,
         publish_mode: input.publishMode,
+        score_publish_time: input.scorePublishTime ?? null,
+        status: input.status,
+      });
+      return mapExamResponse(data);
+    },
+    async updateExamStatus(input) {
+      const data = await apiClient.post<ExamAPIResponse>(`/api/v1/exams/${input.examID}/status`, {
+        tenant_id: input.tenantID,
+        status: input.status,
       });
       return mapExamResponse(data);
     },

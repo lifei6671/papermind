@@ -101,6 +101,8 @@ function createQuestionAPI() {
     importQuestions: vi.fn(),
     startQuestionImportJob: vi.fn(),
     subscribeQuestionImportJob: vi.fn(),
+    listQuestionTags: vi.fn().mockResolvedValue(["阅读理解"]),
+    countAvailableQuestions: vi.fn().mockResolvedValue({}),
   };
 }
 
@@ -129,26 +131,39 @@ function renderCreatePageWithRole(actorRole: ActorRole, api = createQuestionAPI(
 }
 
 function createSpaceAPI(): Pick<SpaceManagementAPI, "listSpaces"> {
+  const spaces = [
+    {
+      id: 301,
+      tenantID: 10,
+      name: "高一一班",
+      description: "高一一班空间",
+      logoFileName: "class-a.png",
+      status: "enabled" as const,
+      members: [],
+    },
+    {
+      id: 302,
+      tenantID: 10,
+      name: "高一二班",
+      description: "高一二班空间",
+      logoFileName: "class-b.png",
+      status: "enabled" as const,
+      members: [],
+    },
+    {
+      id: 303,
+      tenantID: 10,
+      name: "已禁用班级",
+      description: "禁用空间",
+      logoFileName: "class-disabled.png",
+      status: "disabled" as const,
+      members: [],
+    },
+  ];
   return {
-    listSpaces: vi.fn().mockResolvedValue({
-      items: [
-        {
-          id: 301,
-          tenantID: 10,
-          name: "高一一班",
-          description: "高一一班空间",
-          logoFileName: "class-a.png",
-          members: [],
-        },
-        {
-          id: 302,
-          tenantID: 10,
-          name: "高一二班",
-          description: "高一二班空间",
-          logoFileName: "class-b.png",
-          members: [],
-        },
-      ],
+    listSpaces: vi.fn().mockImplementation(async (input) => {
+      const items = input.filters?.status === undefined ? spaces : spaces.filter((space) => space.status === input.filters?.status);
+      return { items, total: items.length };
     }),
   };
 }
@@ -194,6 +209,11 @@ test("新增题目使用独立页面并通过插件渲染 Markdown 预览", asyn
   expect(document.querySelector(".w-md-editor")).toHaveStyle({ height: "auto" });
   expect(document.querySelector(".markdown-editor__preview")).not.toBeInTheDocument();
   expect(screen.queryByText("题干和解析支持 Markdown，编辑时会即时渲染预览。")).not.toBeInTheDocument();
+  const stemEditor = screen.getByLabelText("题干").closest(".markdown-editor");
+  expect(stemEditor).not.toBeNull();
+  expect(within(stemEditor as HTMLElement).getByTitle("加粗（Ctrl+B）")).toBeInTheDocument();
+  expect(within(stemEditor as HTMLElement).getByTitle("标题")).toBeInTheDocument();
+  expect(within(stemEditor as HTMLElement).getByTitle("实时预览（Ctrl+8）")).toBeInTheDocument();
 
   await user.type(screen.getByLabelText("题干"), "## 函数题\n**单调递增**");
   await user.type(screen.getByLabelText("题目解析"), "- 看斜率\n- 排除反例");
@@ -220,23 +240,84 @@ test("题干 Markdown 预览支持渲染 LaTeX 公式", async () => {
   });
 });
 
+test("新增简答题参考答案使用 Markdown 编辑器并保存原文", async () => {
+  const user = userEvent.setup();
+  const api = renderCreatePage();
+  const referenceAnswer = "## 参考答案\n- 采分点一\n- **采分点二**";
+
+  await user.selectOptions(screen.getByLabelText("题型"), "short_text");
+  fireEvent.change(screen.getByLabelText("题干"), { target: { value: "请简述函数单调性的判断方法。" } });
+  fireEvent.change(screen.getByLabelText("题目解析"), { target: { value: "从定义和图像两个角度分析。" } });
+  fireEvent.change(screen.getByLabelText("简答题参考答案"), { target: { value: referenceAnswer } });
+
+  const referenceEditor = screen.getByLabelText("简答题参考答案").closest(".markdown-editor");
+  expect(referenceEditor).not.toBeNull();
+  expect(referenceEditor?.querySelector(".w-md-editor")).toBeInTheDocument();
+  await waitFor(() => {
+    expect(within(referenceEditor as HTMLElement).getByRole("heading", { name: "参考答案" })).toBeInTheDocument();
+  });
+  expect(within(referenceEditor as HTMLElement).getByText("采分点一")).toBeInTheDocument();
+  expect(within(referenceEditor as HTMLElement).getByText("采分点二")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "确认新增" }));
+
+  expect(api.createQuestion).toHaveBeenCalledWith(expect.objectContaining({
+    type: "short_text",
+    title: "请简述函数单调性的判断方法。",
+    options: [],
+    correctOptionIndexes: [],
+    referenceAnswer,
+    standardAnswer: undefined,
+  }));
+});
+
+test("新增简答题时参考答案不能为空", async () => {
+  const user = userEvent.setup();
+  const api = renderCreatePage();
+
+  await user.selectOptions(screen.getByLabelText("题型"), "short_text");
+  fireEvent.change(screen.getByLabelText("题干"), { target: { value: "请简述函数单调性的判断方法。" } });
+  fireEvent.change(screen.getByLabelText("题目解析"), { target: { value: "从定义和图像两个角度分析。" } });
+  await user.click(screen.getByRole("button", { name: "确认新增" }));
+
+  expect(api.createQuestion).not.toHaveBeenCalled();
+  expect(await screen.findByRole("alert")).toHaveTextContent("简答题参考答案不能为空");
+});
+
+test("新增题目时默认分值不能为空", async () => {
+  const user = userEvent.setup();
+  const api = renderCreatePage();
+
+  await user.clear(screen.getByLabelText("默认分值"));
+  fireEvent.change(screen.getByLabelText("题干"), { target: { value: "默认分值为空的题目" } });
+  fireEvent.change(screen.getByLabelText("选项 A"), { target: { value: "选项 A" } });
+  fireEvent.change(screen.getByLabelText("选项 B"), { target: { value: "选项 B" } });
+  fireEvent.change(screen.getByLabelText("题目解析"), { target: { value: "默认分值不能为空。" } });
+  await user.click(screen.getByRole("button", { name: "确认新增" }));
+
+  expect(api.createQuestion).not.toHaveBeenCalled();
+  expect(await screen.findByRole("alert")).toHaveTextContent("默认分值不能为空");
+});
+
 test("教师可以在新增题目页面创建选择题并编辑选项和标签", async () => {
   const user = userEvent.setup();
   const api = renderCreatePage();
 
   await user.selectOptions(screen.getByLabelText("题型"), "multiple");
+  const optionSection = screen.getByLabelText("选择题选项");
+  expect(within(optionSection).getByText("支持公式：行内 $a^2+b^2=c^2$，块级 $$\\sum_{i=1}^{n} i$$")).toHaveClass("exam-option-list__formula-hint");
   await user.selectOptions(screen.getByLabelText("题目难度"), "hard");
   await user.clear(screen.getByLabelText("默认分值"));
   await user.type(screen.getByLabelText("默认分值"), "6");
   await user.clear(screen.getByLabelText("题干"));
   await user.type(screen.getByLabelText("题干"), "## 函数题\n下列函数在 R 上**单调递增**的是哪一项？");
   await user.clear(screen.getByLabelText("选项 A"));
-  await user.type(screen.getByLabelText("选项 A"), "y = x");
+  await user.type(screen.getByLabelText("选项 A"), "$y = x$");
   await user.clear(screen.getByLabelText("选项 B"));
-  await user.type(screen.getByLabelText("选项 B"), "y = -x");
+  await user.type(screen.getByLabelText("选项 B"), "$y = -x$");
   await user.click(screen.getByRole("button", { name: "添加选项" }));
   await user.clear(screen.getByLabelText("选项 C"));
-  await user.type(screen.getByLabelText("选项 C"), "y = x + 1");
+  await user.type(screen.getByLabelText("选项 C"), "$y = x + 1$");
   await user.click(screen.getByLabelText("设为正确答案 C"));
   await user.clear(screen.getByLabelText("题目解析"));
   await user.type(screen.getByLabelText("题目解析"), "- 一次函数斜率为正时单调递增。\n- 排除斜率为负的函数。");
@@ -252,7 +333,7 @@ test("教师可以在新增题目页面创建选择题并编辑选项和标签",
     type: "multiple",
     difficulty: "hard",
     title: "## 函数题\n下列函数在 R 上**单调递增**的是哪一项？",
-    options: ["y = x", "y = -x", "y = x + 1"],
+    options: ["$y = x$", "$y = -x$", "$y = x + 1$"],
     correctOptionIndexes: [0, 1, 2],
     analysis: "- 一次函数斜率为正时单调递增。\n- 排除斜率为负的函数。",
     scoreDefault: "6",
@@ -302,8 +383,14 @@ test("租户管理员新增题目时可以选择归属到具体空间", async ()
   const { api, spacesApi } = renderTenantAdminCreatePage();
 
   await waitFor(() => {
-    expect(spacesApi.listSpaces).toHaveBeenCalledWith(10);
+    expect(spacesApi.listSpaces).toHaveBeenCalledWith(expect.objectContaining({
+      tenantID: 10,
+      page: 1,
+      pageSize: 100,
+      filters: { status: "enabled" },
+    }));
   });
+  expect(screen.queryByRole("option", { name: "已禁用班级" })).not.toBeInTheDocument();
   await user.selectOptions(screen.getByLabelText("所属空间"), "space:302");
   await user.clear(screen.getByLabelText("题干"));
   await user.type(screen.getByLabelText("题干"), "空间题库题目");
@@ -319,6 +406,112 @@ test("租户管理员新增题目时可以选择归属到具体空间", async ()
     title: "空间题库题目",
     analysis: "空间题库解析",
   }));
+});
+
+test("租户管理员从后续页启用空间上下文新增题目时保留有效空间", async () => {
+  const api = createQuestionAPI();
+  const spacesApi = createSpaceAPI();
+  const firstPageSpaces = Array.from({ length: 100 }, (_, index) => ({
+    id: 300 + index,
+    tenantID: 10,
+    name: `第 ${index + 1} 班`,
+    description: "分页空间",
+    logoFileName: "class.png",
+    status: "enabled" as const,
+    members: [],
+  }));
+  vi.mocked(spacesApi.listSpaces).mockImplementation(async (input) => ({
+    items: input.page === 1
+      ? firstPageSpaces
+      : [{
+        id: 999,
+        tenantID: 10,
+        name: "第 101 班",
+        description: "后续页空间",
+        logoFileName: "class-101.png",
+        status: "enabled",
+        members: [],
+      }],
+    total: 101,
+  }));
+
+  renderWithFeedback(
+    <MemoryRouter initialEntries={["/questions/new?space_id=999"]}>
+      <Routes>
+        <Route
+          path="/questions/new"
+          element={<QuestionCreatePage actorRole="tenant_admin" api={api} spaceApi={spacesApi} tenantID={10} />}
+        />
+        <Route path="/questions" element={<div>题库列表页</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await waitFor(() => expect(spacesApi.listSpaces).toHaveBeenCalledWith(expect.objectContaining({
+    tenantID: 10,
+    page: 2,
+    pageSize: 100,
+    filters: { status: "enabled" },
+  })));
+  expect(screen.getByLabelText("所属空间")).toHaveValue("space:999");
+  expect(screen.getByRole("option", { name: "第 101 班" })).toBeInTheDocument();
+});
+
+test("新增题目标签候选来自后端标签接口", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  vi.mocked(api.listQuestions).mockResolvedValue({
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    items: [],
+  });
+  vi.mocked(api.listQuestionTags).mockResolvedValue(["后端标签"]);
+
+  renderCreatePage(api);
+
+  await waitFor(() => expect(api.listQuestionTags).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301 }));
+  await user.type(screen.getByLabelText("题目标签"), "后");
+
+  expect(await screen.findByRole("option", { name: /后端标签/ })).toBeInTheDocument();
+});
+
+test("租户管理员从已禁用空间上下文新增题目时不会提交到禁用空间", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  const spacesApi = createSpaceAPI();
+  renderWithFeedback(
+    <MemoryRouter initialEntries={["/questions/new?space_id=303"]}>
+      <Routes>
+        <Route
+          path="/questions/new"
+          element={<QuestionCreatePage actorRole="tenant_admin" api={api} spaceApi={spacesApi} tenantID={10} />}
+        />
+        <Route path="/questions" element={<div>题库列表页</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await waitFor(() => {
+    expect(spacesApi.listSpaces).toHaveBeenCalledWith(expect.objectContaining({
+      tenantID: 10,
+      page: 1,
+      pageSize: 100,
+      filters: { status: "enabled" },
+    }));
+  });
+  expect(screen.queryByRole("option", { name: "已禁用班级" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "当前空间题库" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("所属空间")).toHaveValue("");
+
+  fireEvent.change(screen.getByLabelText("题干"), { target: { value: "禁用空间上下文题目" } });
+  fireEvent.change(screen.getByLabelText("选项 A"), { target: { value: "选项 A" } });
+  fireEvent.change(screen.getByLabelText("选项 B"), { target: { value: "选项 B" } });
+  fireEvent.change(screen.getByLabelText("题目解析"), { target: { value: "禁用空间上下文解析" } });
+  await user.click(screen.getByRole("button", { name: "确认新增" }));
+
+  expect(api.createQuestion).not.toHaveBeenCalled();
+  expect(await screen.findByRole("alert")).toHaveTextContent("请选择有效的所属空间");
 });
 
 test("租户管理员从其他空间上下文新增题目后返回目标空间列表", async () => {
@@ -338,7 +531,12 @@ test("租户管理员从其他空间上下文新增题目后返回目标空间�
   );
 
   await waitFor(() => {
-    expect(spacesApi.listSpaces).toHaveBeenCalledWith(10);
+    expect(spacesApi.listSpaces).toHaveBeenCalledWith(expect.objectContaining({
+      tenantID: 10,
+      page: 1,
+      pageSize: 100,
+      filters: { status: "enabled" },
+    }));
   });
   await user.selectOptions(screen.getByLabelText("所属空间"), "space:302");
   await user.type(screen.getByLabelText("题干"), "跨空间题目");
@@ -465,10 +663,55 @@ test("教师可以打开编辑题目页面并保存修改", async () => {
   expect(await screen.findByText("题库列表页")).toBeInTheDocument();
 });
 
+test("编辑简答题时参考答案使用 Markdown 编辑器并保存原文", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  api.getQuestion.mockResolvedValueOnce({
+    id: 100,
+    tenantID: 10,
+    spaceID: 301,
+    type: "short_text",
+    title: "请简述闭区间上连续函数的性质。",
+    stem: "请简述闭区间上连续函数的性质。",
+    options: [],
+    correctOptionIndexes: [],
+    referenceAnswer: "## 原参考\n- 有界性\n- 最值定理",
+    analysis: "围绕闭区间和连续两个条件说明。",
+    difficulty: "easy",
+    tag: "函数",
+    tags: ["函数"],
+    scoreDefault: "6",
+    authorName: "teacher01",
+    authorRole: "teacher",
+    createdAt: 1700000000000,
+    status: "ready",
+  });
+
+  renderEditPage(api);
+
+  expect(await screen.findByLabelText("简答题参考答案")).toHaveValue("## 原参考\n- 有界性\n- 最值定理");
+  const referenceEditor = screen.getByLabelText("简答题参考答案").closest(".markdown-editor");
+  expect(referenceEditor).not.toBeNull();
+  expect(referenceEditor?.querySelector(".w-md-editor")).toBeInTheDocument();
+  expect(within(referenceEditor as HTMLElement).getByRole("heading", { name: "原参考" })).toBeInTheDocument();
+
+  const nextReferenceAnswer = "## 新参考\n- 闭区间连续函数有界\n- 可以取得最大值和最小值";
+  fireEvent.change(screen.getByLabelText("简答题参考答案"), { target: { value: nextReferenceAnswer } });
+  await user.click(screen.getByRole("button", { name: "确认保存" }));
+
+  expect(api.updateQuestion).toHaveBeenCalledWith(expect.objectContaining({
+    questionID: 100,
+    type: "short_text",
+    referenceAnswer: nextReferenceAnswer,
+    standardAnswer: undefined,
+  }));
+});
+
 test("编辑题目页面必填项使用红色星号标记", async () => {
   renderEditPage();
 
   expect(await screen.findByRole("heading", { name: "编辑题目" })).toBeInTheDocument();
+  expect(within(screen.getByLabelText("选择题选项")).getByText("支持公式：行内 $a^2+b^2=c^2$，块级 $$\\sum_{i=1}^{n} i$$")).toHaveClass("exam-option-list__formula-hint");
 
   for (const label of ["题型", "题目难度", "默认分值", "题干", "题目解析", "选项 A", "选项 B"]) {
     const field = screen.getByLabelText(label).closest(".field");

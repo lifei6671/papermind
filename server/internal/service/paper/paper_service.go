@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 	"github.com/lifei6671/papermind/server/library/constant"
 )
 
@@ -80,6 +81,8 @@ type SectionQuestion struct {
 	ShuffleOptions *bool    // 是否随机选项，nil 表示回退题库默认值。
 	QuestionType   string   // 题型，仅用于学生预览展示，不包含答案信息。
 	Title          string   // 题干，仅用于学生预览展示。
+	Difficulty     string   // 题目难度，用于组卷工作台展示已选题。
+	TagNames       []string // 题目标签名称，用于组卷工作台展示已选题来源。
 	Options        []string // 选择题选项内容，仅用于学生预览展示，不包含正确答案标记。
 	BlankCount     int      // 填空题空位数，仅用于学生预览展示。
 }
@@ -263,10 +266,14 @@ type SectionAggregate struct {
 type ListPapersInput struct {
 	TenantID uint64  // 所属租户 ID。
 	SpaceID  *uint64 // 可见空间范围；nil 表示租户管理员全租户范围。
+	Page     int     // 当前页码。
+	PageSize int     // 每页条数。
+	Search   string  // 试卷名称、描述、创建人或状态搜索词。
+	Status   string  // 精确试卷状态过滤。
 }
 
 type Repository interface {
-	ListPapers(ctx context.Context, input ListPapersInput) ([]Paper, error)
+	ListPapers(ctx context.Context, input ListPapersInput) (pagination.Result[Paper], error)
 	GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (Paper, error)
 	HasPublishedRuleLiveExam(ctx context.Context, tenantID uint64, paperID uint64) (bool, error)
 	SectionSortOrderExists(ctx context.Context, tenantID uint64, paperID uint64, sortOrder int) (bool, error)
@@ -318,7 +325,7 @@ func NewService(options ServiceOptions) *Service {
 	return &Service{repo: options.Repo}
 }
 
-func (s *Service) ListPapers(ctx context.Context, input ListPapersInput) ([]Paper, error) {
+func (s *Service) ListPapers(ctx context.Context, input ListPapersInput) (pagination.Result[Paper], error) {
 	return s.repo.ListPapers(ctx, input)
 }
 
@@ -535,7 +542,14 @@ func (s *Service) GenerateRuleFixed(ctx context.Context, tenantID uint64, paperI
 	used := map[uint64]bool{}
 	blocked := questionIDSet(blockedQuestionIDs)
 	for _, rule := range rules {
-		selected, err := s.selectQuestionsForRule(ctx, tenantID, paperID, normalizeRuleConfig(rule), used, excludedRecent, blocked)
+		selected, err := s.selectQuestionsForRule(ctx, ruleQuestionSelectionInput{
+			TenantID:       tenantID,
+			PaperID:        paperID,
+			Rule:           normalizeRuleConfig(rule),
+			Used:           used,
+			ExcludedRecent: excludedRecent,
+			Blocked:        blocked,
+		})
 		if err != nil {
 			return err
 		}
@@ -560,14 +574,31 @@ func (s *Service) GenerateRuleFixed(ctx context.Context, tenantID uint64, paperI
 	return s.repo.GenerateFixedQuestionsAndRecalculate(ctx, tenantID, paperID, BuildModeRuleFixed, questions)
 }
 
-func (s *Service) selectQuestionsForRule(ctx context.Context, tenantID uint64, paperID uint64, rule Rule, used map[uint64]bool, excludedRecent map[uint64]bool, blocked map[uint64]bool) ([]MatchedQuestion, error) {
+type ruleQuestionSelectionInput struct {
+	TenantID       uint64
+	PaperID        uint64
+	Rule           Rule
+	Used           map[uint64]bool
+	ExcludedRecent map[uint64]bool
+	Blocked        map[uint64]bool
+}
+
+func (s *Service) selectQuestionsForRule(ctx context.Context, input ruleQuestionSelectionInput) ([]MatchedQuestion, error) {
+	rule := input.Rule
 	difficultyCounts := allocateDifficultyCounts(rule.QuestionCount, rule.DifficultyPercentages)
 	if len(difficultyCounts) == 0 {
-		matched, err := s.repo.MatchQuestionsForRule(ctx, tenantID, paperID, rule)
+		matched, err := s.repo.MatchQuestionsForRule(ctx, input.TenantID, input.PaperID, rule)
 		if err != nil {
 			return nil, err
 		}
-		return filterMatchedQuestions(matched, rule, used, excludedRecent, blocked, rule.QuestionCount), nil
+		return filterMatchedQuestions(matchedQuestionFilterInput{
+			Matched:        matched,
+			Rule:           rule,
+			Used:           input.Used,
+			ExcludedRecent: input.ExcludedRecent,
+			Blocked:        input.Blocked,
+			Limit:          rule.QuestionCount,
+		}), nil
 	}
 
 	selected := make([]MatchedQuestion, 0, rule.QuestionCount)
@@ -578,11 +609,18 @@ func (s *Service) selectQuestionsForRule(ctx context.Context, tenantID uint64, p
 		}
 		difficultyRule := rule
 		difficultyRule.Difficulty = &difficulty
-		matched, err := s.repo.MatchQuestionsForRule(ctx, tenantID, paperID, difficultyRule)
+		matched, err := s.repo.MatchQuestionsForRule(ctx, input.TenantID, input.PaperID, difficultyRule)
 		if err != nil {
 			return nil, err
 		}
-		picked := filterMatchedQuestions(matched, rule, usedFromSelected(used, selected, rule.ExcludeUsedQuestions), excludedRecent, blocked, required)
+		picked := filterMatchedQuestions(matchedQuestionFilterInput{
+			Matched:        matched,
+			Rule:           rule,
+			Used:           usedFromSelected(input.Used, selected, rule.ExcludeUsedQuestions),
+			ExcludedRecent: input.ExcludedRecent,
+			Blocked:        input.Blocked,
+			Limit:          required,
+		})
 		if len(picked) < required {
 			selected = append(selected, picked...)
 			continue
@@ -590,7 +628,7 @@ func (s *Service) selectQuestionsForRule(ctx context.Context, tenantID uint64, p
 		selected = append(selected, picked...)
 	}
 	if len(selected) < rule.QuestionCount {
-		matched, err := s.repo.MatchQuestionsForRule(ctx, tenantID, paperID, rule)
+		matched, err := s.repo.MatchQuestionsForRule(ctx, input.TenantID, input.PaperID, rule)
 		if err != nil {
 			return nil, err
 		}
@@ -599,13 +637,13 @@ func (s *Service) selectQuestionsForRule(ctx context.Context, tenantID uint64, p
 			selectedIDs[question.ID] = true
 		}
 		for _, question := range matched {
-			if selectedIDs[question.ID] || blocked[question.ID] {
+			if selectedIDs[question.ID] || input.Blocked[question.ID] {
 				continue
 			}
-			if rule.ExcludeRecentExamQuestions && excludedRecent[question.ID] {
+			if rule.ExcludeRecentExamQuestions && input.ExcludedRecent[question.ID] {
 				continue
 			}
-			if rule.ExcludeUsedQuestions && used[question.ID] {
+			if rule.ExcludeUsedQuestions && input.Used[question.ID] {
 				continue
 			}
 			selected = append(selected, question)
@@ -618,20 +656,29 @@ func (s *Service) selectQuestionsForRule(ctx context.Context, tenantID uint64, p
 	return selected, nil
 }
 
-func filterMatchedQuestions(matched []MatchedQuestion, rule Rule, used map[uint64]bool, excludedRecent map[uint64]bool, blocked map[uint64]bool, limit int) []MatchedQuestion {
-	selected := make([]MatchedQuestion, 0, limit)
-	for _, question := range matched {
-		if blocked[question.ID] {
+type matchedQuestionFilterInput struct {
+	Matched        []MatchedQuestion
+	Rule           Rule
+	Used           map[uint64]bool
+	ExcludedRecent map[uint64]bool
+	Blocked        map[uint64]bool
+	Limit          int
+}
+
+func filterMatchedQuestions(input matchedQuestionFilterInput) []MatchedQuestion {
+	selected := make([]MatchedQuestion, 0, input.Limit)
+	for _, question := range input.Matched {
+		if input.Blocked[question.ID] {
 			continue
 		}
-		if rule.ExcludeRecentExamQuestions && excludedRecent[question.ID] {
+		if input.Rule.ExcludeRecentExamQuestions && input.ExcludedRecent[question.ID] {
 			continue
 		}
-		if rule.ExcludeUsedQuestions && used[question.ID] {
+		if input.Rule.ExcludeUsedQuestions && input.Used[question.ID] {
 			continue
 		}
 		selected = append(selected, question)
-		if len(selected) == limit {
+		if len(selected) == input.Limit {
 			break
 		}
 	}

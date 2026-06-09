@@ -62,7 +62,7 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 		Where(ExamColumns.DeletedAt+" = ?", 0)
 	if input.SpaceID != nil {
 		query = query.Where(fmt.Sprintf(`
-			EXISTS (
+				EXISTS (
 				SELECT 1 FROM exam_targets AS et
 				WHERE et.tenant_id = exams.tenant_id
 					and et.exam_id = exams.id
@@ -87,7 +87,10 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 						))
 					)
 			)
-		`, r.userTargetScopedSpacePredicate("et", "sm.space_id")), serviceexam.TargetTypeSpace, *input.SpaceID, serviceexam.TargetTypeUser, servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled, *input.SpaceID, servicespace.StatusEnabled)
+			`, r.userTargetScopedSpacePredicate("et", "sm.space_id")), serviceexam.TargetTypeSpace, *input.SpaceID, serviceexam.TargetTypeUser, servicetenantuser.StatusEnabled, servicetenantuser.StatusEnabled, *input.SpaceID, servicespace.StatusEnabled)
+	}
+	if input.PaperID != nil {
+		query = query.Where(ExamColumns.PaperID+" = ?", *input.PaperID)
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -186,15 +189,18 @@ func (r *ExamRepository) CreateExam(ctx context.Context, exam serviceexam.Exam) 
 			Version:       1,
 			ExtJSON:       datatypes.JSON("{}"),
 		},
-		TenantID:       exam.TenantID,
-		PaperID:        exam.PaperID,
-		Name:           exam.Name,
-		MaxAttempts:    exam.MaxAttempts,
-		ResultStrategy: exam.ResultStrategy,
-		Status:         exam.Status,
-	}
-	if row.MaxAttempts == 0 {
-		row.MaxAttempts = 1
+		TenantID:         exam.TenantID,
+		PaperID:          exam.PaperID,
+		Name:             exam.Name,
+		StartTime:        exam.StartTime,
+		EndTime:          exam.EndTime,
+		DurationMinutes:  exam.DurationMinutes,
+		MaxAttempts:      exam.MaxAttempts,
+		ResultStrategy:   exam.ResultStrategy,
+		PublishMode:      exam.PublishMode,
+		ScorePublishTime: exam.ScorePublishTime,
+		InviteCode:       exam.InviteCode,
+		Status:           exam.Status,
 	}
 	if row.ResultStrategy == "" {
 		row.ResultStrategy = serviceexam.ResultStrategyLatest
@@ -333,7 +339,7 @@ func (r *ExamRepository) matchRuleLiveQuestionIDs(ctx context.Context, tenantID 
 
 // PublishExamAndFreezeLivePool 发布考试并冻结动态组卷题池。
 // 考试状态和冻结题目写在同一个事务内，防止考试已发布但题池缺失或只写入一部分。
-func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam serviceexam.Exam, pool []serviceexam.LivePoolItem) (serviceexam.Exam, error) {
+func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam serviceexam.Exam, pool []serviceexam.LivePoolItem, expectedStatus string, log *serviceexam.OperationLog) (serviceexam.Exam, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 发布时写入所有会影响考生可见性和成绩发布的配置，并递增考试版本。
 		updates := map[string]any{
@@ -350,16 +356,19 @@ func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam 
 			BaseColumns.UpdatedByType:    AuditActorTenantUser,
 			BaseColumns.Version:          gorm.Expr(BaseColumns.Version + " + 1"),
 		}
-		result := tx.Model(&ExamDO{}).
+		query := tx.Model(&ExamDO{}).
 			Where(ExamColumns.TenantID+" = ?", exam.TenantID).
 			Where(ExamColumns.ID+" = ?", exam.ID).
-			Where(ExamColumns.DeletedAt+" = ?", 0).
-			Updates(updates)
+			Where(ExamColumns.DeletedAt+" = ?", 0)
+		if expectedStatus != "" {
+			query = query.Where(ExamColumns.Status+" = ?", expectedStatus)
+		}
+		result := query.Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
+			return r.examStatusPreconditionError(tx, exam.TenantID, exam.ID, expectedStatus)
 		}
 		for _, item := range pool {
 			// 动态组卷结果在发布瞬间固化到 exam_live_question_pools。
@@ -377,6 +386,22 @@ func (r *ExamRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam 
 				QuestionID: item.QuestionID,
 			}
 			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+		}
+		if log != nil {
+			publishLog := *log
+			publishLog.TenantID = exam.TenantID
+			publishLog.ExamID = exam.ID
+			targets, err := r.listTargetsInDB(tx, exam.TenantID, exam.ID)
+			if err != nil {
+				return err
+			}
+			spaceIDs, err := r.operationTargetSpaceIDsInTx(tx, exam.TenantID, targets)
+			if err != nil {
+				return err
+			}
+			if err := r.appendOperationLogsForSpacesInTx(tx, publishLog, spaceIDs); err != nil {
 				return err
 			}
 		}
@@ -1870,14 +1895,14 @@ func (r *ExamRepository) SaveAttemptQuestions(ctx context.Context, questions []s
 
 // ListPendingAttempts 列出一场考试中待人工评分的简答题答案。
 // 每一行对应一个待阅答案，并携带考生、空间、考试、题目快照和答案版本信息。
-func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64) ([]serviceexam.PendingAttempt, error) {
+func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64, keyword string) ([]serviceexam.PendingAttempt, error) {
 	var rows []pendingReviewRow
 	// 待阅答案主查询不直接关联空间成员，避免多空间考生把同一答案放大为多行。
 	// 本次考试实际命中的投放空间会在结果组装阶段按 attempt 单独读取。
-	if err := r.db.WithContext(ctx).Table("exam_answers AS answers").
+	query := r.db.WithContext(ctx).Table("exam_answers AS answers").
 		Select(`
-			attempts.id AS attempt_id,
-			attempt_questions.id AS attempt_question_id,
+				attempts.id AS attempt_id,
+				attempt_questions.id AS attempt_question_id,
 			attempts.exam_id AS exam_id,
 			attempts.user_id AS user_id,
 			COALESCE(users.real_name, users.username) AS student_name,
@@ -1894,7 +1919,9 @@ func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint6
 		Joins("JOIN users ON users.id = attempts.user_id AND users.deleted_at = 0").
 		Where("answers.tenant_id = ?", tenantID).
 		Where("attempts.exam_id = ?", examID).
-		Where("answers.grading_status = ?", constant.GradingStatusPending).
+		Where("answers.grading_status = ?", constant.GradingStatusPending)
+	query = r.applyPendingAttemptSearch(query, keyword)
+	if err := query.
 		Order("attempts.submitted_at ASC, attempt_questions.sort_order ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -1916,6 +1943,9 @@ func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint6
 		if err != nil {
 			return nil, err
 		}
+		if len(spaces) == 0 {
+			continue
+		}
 		spaceID, spaceName := firstAttemptTargetSpace(spaces)
 		items = append(items, serviceexam.PendingAttempt{
 			AttemptID:             row.AttemptID,
@@ -1936,6 +1966,50 @@ func (r *ExamRepository) ListPendingAttempts(ctx context.Context, tenantID uint6
 		})
 	}
 	return items, nil
+}
+
+func (r *ExamRepository) applyPendingAttemptSearch(query *gorm.DB, keyword string) *gorm.DB {
+	value := strings.TrimSpace(keyword)
+	if value == "" {
+		return query
+	}
+	pattern := "%" + strings.ToLower(value) + "%"
+	userTargetScopePredicate := r.userTargetScopedSpacePredicate("targets", "members.space_id")
+	condition := r.db.Where("LOWER(COALESCE(users.real_name, users.username)) LIKE ?", pattern).
+		Or("LOWER(users.username) LIKE ?", pattern).
+		Or("LOWER(exams.name) LIKE ?", pattern).
+		Or("LOWER(attempt_questions.question_snapshot) LIKE ?", pattern).
+		Or("LOWER(answers.answer_content) LIKE ?", pattern).
+		Or(fmt.Sprintf(`
+					EXISTS (
+						SELECT 1
+						FROM exam_targets AS targets
+					JOIN space_members AS members
+						ON members.tenant_id = attempts.tenant_id
+						AND members.user_id = attempts.user_id
+						AND members.status = ?
+						AND members.role_in_space = ?
+						AND members.deleted_at = 0
+						AND (
+							(targets.target_type = ? AND members.space_id = targets.target_id)
+							OR (targets.target_type = ? AND targets.target_id = attempts.user_id AND %s)
+						)
+					JOIN tenant_user_memberships AS tum
+						ON tum.tenant_id = members.tenant_id
+						AND tum.user_id = members.user_id
+						AND tum.role = ?
+						AND tum.status = ?
+					JOIN spaces
+						ON spaces.tenant_id = members.tenant_id
+						AND spaces.id = members.space_id
+						AND spaces.status = ?
+						AND spaces.deleted_at = 0
+					WHERE targets.tenant_id = attempts.tenant_id
+						AND targets.exam_id = attempts.exam_id
+						AND LOWER(spaces.name) LIKE ?
+					)
+				`, userTargetScopePredicate), servicespace.StatusEnabled, constant.RoleStudent, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, constant.RoleStudent, servicetenantuser.StatusEnabled, servicespace.StatusEnabled, pattern)
+	return query.Where(condition)
 }
 
 // AttemptSpaceIDs 读取作答考生在本次考试中实际命中的投放空间。
@@ -1998,15 +2072,16 @@ func (r *ExamRepository) listAttemptTargetSpaces(ctx context.Context, tenantID u
 				ON members.tenant_id = attempts.tenant_id
 				AND members.user_id = attempts.user_id
 				AND members.status = ?
+				AND members.role_in_space = ?
 				AND members.deleted_at = 0
 				AND (
 					(targets.target_type = ? AND members.space_id = targets.target_id)
 					OR (targets.target_type = ? AND targets.target_id = attempts.user_id AND %s)
 				)
-		`, userTargetScopePredicate), servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser).
+		`, userTargetScopePredicate), servicespace.StatusEnabled, constant.RoleStudent, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser).
 		Joins("JOIN spaces ON spaces.tenant_id = members.tenant_id AND spaces.id = members.space_id AND spaces.status = ? AND spaces.deleted_at = 0", servicespace.StatusEnabled).
 		Joins("JOIN users ON users.id = members.user_id AND users.status = ? AND users.deleted_at = 0", servicetenantuser.StatusEnabled).
-		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id AND tum.user_id = members.user_id AND tum.status = ?", servicetenantuser.StatusEnabled).
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id AND tum.user_id = members.user_id AND tum.role = ? AND tum.status = ?", constant.RoleStudent, servicetenantuser.StatusEnabled).
 		Where("attempts.tenant_id = ?", tenantID).
 		Where("attempts.id = ?", attemptID).
 		Order("spaces.id ASC").
@@ -2032,6 +2107,7 @@ func (r *ExamRepository) listAttemptSingleTargetSpaceFallback(ctx context.Contex
 				AND targets.target_type = ?
 		`, serviceexam.TargetTypeSpace).
 		Joins("JOIN spaces ON spaces.tenant_id = targets.tenant_id AND spaces.id = targets.target_id AND spaces.status = ? AND spaces.deleted_at = 0", servicespace.StatusEnabled).
+		Joins("JOIN tenant_user_memberships AS tum ON tum.tenant_id = attempts.tenant_id AND tum.user_id = attempts.user_id AND tum.role = ? AND tum.status = ?", constant.RoleStudent, servicetenantuser.StatusEnabled).
 		Where("attempts.tenant_id = ?", tenantID).
 		Where("attempts.id = ?", attemptID).
 		Where(`
@@ -2043,6 +2119,18 @@ func (r *ExamRepository) listAttemptSingleTargetSpaceFallback(ctx context.Contex
 					and user_targets.target_type = ?
 			)
 		`, serviceexam.TargetTypeUser).
+		Where(`
+			NOT EXISTS (
+				SELECT 1
+				FROM space_members AS current_members
+				WHERE current_members.tenant_id = attempts.tenant_id
+					and current_members.user_id = attempts.user_id
+					and current_members.space_id = targets.target_id
+					and current_members.status = ?
+					and current_members.deleted_at = 0
+					and current_members.role_in_space <> ?
+			)
+		`, servicespace.StatusEnabled, constant.RoleStudent).
 		Order("spaces.id ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -2217,6 +2305,9 @@ func (r *ExamRepository) ListScoreExportRows(ctx context.Context, tenantID uint6
 		spaces, err := r.cachedAttemptTargetSpaces(ctx, tenantID, row.AttemptID, spaceCache)
 		if err != nil {
 			return nil, err
+		}
+		if len(spaces) == 0 {
+			continue
 		}
 		spaceID, spaceName := firstAttemptTargetSpace(spaces)
 		items = append(items, serviceexam.ScoreExportRow{
@@ -2399,11 +2490,17 @@ func (r *ExamRepository) ListExamResults(ctx context.Context, input serviceexam.
 							and members.user_id = attempts.user_id
 							and members.space_id IN ?
 							and members.status = ?
+							and members.role_in_space = ?
 							and members.deleted_at = 0
 							and (
 								(targets.target_type = ? and members.space_id = targets.target_id)
 								OR (targets.target_type = ? and targets.target_id = attempts.user_id and %s)
 							)
+					JOIN tenant_user_memberships AS tum
+							ON tum.tenant_id = members.tenant_id
+							and tum.user_id = members.user_id
+							and tum.role = ?
+							and tum.status = ?
 					JOIN spaces
 							ON spaces.tenant_id = members.tenant_id
 							and spaces.id = members.space_id
@@ -2414,7 +2511,7 @@ func (r *ExamRepository) ListExamResults(ctx context.Context, input serviceexam.
 						and spaces.name LIKE ?
 				)
 			)
-		`, userTargetScopePredicate), keyword, keyword, input.SpaceIDs, servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, servicespace.StatusEnabled, keyword)
+		`, userTargetScopePredicate), keyword, keyword, input.SpaceIDs, servicespace.StatusEnabled, constant.RoleStudent, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, constant.RoleStudent, servicetenantuser.StatusEnabled, servicespace.StatusEnabled, keyword)
 	}
 	switch input.Status {
 	case "pending_review":
@@ -2650,11 +2747,17 @@ func (r *ExamRepository) managementResultBaseQuery(ctx context.Context, tenantID
 						ON members.tenant_id = attempts.tenant_id
 						and members.user_id = attempts.user_id
 						and members.status = ?
+						and members.role_in_space = ?
 						and members.deleted_at = 0
 						and (
 							(targets.target_type = ? and members.space_id = targets.target_id)
 							or (targets.target_type = ? and targets.target_id = attempts.user_id and %s)
 						)
+					JOIN tenant_user_memberships AS tum
+						ON tum.tenant_id = members.tenant_id
+						and tum.user_id = members.user_id
+						and tum.role = ?
+						and tum.status = ?
 					JOIN spaces
 						ON spaces.tenant_id = members.tenant_id
 						and spaces.id = members.space_id
@@ -2672,11 +2775,17 @@ func (r *ExamRepository) managementResultBaseQuery(ctx context.Context, tenantID
 								ON members.tenant_id = attempts.tenant_id
 								and members.user_id = attempts.user_id
 								and members.status = ?
+								and members.role_in_space = ?
 								and members.deleted_at = 0
 								and (
 									(targets.target_type = ? and members.space_id = targets.target_id)
 									or (targets.target_type = ? and targets.target_id = attempts.user_id and %s)
 								)
+						JOIN tenant_user_memberships AS tum
+								ON tum.tenant_id = members.tenant_id
+								and tum.user_id = members.user_id
+								and tum.role = ?
+								and tum.status = ?
 						JOIN spaces
 								ON spaces.tenant_id = members.tenant_id
 								and spaces.id = members.space_id
@@ -2692,6 +2801,14 @@ func (r *ExamRepository) managementResultBaseQuery(ctx context.Context, tenantID
 							and user_targets.exam_id = attempts.exam_id
 							and user_targets.target_type = ?
 					)
+						and EXISTS (
+							SELECT 1
+							FROM tenant_user_memberships AS fallback_tum
+							WHERE fallback_tum.tenant_id = attempts.tenant_id
+								and fallback_tum.user_id = attempts.user_id
+								and fallback_tum.role = ?
+								and fallback_tum.status = ?
+						)
 						and (
 							SELECT COUNT(DISTINCT targets.target_id)
 							FROM exam_targets AS targets
@@ -2717,15 +2834,30 @@ func (r *ExamRepository) managementResultBaseQuery(ctx context.Context, tenantID
 								and targets.target_type = ?
 								and targets.target_id IN ?
 						)
+						and NOT EXISTS (
+							SELECT 1
+							FROM exam_targets AS targets
+							JOIN space_members AS current_members
+									ON current_members.tenant_id = targets.tenant_id
+									and current_members.space_id = targets.target_id
+									and current_members.user_id = attempts.user_id
+									and current_members.status = ?
+									and current_members.deleted_at = 0
+									and current_members.role_in_space <> ?
+							WHERE targets.tenant_id = attempts.tenant_id
+								and targets.exam_id = attempts.exam_id
+								and targets.target_type = ?
+						)
 					)
 					`,
 			r.userTargetScopedSpacePredicate("targets", "members.space_id"),
 			r.userTargetScopedSpacePredicate("targets", "members.space_id")),
-			servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, servicespace.StatusEnabled, spaceIDs,
-			servicespace.StatusEnabled, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, servicespace.StatusEnabled,
-			serviceexam.TargetTypeUser,
+			servicespace.StatusEnabled, constant.RoleStudent, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, constant.RoleStudent, servicetenantuser.StatusEnabled, servicespace.StatusEnabled, spaceIDs,
+			servicespace.StatusEnabled, constant.RoleStudent, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, constant.RoleStudent, servicetenantuser.StatusEnabled, servicespace.StatusEnabled,
+			serviceexam.TargetTypeUser, constant.RoleStudent, servicetenantuser.StatusEnabled,
 			servicespace.StatusEnabled, serviceexam.TargetTypeSpace,
 			servicespace.StatusEnabled, serviceexam.TargetTypeSpace, spaceIDs,
+			servicespace.StatusEnabled, constant.RoleStudent, serviceexam.TargetTypeSpace,
 		)
 	}
 	return query
@@ -2898,15 +3030,15 @@ func (r *ExamRepository) ListUserResultSnapshots(ctx context.Context, tenantID u
 
 // UpdateScorePublishConfig 更新考试成绩发布方式。
 // 发布配置和操作日志必须同事务写入，避免成绩已可见但管理端日志缺失。
-func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64, log *serviceexam.OperationLog) (serviceexam.Exam, error) {
+func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, input serviceexam.UpdateScorePublishConfigRepositoryInput) (serviceexam.Exam, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&ExamDO{}).
-			Where(ExamColumns.TenantID+" = ?", tenantID).
-			Where(ExamColumns.ID+" = ?", examID).
+			Where(ExamColumns.TenantID+" = ?", input.TenantID).
+			Where(ExamColumns.ID+" = ?", input.ExamID).
 			Where(ExamColumns.DeletedAt+" = ?", 0).
 			Updates(map[string]any{
-				ExamColumns.PublishMode:      publishMode,
-				ExamColumns.ScorePublishTime: scorePublishTime,
+				ExamColumns.PublishMode:      input.PublishMode,
+				ExamColumns.ScorePublishTime: input.ScorePublishTime,
 				BaseColumns.UpdatedAt:        r.now(),
 				BaseColumns.UpdatedByType:    AuditActorTenantUser,
 				BaseColumns.Version:          gorm.Expr(BaseColumns.Version + " + 1"),
@@ -2917,17 +3049,17 @@ func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID 
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		if log == nil {
+		if input.Log == nil {
 			return nil
 		}
-		publishLog := *log
-		publishLog.TenantID = tenantID
-		publishLog.ExamID = examID
-		targets, err := r.listTargetsInDB(tx, tenantID, examID)
+		publishLog := *input.Log
+		publishLog.TenantID = input.TenantID
+		publishLog.ExamID = input.ExamID
+		targets, err := r.listTargetsInDB(tx, input.TenantID, input.ExamID)
 		if err != nil {
 			return err
 		}
-		spaceIDs, err := r.operationTargetSpaceIDsInTx(tx, tenantID, targets)
+		spaceIDs, err := r.operationTargetSpaceIDsInTx(tx, input.TenantID, targets)
 		if err != nil {
 			return err
 		}
@@ -2936,7 +3068,76 @@ func (r *ExamRepository) UpdateScorePublishConfig(ctx context.Context, tenantID 
 	if err != nil {
 		return serviceexam.Exam{}, err
 	}
-	return r.GetExam(ctx, tenantID, examID)
+	return r.GetExam(ctx, input.TenantID, input.ExamID)
+}
+
+// UpdateExamStatus 更新考试状态，并在同一事务中写入管理端操作日志。
+func (r *ExamRepository) UpdateExamStatus(ctx context.Context, input serviceexam.UpdateExamStatusRepositoryInput) (serviceexam.Exam, error) {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		updates := map[string]any{
+			ExamColumns.Status:        input.Status,
+			BaseColumns.UpdatedAt:     r.now(),
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		}
+		if input.InviteCode != "" {
+			updates[ExamColumns.InviteCode] = input.InviteCode
+		}
+		if input.EndTime != nil {
+			updates[ExamColumns.EndTime] = *input.EndTime
+		}
+		query := tx.Model(&ExamDO{}).
+			Where(ExamColumns.TenantID+" = ?", input.TenantID).
+			Where(ExamColumns.ID+" = ?", input.ExamID).
+			Where(ExamColumns.DeletedAt+" = ?", 0)
+		if input.ExpectedStatus != "" {
+			query = query.Where(ExamColumns.Status+" = ?", input.ExpectedStatus)
+		}
+		result := query.Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return r.examStatusPreconditionError(tx, input.TenantID, input.ExamID, input.ExpectedStatus)
+		}
+		if input.Log.OperationType == "" {
+			return nil
+		}
+		log := input.Log
+		log.TenantID = input.TenantID
+		log.ExamID = input.ExamID
+		targets, err := r.listTargetsInDB(tx, input.TenantID, input.ExamID)
+		if err != nil {
+			return err
+		}
+		spaceIDs, err := r.operationTargetSpaceIDsInTx(tx, input.TenantID, targets)
+		if err != nil {
+			return err
+		}
+		return r.appendOperationLogsForSpacesInTx(tx, log, spaceIDs)
+	})
+	if err != nil {
+		return serviceexam.Exam{}, err
+	}
+	return r.GetExam(ctx, input.TenantID, input.ExamID)
+}
+
+func (r *ExamRepository) examStatusPreconditionError(tx *gorm.DB, tenantID uint64, examID uint64, expectedStatus string) error {
+	if expectedStatus == "" {
+		return gorm.ErrRecordNotFound
+	}
+	var count int64
+	if err := tx.Model(&ExamDO{}).
+		Where(ExamColumns.TenantID+" = ?", tenantID).
+		Where(ExamColumns.ID+" = ?", examID).
+		Where(ExamColumns.DeletedAt+" = ?", 0).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return serviceexam.ErrInvalidExamStatus
 }
 
 // AppendExportOperationLog 写入成绩导出审计日志。
@@ -3078,20 +3279,20 @@ func (r *ExamRepository) UpsertAnswer(ctx context.Context, answer serviceexam.An
 
 // SubmitAttemptAndGradeObjectiveQuestions 提交作答并完成客观题自动判分。
 // 提交状态更新、答案判分、分数回写和提交事件写入在同一事务内完成。
-func (r *ExamRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, tenantID uint64, attemptID uint64, version int64, submittedAt int64, status string, grader serviceexam.ObjectiveGradingFunc, event serviceexam.ExamEvent) (int64, error) {
+func (r *ExamRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, input serviceexam.SubmitAttemptAndGradeInput) (int64, error) {
 	var affected int64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 作答提交使用 attempt version 和 in_progress 状态做乐观锁。
 		// 重复提交或页面持有旧版本时不会继续判分，也不会重复写提交事件。
 		result := tx.Model(&ExamAttemptDO{}).
-			Where(ExamAttemptColumns.TenantID+" = ?", tenantID).
-			Where(ExamAttemptColumns.ID+" = ?", attemptID).
-			Where(BaseColumns.Version+" = ?", version).
+			Where(ExamAttemptColumns.TenantID+" = ?", input.TenantID).
+			Where(ExamAttemptColumns.ID+" = ?", input.AttemptID).
+			Where(BaseColumns.Version+" = ?", input.Version).
 			Where(ExamAttemptColumns.Status+" = ?", serviceexam.AttemptStatusInProgress).
 			Updates(map[string]any{
-				ExamAttemptColumns.Status:      status,
-				ExamAttemptColumns.SubmittedAt: submittedAt,
-				BaseColumns.UpdatedAt:          submittedAt,
+				ExamAttemptColumns.Status:      input.Status,
+				ExamAttemptColumns.SubmittedAt: input.SubmittedAt,
+				BaseColumns.UpdatedAt:          input.SubmittedAt,
 				BaseColumns.UpdatedByType:      AuditActorTenantUser,
 				BaseColumns.Version:            gorm.Expr(BaseColumns.Version + " + 1"),
 			})
@@ -3104,30 +3305,30 @@ func (r *ExamRepository) SubmitAttemptAndGradeObjectiveQuestions(ctx context.Con
 		}
 
 		// 自动判分读取的是 attempt_questions 中的题目快照和正确答案快照，保证按开考时内容评分。
-		items, err := r.listAnswersForGrading(tx, tenantID, attemptID)
+		items, err := r.listAnswersForGrading(tx, input.TenantID, input.AttemptID)
 		if err != nil {
 			return err
 		}
-		grades, objectiveScore, err := grader(items)
+		grades, objectiveScore, err := input.Grader(items)
 		if err != nil {
 			return err
 		}
-		if err := r.saveAnswerGrades(tx, tenantID, attemptID, submittedAt, grades); err != nil {
+		if err := r.saveAnswerGrades(tx, input.TenantID, input.AttemptID, input.SubmittedAt, grades); err != nil {
 			return err
 		}
 		// 提交时总分先等于客观题分；后续简答题人工评分完成后会再叠加主观题分。
 		if err := tx.Model(&ExamAttemptDO{}).
-			Where(ExamAttemptColumns.TenantID+" = ?", tenantID).
-			Where(ExamAttemptColumns.ID+" = ?", attemptID).
+			Where(ExamAttemptColumns.TenantID+" = ?", input.TenantID).
+			Where(ExamAttemptColumns.ID+" = ?", input.AttemptID).
 			Updates(map[string]any{
 				ExamAttemptColumns.ObjectiveScore: objectiveScore,
 				ExamAttemptColumns.TotalScore:     objectiveScore,
-				BaseColumns.UpdatedAt:             submittedAt,
+				BaseColumns.UpdatedAt:             input.SubmittedAt,
 				BaseColumns.UpdatedByType:         AuditActorTenantUser,
 			}).Error; err != nil {
 			return err
 		}
-		return appendEventWithDB(tx, event)
+		return appendEventWithDB(tx, input.Event)
 	})
 	return affected, err
 }

@@ -369,8 +369,8 @@ export function PaperPreviewPage({
           return;
         }
 
-        const [paperData, sectionData, sectionQuestionData, questionData] = await Promise.all([
-          providedPaperApi.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }),
+        const [nextPaper, sectionData, sectionQuestionData, questionData] = await Promise.all([
+          providedPaperApi.getPaper({ tenantID, paperID }),
           providedPaperApi.listSections({ tenantID, paperID }),
           providedPaperApi.listSectionQuestions({ tenantID, paperID }),
           loadQuestionPool(providedQuestionApi, tenantID, spaceID),
@@ -378,7 +378,7 @@ export function PaperPreviewPage({
         if (ignore) {
           return;
         }
-        setPaper(paperData.items.find((item) => item.id === paperID) ?? null);
+        setPaper(nextPaper);
         setSections(sectionData.items);
         setSectionQuestions(sectionQuestionData.items);
         setQuestionPool(questionData);

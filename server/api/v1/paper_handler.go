@@ -15,6 +15,7 @@ import (
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"github.com/lifei6671/papermind/server/library/code"
+	"github.com/lifei6671/papermind/server/library/constant"
 	"github.com/lifei6671/papermind/server/library/response"
 )
 
@@ -48,7 +49,10 @@ type paperResponse struct {
 }
 
 type paperListResponse struct {
-	Items []paperResponse `json:"items"`
+	Items    []paperResponse `json:"items"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"page_size"`
+	Total    int64           `json:"total"`
 }
 
 type paperSectionResponse struct {
@@ -75,6 +79,8 @@ type paperSectionQuestionResponse struct {
 	SortOrder    int      `json:"sort_order"`
 	Score        string   `json:"score"`
 	QuestionType string   `json:"question_type,omitempty"`
+	Difficulty   string   `json:"difficulty,omitempty"`
+	TagNames     []string `json:"tag_names,omitempty"`
 	Title        string   `json:"title,omitempty"`
 	Options      []string `json:"options,omitempty"`
 	BlankCount   int      `json:"blank_count,omitempty"`
@@ -260,16 +266,102 @@ func (h paperHandler) list(c *gin.Context) {
 		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
 		return
 	}
-	papers, err := h.service.ListPapers(c.Request.Context(), servicepaper.ListPapersInput{TenantID: tenantID, SpaceID: spaceID})
+	page, pageSize, err := readPaginationQuery(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
+		return
+	}
+	papers, err := h.service.ListPapers(c.Request.Context(), servicepaper.ListPapersInput{
+		TenantID: tenantID,
+		SpaceID:  spaceID,
+		Page:     page,
+		PageSize: pageSize,
+		Search:   c.Query("search"),
+		Status:   c.Query("status"),
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取试卷列表失败"))
 		return
 	}
-	items := make([]paperResponse, 0, len(papers))
-	for _, paper := range papers {
+	items := make([]paperResponse, 0, len(papers.Items))
+	for _, paper := range papers.Items {
 		items = append(items, paperToResponse(paper))
 	}
-	c.JSON(http.StatusOK, response.OK(paperListResponse{Items: items}))
+	paged := response.Page(items, papers.Page, papers.PageSize, papers.Total)
+	c.JSON(http.StatusOK, response.OK(paperListResponse{
+		Items:    paged.Items,
+		Page:     paged.Page,
+		PageSize: paged.PageSize,
+		Total:    paged.Total,
+	}))
+}
+
+func (h paperHandler) listPublishCandidates(c *gin.Context) {
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	spaceID, err := readOptionalUintQuery(c, "space_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
+		return
+	}
+	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users); err != nil {
+		writePermissionOrInternalError(c, err, "构建试卷权限上下文失败")
+		return
+	}
+	papers, err := h.service.ListPapers(c.Request.Context(), servicepaper.ListPapersInput{
+		TenantID: tenantID,
+		SpaceID:  spaceID,
+		Page:     1,
+		PageSize: publishPaperCandidatePageSize,
+		Search:   c.Query("search"),
+		Status:   constant.PaperStatusEnabled,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取发布试卷候选失败"))
+		return
+	}
+	items := make([]paperResponse, 0, len(papers.Items))
+	for _, paper := range papers.Items {
+		items = append(items, paperToResponse(paper))
+	}
+	paged := response.Page(items, papers.Page, papers.PageSize, papers.Total)
+	c.JSON(http.StatusOK, response.OK(paperListResponse{
+		Items:    paged.Items,
+		Page:     paged.Page,
+		PageSize: paged.PageSize,
+		Total:    paged.Total,
+	}))
+}
+
+func (h paperHandler) get(c *gin.Context) {
+	paperID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "试卷 ID 必须是正整数"))
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	if !h.authorizePaperRead(c, tenantID, paperID) {
+		return
+	}
+	paper, err := h.service.GetPaper(c.Request.Context(), tenantID, paperID)
+	if err != nil {
+		writePaperServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(paperToResponse(paper)))
 }
 
 func (h paperHandler) create(c *gin.Context) {
@@ -1456,9 +1548,10 @@ func (h paperHandler) paperCreatorWriteRank(ctx context.Context, paper servicepa
 }
 
 const (
-	paperWriteRankTeacher     = 1
-	paperWriteRankSpaceAdmin  = 2
-	paperWriteRankTenantAdmin = 3
+	paperWriteRankTeacher         = 1
+	paperWriteRankSpaceAdmin      = 2
+	paperWriteRankTenantAdmin     = 3
+	publishPaperCandidatePageSize = 10
 )
 
 func paperWriteRankFromPermissionContext(ctx permission.PermissionContext, spaceID uint64) int {
@@ -1580,6 +1673,8 @@ func sectionQuestionToResponse(question servicepaper.SectionQuestion) paperSecti
 		SortOrder:    question.SortOrder,
 		Score:        question.Score,
 		QuestionType: question.QuestionType,
+		Difficulty:   question.Difficulty,
+		TagNames:     question.TagNames,
 		Title:        question.Title,
 		Options:      question.Options,
 		BlankCount:   question.BlankCount,

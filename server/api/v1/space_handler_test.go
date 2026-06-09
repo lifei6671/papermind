@@ -96,6 +96,7 @@ func TestPlatformUserCannotEnterTenantSpaceRoutes(t *testing.T) {
 			"name": "平台越权更新",
 			"type": "class"
 		}`)},
+		{name: "disable space", method: http.MethodPost, target: "/api/v1/spaces/100/disable", body: []byte(`{"tenant_id":10}`)},
 		{name: "delete space", method: http.MethodDelete, target: "/api/v1/spaces/100?tenant_id=10"},
 		{name: "tenant-prefixed list spaces", method: http.MethodGet, target: "/api/v1/tenant/spaces?tenant_id=10"},
 		{name: "tenant-prefixed create space", method: http.MethodPost, target: "/api/v1/tenant/spaces", body: []byte(`{
@@ -109,6 +110,7 @@ func TestPlatformUserCannotEnterTenantSpaceRoutes(t *testing.T) {
 			"name": "平台越权更新",
 			"type": "class"
 		}`)},
+		{name: "tenant-prefixed disable space", method: http.MethodPost, target: "/api/v1/tenant/spaces/100/disable", body: []byte(`{"tenant_id":10}`)},
 		{name: "tenant-prefixed delete space", method: http.MethodDelete, target: "/api/v1/tenant/spaces/100?tenant_id=10"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -252,6 +254,32 @@ func TestSpaceProfileRoutesRequireTenantAdminWithSQLite(t *testing.T) {
 		t.Fatalf("space admin delete status = %d, body = %s", forbiddenDelete.Code, forbiddenDelete.Body.String())
 	}
 
+	forbiddenDisable := httptest.NewRecorder()
+	router.ServeHTTP(forbiddenDisable, authorizedRequest(http.MethodPost, "/api/v1/spaces/100/disable", []byte(`{"tenant_id":10}`), spaceAdminAuthHeader))
+	if forbiddenDisable.Code != http.StatusForbidden {
+		t.Fatalf("space admin disable status = %d, body = %s", forbiddenDisable.Code, forbiddenDisable.Body.String())
+	}
+
+	disableRecorder := httptest.NewRecorder()
+	router.ServeHTTP(disableRecorder, authorizedRequest(http.MethodPost, "/api/v1/spaces/100/disable", []byte(`{"tenant_id":10}`), adminAuthHeader))
+	if disableRecorder.Code != http.StatusOK {
+		t.Fatalf("tenant admin disable status = %d, body = %s", disableRecorder.Code, disableRecorder.Body.String())
+	}
+	disableBody := decodeExamAPIResponse[spaceResponse](t, disableRecorder.Body.Bytes())
+	if disableBody.Data.Status != "disabled" {
+		t.Fatalf("expected disabled space response, got %#v", disableBody.Data)
+	}
+	var disabledStatus string
+	if err := gormDB.Table("spaces").
+		Select("status").
+		Where("tenant_id = ? AND id = ?", 10, 100).
+		Scan(&disabledStatus).Error; err != nil {
+		t.Fatalf("query disabled space status: %v", err)
+	}
+	if disabledStatus != "disabled" {
+		t.Fatalf("expected disabled space in database, got %q", disabledStatus)
+	}
+
 	deleteRecorder := httptest.NewRecorder()
 	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/spaces/100?tenant_id=10", nil, adminAuthHeader))
 	if deleteRecorder.Code != http.StatusOK {
@@ -277,12 +305,12 @@ func TestSpaceMemberRoutesAllowCurrentSpaceAdminOnlyWithSQLite(t *testing.T) {
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("space admin list own members status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
-	listBody := decodeExamAPIResponse[[]spaceMemberResponse](t, listRecorder.Body.Bytes())
-	if len(listBody.Data) != 2 {
+	listBody := decodeExamAPIResponse[spaceMemberListResponse](t, listRecorder.Body.Bytes())
+	if listBody.Data.Total != 2 || len(listBody.Data.Items) != 2 {
 		t.Fatalf("expected own space members, got %#v", listBody.Data)
 	}
-	if listBody.Data[1].Username != "student_zhang" || listBody.Data[1].Email != "zhang@example.test" {
-		t.Fatalf("expected list members to include user detail fields, got %#v", listBody.Data[1])
+	if listBody.Data.Items[1].Username != "student_zhang" || listBody.Data.Items[1].Email != "zhang@example.test" {
+		t.Fatalf("expected list members to include user detail fields, got %#v", listBody.Data.Items[1])
 	}
 
 	addRecorder := httptest.NewRecorder()
@@ -397,8 +425,8 @@ func TestTenantAdminCanManageSpaceMembersWithSQLite(t *testing.T) {
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("tenant admin list members status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
-	listBody := decodeExamAPIResponse[[]spaceMemberResponse](t, listRecorder.Body.Bytes())
-	if len(listBody.Data) != 2 || listBody.Data[0].Role != "space_admin" {
+	listBody := decodeExamAPIResponse[spaceMemberListResponse](t, listRecorder.Body.Bytes())
+	if listBody.Data.Total != 2 || len(listBody.Data.Items) != 2 || listBody.Data.Items[0].Role != "space_admin" {
 		t.Fatalf("unexpected tenant admin member list: %#v", listBody.Data)
 	}
 
@@ -548,8 +576,8 @@ func TestSpaceMemberRoutesUseSessionTenant(t *testing.T) {
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list members with forged tenant status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
 	}
-	listBody := decodeExamAPIResponse[[]spaceMemberResponse](t, listRecorder.Body.Bytes())
-	if len(listBody.Data) != 2 || listBody.Data[0].UserID != 20 {
+	listBody := decodeExamAPIResponse[spaceMemberListResponse](t, listRecorder.Body.Bytes())
+	if listBody.Data.Total != 2 || len(listBody.Data.Items) != 2 || listBody.Data.Items[0].UserID != 20 {
 		t.Fatalf("expected member list to use session tenant, got %#v", listBody.Data)
 	}
 

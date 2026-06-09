@@ -33,6 +33,7 @@ type QuestionImportPageProps = {
 };
 
 const questionImportFileMaxBytes = 100 * 1024 * 1024;
+const questionImportSpaceOptionPageSize = 100;
 
 export function QuestionImportPage({
   api = questionApi,
@@ -78,10 +79,10 @@ export function QuestionImportPage({
 
     let ignore = false;
 
-    spaceApi.listSpaces(tenantID)
-      .then((data) => {
+    listAllQuestionImportSpaces(spaceApi, tenantID)
+      .then((items) => {
         if (!ignore) {
-          setQuestionSpaces(data.items);
+          setQuestionSpaces(items);
         }
       })
       .catch(() => {
@@ -287,6 +288,25 @@ function readQuestionScopeSpaceID(value: string) {
   }
   const parsed = Number.parseInt(value.replace("space:", ""), 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function listAllQuestionImportSpaces(api: Pick<SpaceManagementAPI, "listSpaces">, tenantID: number) {
+  const spaces: SpaceRow[] = [];
+  let page = 1;
+
+  while (true) {
+    const data = await api.listSpaces({
+      tenantID,
+      page,
+      pageSize: questionImportSpaceOptionPageSize,
+      filters: { status: "enabled" },
+    });
+    spaces.push(...data.items);
+    if (data.items.length === 0 || data.total === undefined || spaces.length >= data.total) {
+      return spaces;
+    }
+    page += 1;
+  }
 }
 
 function formatImportSummary(successCount: number, errorCount: number) {

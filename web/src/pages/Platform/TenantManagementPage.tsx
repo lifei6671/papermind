@@ -1,10 +1,11 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
-import { ArrowLeft, Maximize2, Minimize2, Search, X } from "lucide-react";
+import { Maximize2, Minimize2, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { PlatformDrawer } from "../../components/ui/PlatformDrawer";
+import { PlatformDrawerHeader } from "../../components/ui/PlatformDrawerHeader";
 import { PlatformModal } from "../../components/ui/PlatformModal";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
@@ -57,6 +58,7 @@ export function TenantManagementPage({
   const [resourceUsers, setResourceUsers] = useState<TenantUserRow[]>([]);
   const [resourceError, setResourceError] = useState("");
   const [isResourceLoading, setIsResourceLoading] = useState(false);
+  const [isResourceDrawerOpen, setIsResourceDrawerOpen] = useState(false);
   const [isTenantListRefreshing, setIsTenantListRefreshing] = useState(false);
 
   useEffect(() => {
@@ -255,6 +257,7 @@ export function TenantManagementPage({
     setResourceDrawer({ kind, tenant });
     setResourceError("");
     setIsResourceLoading(true);
+    setIsResourceDrawerOpen(true);
     setResourceSpaces([]);
     setResourceUsers([]);
 
@@ -538,10 +541,16 @@ export function TenantManagementPage({
 
       {resourceDrawer && (
         <TenantResourceDrawerView
+          afterOpenChange={(nextOpen) => {
+            if (!nextOpen) {
+              setResourceDrawer(null);
+            }
+          }}
           drawer={resourceDrawer}
           error={resourceError}
           isLoading={isResourceLoading}
-          onClose={() => setResourceDrawer(null)}
+          onClose={() => setIsResourceDrawerOpen(false)}
+          open={isResourceDrawerOpen}
           spaces={resourceSpaces}
           users={resourceUsers}
         />
@@ -551,19 +560,23 @@ export function TenantManagementPage({
 }
 
 type TenantResourceDrawerViewProps = {
+  afterOpenChange: (open: boolean) => void;
   drawer: TenantResourceDrawer;
   error: string;
   isLoading: boolean;
   onClose: () => void;
+  open: boolean;
   spaces: SpaceRow[];
   users: TenantUserRow[];
 };
 
 function TenantResourceDrawerView({
+  afterOpenChange,
   drawer,
   error,
   isLoading,
   onClose,
+  open,
   spaces,
   users,
 }: TenantResourceDrawerViewProps) {
@@ -575,21 +588,19 @@ function TenantResourceDrawerView({
   };
 
   return (
-    <PlatformDrawer ariaLabel={`${title}抽屉`} fullscreen={isFullscreen} onClose={closeDrawer} open>
-        <header className="tenant-resource-drawer__head">
-          <button
-            aria-label="返回租户列表"
-            className="tenant-resource-drawer__icon"
-            onClick={closeDrawer}
-            type="button"
-          >
-            <ArrowLeft aria-hidden="true" size={19} />
-          </button>
-          <div className="tenant-resource-drawer__title">
-            <span>{drawer.tenant.code}</span>
-            <h2>{title}</h2>
-          </div>
-          <div className="tenant-resource-drawer__tools">
+    <PlatformDrawer
+      afterOpenChange={afterOpenChange}
+      ariaLabel={`${title}抽屉`}
+      fullscreen={isFullscreen}
+      onClose={closeDrawer}
+      open={open}
+    >
+        <PlatformDrawerHeader
+          backAriaLabel="返回租户列表"
+          onBack={closeDrawer}
+          title={title}
+          actions={(
+            <>
             <button
               aria-label={isFullscreen ? "退出全屏抽屉" : "全屏抽屉"}
               className="tenant-resource-drawer__icon"
@@ -600,16 +611,9 @@ function TenantResourceDrawerView({
                 ? <Minimize2 aria-hidden="true" size={18} />
                 : <Maximize2 aria-hidden="true" size={18} />}
             </button>
-            <button
-              aria-label="关闭抽屉"
-              className="tenant-resource-drawer__icon"
-              onClick={closeDrawer}
-              type="button"
-            >
-              <X aria-hidden="true" size={19} />
-            </button>
-          </div>
-        </header>
+            </>
+          )}
+        />
 
         {isLoading && <div className="tenant-resource-drawer__state" role="status">正在加载</div>}
         {error && <div className="tenant-admin-warning" role="alert">{error}</div>}

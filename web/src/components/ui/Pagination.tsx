@@ -1,17 +1,37 @@
 import AntPagination from "antd/es/pagination";
+import { Select } from "./Select";
 
 type PaginationProps = {
   page: number;
   pageSize: number;
+  pageSizeOptions?: number[];
   total: number;
   onPageChange: (page: number) => void;
+  onPageSizeChange?: (pageSize: number) => void;
 };
 
-export function Pagination({ page, pageSize, total, onPageChange }: PaginationProps) {
+export function Pagination({ onPageChange, onPageSizeChange, page, pageSize, pageSizeOptions, total }: PaginationProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const shouldShowPageSize = !!onPageSizeChange && !!pageSizeOptions?.length;
 
   return (
     <nav aria-label="分页" className="pagination pagination--right">
+      {shouldShowPageSize && (
+        <div className="pagination__page-size">
+          <span>每页条数</span>
+          <div className="pagination__page-size-select">
+            <Select
+              ariaLabel="每页条数"
+              onChange={(value) => onPageSizeChange(Number(value))}
+              options={pageSizeOptions.map((option) => ({
+                value: String(option),
+                label: `${option} 条 / 页`,
+              }))}
+              value={String(pageSize)}
+            />
+          </div>
+        </div>
+      )}
       <AntPagination
         className="pagination__controls"
         current={page}

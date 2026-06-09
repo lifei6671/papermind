@@ -120,13 +120,23 @@ type ExamEntryContext struct {
 	Exam      Exam
 }
 
+type SubmitAttemptAndGradeInput struct {
+	TenantID    uint64
+	AttemptID   uint64
+	Version     int64
+	SubmittedAt int64
+	Status      string
+	Grader      ObjectiveGradingFunc
+	Event       ExamEvent
+}
+
 type TakingRepository interface {
 	FindAttemptByTokenHash(ctx context.Context, tokenHash string) (Attempt, error)
 	GetExam(ctx context.Context, tenantID uint64, examID uint64) (Exam, error)
 	GetAttemptQuestion(ctx context.Context, tenantID uint64, attemptID uint64, attemptQuestionID uint64) (AttemptQuestion, error)
 	UpsertAnswer(ctx context.Context, answer Answer) error
 	// 提交事务内先锁定作答状态，再读取本次答案快照并调用 grader，最后原子写入分数和提交事件。
-	SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, tenantID uint64, attemptID uint64, version int64, submittedAt int64, status string, grader ObjectiveGradingFunc, event ExamEvent) (int64, error)
+	SubmitAttemptAndGradeObjectiveQuestions(ctx context.Context, input SubmitAttemptAndGradeInput) (int64, error)
 	AppendEvent(ctx context.Context, event ExamEvent) error
 }
 
@@ -206,7 +216,15 @@ func (s *TakingService) Submit(ctx context.Context, input SubmitInput) error {
 		EventType: input.EventType,
 		EventTime: s.now(),
 	}
-	_, err = s.repo.SubmitAttemptAndGradeObjectiveQuestions(ctx, input.TenantID, input.AttemptID, attempt.Version, s.now(), AttemptStatusSubmitted, s.gradeObjectiveAnswers, event)
+	_, err = s.repo.SubmitAttemptAndGradeObjectiveQuestions(ctx, SubmitAttemptAndGradeInput{
+		TenantID:    input.TenantID,
+		AttemptID:   input.AttemptID,
+		Version:     attempt.Version,
+		SubmittedAt: s.now(),
+		Status:      AttemptStatusSubmitted,
+		Grader:      s.gradeObjectiveAnswers,
+		Event:       event,
+	})
 	return err
 }
 
@@ -310,6 +328,9 @@ func (s *TakingService) validateTakingToken(ctx context.Context, tenantID uint64
 	exam, err := s.repo.GetExam(ctx, tenantID, attempt.ExamID)
 	if err != nil {
 		return Attempt{}, Exam{}, err
+	}
+	if exam.Status != StatusPublished {
+		return Attempt{}, Exam{}, ErrExamNotEligible
 	}
 	if attempt.Status != AttemptStatusInProgress {
 		return Attempt{}, Exam{}, ErrAttemptAlreadySubmitted

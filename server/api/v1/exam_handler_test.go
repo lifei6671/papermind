@@ -24,6 +24,31 @@ import (
 
 const fixedAPINow int64 = 1_779_792_000_000
 
+func TestPublishExamRequestAllowsUnlimitedMaxAttempts(t *testing.T) {
+	request := publishExamRequest{
+		TenantID:        10,
+		PaperID:         100,
+		Name:            "不限次数考试",
+		TargetType:      serviceexam.TargetTypeSpace,
+		TargetID:        301,
+		StartTime:       fixedAPINow,
+		EndTime:         fixedAPINow + 120*60*1000,
+		DurationMinutes: 120,
+		MaxAttempts:     0,
+		ResultStrategy:  serviceexam.ResultStrategyLatest,
+		PublishMode:     serviceexam.PublishModeManualPublish,
+		Status:          serviceexam.StatusDraft,
+	}
+	if err := request.validate(); err != nil {
+		t.Fatalf("expected unlimited max attempts to pass validation, got %v", err)
+	}
+
+	request.MaxAttempts = -1
+	if err := request.validate(); err == nil {
+		t.Fatal("expected negative max attempts to fail validation")
+	}
+}
+
 func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)
@@ -57,6 +82,16 @@ func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 		listBody.Data.Items[0].Targets[0].TargetType != "space" ||
 		listBody.Data.Items[0].Targets[0].TargetID != 100 {
 		t.Fatalf("expected seeded exam list to keep full targets, got %#v", listBody.Data.Items[0].Targets)
+	}
+
+	filterRecorder := httptest.NewRecorder()
+	router.ServeHTTP(filterRecorder, authorizedRequest(http.MethodGet, "/api/v1/exams?tenant_id=10&paper_id=999", nil, authHeader))
+	if filterRecorder.Code != http.StatusOK {
+		t.Fatalf("filtered list status = %d, body = %s", filterRecorder.Code, filterRecorder.Body.String())
+	}
+	filterBody := decodeExamAPIResponse[examListResponse](t, filterRecorder.Body.Bytes())
+	if filterBody.Data.Total != 0 || len(filterBody.Data.Items) != 0 {
+		t.Fatalf("expected paper_id filter to remove seeded exam, got %#v", filterBody.Data)
 	}
 
 	payload := []byte(`{
@@ -94,6 +129,140 @@ func TestExamAPIRoutesListAndPublishWithSQLite(t *testing.T) {
 	}
 	if targetCount != 1 {
 		t.Fatalf("expected one target row, got %d", targetCount)
+	}
+}
+
+func TestExamAPIStatusLifecycleWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:            gormDB,
+		Now:           func() int64 { return fixedAPINow },
+		CodeGenerator: fixedCodeGenerator{code: "PMSTAT"},
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/exams", []byte(`{
+		"tenant_id": 10,
+		"paper_id": 100,
+		"name": "草稿考试",
+		"target_type": "space",
+		"target_id": 100,
+		"start_time": 1772269200000,
+		"end_time": 1772276400000,
+		"duration_minutes": 120,
+		"max_attempts": 1,
+		"result_strategy": "latest",
+		"publish_mode": "manual_publish",
+		"status": "draft"
+	}`), authHeader))
+	if createRecorder.Code != http.StatusOK {
+		t.Fatalf("create draft status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
+	}
+	createBody := decodeExamAPIResponse[examResponse](t, createRecorder.Body.Bytes())
+	if createBody.Data.Status != serviceexam.StatusDraft || createBody.Data.InviteCode != "" {
+		t.Fatalf("expected draft without invite code, got %#v", createBody.Data)
+	}
+
+	secondCreateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(secondCreateRecorder, authorizedRequest(http.MethodPost, "/api/v1/exams", []byte(`{
+		"tenant_id": 10,
+		"paper_id": 100,
+		"name": "第二个草稿考试",
+		"target_type": "space",
+		"target_id": 100,
+		"start_time": 1772269200000,
+		"end_time": 1772276400000,
+		"duration_minutes": 120,
+		"max_attempts": 1,
+		"result_strategy": "latest",
+		"publish_mode": "manual_publish",
+		"status": "draft"
+	}`), authHeader))
+	if secondCreateRecorder.Code != http.StatusOK {
+		t.Fatalf("create second draft status = %d, body = %s", secondCreateRecorder.Code, secondCreateRecorder.Body.String())
+	}
+	secondCreateBody := decodeExamAPIResponse[examResponse](t, secondCreateRecorder.Body.Bytes())
+	if secondCreateBody.Data.Status != serviceexam.StatusDraft || secondCreateBody.Data.InviteCode != "" {
+		t.Fatalf("expected second draft without invite code, got %#v", secondCreateBody.Data)
+	}
+
+	publishRecorder := httptest.NewRecorder()
+	router.ServeHTTP(publishRecorder, authorizedRequest(http.MethodPost, fmt.Sprintf("/api/v1/exams/%d/status", createBody.Data.ID), []byte(`{
+		"tenant_id": 10,
+		"status": "published"
+	}`), authHeader))
+	if publishRecorder.Code != http.StatusOK {
+		t.Fatalf("publish draft status = %d, body = %s", publishRecorder.Code, publishRecorder.Body.String())
+	}
+	publishBody := decodeExamAPIResponse[examResponse](t, publishRecorder.Body.Bytes())
+	if publishBody.Data.Status != serviceexam.StatusPublished || publishBody.Data.InviteCode != "PMSTAT" {
+		t.Fatalf("expected draft to publish with invite code, got %#v", publishBody.Data)
+	}
+
+	closeRecorder := httptest.NewRecorder()
+	router.ServeHTTP(closeRecorder, authorizedRequest(http.MethodPost, fmt.Sprintf("/api/v1/exams/%d/status", createBody.Data.ID), []byte(`{
+		"tenant_id": 10,
+		"status": "closed"
+	}`), authHeader))
+	if closeRecorder.Code != http.StatusOK {
+		t.Fatalf("close exam status = %d, body = %s", closeRecorder.Code, closeRecorder.Body.String())
+	}
+	closeBody := decodeExamAPIResponse[examResponse](t, closeRecorder.Body.Bytes())
+	if closeBody.Data.Status != serviceexam.StatusClosed || closeBody.Data.EndTime != fixedAPINow {
+		t.Fatalf("expected closed exam with end_time now, got %#v", closeBody.Data)
+	}
+}
+
+func TestExamAPIStatusUpdateRejectsTeacherOutsideExamScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+	seedExamDetailTarget(t, gormDB, 1, serviceexam.TargetTypeSpace, 100)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash teacher password: %v", err)
+	}
+	if err := gormDB.Table("users").
+		Where("username = ?", "teacher_zhao").
+		Update("password_hash", passwordHash).Error; err != nil {
+		t.Fatalf("update teacher password: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, logo_url, description, type, status,
+			created_at, updated_at, ext_json
+		) VALUES (110, 10, '高一 2 班', '', '', 'class', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed other teacher space: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status,
+			created_at, updated_at, ext_json
+		) VALUES (110, 10, 110, 22, 'teacher', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed out-of-scope teacher member: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher_zhao", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/exams/1/status", []byte(`{
+		"tenant_id": 10,
+		"status": "closed"
+	}`), authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected out-of-scope teacher status update 403, got status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -304,6 +473,7 @@ func TestExamAPIManagementResultsWithSQLite(t *testing.T) {
 	seedSpaceAPITestData(t, gormDB)
 	seedExamDetailTarget(t, gormDB, 1, serviceexam.TargetTypeSpace, 100)
 	seedExamOverviewPreviewData(t, gormDB)
+	seedExamManagementLowScoreResultData(t, gormDB)
 
 	router := NewRouter(RouterOptions{DB: gormDB, Now: func() int64 { return fixedAPINow }})
 	authHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
@@ -3166,11 +3336,53 @@ func seedExamOverviewPreviewData(t *testing.T, gormDB *gorm.DB) {
 		t.Fatalf("seed overview attempt: %v", err)
 	}
 	if err := gormDB.Exec(`
+		INSERT INTO exam_attempt_questions (
+			id, tenant_id, attempt_id, section_id, question_id, section_snapshot, sort_order, score,
+			question_snapshot, option_snapshot, correct_answer_snapshot, created_at, updated_at, ext_json
+		) VALUES (1901, 10, 1801, 501, 1501, '{"name":"一、单项选择题"}', 1, 2, '{"title":"服务端预览题干","type":"single"}', '[]', '{"correct":"A"}', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed overview attempt questions: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_answers (
+			id, tenant_id, attempt_id, attempt_question_id, answer_content, score, grading_status,
+			created_at, updated_at, ext_json
+		) VALUES (2001, 10, 1801, 1901, 'A', 2, ?, ?, ?, '{}')
+	`, constant.GradingStatusAuto, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed overview answers: %v", err)
+	}
+}
+
+func seedExamManagementLowScoreResultData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES (23, 'student_low', '低分考生', '13800000023', 'student.low@example.test', 'hash', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed low score student: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES (23, 10, 23, 'student', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed low score student role: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status, created_at, updated_at, ext_json
+		) VALUES (23, 10, 100, 23, 'student', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed low score student space member: %v", err)
+	}
+	if err := gormDB.Exec(`
 		INSERT INTO exam_attempts (
 			id, tenant_id, exam_id, user_id, attempt_no, status, started_at, submitted_at,
 			exam_token_hash, exam_token_expires_at, objective_score, subjective_score, total_score,
 			created_at, updated_at, version, ext_json
-		) VALUES (1803, 10, 1, 20, 1, 'submitted', ?, ?, 'overview-low-token', ?, 0, 0, 0, ?, ?, 1, '{}')
+		) VALUES (1803, 10, 1, 23, 1, 'submitted', ?, ?, 'overview-low-token', ?, 0, 0, 0, ?, ?, 1, '{}')
 	`, fixedAPINow-3_600_000, fixedAPINow-2_000, fixedAPINow+3_600_000, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed low-score overview attempt: %v", err)
 	}
@@ -3178,21 +3390,17 @@ func seedExamOverviewPreviewData(t *testing.T, gormDB *gorm.DB) {
 		INSERT INTO exam_attempt_questions (
 			id, tenant_id, attempt_id, section_id, question_id, section_snapshot, sort_order, score,
 			question_snapshot, option_snapshot, correct_answer_snapshot, created_at, updated_at, ext_json
-		) VALUES
-			(1901, 10, 1801, 501, 1501, '{"name":"一、单项选择题"}', 1, 2, '{"title":"服务端预览题干","type":"single"}', '[]', '{"correct":"A"}', ?, ?, '{}'),
-			(1902, 10, 1803, 501, 1501, '{"name":"一、单项选择题"}', 1, 2, '{"title":"服务端预览题干","type":"single"}', '[]', '{"correct":"A"}', ?, ?, '{}')
-	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
-		t.Fatalf("seed overview attempt questions: %v", err)
+		) VALUES (1902, 10, 1803, 501, 1501, '{"name":"一、单项选择题"}', 1, 2, '{"title":"服务端预览题干","type":"single"}', '[]', '{"correct":"A"}', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed low-score overview attempt question: %v", err)
 	}
 	if err := gormDB.Exec(`
 		INSERT INTO exam_answers (
 			id, tenant_id, attempt_id, attempt_question_id, answer_content, score, grading_status,
 			created_at, updated_at, ext_json
-		) VALUES
-			(2001, 10, 1801, 1901, 'A', 2, ?, ?, ?, '{}'),
-			(2002, 10, 1803, 1902, 'B', 0, ?, ?, ?, '{}')
-	`, constant.GradingStatusAuto, fixedAPINow, fixedAPINow, constant.GradingStatusAuto, fixedAPINow, fixedAPINow).Error; err != nil {
-		t.Fatalf("seed overview answers: %v", err)
+		) VALUES (2002, 10, 1803, 1902, 'B', 0, ?, ?, ?, '{}')
+	`, constant.GradingStatusAuto, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed low-score overview answer: %v", err)
 	}
 }
 

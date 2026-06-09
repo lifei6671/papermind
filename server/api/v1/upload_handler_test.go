@@ -137,7 +137,13 @@ func TestBuildUploadObjectKeyUsesTimestampMD5AndExtension(t *testing.T) {
 	expectedPrefix := "tenant-logos/20260527/20260527160809_" + hex.EncodeToString(hash[:])[:16] + "_"
 	expectedSuffix := ".webp"
 
-	key, err := buildUploadObjectKey("tenant-logos", "logo.PNG", "image/webp", []byte("logo"), now)
+	key, err := buildUploadObjectKey(uploadObjectKeyInput{
+		Category:    "tenant-logos",
+		FileName:    "logo.PNG",
+		ContentType: "image/webp",
+		FileContent: []byte("logo"),
+		Now:         now,
+	})
 	if err != nil {
 		t.Fatalf("build object key: %v", err)
 	}
@@ -152,11 +158,23 @@ func TestBuildUploadObjectKeyUsesTimestampMD5AndExtension(t *testing.T) {
 
 func TestBuildUploadObjectKeyAvoidsSameSecondContentCollision(t *testing.T) {
 	now := time.Date(2026, 5, 27, 16, 8, 9, 0, time.Local)
-	firstKey, err := buildUploadObjectKey("tenant-logos", "logo.png", "image/png", []byte("logo"), now)
+	firstKey, err := buildUploadObjectKey(uploadObjectKeyInput{
+		Category:    "tenant-logos",
+		FileName:    "logo.png",
+		ContentType: "image/png",
+		FileContent: []byte("logo"),
+		Now:         now,
+	})
 	if err != nil {
 		t.Fatalf("build first object key: %v", err)
 	}
-	secondKey, err := buildUploadObjectKey("tenant-logos", "logo.png", "image/png", []byte("logo"), now)
+	secondKey, err := buildUploadObjectKey(uploadObjectKeyInput{
+		Category:    "tenant-logos",
+		FileName:    "logo.png",
+		ContentType: "image/png",
+		FileContent: []byte("logo"),
+		Now:         now,
+	})
 	if err != nil {
 		t.Fatalf("build second object key: %v", err)
 	}

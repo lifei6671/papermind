@@ -157,7 +157,7 @@ test("租户管理页通过右侧抽屉查看租户空间", async () => {
   expect(within(drawer).queryByRole("tablist")).not.toBeInTheDocument();
   expect(within(drawer).getByRole("button", { name: "返回租户列表" })).toBeInTheDocument();
   expect(within(drawer).getByRole("button", { name: "全屏抽屉" })).toBeInTheDocument();
-  expect(within(drawer).getByRole("button", { name: "关闭抽屉" })).toBeInTheDocument();
+  expect(within(drawer).queryByRole("button", { name: "关闭抽屉" })).not.toBeInTheDocument();
   expect(within(drawer).getByRole("columnheader", { name: "空间" })).toBeInTheDocument();
   expect(within(drawer).getByRole("columnheader", { name: "Logo" })).toBeInTheDocument();
   expect(within(drawer).getByRole("columnheader", { name: "描述" })).toBeInTheDocument();
@@ -207,7 +207,7 @@ test("租户管理页通过右侧抽屉查看租户用户", async () => {
   expect(within(drawer).getByText("教师")).toBeInTheDocument();
   expect(within(drawer).getByText("启用")).toBeInTheDocument();
 
-  await user.click(within(drawer).getByRole("button", { name: "关闭抽屉" }));
+  await user.click(within(drawer).getByRole("button", { name: "返回租户列表" }));
 
   await waitFor(() => {
     expect(screen.queryByRole("dialog", { name: "青藤一中用户抽屉" })).not.toBeInTheDocument();

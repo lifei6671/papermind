@@ -191,7 +191,7 @@ type fakeReviewRepository struct {
 	gradeErr        error
 }
 
-func (r *fakeReviewRepository) ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64) ([]PendingAttempt, error) {
+func (r *fakeReviewRepository) ListPendingAttempts(ctx context.Context, tenantID uint64, examID uint64, keyword string) ([]PendingAttempt, error) {
 	return append([]PendingAttempt(nil), r.pendingAttempts...), nil
 }
 

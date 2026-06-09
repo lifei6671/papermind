@@ -94,6 +94,15 @@ type questionTenantRequest struct {
 	TenantID uint64 `json:"tenant_id"`
 }
 
+type questionAvailabilityRequest struct {
+	TenantID           uint64   `json:"tenant_id"`
+	SpaceID            *uint64  `json:"space_id"`
+	Scope              string   `json:"scope"`
+	Status             string   `json:"status"`
+	Tags               []string `json:"tags"`
+	ExcludeQuestionIDs []uint64 `json:"exclude_question_ids"`
+}
+
 type questionOptionResponse struct {
 	ID           uint64 `json:"id"`
 	OptionKey    string `json:"option_key"`
@@ -107,6 +116,19 @@ type questionListResponse struct {
 	Page     int                `json:"page"`
 	PageSize int                `json:"page_size"`
 	Total    int64              `json:"total"`
+}
+
+type questionTagsResponse struct {
+	Items []string `json:"items"`
+}
+
+type questionAvailabilityCountResponse struct {
+	Type  string `json:"type"`
+	Count int64  `json:"count"`
+}
+
+type questionAvailabilityCountsResponse struct {
+	Items []questionAvailabilityCountResponse `json:"items"`
 }
 
 func (h questionHandler) list(c *gin.Context) {
@@ -133,11 +155,16 @@ func (h questionHandler) list(c *gin.Context) {
 		return
 	}
 	result, err := h.service.ListVisibleQuestions(c.Request.Context(), servicequestion.ListQuestionsInput{
-		TenantID: tenantID,
-		SpaceID:  spaceID,
-		Page:     page,
-		PageSize: pageSize,
-		Search:   c.Query("search"),
+		TenantID:   tenantID,
+		SpaceID:    spaceID,
+		Scope:      c.Query("scope"),
+		Page:       page,
+		PageSize:   pageSize,
+		Search:     c.Query("search"),
+		Type:       c.Query("type"),
+		Difficulty: c.Query("difficulty"),
+		Tag:        c.Query("tag"),
+		Status:     c.Query("status"),
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取题目列表失败"))
@@ -154,6 +181,86 @@ func (h questionHandler) list(c *gin.Context) {
 		PageSize: paged.PageSize,
 		Total:    paged.Total,
 	}))
+}
+
+func (h questionHandler) listTags(c *gin.Context) {
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, tenantID, h.members) {
+		return
+	}
+	spaceID, err := readOptionalUintQuery(c, "space_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
+		return
+	}
+	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.users); err != nil {
+		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
+	tags, err := h.service.ListVisibleQuestionTags(c.Request.Context(), servicequestion.QuestionTagListInput{
+		TenantID: tenantID,
+		SpaceID:  spaceID,
+		Scope:    c.Query("scope"),
+		Status:   c.Query("status"),
+		Search:   c.Query("search"),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取题目标签失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(questionTagsResponse{Items: tags}))
+}
+
+func (h questionHandler) countAvailability(c *gin.Context) {
+	var request questionAvailabilityRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 不能为空"))
+		return
+	}
+	if request.SpaceID != nil && *request.SpaceID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
+		return
+	}
+	if !authorizeExamBusiness(c, request.TenantID, h.members) {
+		return
+	}
+	if _, err := permissionContextForResourceScope(c, request.TenantID, request.SpaceID, h.members, h.users); err != nil {
+		writePermissionOrInternalError(c, err, "构建题库权限上下文失败")
+		return
+	}
+	counts, err := h.service.CountVisibleQuestionsByType(c.Request.Context(), servicequestion.QuestionAvailabilityInput{
+		TenantID:           request.TenantID,
+		SpaceID:            request.SpaceID,
+		Scope:              request.Scope,
+		Status:             request.Status,
+		Tags:               request.Tags,
+		ExcludeQuestionIDs: request.ExcludeQuestionIDs,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取题目可用数量失败"))
+		return
+	}
+	items := make([]questionAvailabilityCountResponse, 0, len(counts))
+	for _, questionType := range []string{
+		servicequestion.QuestionTypeSingle,
+		servicequestion.QuestionTypeMultiple,
+		servicequestion.QuestionTypeJudge,
+		servicequestion.QuestionTypeFillBlank,
+		servicequestion.QuestionTypeShortText,
+	} {
+		if count, ok := counts[questionType]; ok {
+			items = append(items, questionAvailabilityCountResponse{Type: questionType, Count: count})
+		}
+	}
+	c.JSON(http.StatusOK, response.OK(questionAvailabilityCountsResponse{Items: items}))
 }
 
 func (h questionHandler) create(c *gin.Context) {

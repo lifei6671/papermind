@@ -24,6 +24,28 @@ describe("paperApi", () => {
           },
         }));
       }
+      if (String(input).endsWith("/api/v1/papers/100?tenant_id=10")) {
+        return new Response(JSON.stringify({
+          code: 0,
+          message: "ok",
+          data: {
+            id: 100,
+            tenant_id: 10,
+            space_id: 301,
+            name: "高一语文月考试卷",
+            description: "月考",
+            duration_minutes: 120,
+            grade_level: "高一",
+            total_score: "30",
+            build_mode: "manual",
+            shuffle_questions: false,
+            show_analysis: true,
+            status: "draft",
+            created_at: 1717291800000,
+            creator_name: "teacher.exam",
+          },
+        }));
+      }
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
@@ -44,12 +66,15 @@ describe("paperApi", () => {
             created_at: 1717291800000,
             creator_name: "teacher.exam",
           }],
+          page: 2,
+          page_size: 10,
+          total: 37,
         },
       }));
     });
     const api = createPaperAPI(createApiClient({ baseUrl: "", fetcher }));
 
-    await expect(api.listPapers({ tenantID: 10 })).resolves.toEqual({
+    await expect(api.listPapers({ tenantID: 10, spaceID: 301, page: 2, pageSize: 10, search: "月考" })).resolves.toEqual({
       items: [{
         id: 100,
         tenantID: 10,
@@ -64,7 +89,34 @@ describe("paperApi", () => {
         createdAt: 1717291800000,
         creatorName: "teacher.exam",
       }],
+      page: 2,
+      pageSize: 10,
+      total: 37,
     });
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/papers?tenant_id=10&space_id=301&page=2&page_size=10&search=%E6%9C%88%E8%80%83",
+      expect.objectContaining({ method: "GET" }),
+    );
+    await expect(api.getPaper({ tenantID: 10, paperID: 100 })).resolves.toEqual({
+      id: 100,
+      tenantID: 10,
+      spaceID: 301,
+      name: "高一语文月考试卷",
+      description: "月考",
+      durationMinutes: 120,
+      gradeLevel: "高一",
+      buildMode: "manual",
+      status: "draft",
+      totalScore: "30",
+      createdAt: 1717291800000,
+      creatorName: "teacher.exam",
+    });
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/papers/100?tenant_id=10",
+      expect.objectContaining({ method: "GET" }),
+    );
     await expect(api.listSections({ tenantID: 10, paperID: 100 })).resolves.toEqual({
       items: [{
         id: 200,
@@ -507,6 +559,8 @@ describe("paperApi", () => {
               sort_order: 1,
               score: "6",
               question_type: "single",
+              difficulty: "hard",
+              tag_names: ["函数", "高一"],
               title: "学生预览题干",
               options: ["选项 A", "选项 B"],
               blank_count: 1,
@@ -634,6 +688,8 @@ describe("paperApi", () => {
         sortOrder: 1,
         score: "6",
         questionType: "single",
+        difficulty: "hard",
+        tagNames: ["函数", "高一"],
         title: "学生预览题干",
         options: ["选项 A", "选项 B"],
         blankCount: 1,
@@ -758,5 +814,47 @@ describe("paperApi", () => {
       paperID: 100,
       sectionID: 12,
     })).resolves.toBeUndefined();
+  });
+
+  test("发布试卷候选检索不向后端传递状态或分页参数", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
+      code: 0,
+      message: "ok",
+      data: {
+        items: [{
+          id: 200,
+          tenant_id: 10,
+          space_id: 301,
+          name: "高三语文期末考试",
+          description: "可发布",
+          duration_minutes: 120,
+          grade_level: "高三",
+          total_score: "100",
+          build_mode: "manual",
+          shuffle_questions: false,
+          show_analysis: true,
+          status: "enabled",
+          created_at: 1717291800000,
+          creator_name: "teacher.exam",
+        }],
+        page: 1,
+        page_size: 10,
+        total: 1,
+      },
+    })));
+    const api = createPaperAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.listPublishPaperCandidates({ tenantID: 10, spaceID: 301, search: " 期末 " })).resolves.toMatchObject({
+      items: [{ id: 200, name: "高三语文期末考试", status: "enabled" }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/papers/publish-candidates?tenant_id=10&space_id=301&search=%E6%9C%9F%E6%9C%AB",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(String(fetcher.mock.calls[0]?.[0])).not.toContain("status=");
+    expect(String(fetcher.mock.calls[0]?.[0])).not.toContain("page_size=");
   });
 });

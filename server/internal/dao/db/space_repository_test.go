@@ -11,6 +11,93 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+func TestSpaceRepositorySearchesLocalizedMemberRoleAndStatusBeforePaginating(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedSpaceMemberSearchData(t, gormDB)
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{})
+
+	teacherResult, err := repo.ListMemberNamesPage(context.Background(), SpaceMemberNamePageInput{
+		TenantID: 10,
+		SpaceID:  301,
+		Page:     pagination.Input{Page: 1, PageSize: 10},
+		Search:   "教师",
+	})
+	if err != nil {
+		t.Fatalf("ListMemberNamesPage by localized role returned error: %v", err)
+	}
+	assertUint64s(t, spaceMemberUserIDs(teacherResult.Items), []uint64{21})
+
+	disabledResult, err := repo.ListMemberNamesPage(context.Background(), SpaceMemberNamePageInput{
+		TenantID: 10,
+		SpaceID:  301,
+		Page:     pagination.Input{Page: 1, PageSize: 10},
+		Search:   "禁用",
+	})
+	if err != nil {
+		t.Fatalf("ListMemberNamesPage by localized status returned error: %v", err)
+	}
+	assertUint64s(t, spaceMemberUserIDs(disabledResult.Items), []uint64{22})
+}
+
+func TestSpaceRepositoryFiltersMemberRoleAndStatusBeforePaginating(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedSpaceMemberSearchData(t, gormDB)
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{})
+
+	result, err := repo.ListMemberNamesPage(context.Background(), SpaceMemberNamePageInput{
+		TenantID: 10,
+		SpaceID:  301,
+		Page:     pagination.Input{Page: 1, PageSize: 1},
+		Search:   "同学",
+		Role:     servicespace.RoleStudent,
+		Status:   servicespace.StatusEnabled,
+	})
+	if err != nil {
+		t.Fatalf("ListMemberNamesPage returned error: %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("expected role/status filtered total=1 and one item, got %#v", result)
+	}
+	if result.Items[0].UserID != 23 {
+		t.Fatalf("expected enabled student user 23, got %#v", result.Items[0])
+	}
+}
+
+func TestSpaceRepositoryFiltersSpacesByStatusBeforePaginating(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	if err := gormDB.Exec(`
+		INSERT INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, ext_json
+		) VALUES (10, '青藤一中', '', '', 'PM-QT01', 1, 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, logo_url, description, type, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(301, 10, '高一 1 班', '', '', 'class', 'disabled', 1000, 1000, '{}'),
+			(302, 10, '高一 2 班', '', '', 'class', 'enabled', 2000, 2000, '{}'),
+			(303, 10, '高一 3 班', '', '', 'class', 'enabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed spaces: %v", err)
+	}
+
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{})
+	result, err := repo.ListSpaces(context.Background(), servicespace.ListInput{TenantID: 10, Page: 1, PageSize: 1, Search: "高一", Status: servicespace.StatusEnabled})
+	if err != nil {
+		t.Fatalf("ListSpaces returned error: %v", err)
+	}
+	if result.Total != 2 || len(result.Items) != 1 {
+		t.Fatalf("expected enabled total=2 and one paged item, got %#v", result)
+	}
+	if result.Items[0].ID != 302 {
+		t.Fatalf("expected first enabled space by id, got %#v", result.Items[0])
+	}
+}
+
 func TestSpaceRepositoryRejectsLosingLastSpaceAdminAfterMemberChanges(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -152,7 +239,7 @@ func TestSpaceRepositoryRejectsMissingMemberChanges(t *testing.T) {
 	}
 }
 
-func TestSpaceRepositoryAllowsLosingLastSpaceAdminInDisabledSpace(t *testing.T) {
+func TestSpaceRepositoryRejectsMemberChangesInDisabledSpace(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	seedSpaceAdminInvariantData(t, gormDB, false)
 	if err := gormDB.Table("spaces").
@@ -162,8 +249,8 @@ func TestSpaceRepositoryAllowsLosingLastSpaceAdminInDisabledSpace(t *testing.T) 
 	}
 	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
 
-	if err := repo.DisableMember(context.Background(), 10, 301, 20); err != nil {
-		t.Fatalf("DisableMember returned error: %v", err)
+	if err := repo.DisableMember(context.Background(), 10, 301, 20); !errors.Is(err, servicespace.ErrSpaceNotFound) {
+		t.Fatalf("expected ErrSpaceNotFound, got %v", err)
 	}
 	var status string
 	if err := gormDB.Table("space_members").
@@ -172,8 +259,41 @@ func TestSpaceRepositoryAllowsLosingLastSpaceAdminInDisabledSpace(t *testing.T) 
 		Scan(&status).Error; err != nil {
 		t.Fatalf("query member status: %v", err)
 	}
-	if status != servicespace.StatusDisabled {
-		t.Fatalf("expected member disabled in disabled space, got %q", status)
+	if status != servicespace.StatusEnabled {
+		t.Fatalf("expected member status unchanged in disabled space, got %q", status)
+	}
+}
+
+func TestSpaceRepositoryRejectsProfileUpdateInDisabledSpace(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedSpaceAdminInvariantData(t, gormDB, true)
+	if err := gormDB.Table("spaces").
+		Where("tenant_id = ? AND id = ?", 10, 301).
+		Update("status", servicespace.StatusDisabled).Error; err != nil {
+		t.Fatalf("disable space: %v", err)
+	}
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	_, err := repo.UpdateSpaceProfile(context.Background(), servicespace.UpdateProfileInput{
+		TenantID:    10,
+		SpaceID:     301,
+		Name:        "禁用空间改名",
+		LogoURL:     "logos/disabled.png",
+		Description: "不应保存",
+		Type:        "class",
+	})
+	if !errors.Is(err, servicespace.ErrSpaceNotFound) {
+		t.Fatalf("expected ErrSpaceNotFound, got %v", err)
+	}
+	var name string
+	if err := gormDB.Table("spaces").
+		Select("name").
+		Where("tenant_id = ? AND id = ?", 10, 301).
+		Scan(&name).Error; err != nil {
+		t.Fatalf("query space name: %v", err)
+	}
+	if name == "禁用空间改名" {
+		t.Fatalf("disabled space profile should remain unchanged")
 	}
 }
 
@@ -201,12 +321,39 @@ func TestSpaceRepositoryUpdateAndDeleteSpaceProfile(t *testing.T) {
 	if err := repo.DeleteSpace(context.Background(), 10, 301); err != nil {
 		t.Fatalf("DeleteSpace returned error: %v", err)
 	}
-	result, err := repo.ListSpaces(context.Background(), 10, pagination.Input{Page: 1, PageSize: 10})
+	result, err := repo.ListSpaces(context.Background(), servicespace.ListInput{TenantID: 10, Page: 1, PageSize: 10})
 	if err != nil {
 		t.Fatalf("ListSpaces returned error: %v", err)
 	}
 	if result.Total != 0 || len(result.Items) != 0 {
 		t.Fatalf("expected deleted space hidden from list, got %#v", result)
+	}
+}
+
+func TestSpaceRepositorySearchesSpacesBeforePaginating(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedSpaceAdminInvariantData(t, gormDB, true)
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, logo_url, description, type, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(302, 10, '高一数学班', '', '数学竞赛', 'class', 'enabled', 3000, 3000, '{}'),
+			(303, 10, '高一英语班', '', '英语竞赛', 'class', 'enabled', 4000, 4000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed spaces: %v", err)
+	}
+
+	repo := NewSpaceRepository(gormDB, SpaceRepositoryOptions{Now: func() int64 { return 2000 }})
+	result, err := repo.ListSpaces(context.Background(), servicespace.ListInput{TenantID: 10, Page: 1, PageSize: 1, Search: "竞赛"})
+	if err != nil {
+		t.Fatalf("ListSpaces returned error: %v", err)
+	}
+	if result.Total != 2 || len(result.Items) != 1 {
+		t.Fatalf("expected filtered total=2 and one paged item, got %#v", result)
+	}
+	if result.Items[0].ID != 302 {
+		t.Fatalf("expected list order to remain stable after filtering, got %#v", result.Items[0])
 	}
 }
 
@@ -456,4 +603,69 @@ func seedUserMembershipListData(t *testing.T, gormDB interface {
 	`).Error; err != nil {
 		t.Fatalf("seed space members: %v", err)
 	}
+}
+
+func seedSpaceMemberSearchData(t *testing.T, gormDB interface {
+	Exec(sql string, values ...any) *gorm.DB
+}) {
+	t.Helper()
+	if err := gormDB.Exec(`
+		INSERT INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, ext_json
+		) VALUES (10, '青藤一中', '', '', 'PM-QT01', 1, 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, logo_url, description, type, status,
+			created_at, updated_at, ext_json
+		) VALUES (301, 10, '高一一班', '', '', 'class', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed space: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(20, 'space.admin', '空间管理员', '13800000020', 'admin@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
+			(21, 'teacher.one', '李教师', '13800000021', 'teacher@example.test', 'hash', 'enabled', 2000, 2000, '{}'),
+			(22, 'disabled.student', '禁用同学', '13800000022', 'disabled@example.test', 'hash', 'enabled', 3000, 3000, '{}'),
+			(23, 'enabled.student', '启用同学', '13800000023', 'student@example.test', 'hash', 'enabled', 4000, 4000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 20, 'teacher', 'enabled', 1000, 1000, '{}'),
+			(21, 10, 21, 'teacher', 'enabled', 2000, 2000, '{}'),
+			(22, 10, 22, 'student', 'enabled', 3000, 3000, '{}'),
+			(23, 10, 23, 'student', 'enabled', 4000, 4000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant memberships: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 301, 20, 'space_admin', 'enabled', 1000, 1000, '{}'),
+			(21, 10, 301, 21, 'teacher', 'enabled', 2000, 2000, '{}'),
+			(22, 10, 301, 22, 'student', 'disabled', 3000, 3000, '{}'),
+			(23, 10, 301, 23, 'student', 'enabled', 4000, 4000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed space members: %v", err)
+	}
+}
+
+func spaceMemberUserIDs(members []SpaceMemberName) []uint64 {
+	ids := make([]uint64, 0, len(members))
+	for _, member := range members {
+		ids = append(ids, member.UserID)
+	}
+	return ids
 }

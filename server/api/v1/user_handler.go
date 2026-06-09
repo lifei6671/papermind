@@ -3,6 +3,7 @@ package v1
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
@@ -35,6 +36,14 @@ type disableUserRequest struct {
 	TenantID uint64 `json:"tenant_id"`
 }
 
+type updateUserProfileRequest struct {
+	TenantID  uint64 `json:"tenant_id"`
+	RealName  string `json:"real_name"`
+	AvatarURL string `json:"avatar_url"`
+	Phone     string `json:"phone"`
+	Email     string `json:"email"`
+}
+
 type updateUserRoleRequest struct {
 	TenantID uint64 `json:"tenant_id"`
 	Role     string `json:"role"`
@@ -59,9 +68,15 @@ type userResponse struct {
 	Username            string `json:"username"`
 	RealName            string `json:"real_name"`
 	AvatarURL           string `json:"avatar_url"`
+	Phone               string `json:"phone"`
+	Email               string `json:"email"`
 	Role                string `json:"role"`
 	Status              string `json:"status"`
 	ForcePasswordChange bool   `json:"force_password_change"`
+	LastLoginIP         string `json:"last_login_ip"`
+	LastLoginAt         int64  `json:"last_login_at"`
+	CreatedAt           int64  `json:"created_at"`
+	UpdatedAt           int64  `json:"updated_at"`
 }
 
 type userListResponse struct {
@@ -85,7 +100,24 @@ func (h userHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), servicetenantuser.ListInput{TenantID: principal.TenantID, Page: page, PageSize: pageSize})
+	excludeSpaceID, err := readOptionalUintQuery(c, "exclude_space_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "exclude_space_id 必须是正整数"))
+		return
+	}
+	excludeSpaceIDValue := uint64(0)
+	if excludeSpaceID != nil {
+		excludeSpaceIDValue = *excludeSpaceID
+	}
+	result, err := h.service.List(c.Request.Context(), servicetenantuser.ListInput{
+		TenantID:       principal.TenantID,
+		Page:           page,
+		PageSize:       pageSize,
+		Search:         c.Query("search"),
+		Role:           c.Query("role"),
+		Status:         c.Query("status"),
+		ExcludeSpaceID: excludeSpaceIDValue,
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取用户列表失败"))
 		return
@@ -236,6 +268,50 @@ func (h userHandler) enable(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
 }
 
+func (h userHandler) updateProfile(c *gin.Context) {
+	userID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "用户 ID 必须是正整数"))
+		return
+	}
+	var request updateUserProfileRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	displayName := strings.TrimSpace(request.RealName)
+	if displayName == "" {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "real_name 不能为空"))
+		return
+	}
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.service)
+	if !ok {
+		return
+	}
+	existingUser, err := h.service.Get(c.Request.Context(), principal.TenantID, userID)
+	if err != nil {
+		writeUserServiceError(c, err)
+		return
+	}
+	avatarURL := strings.TrimSpace(request.AvatarURL)
+	if avatarURL == "" {
+		avatarURL = existingUser.AvatarURL
+	}
+	user, err := h.service.UpdateProfile(c.Request.Context(), servicetenantuser.UpdateProfileInput{
+		TenantID:    principal.TenantID,
+		UserID:      userID,
+		DisplayName: displayName,
+		AvatarURL:   avatarURL,
+		Phone:       strings.TrimSpace(request.Phone),
+		Email:       strings.TrimSpace(request.Email),
+	})
+	if err != nil {
+		writeUserServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(userToResponse(user)))
+}
+
 func (h userHandler) delete(c *gin.Context) {
 	userID, err := readUintParam(c, "id")
 	if err != nil {
@@ -346,9 +422,15 @@ func userToResponse(user servicetenantuser.User) userResponse {
 		Username:            user.Username,
 		RealName:            user.RealName,
 		AvatarURL:           user.AvatarURL,
+		Phone:               user.Phone,
+		Email:               user.Email,
 		Role:                user.Role,
 		Status:              user.Status,
 		ForcePasswordChange: user.ForcePasswordChange,
+		LastLoginIP:         user.LastLoginIP,
+		LastLoginAt:         user.LastLoginAt,
+		CreatedAt:           user.CreatedAt,
+		UpdatedAt:           user.UpdatedAt,
 	}
 }
 

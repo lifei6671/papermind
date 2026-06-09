@@ -75,6 +75,7 @@ type PlatformTenantSpaceAPIResponse = {
   name: string;
   logo_url: string;
   description: string;
+  status: "enabled" | "disabled";
   members: PlatformTenantSpaceMemberAPIResponse[];
 };
 
@@ -143,6 +144,7 @@ export function createTenantAPI(apiClient: ApiClient): TenantManagementAPI {
           name: row.name,
           description: row.description,
           logoFileName: row.logo_url || "未上传",
+          status: row.status,
           members: row.members.map((member) => ({
             id: member.id,
             userID: member.user_id,

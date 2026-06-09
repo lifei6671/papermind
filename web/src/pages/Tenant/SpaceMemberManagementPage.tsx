@@ -7,6 +7,7 @@ import { useSession } from "../../auth/session-context";
 import type { ProfileSpaceAuthorization } from "../../auth/session-context";
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
+import { Pagination } from "../../components/ui/Pagination";
 import { Panel } from "../../components/ui/Panel";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 
@@ -32,7 +33,11 @@ type MemberResult = {
   spaceID: number;
   members: SpaceMember[];
   errorMessage: string;
+  total: number;
 };
+
+const memberPageSizeOptions = [5, 10, 20, 50];
+const defaultMemberPageSize = 10;
 
 export function SpaceMemberManagementPage({ api = spaceApi, tenantID }: SpaceMemberManagementPageProps) {
   const { session } = useSession();
@@ -49,6 +54,7 @@ export function SpaceMemberManagementPage({ api = spaceApi, tenantID }: SpaceMem
     spaceID: 0,
     members: [],
     errorMessage: "",
+    total: 0,
   });
   const [newMemberUserID, setNewMemberUserID] = useState("");
   const [newMemberRole, setNewMemberRole] = useState<MemberRole>("teacher");
@@ -56,9 +62,12 @@ export function SpaceMemberManagementPage({ api = spaceApi, tenantID }: SpaceMem
   const [actionError, setActionError] = useState("");
   const [actionKey, setActionKey] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [memberPage, setMemberPage] = useState(1);
+  const [memberPageSize, setMemberPageSize] = useState(defaultMemberPageSize);
   const isLoading = selectedSpaceID > 0 && memberResult.spaceID !== selectedSpaceID;
   const members = isLoading ? [] : memberResult.members;
   const errorMessage = isLoading ? "" : memberResult.errorMessage;
+  const memberTotal = isLoading ? 0 : memberResult.total;
 
   useEffect(() => {
     let active = true;
@@ -68,13 +77,14 @@ export function SpaceMemberManagementPage({ api = spaceApi, tenantID }: SpaceMem
       };
     }
 
-    api.listSpaceMembers({ tenantID, spaceID: selectedSpaceID })
+    api.listSpaceMembers({ tenantID, spaceID: selectedSpaceID, page: memberPage, pageSize: memberPageSize })
       .then((result) => {
         if (active) {
           setMemberResult({
             spaceID: selectedSpaceID,
             members: result.items,
             errorMessage: "",
+            total: result.total ?? result.items.length,
           });
         }
       })
@@ -84,6 +94,7 @@ export function SpaceMemberManagementPage({ api = spaceApi, tenantID }: SpaceMem
             spaceID: selectedSpaceID,
             members: [],
             errorMessage: formatApiErrorMessage(error, "空间成员加载失败"),
+            total: 0,
           });
         }
       });
@@ -91,7 +102,11 @@ export function SpaceMemberManagementPage({ api = spaceApi, tenantID }: SpaceMem
     return () => {
       active = false;
     };
-  }, [api, refreshKey, selectedSpaceID, tenantID]);
+  }, [api, memberPage, memberPageSize, refreshKey, selectedSpaceID, tenantID]);
+
+  useEffect(() => {
+    queueMicrotask(() => setMemberPage(1));
+  }, [selectedSpaceID]);
 
   async function handleAddMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -267,6 +282,17 @@ export function SpaceMemberManagementPage({ api = spaceApi, tenantID }: SpaceMem
                     </tbody>
                   </table>
                 </div>
+                <Pagination
+                  onPageChange={setMemberPage}
+                  onPageSizeChange={(nextPageSize) => {
+                    setMemberPage(1);
+                    setMemberPageSize(nextPageSize);
+                  }}
+                  page={memberPage}
+                  pageSize={memberPageSize}
+                  pageSizeOptions={memberPageSizeOptions}
+                  total={memberTotal}
+                />
               </>
             )}
           </>

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lifei6671/papermind/server/internal/service/pagination"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
 	"gorm.io/gorm"
@@ -44,7 +43,7 @@ func TestTenantUserRepositoryListsUsersByCreatedAtDesc(t *testing.T) {
 	}
 
 	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{})
-	result, err := repo.ListUsers(context.Background(), 10, pagination.Input{Page: 1, PageSize: 10})
+	result, err := repo.ListUsers(context.Background(), servicetenantuser.ListInput{TenantID: 10, Page: 1, PageSize: 10})
 	if err != nil {
 		t.Fatalf("ListUsers returned error: %v", err)
 	}
@@ -53,6 +52,274 @@ func TestTenantUserRepositoryListsUsersByCreatedAtDesc(t *testing.T) {
 		got = append(got, user.ID)
 	}
 	assertUint64s(t, got, []uint64{22, 21, 20})
+}
+
+func TestTenantUserRepositorySearchesBeforePaginating(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	if err := gormDB.Exec(`
+		INSERT INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, ext_json
+		) VALUES (10, '青藤一中', '', '', 'PM-QT01', 1, 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(20, 'math.teacher', '数学教师', '13800000020', 'math@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
+			(21, 'english.teacher', '英语教师', '13800000021', 'english@example.test', 'hash', 'enabled', 2000, 2000, '{}'),
+			(22, 'math.student', '数学学生', '13800000022', 'student@example.test', 'hash', 'enabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 20, 'teacher', 'enabled', 1000, 1000, '{}'),
+			(21, 10, 21, 'teacher', 'enabled', 2000, 2000, '{}'),
+			(22, 10, 22, 'student', 'enabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed memberships: %v", err)
+	}
+
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{})
+	result, err := repo.ListUsers(context.Background(), servicetenantuser.ListInput{TenantID: 10, Page: 1, PageSize: 1, Search: "math"})
+	if err != nil {
+		t.Fatalf("ListUsers returned error: %v", err)
+	}
+	if result.Total != 2 || len(result.Items) != 1 {
+		t.Fatalf("expected filtered total=2 and one paged item, got %#v", result)
+	}
+	if result.Items[0].Username != "math.student" {
+		t.Fatalf("expected newest matching user first, got %#v", result.Items[0])
+	}
+}
+
+func TestTenantUserRepositorySearchesLocalizedRoleAndStatusBeforePaginating(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	if err := gormDB.Exec(`
+		INSERT INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, ext_json
+		) VALUES (10, '青藤一中', '', '', 'PM-QT01', 1, 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(20, 'teacher.enabled', '李老师', '13800000020', 'teacher@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
+			(21, 'student.enabled', '张同学', '13800000021', 'student@example.test', 'hash', 'enabled', 2000, 2000, '{}'),
+			(22, 'student.disabled', '王同学', '13800000022', 'disabled@example.test', 'hash', 'disabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 20, 'teacher', 'enabled', 1000, 1000, '{}'),
+			(21, 10, 21, 'student', 'enabled', 2000, 2000, '{}'),
+			(22, 10, 22, 'student', 'enabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed memberships: %v", err)
+	}
+
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{})
+	studentResult, err := repo.ListUsers(context.Background(), servicetenantuser.ListInput{TenantID: 10, Page: 1, PageSize: 10, Search: "学生"})
+	if err != nil {
+		t.Fatalf("ListUsers by localized role returned error: %v", err)
+	}
+	assertUint64s(t, tenantUserIDs(studentResult.Items), []uint64{22, 21})
+
+	disabledResult, err := repo.ListUsers(context.Background(), servicetenantuser.ListInput{TenantID: 10, Page: 1, PageSize: 10, Search: "禁用"})
+	if err != nil {
+		t.Fatalf("ListUsers by localized status returned error: %v", err)
+	}
+	assertUint64s(t, tenantUserIDs(disabledResult.Items), []uint64{22})
+}
+
+func TestTenantUserRepositoryFiltersRoleAndStatusBeforePaginating(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	if err := gormDB.Exec(`
+		INSERT INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, ext_json
+		) VALUES (10, '青藤一中', '', '', 'PM-QT01', 1, 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(20, 'math.teacher', '数学教师', '13800000020', 'teacher@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
+			(21, 'math.student.enabled', '数学学生', '13800000021', 'student@example.test', 'hash', 'enabled', 2000, 2000, '{}'),
+			(22, 'math.student.disabled', '禁用数学学生', '13800000022', 'disabled@example.test', 'hash', 'disabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 20, 'teacher', 'enabled', 1000, 1000, '{}'),
+			(21, 10, 21, 'student', 'enabled', 2000, 2000, '{}'),
+			(22, 10, 22, 'student', 'enabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed memberships: %v", err)
+	}
+
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{})
+	result, err := repo.ListUsers(context.Background(), servicetenantuser.ListInput{
+		TenantID: 10,
+		Page:     1,
+		PageSize: 1,
+		Search:   "math",
+		Role:     servicetenantuser.RoleStudent,
+		Status:   servicetenantuser.StatusEnabled,
+	})
+	if err != nil {
+		t.Fatalf("ListUsers returned error: %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("expected role/status filtered total=1 and one item, got %#v", result)
+	}
+	if result.Items[0].ID != 21 {
+		t.Fatalf("expected enabled student 21, got %#v", result.Items[0])
+	}
+}
+
+func TestTenantUserRepositoryExcludesSpaceMembersBeforePaginating(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	if err := gormDB.Exec(`
+		INSERT INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, ext_json
+		) VALUES (10, '青藤一中', '', '', 'PM-QT01', 1, 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO spaces (
+			id, tenant_id, name, logo_url, description, type, status,
+			created_at, updated_at, ext_json
+		) VALUES (301, 10, '高一 1 班', '', '', 'class', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed space: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(20, 'student.in.space', '空间内学生', '13800000020', 'in@example.test', 'hash', 'enabled', 1000, 1000, '{}'),
+			(21, 'student.available.1', '可添加学生一', '13800000021', 'available1@example.test', 'hash', 'enabled', 2000, 2000, '{}'),
+			(22, 'student.available.2', '可添加学生二', '13800000022', 'available2@example.test', 'hash', 'enabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES
+			(20, 10, 20, 'student', 'enabled', 1000, 1000, '{}'),
+			(21, 10, 21, 'student', 'enabled', 2000, 2000, '{}'),
+			(22, 10, 22, 'student', 'enabled', 3000, 3000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed memberships: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status,
+			created_at, updated_at, ext_json
+		) VALUES (20, 10, 301, 20, 'student', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed space member: %v", err)
+	}
+
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{})
+	result, err := repo.ListUsers(context.Background(), servicetenantuser.ListInput{
+		TenantID:       10,
+		Page:           1,
+		PageSize:       1,
+		Search:         "student",
+		Role:           servicetenantuser.RoleStudent,
+		Status:         servicetenantuser.StatusEnabled,
+		ExcludeSpaceID: 301,
+	})
+	if err != nil {
+		t.Fatalf("ListUsers returned error: %v", err)
+	}
+	if result.Total != 2 || len(result.Items) != 1 {
+		t.Fatalf("expected filtered total=2 and one paged item, got %#v", result)
+	}
+	if result.Items[0].ID != 22 {
+		t.Fatalf("expected newest available student first, got %#v", result.Items[0])
+	}
+}
+
+func TestTenantUserRepositoryUpdateProfileDoesNotTouchOtherTenantUser(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	if err := gormDB.Exec(`
+		INSERT INTO tenants (
+			id, name, logo_url, description, tenant_code, allow_register, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(10, '青藤一中', '', '', 'PM-QT01', 1, 'enabled', 1000, 1000, '{}'),
+			(11, '松云二中', '', '', 'PM-SY02', 1, 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed tenants: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO users (
+			id, username, real_name, phone, email, password_hash, status,
+			created_at, updated_at, ext_json
+		) VALUES (30, 'other.tenant', '外租户用户', '13800000030', 'other@example.test', 'hash', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed other tenant user: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO tenant_user_memberships (
+			id, tenant_id, user_id, role, status, created_at, updated_at, ext_json
+		) VALUES (30, 11, 30, 'teacher', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed other tenant membership: %v", err)
+	}
+	repo := NewTenantUserRepository(gormDB, TenantUserRepositoryOptions{Now: func() int64 { return 2000 }})
+
+	_, err := repo.UpdateProfile(context.Background(), servicetenantuser.UpdateProfileInput{
+		TenantID:    10,
+		UserID:      30,
+		DisplayName: "被越权修改",
+		Phone:       "13900000030",
+		Email:       "hacked@example.test",
+	})
+	if !errors.Is(err, servicetenantuser.ErrUserNotFound) {
+		t.Fatalf("expected ErrUserNotFound for other tenant user, got %v", err)
+	}
+
+	var user struct {
+		RealName string
+		Phone    string
+		Email    string
+	}
+	if err := gormDB.Table("users").
+		Select("real_name, phone, email").
+		Where("id = ?", 30).
+		Scan(&user).Error; err != nil {
+		t.Fatalf("query other tenant user: %v", err)
+	}
+	if user.RealName != "外租户用户" || user.Phone != "13800000030" || user.Email != "other@example.test" {
+		t.Fatalf("other tenant user should stay unchanged, got %#v", user)
+	}
 }
 
 func TestTenantUserRepositoryRejectsDisablingLastTenantAdmin(t *testing.T) {
@@ -465,4 +732,12 @@ func seedTenantAdminInvariantData(t *testing.T, gormDB interface {
 	`).Error; err != nil {
 		t.Fatalf("seed second admin role: %v", err)
 	}
+}
+
+func tenantUserIDs(users []servicetenantuser.User) []uint64 {
+	ids := make([]uint64, 0, len(users))
+	for _, user := range users {
+		ids = append(ids, user.ID)
+	}
+	return ids
 }

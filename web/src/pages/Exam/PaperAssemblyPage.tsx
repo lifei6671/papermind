@@ -1,18 +1,26 @@
+import MDEditor from "@uiw/react-md-editor/nohighlight";
+import "@uiw/react-md-editor/markdown-editor.css";
+import "@uiw/react-markdown-preview/markdown.css";
+import "katex/dist/katex.min.css";
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
+import rehypeKatex from "rehype-katex";
+import remarkMath from "remark-math";
 import { useLocation, useNavigate } from "react-router-dom";
 import { formatApiErrorMessage } from "../../api/client";
 import type { ActorRole } from "../../api/grading";
 import type { PaperAssemblyAPI, PaperBuildMode, PaperRow, PaperRuleRow, PaperSectionRow } from "../../api/papers";
 import { paperApi } from "../../api/papers";
 import { useFeedback } from "../../app/feedback-context";
+import { localizeMarkdownEditorCommand } from "../../components/markdown/markdownEditorCommands";
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Pagination } from "../../components/ui/Pagination";
 import { Panel } from "../../components/ui/Panel";
+import { PlatformDrawer } from "../../components/ui/PlatformDrawer";
+import { PlatformDrawerHeader } from "../../components/ui/PlatformDrawerHeader";
 import { PlatformModal } from "../../components/ui/PlatformModal";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
-import { Select } from "../../components/ui/Select";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 
@@ -86,6 +94,7 @@ export function PaperAssemblyPage({
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [paperPage, setPaperPage] = useState(1);
   const [paperPageSize, setPaperPageSize] = useState(20);
+  const [paperTotal, setPaperTotal] = useState(0);
   const [loadError, setLoadError] = useState("");
   const [isPaperListRefreshing, setIsPaperListRefreshing] = useState(false);
   const [isCreatingPaper, setIsCreatingPaper] = useState(false);
@@ -96,12 +105,19 @@ export function PaperAssemblyPage({
   useEffect(() => {
     let ignore = false;
 
-    api.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) })
+    api.listPapers({
+      tenantID,
+      ...(spaceID === undefined ? {} : { spaceID }),
+      page: paperPage,
+      pageSize: paperPageSize,
+      ...(appliedSearchQuery.trim() ? { search: appliedSearchQuery } : {}),
+    })
       .then((data) => {
         if (ignore) {
           return;
         }
         setPapers(data.items);
+        setPaperTotal(data.total ?? data.items.length);
         setActivePaperID((current) => {
           if (current !== null && data.items.some((paper) => paper.id === current)) {
             return current;
@@ -123,7 +139,7 @@ export function PaperAssemblyPage({
     return () => {
       ignore = true;
     };
-  }, [api, tenantID, spaceID]);
+  }, [api, tenantID, spaceID, paperPage, paperPageSize, appliedSearchQuery]);
 
   useEffect(() => {
     if (activePaperID === null) {
@@ -155,20 +171,7 @@ export function PaperAssemblyPage({
     };
   }, [activePaperID, api, tenantID]);
 
-  const filteredPapers = papers.filter((paper) => {
-    const keyword = appliedSearchQuery.trim().toLowerCase();
-    if (!keyword) {
-      return true;
-    }
-    return [paper.name, paper.creatorName, paper.buildMode, buildModeLabel(paper.buildMode), paperStatusLabel(paper.status)].some((value) =>
-      value.toLowerCase().includes(keyword),
-    );
-  });
-  const normalizedPaperPage = Math.min(paperPage, Math.max(1, Math.ceil(filteredPapers.length / paperPageSize)));
-  const pagedPapers = filteredPapers.slice(
-    (normalizedPaperPage - 1) * paperPageSize,
-    normalizedPaperPage * paperPageSize,
-  );
+  const normalizedPaperPage = Math.min(paperPage, Math.max(1, Math.ceil(paperTotal / paperPageSize)));
 
   async function loadWorkspace(paperID: number) {
     try {
@@ -419,8 +422,14 @@ export function PaperAssemblyPage({
     setPaperPage(1);
     setIsPaperListRefreshing(true);
     try {
-      const data = await withRefreshFeedback(api.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }));
+      const data = await withRefreshFeedback(api.listPapers({
+        tenantID,
+        ...(spaceID === undefined ? {} : { spaceID }),
+        page: 1,
+        pageSize: paperPageSize,
+      }));
       setPapers(data.items);
+      setPaperTotal(data.total ?? data.items.length);
       setActivePaperID((current) => {
         if (current !== null && data.items.some((paper) => paper.id === current)) {
           return current;
@@ -487,8 +496,8 @@ export function PaperAssemblyPage({
             </tr>
           </thead>
           <tbody>
-            {pagedPapers.length === 0 && <EmptyTableRow colSpan={8} />}
-            {pagedPapers.map((paper) => (
+            {papers.length === 0 && <EmptyTableRow colSpan={8} />}
+            {papers.map((paper) => (
               <tr key={paper.id}>
                 <td>{paper.name}</td>
                 <td>
@@ -551,27 +560,17 @@ export function PaperAssemblyPage({
           </tbody>
         </table>
       </div>
-      <div className="question-bank-pagination">
-        <div className="question-bank-pagination__page-size">
-          <span>每页条数</span>
-          <div className="question-bank-pagination__page-size-select">
-            <Select
-              ariaLabel="每页条数"
-              onChange={(value) => {
-                const nextPageSize = Number(value);
-                setPaperPage(1);
-                setPaperPageSize(nextPageSize);
-              }}
-              options={paperPageSizeOptions.map((option) => ({
-                value: String(option),
-                label: `${option} 条 / 页`,
-              }))}
-              value={String(paperPageSize)}
-            />
-          </div>
-        </div>
-        <Pagination page={normalizedPaperPage} pageSize={paperPageSize} total={filteredPapers.length} onPageChange={setPaperPage} />
-      </div>
+      <Pagination
+        onPageChange={setPaperPage}
+        onPageSizeChange={(nextPageSize) => {
+          setPaperPage(1);
+          setPaperPageSize(nextPageSize);
+        }}
+        page={normalizedPaperPage}
+        pageSize={paperPageSize}
+        pageSizeOptions={paperPageSizeOptions}
+        total={paperTotal}
+      />
     </>
   );
 
@@ -586,8 +585,8 @@ export function PaperAssemblyPage({
           </tr>
         </thead>
         <tbody>
-          {filteredPapers.length === 0 && <EmptyTableRow colSpan={3} />}
-          {filteredPapers.map((paper) => (
+          {papers.length === 0 && <EmptyTableRow colSpan={3} />}
+          {papers.map((paper) => (
             <tr
               aria-selected={activePaperID === paper.id}
               className={activePaperID === paper.id ? "exam-paper-row exam-paper-row--active" : "exam-paper-row"}
@@ -764,10 +763,11 @@ export function PaperAssemblyPage({
         )}
       </Panel>
 
-      <PlatformModal open={isCreatePaperDialogOpen} onClose={() => setIsCreatePaperDialogOpen(false)} title="新建试卷">
-            <form className="platform-form" onSubmit={handleCreatePaper}>
+      <PlatformDrawer ariaLabel="新建试卷抽屉" onClose={() => setIsCreatePaperDialogOpen(false)} open={isCreatePaperDialogOpen}>
+        <PlatformDrawerHeader onBack={() => setIsCreatePaperDialogOpen(false)} title="新建试卷" />
+            <form className="platform-form exam-paper-create-form" onSubmit={handleCreatePaper}>
               <label className="field">
-                <span>试卷名称</span>
+                <RequiredLabel>试卷名称</RequiredLabel>
                 <input
                   aria-label="试卷名称"
                   onChange={(event) => setNewPaperName(event.target.value)}
@@ -776,9 +776,10 @@ export function PaperAssemblyPage({
                 />
               </label>
               <label className="field">
-                <span>组卷方式</span>
+                <RequiredLabel>组卷方式</RequiredLabel>
                 <select
                   aria-label="组卷方式"
+                  required
                   onChange={(event) => setNewPaperBuildMode(event.target.value as PaperBuildMode)}
                   value={newPaperBuildMode}
                 >
@@ -788,7 +789,7 @@ export function PaperAssemblyPage({
                 </select>
               </label>
               <label className="field">
-                <span>考试时长</span>
+                <RequiredLabel>考试时长</RequiredLabel>
                 <input
                   aria-label="考试时长"
                   min={1}
@@ -799,7 +800,7 @@ export function PaperAssemblyPage({
                 />
               </label>
               <label className="field">
-                <span>适用年级</span>
+                <RequiredLabel>适用年级</RequiredLabel>
                 <input
                   aria-label="适用年级"
                   onChange={(event) => setNewPaperGradeText(event.target.value)}
@@ -807,14 +808,11 @@ export function PaperAssemblyPage({
                   value={newPaperGradeText}
                 />
               </label>
-              <label className="field">
-                <span>试卷说明</span>
-                <input
-                  aria-label="试卷说明"
-                  onChange={(event) => setNewPaperDescription(event.target.value)}
-                  value={newPaperDescription}
-                />
-              </label>
+              <PaperDescriptionMarkdownEditor
+                label="试卷说明"
+                onChange={setNewPaperDescription}
+                value={newPaperDescription}
+              />
               <div className="platform-dialog__actions">
                 <Button variant="secondary" onClick={() => setIsCreatePaperDialogOpen(false)} type="button">
                   取消
@@ -824,7 +822,7 @@ export function PaperAssemblyPage({
                 </Button>
               </div>
             </form>
-      </PlatformModal>
+      </PlatformDrawer>
 
       <PlatformModal open={isSectionDialogOpen} onClose={() => setIsSectionDialogOpen(false)} title="新增大题弹窗">
             <form className="platform-form" onSubmit={handleAddSection}>
@@ -929,6 +927,47 @@ export function PaperAssemblyPage({
         </PlatformModal>
       )}
     </section>
+  );
+}
+
+function RequiredLabel({ children }: { children: string }) {
+  return (
+    <span className="field-label">
+      {children}
+      <span aria-hidden="true" className="required-marker">*</span>
+    </span>
+  );
+}
+
+function PaperDescriptionMarkdownEditor({
+  label,
+  onChange,
+  value,
+}: {
+  label: string;
+  onChange(value: string): void;
+  value: string;
+}) {
+  return (
+    <div className="field markdown-editor exam-paper-create__description" data-color-mode="light">
+      <span>{label}</span>
+      <MDEditor
+        commandsFilter={localizeMarkdownEditorCommand}
+        height="auto"
+        onChange={(nextValue) => onChange(nextValue ?? "")}
+        preview="live"
+        previewOptions={{
+          // 试卷说明按 Markdown 原文保存，预览阶段补公式渲染能力。
+          rehypePlugins: [rehypeKatex],
+          remarkPlugins: [remarkMath],
+        }}
+        textareaProps={{
+          "aria-label": label,
+        }}
+        value={value}
+        visibleDragbar={false}
+      />
+    </div>
   );
 }
 

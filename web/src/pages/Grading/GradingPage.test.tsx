@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { expect, test, vi } from "vitest";
@@ -107,6 +107,127 @@ test("阅卷页缺少考试时不请求后端", () => {
   expect(screen.getByText("请先选择考试后再进入阅卷中心。")).toBeInTheDocument();
   expect(api.listPendingAttempts).not.toHaveBeenCalled();
   expect(api.gradeShortText).not.toHaveBeenCalled();
+});
+
+test("阅卷页搜索通过后端重新加载待阅卷列表", async () => {
+  const user = userEvent.setup();
+  const api: GradingAPI = {
+    listPendingAttempts: vi.fn()
+      .mockResolvedValueOnce({
+        items: [
+          {
+            attemptID: 900,
+            attemptQuestionID: 901,
+            studentName: "张三",
+            spaceName: "高一 1 班",
+            examName: "高一语文期中考试",
+            questionTitle: "第一题",
+            answerContent: "第一份答案",
+            submittedAt: "2026-05-26 18:40",
+            maxScore: "10",
+            answerVersion: 7,
+            pendingShortTextCount: 1,
+            status: "pending",
+          },
+          {
+            attemptID: 901,
+            attemptQuestionID: 902,
+            studentName: "李四",
+            spaceName: "高一 2 班",
+            examName: "高一语文期中考试",
+            questionTitle: "第二题",
+            answerContent: "第二份答案",
+            submittedAt: "2026-05-26 18:41",
+            maxScore: "8",
+            answerVersion: 3,
+            pendingShortTextCount: 1,
+            status: "pending",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        items: [{
+          attemptID: 901,
+          attemptQuestionID: 902,
+          studentName: "李四",
+          spaceName: "高一 2 班",
+          examName: "高一语文期中考试",
+          questionTitle: "第二题",
+          answerContent: "第二份答案",
+          submittedAt: "2026-05-26 18:41",
+          maxScore: "8",
+          answerVersion: 3,
+          pendingShortTextCount: 1,
+          status: "pending",
+        }],
+      }),
+    gradeShortText: vi.fn().mockResolvedValue(undefined),
+  };
+
+  render(
+    <MemoryRouter>
+      <GradingPage api={api} tenantID={10} examID={1} actorID={501} actorRole="teacher" spaceID={301} />
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByText("张三")).toBeInTheDocument();
+  expect(screen.getByText("李四")).toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("搜索待阅卷"), "李四");
+  await user.click(screen.getByRole("button", { name: "搜索" }));
+
+  await waitFor(() => {
+    expect(api.listPendingAttempts).toHaveBeenLastCalledWith({
+      tenantID: 10,
+      examID: 1,
+      actorID: 501,
+      actorRole: "teacher",
+      spaceID: 301,
+      search: "李四",
+    });
+  });
+  expect(await screen.findByText("李四")).toBeInTheDocument();
+  expect(screen.queryByText("张三")).not.toBeInTheDocument();
+});
+
+test("阅卷页后端搜索失败后清空旧待阅卷结果", async () => {
+  const user = userEvent.setup();
+  const api: GradingAPI = {
+    listPendingAttempts: vi.fn()
+      .mockResolvedValueOnce({
+        items: [{
+          attemptID: 900,
+          attemptQuestionID: 901,
+          studentName: "张三",
+          spaceName: "高一 1 班",
+          examName: "高一语文期中考试",
+          questionTitle: "第一题",
+          answerContent: "第一份答案",
+          submittedAt: "2026-05-26 18:40",
+          maxScore: "10",
+          answerVersion: 7,
+          pendingShortTextCount: 1,
+          status: "pending",
+        }],
+      })
+      .mockRejectedValueOnce(new Error("search failed")),
+    gradeShortText: vi.fn().mockResolvedValue(undefined),
+  };
+
+  render(
+    <MemoryRouter>
+      <GradingPage api={api} tenantID={10} examID={1} actorID={501} actorRole="teacher" spaceID={301} />
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByText("张三")).toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("搜索待阅卷"), "不存在");
+  await user.click(screen.getByRole("button", { name: "搜索" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("search failed");
+  await waitFor(() => expect(screen.queryByText("张三")).not.toBeInTheDocument());
+  expect(screen.getByText("无记录")).toBeInTheDocument();
 });
 
 test("阅卷页带 attempt_id 时自动打开对应作答", async () => {

@@ -46,29 +46,19 @@ export function PaperPreviewRoute({
     let ignore = false;
 
     async function resolveLegacyPreview() {
-      const pageSize = 100;
-      let page = 1;
-      let matchedExams: Awaited<ReturnType<ExamManagementAPI["listExams"]>>["items"] = [];
-
-      while (!ignore) {
-        const data = await providedExamApi.listExams({
-          tenantID,
-          ...(spaceID === undefined ? {} : { spaceID }),
-          page,
-          pageSize,
-        });
-        matchedExams = matchedExams.concat(data.items.filter((exam) => exam.paperID === paperID));
-        if (matchedExams.length > 1 || data.page * data.pageSize >= data.total) {
-          break;
-        }
-        page += 1;
-      }
+      const data = await providedExamApi.listExams({
+        tenantID,
+        ...(spaceID === undefined ? {} : { spaceID }),
+        paperID,
+        page: 1,
+        pageSize: 2,
+      });
 
       if (ignore) {
         return;
       }
-      setResolution(matchedExams.length === 1
-        ? { requestKey, status: "canonical", examID: matchedExams[0].id }
+      setResolution(data.total === 1 && data.items.length === 1
+        ? { requestKey, status: "canonical", examID: data.items[0].id }
         : { requestKey, status: "paper" });
     }
 
@@ -151,12 +141,11 @@ export function PaperStudentPreviewRoute({
 
     async function loadStudentPreview() {
       try {
-        const [paperData, sectionData, sectionQuestionData] = await Promise.all([
-          providedPaperApi.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }),
+        const [paper, sectionData, sectionQuestionData] = await Promise.all([
+          providedPaperApi.getPaper({ tenantID, paperID }),
           providedPaperApi.listSections({ tenantID, paperID }),
           providedPaperApi.listSectionQuestions({ tenantID, paperID }),
         ]);
-        const paper = paperData.items.find((item) => item.id === paperID);
         if (ignore) {
           return;
         }

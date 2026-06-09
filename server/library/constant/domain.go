@@ -49,6 +49,10 @@ const (
 	ExamStatusDraft = "draft"
 	// ExamStatusPublished 表示考试已发布。
 	ExamStatusPublished = "published"
+	// ExamStatusClosed 表示考试已提前结束。
+	ExamStatusClosed = "closed"
+	// ExamStatusDisabled 表示考试已禁用。
+	ExamStatusDisabled = "disabled"
 	// PaperStatusDraft 表示试卷草稿状态。
 	PaperStatusDraft = "draft"
 	// PaperStatusEnabled 表示试卷可用。

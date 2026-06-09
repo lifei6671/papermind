@@ -1,4 +1,5 @@
 import AntSelect from "antd/es/select";
+import { useId } from "react";
 
 export type SelectOption = {
   value: string;
@@ -14,12 +15,15 @@ type SelectProps = {
 };
 
 export function Select({ ariaLabel, onChange, options, placeholder, value }: SelectProps) {
+  const selectID = useId();
+
   return (
     <AntSelect
       aria-label={ariaLabel}
       className="ui-select-trigger"
       classNames={{ popup: { root: "ui-select-content" } }}
       getPopupContainer={(trigger) => trigger.parentElement ?? document.body}
+      id={selectID}
       onChange={(nextValue) => onChange(nextValue)}
       options={options}
       placeholder={placeholder}

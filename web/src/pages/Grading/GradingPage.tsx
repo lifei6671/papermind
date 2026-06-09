@@ -49,26 +49,16 @@ export function GradingPage({
 
   const pendingCount = attempts.filter((attempt) => attempt.status === "pending").length;
 
-  const filteredAttempts = attempts.filter((attempt) => {
-    const keyword = appliedSearchQuery.trim();
-    if (!keyword) {
-      return true;
-    }
-
-    return [attempt.studentName, attempt.spaceName, attempt.examName, attempt.questionTitle].some((value) =>
-      value.includes(keyword),
-    );
-  });
-
-  async function loadPendingAttempts() {
+  async function loadPendingAttempts(search = appliedSearchQuery) {
     try {
       if (!effectiveExamID) {
         return;
       }
-      const result = await api.listPendingAttempts({ tenantID, examID: effectiveExamID, actorID, actorRole, spaceID: effectiveSpaceID });
+      const result = await api.listPendingAttempts({ tenantID, examID: effectiveExamID, actorID, actorRole, spaceID: effectiveSpaceID, search });
       setAttempts(result.items);
       setLoadError("");
     } catch (err) {
+      setAttempts([]);
       setLoadError(formatApiErrorMessage(err, "待阅卷列表加载失败"));
     }
   }
@@ -78,7 +68,7 @@ export function GradingPage({
       return undefined;
     }
     let ignore = false;
-    api.listPendingAttempts({ tenantID, examID: effectiveExamID, actorID, actorRole, spaceID: effectiveSpaceID })
+    api.listPendingAttempts({ tenantID, examID: effectiveExamID, actorID, actorRole, spaceID: effectiveSpaceID, search: appliedSearchQuery })
       .then((result) => {
         if (!ignore) {
           setAttempts(result.items);
@@ -87,13 +77,14 @@ export function GradingPage({
       })
       .catch((err: unknown) => {
         if (!ignore) {
+          setAttempts([]);
           setLoadError(formatApiErrorMessage(err, "待阅卷列表加载失败"));
         }
       });
     return () => {
       ignore = true;
     };
-  }, [api, tenantID, effectiveExamID, actorID, actorRole, effectiveSpaceID, teacherNeedsSpace]);
+  }, [api, tenantID, effectiveExamID, actorID, actorRole, effectiveSpaceID, appliedSearchQuery, teacherNeedsSpace]);
 
   useEffect(() => {
     if (!selectedAttemptID || autoOpenedAttemptID.current === selectedAttemptID) {
@@ -120,7 +111,7 @@ export function GradingPage({
     setAppliedSearchQuery("");
     setIsPendingListRefreshing(true);
     try {
-      await withRefreshFeedback(loadPendingAttempts());
+      await withRefreshFeedback(loadPendingAttempts(""));
     } finally {
       setIsPendingListRefreshing(false);
     }
@@ -257,8 +248,8 @@ export function GradingPage({
               </tr>
             </thead>
             <tbody>
-              {filteredAttempts.length === 0 && <EmptyTableRow colSpan={7} />}
-              {filteredAttempts.map((attempt) => (
+              {attempts.length === 0 && <EmptyTableRow colSpan={7} />}
+              {attempts.map((attempt) => (
                 <tr key={`${attempt.attemptID}-${attempt.attemptQuestionID}`}>
                   <td>{attempt.studentName}</td>
                   <td>{attempt.spaceName}</td>

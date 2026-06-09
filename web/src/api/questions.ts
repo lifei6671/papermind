@@ -32,9 +32,31 @@ export type QuestionRow = {
 export type ListQuestionsInput = {
   tenantID: number;
   spaceID?: number;
+  scope?: "public";
   page?: number;
   pageSize?: number;
   search?: string;
+  type?: QuestionType;
+  difficulty?: QuestionDifficulty;
+  tag?: string;
+  status?: QuestionStatus | "ready";
+};
+
+export type ListQuestionTagsInput = {
+  tenantID: number;
+  spaceID?: number;
+  scope?: "public";
+  status?: QuestionStatus | "ready";
+  search?: string;
+};
+
+export type QuestionAvailabilityInput = {
+  tenantID: number;
+  spaceID?: number;
+  scope?: "public";
+  status?: QuestionStatus | "ready";
+  tags?: string[];
+  excludeQuestionIDs?: number[];
 };
 
 export type CreateQuestionInput = {
@@ -116,6 +138,8 @@ export type QuestionListResult = {
 
 export type QuestionBankAPI = {
   listQuestions(input: ListQuestionsInput): Promise<QuestionListResult>;
+  listQuestionTags(input: ListQuestionTagsInput): Promise<string[]>;
+  countAvailableQuestions(input: QuestionAvailabilityInput): Promise<Partial<Record<QuestionType, number>>>;
   createQuestion(input: CreateQuestionInput): Promise<QuestionRow>;
 };
 
@@ -198,6 +222,17 @@ type QuestionImportJobEventAPIResponse = {
   message?: string;
 };
 
+type QuestionTagsAPIResponse = {
+  items: string[];
+};
+
+type QuestionAvailabilityAPIResponse = {
+  items: Array<{
+    type: QuestionType;
+    count: number;
+  }>;
+};
+
 const defaultApiClient = createApiClient({
   baseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
 });
@@ -211,11 +246,27 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
       if (input.spaceID !== undefined) {
         params.set("space_id", String(input.spaceID));
       }
+      if (input.scope) {
+        params.set("scope", input.scope);
+      }
       params.set("page", String(input.page ?? 1));
       params.set("page_size", String(input.pageSize ?? 20));
       const search = input.search?.trim();
       if (search) {
         params.set("search", search);
+      }
+      if (input.type) {
+        params.set("type", input.type);
+      }
+      if (input.difficulty) {
+        params.set("difficulty", input.difficulty);
+      }
+      const tag = input.tag?.trim();
+      if (tag) {
+        params.set("tag", tag);
+      }
+      if (input.status) {
+        params.set("status", input.status);
       }
       const data = await apiClient.get<PageData<QuestionAPIResponse>>(`/api/v1/questions?${params.toString()}`);
       return {
@@ -224,6 +275,35 @@ export function createQuestionAPI(apiClient: ApiClient): QuestionAPI {
         pageSize: data.page_size,
         total: data.total,
       };
+    },
+    async listQuestionTags(input) {
+      const params = new URLSearchParams({ tenant_id: String(input.tenantID) });
+      if (input.spaceID !== undefined) {
+        params.set("space_id", String(input.spaceID));
+      }
+      if (input.scope) {
+        params.set("scope", input.scope);
+      }
+      if (input.status) {
+        params.set("status", input.status);
+      }
+      const search = input.search?.trim();
+      if (search) {
+        params.set("search", search);
+      }
+      const data = await apiClient.get<QuestionTagsAPIResponse>(`/api/v1/questions/tags?${params.toString()}`);
+      return data.items;
+    },
+    async countAvailableQuestions(input) {
+      const data = await apiClient.post<QuestionAvailabilityAPIResponse>("/api/v1/questions/availability-counts", {
+        tenant_id: input.tenantID,
+        ...(input.spaceID === undefined ? {} : { space_id: input.spaceID }),
+        ...(input.scope === undefined ? {} : { scope: input.scope }),
+        ...(input.status === undefined ? {} : { status: input.status }),
+        tags: input.tags ?? [],
+        exclude_question_ids: input.excludeQuestionIDs ?? [],
+      });
+      return Object.fromEntries(data.items.map((item) => [item.type, item.count])) as Partial<Record<QuestionType, number>>;
     },
     async getQuestion(input) {
       const params = new URLSearchParams({ tenant_id: String(input.tenantID) });

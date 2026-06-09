@@ -14,6 +14,7 @@ import { questionApi } from "../../api/questions";
 import type { QuestionAPI, QuestionDifficulty, QuestionType } from "../../api/questions";
 import { spaceApi as defaultSpaceApi } from "../../api/spaces";
 import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
+import { localizeMarkdownEditorCommand } from "../../components/markdown/markdownEditorCommands";
 import { Button } from "../../components/ui/Button";
 import { Panel } from "../../components/ui/Panel";
 import { canWritePublicQuestionScope } from "./questionScopePermissions";
@@ -42,6 +43,7 @@ const questionDifficultyLabels: Record<QuestionDifficulty, string> = {
 };
 
 const defaultChoiceOptions = ["", ""];
+const questionScopeSpacePageSize = 100;
 
 export function QuestionCreatePage({
   api = questionApi,
@@ -74,7 +76,7 @@ export function QuestionCreatePage({
   const [selectedQuestionTags, setSelectedQuestionTags] = useState<string[]>([]);
   const [questionTagQuery, setQuestionTagQuery] = useState("");
   const [isQuestionTagInputFocused, setIsQuestionTagInputFocused] = useState(false);
-  const [selectedQuestionSpaceID, setSelectedQuestionSpaceID] = useState<number | null>(currentSpaceID ?? null);
+  const [selectedQuestionSpaceID, setSelectedQuestionSpaceID] = useState<number | null | undefined>(currentSpaceID ?? null);
 
   const questionTagSuggestions = tags
     .filter((item) => item.toLowerCase().includes(questionTagQuery.trim().toLowerCase()))
@@ -82,8 +84,14 @@ export function QuestionCreatePage({
     .slice(0, 10);
   const shouldShowQuestionTagSuggestions = isQuestionTagInputFocused && questionTagQuery.trim() !== "" && questionTagSuggestions.length > 0;
   const questionListPath = `/questions${questionSearchForScope(location.search, selectedQuestionSpaceID)}`;
-  const questionScopeSpaceOptions = buildQuestionScopeSpaceOptions(currentSpaceID, canSelectTenantSpaceScope ? questionSpaces : [], selectedQuestionSpaceID);
-  const selectedQuestionScopeValue = selectedQuestionSpaceID === null && canSelectPublicScope
+  const questionScopeSpaceOptions = buildQuestionScopeSpaceOptions(
+    canSelectTenantSpaceScope ? undefined : currentSpaceID,
+    canSelectTenantSpaceScope ? questionSpaces : [],
+    canSelectTenantSpaceScope ? undefined : selectedQuestionSpaceID,
+  );
+  const selectedQuestionScopeValue = selectedQuestionSpaceID === undefined
+    ? ""
+    : selectedQuestionSpaceID === null && canSelectPublicScope
     ? "public"
     : selectedQuestionSpaceID === null
       ? ""
@@ -92,10 +100,10 @@ export function QuestionCreatePage({
   useEffect(() => {
     let ignore = false;
 
-    api.listQuestions({ tenantID, ...(currentSpaceID === undefined ? {} : { spaceID: currentSpaceID }) })
-      .then((data) => {
+    api.listQuestionTags({ tenantID, ...(currentSpaceID === undefined ? {} : { spaceID: currentSpaceID }) })
+      .then((items) => {
         if (!ignore) {
-          setTags((items) => mergeTags(items, data.items.flatMap((item) => item.tags.length > 0 ? item.tags : [item.tag])));
+          setTags((current) => mergeTags(current, items));
         }
       })
       .catch(() => {
@@ -116,10 +124,16 @@ export function QuestionCreatePage({
 
     let ignore = false;
 
-    spaceApi.listSpaces(tenantID)
-      .then((data) => {
+    listEnabledQuestionSpaces(spaceApi, tenantID)
+      .then((items) => {
         if (!ignore) {
-          setQuestionSpaces(data.items);
+          setQuestionSpaces(items);
+          setSelectedQuestionSpaceID((current) => {
+            if (current === undefined || current === null) {
+              return current;
+            }
+            return items.some((space) => space.id === current) ? current : undefined;
+          });
         }
       })
       .catch(() => {
@@ -178,6 +192,14 @@ export function QuestionCreatePage({
       showError("题干和题目解析不能为空");
       return;
     }
+    if (scoreDefault.trim() === "") {
+      showError("默认分值不能为空");
+      return;
+    }
+    if (!Number.isFinite(Number(scoreDefault)) || Number(scoreDefault) < 0) {
+      showError("默认分值不能小于 0");
+      return;
+    }
 
     const optionPayload = buildOptionPayload(questionType, optionValues, singleCorrectIndex, multipleCorrectIndexes);
     if (optionPayload.hasBlankCorrectOption) {
@@ -186,6 +208,22 @@ export function QuestionCreatePage({
     }
     if (questionType === "fill_blank" && hasBlankFillBlankAnswer(fillBlankAnswers)) {
       showError("填空题每个空都需要标准答案");
+      return;
+    }
+    if (questionType === "short_text" && referenceAnswer.trim() === "") {
+      showError("简答题参考答案不能为空");
+      return;
+    }
+    if (selectedQuestionSpaceID === undefined) {
+      showError("请选择有效的所属空间");
+      return;
+    }
+    if (
+      canSelectTenantSpaceScope
+      && selectedQuestionSpaceID !== null
+      && !questionSpaces.some((space) => space.id === selectedQuestionSpaceID)
+    ) {
+      showError("请选择有效的所属空间");
       return;
     }
     const questionTags = normalizeTags([...selectedQuestionTags, questionTagQuery]);
@@ -277,7 +315,7 @@ export function QuestionCreatePage({
           <span aria-hidden="true" className="exam-question-create-head__divider">|</span>
           <h1 className="exam-question-create-head__title">{isEditMode ? "编辑题目" : "新增题目"}</h1>
         </div>
-        <form className="platform-form exam-question-page-form" onSubmit={handleSaveQuestion}>
+        <form className="platform-form exam-question-page-form" noValidate onSubmit={handleSaveQuestion}>
           <div className="exam-question-form-grid">
             <label className="field">
               <RequiredLabel>所属空间</RequiredLabel>
@@ -287,6 +325,7 @@ export function QuestionCreatePage({
                 required
                 value={selectedQuestionScopeValue}
               >
+                <option value="">请选择所属空间</option>
                 {canSelectPublicScope && <option value="public">公共题库</option>}
                 {questionScopeSpaceOptions.map((space) => (
                   <option key={space.id} value={`space:${space.id}`}>
@@ -344,7 +383,12 @@ export function QuestionCreatePage({
           {(questionType === "single" || questionType === "multiple") && (
             <section className="exam-option-list" aria-label="选择题选项">
               <div className="exam-option-list__head">
-                <span>选项</span>
+                <div className="exam-option-list__title">
+                  <span>选项</span>
+                  <small className="exam-option-list__formula-hint">
+                    {"支持公式：行内 $a^2+b^2=c^2$，块级 $$\\sum_{i=1}^{n} i$$"}
+                  </small>
+                </div>
                 <button className="secondary-button tenant-create-button" onClick={handleAddChoiceOption} type="button">
                   添加选项
                 </button>
@@ -456,15 +500,7 @@ export function QuestionCreatePage({
             </section>
           )}
           {questionType === "short_text" && (
-            <label className="field">
-              <RequiredLabel>参考答案</RequiredLabel>
-              <textarea
-                aria-label="简答题参考答案"
-                onChange={(event) => setReferenceAnswer(event.target.value)}
-                required
-                value={referenceAnswer}
-              />
-            </label>
+            <MarkdownEditor ariaLabel="简答题参考答案" label="参考答案" onChange={setReferenceAnswer} required value={referenceAnswer} />
           )}
 
           <MarkdownEditor label="题目解析" onChange={setAnalysis} required value={analysis} />
@@ -553,11 +589,13 @@ function RequiredLabel({ children }: { children: string }) {
 }
 
 function MarkdownEditor({
+  ariaLabel,
   label,
   onChange,
   required = false,
   value,
 }: {
+  ariaLabel?: string;
   label: string;
   onChange(value: string): void;
   required?: boolean;
@@ -567,16 +605,17 @@ function MarkdownEditor({
     <div className="field markdown-editor" data-color-mode="light">
       {required ? <RequiredLabel>{label}</RequiredLabel> : <span>{label}</span>}
       <MDEditor
+        commandsFilter={localizeMarkdownEditorCommand}
         height="auto"
         onChange={(nextValue) => onChange(nextValue ?? "")}
         preview="live"
         previewOptions={{
-          // 题干和解析都按 Markdown 原文存储，预览阶段补公式渲染。
+          // 题目文本字段按 Markdown 原文存储，预览阶段补公式渲染。
           rehypePlugins: [rehypeKatex],
           remarkPlugins: [remarkMath],
         }}
         textareaProps={{
-          "aria-label": label,
+          "aria-label": ariaLabel ?? label,
           required,
         }}
         value={value}
@@ -586,13 +625,17 @@ function MarkdownEditor({
   );
 }
 
-function buildQuestionScopeSpaceOptions(currentSpaceID: number | undefined, spaces: SpaceRow[], selectedSpaceID: number | null) {
+function buildQuestionScopeSpaceOptions(currentSpaceID: number | undefined, spaces: SpaceRow[], selectedSpaceID: number | null | undefined) {
   const options = spaces.map((space) => ({
-    id: space.id,
-    label: space.name,
-  }));
+      id: space.id,
+      label: space.name,
+    }));
   for (const fallbackSpaceID of [currentSpaceID, selectedSpaceID]) {
-    if (fallbackSpaceID !== undefined && fallbackSpaceID !== null && !options.some((space) => space.id === fallbackSpaceID)) {
+    if (
+      fallbackSpaceID !== undefined
+      && fallbackSpaceID !== null
+      && !options.some((space) => space.id === fallbackSpaceID)
+    ) {
       options.push({
         id: fallbackSpaceID,
         label: fallbackSpaceID === currentSpaceID ? "当前空间题库" : `空间 ${fallbackSpaceID}`,
@@ -602,12 +645,36 @@ function buildQuestionScopeSpaceOptions(currentSpaceID: number | undefined, spac
   return options;
 }
 
+async function listEnabledQuestionSpaces(api: Pick<SpaceManagementAPI, "listSpaces">, tenantID: number) {
+  const spaces: SpaceRow[] = [];
+  let page = 1;
+
+  while (true) {
+    const data = await api.listSpaces({
+      tenantID,
+      page,
+      pageSize: questionScopeSpacePageSize,
+      filters: { status: "enabled" },
+    });
+    spaces.push(...data.items);
+    if (data.items.length === 0 || data.total === undefined || spaces.length >= data.total) {
+      break;
+    }
+    page += 1;
+  }
+
+  return spaces;
+}
+
 function readQuestionScopeSpaceID(value: string) {
+  if (value === "") {
+    return undefined;
+  }
   if (value === "public") {
     return null;
   }
   const parsed = Number.parseInt(value.replace("space:", ""), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function readSpaceIDFromSearch(search: string) {
@@ -619,7 +686,10 @@ function readSpaceIDFromSearch(search: string) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function questionSearchForScope(currentSearch: string, questionSpaceID: number | null) {
+function questionSearchForScope(currentSearch: string, questionSpaceID: number | null | undefined) {
+  if (questionSpaceID === undefined) {
+    return currentSearch;
+  }
   const params = new URLSearchParams(currentSearch);
   if (questionSpaceID === null) {
     params.delete("space_id");

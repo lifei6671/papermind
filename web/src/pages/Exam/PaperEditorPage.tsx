@@ -27,6 +27,7 @@ import type { QuestionAPI, QuestionDifficulty, QuestionRow, QuestionType } from 
 import { questionApi } from "../../api/questions";
 import type { SpaceManagementAPI, SpaceRow } from "../../api/spaces";
 import { spaceApi } from "../../api/spaces";
+import { localizeMarkdownEditorCommand } from "../../components/markdown/markdownEditorCommands";
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { Panel } from "../../components/ui/Panel";
@@ -49,7 +50,15 @@ type PaperEditorPageProps = {
 
 type SelectedQuestionGroup = {
   section: PaperSectionRow;
-  questions: Array<ManualQuestionRow & { question: QuestionRow | null }>;
+  questions: Array<ManualQuestionRow & { question: SelectedQuestionDisplay | null }>;
+};
+
+type SelectedQuestionDisplay = {
+  id: number;
+  title: string;
+  tag: string;
+  tags: string[];
+  difficulty?: QuestionDifficulty;
 };
 
 type FilterSelectOption = {
@@ -88,6 +97,8 @@ const defaultDifficultyPercentages: SmartDifficultyPercentages = {
   medium: 50,
   hard: 20,
 };
+const candidateQuestionPageSize = 10;
+const paperEditorSpacePageSize = 100;
 
 const sectionTemplates: Record<QuestionType, { name: string; instructions: string }> = {
   single: { name: "一、单项选择题", instructions: "每题 5 分" },
@@ -130,7 +141,10 @@ export function PaperEditorPage({
   const [persistedSections, setPersistedSections] = useState<PaperSectionRow[]>([]);
   const [sectionQuestions, setSectionQuestions] = useState<ManualQuestionRow[]>([]);
   const [persistedSectionQuestions, setPersistedSectionQuestions] = useState<ManualQuestionRow[]>([]);
-  const [questionPool, setQuestionPool] = useState<QuestionRow[]>([]);
+  const [questionTags, setQuestionTags] = useState<string[]>([]);
+  const [questionAvailabilityCounts, setQuestionAvailabilityCounts] = useState<Partial<Record<QuestionType, number>>>({});
+  const [candidateQuestions, setCandidateQuestions] = useState<QuestionRow[]>([]);
+  const [candidateQuestionTotal, setCandidateQuestionTotal] = useState(0);
   const [tenantSpaces, setTenantSpaces] = useState<SpaceRow[]>([]);
   const [selectedPaperSpaceID, setSelectedPaperSpaceID] = useState<number | null>(spaceID ?? null);
   const [paperName, setPaperName] = useState("");
@@ -157,6 +171,7 @@ export function PaperEditorPage({
   const [selectedDifficulty, setSelectedDifficulty] = useState<"all" | QuestionDifficulty>("all");
   const [selectedTag, setSelectedTag] = useState("all");
   const [page, setPage] = useState(1);
+  const [candidateReloadToken, setCandidateReloadToken] = useState(0);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isGeneratingSmartPaper, setIsGeneratingSmartPaper] = useState(false);
   const [isPublishingPaper, setIsPublishingPaper] = useState(false);
@@ -169,32 +184,6 @@ export function PaperEditorPage({
   const [questionDropDirection, setQuestionDropDirection] = useState<DropIndicatorDirection | null>(null);
   const [editingScores, setEditingScores] = useState<Record<string, string>>({});
 
-  const loadQuestionPool = useCallback(async (paperSpaceID: number | null = spaceID ?? null) => {
-    const pageSize = 100;
-    const allItems: QuestionRow[] = [];
-    let page = 1;
-    let loadedCount = 0;
-    let total = 0;
-
-    while (page === 1 || loadedCount < total) {
-      const data = await providedQuestionApi.listQuestions({
-        tenantID,
-        ...(paperSpaceID === null ? {} : { spaceID: paperSpaceID }),
-        page,
-        pageSize,
-      });
-      total = data.total;
-      loadedCount += data.items.length;
-      allItems.push(...data.items);
-      if (data.items.length === 0) {
-        break;
-      }
-      page += 1;
-    }
-
-    return allItems.filter((item) => item.status === "ready");
-  }, [providedQuestionApi, spaceID, tenantID]);
-
   const loadWorkspaceSnapshot = useCallback(async () => {
     if (paperID === undefined) {
       return {
@@ -205,19 +194,19 @@ export function PaperEditorPage({
       };
     }
 
-    const [paperData, sectionData, sectionQuestionData, ruleData] = await Promise.all([
-      providedPaperApi.listPapers({ tenantID, ...(spaceID === undefined ? {} : { spaceID }) }),
+    const [currentPaper, sectionData, sectionQuestionData, ruleData] = await Promise.all([
+      providedPaperApi.getPaper({ tenantID, paperID }),
       providedPaperApi.listSections({ tenantID, paperID }),
       providedPaperApi.listSectionQuestions({ tenantID, paperID }),
       providedPaperApi.listRules({ tenantID, paperID }),
     ]);
     return {
-      currentPaper: paperData.items.find((item) => item.id === paperID) ?? null,
+      currentPaper,
       nextSections: sectionData.items,
       nextSectionQuestions: sectionQuestionData.items,
       nextRules: ruleData.items,
     };
-  }, [paperID, providedPaperApi, spaceID, tenantID]);
+  }, [paperID, providedPaperApi, tenantID]);
 
   const applySmartRuleState = useCallback((
     nextSections: PaperSectionRow[],
@@ -306,22 +295,88 @@ export function PaperEditorPage({
   useEffect(() => {
     let ignore = false;
 
-    void loadQuestionPool(selectedPaperSpaceID)
-      .then((nextQuestionPool) => {
+    providedQuestionApi.listQuestions({
+      tenantID,
+      ...(selectedPaperSpaceID === null ? { scope: "public" as const } : { spaceID: selectedPaperSpaceID }),
+      page,
+      pageSize: candidateQuestionPageSize,
+      status: "ready",
+      ...(selectedType === "all" ? {} : { type: selectedType }),
+      ...(selectedDifficulty === "all" ? {} : { difficulty: selectedDifficulty }),
+      ...(selectedTag === "all" ? {} : { tag: selectedTag }),
+    })
+      .then((data) => {
         if (!ignore) {
-          setQuestionPool(nextQuestionPool);
+          setCandidateQuestions(data.items);
+          setCandidateQuestionTotal(data.total);
         }
       })
       .catch((error) => {
         if (!ignore) {
-          showError(formatApiErrorMessage(error, "题库候选题加载失败"));
+          setCandidateQuestions([]);
+          setCandidateQuestionTotal(0);
+          showError(formatApiErrorMessage(error, "候选题加载失败"));
         }
       });
 
     return () => {
       ignore = true;
     };
-  }, [loadQuestionPool, selectedPaperSpaceID, showError]);
+  }, [candidateReloadToken, providedQuestionApi, tenantID, selectedPaperSpaceID, page, selectedType, selectedDifficulty, selectedTag, showError]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    providedQuestionApi.listQuestionTags({
+      tenantID,
+      ...(selectedPaperSpaceID === null ? { scope: "public" as const } : { spaceID: selectedPaperSpaceID }),
+      status: "ready",
+      search: smartTagQuery,
+    })
+      .then((items) => {
+        if (!ignore) {
+          setQuestionTags(items);
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setQuestionTags([]);
+          showError(formatApiErrorMessage(error, "题目标签加载失败"));
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [candidateReloadToken, providedQuestionApi, selectedPaperSpaceID, showError, smartTagQuery, tenantID]);
+
+  useEffect(() => {
+    let ignore = false;
+    const tags = smartQuestionScope === "tag_filter" ? smartSelectedTags : [];
+
+    providedQuestionApi.countAvailableQuestions({
+      tenantID,
+      ...(selectedPaperSpaceID === null ? { scope: "public" as const } : { spaceID: selectedPaperSpaceID }),
+      status: "ready",
+      tags,
+      excludeQuestionIDs: blockedSmartQuestionIDs,
+    })
+      .then((counts) => {
+        if (!ignore) {
+          setQuestionAvailabilityCounts(counts);
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setQuestionAvailabilityCounts({});
+          showError(formatApiErrorMessage(error, "题目可用数量加载失败"));
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [blockedSmartQuestionIDs, candidateReloadToken, providedQuestionApi, selectedPaperSpaceID, showError, smartQuestionScope, smartSelectedTags, tenantID]);
 
   useEffect(() => {
     if (actorRole !== "tenant_admin") {
@@ -329,10 +384,10 @@ export function PaperEditorPage({
     }
 
     let ignore = false;
-    void providedSpaceApi.listSpaces(tenantID)
-      .then((result) => {
+    void listAllPaperEditorSpaces(providedSpaceApi, tenantID)
+      .then((items) => {
         if (!ignore) {
-          setTenantSpaces(result.items);
+          setTenantSpaces(items);
         }
       })
       .catch((error) => {
@@ -347,7 +402,31 @@ export function PaperEditorPage({
     };
   }, [actorRole, providedSpaceApi, showError, tenantID]);
 
-  const questionMap = useMemo(() => new Map(questionPool.map((item) => [item.id, item])), [questionPool]);
+  const questionMap = useMemo(() => {
+    const items = new Map<number, SelectedQuestionDisplay>();
+    for (const item of sectionQuestions) {
+      if (item.title !== undefined && item.title.trim() !== "") {
+        const tags = item.tagNames ?? [];
+        items.set(item.questionID, {
+          id: item.questionID,
+          title: item.title,
+          tag: tags[0] ?? "",
+          tags,
+          difficulty: item.difficulty,
+        });
+      }
+    }
+    for (const item of candidateQuestions) {
+      items.set(item.id, {
+        id: item.id,
+        title: item.title,
+        tag: item.tag,
+        tags: item.tags,
+        difficulty: item.difficulty,
+      });
+    }
+    return items;
+  }, [candidateQuestions, sectionQuestions]);
   const blockedSmartQuestions = useMemo(() => blockedSmartQuestionIDs.map((questionID) => {
     const question = questionMap.get(questionID);
 
@@ -358,15 +437,10 @@ export function PaperEditorPage({
       tags: question?.tags ?? [],
     };
   }), [blockedSmartQuestionIDs, questionMap]);
-  const tags = useMemo(() => {
-    const values = Array.from(new Set(questionPool.flatMap((item) => item.tags.length > 0 ? item.tags : [item.tag]).filter(Boolean)));
-    values.sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
-    return values;
-  }, [questionPool]);
+  const tags = questionTags;
   const smartTagOptions = useMemo(() => {
-    const query = smartTagQuery.trim().toLocaleLowerCase();
-    return tags.filter((tag) => !smartSelectedTags.includes(tag) && (query.length === 0 || tag.toLocaleLowerCase().includes(query)));
-  }, [smartSelectedTags, smartTagQuery, tags]);
+    return tags.filter((tag) => !smartSelectedTags.includes(tag));
+  }, [smartSelectedTags, tags]);
 
   function selectSmartTag(tag: string) {
     setSmartSelectedTags((items) => items.includes(tag) ? items : [...items, tag]);
@@ -476,38 +550,17 @@ export function PaperEditorPage({
     }
   }
 
-  const filteredQuestions = questionPool.filter((item) => {
-    if (!questionVisibleForPaperScope(item, selectedPaperSpaceID ?? undefined)) {
-      return false;
-    }
-    if (selectedType !== "all" && item.type !== selectedType) {
-      return false;
-    }
-    if (selectedDifficulty !== "all" && item.difficulty !== selectedDifficulty) {
-      return false;
-    }
-    if (selectedTag !== "all" && !(item.tags.length > 0 ? item.tags : [item.tag]).includes(selectedTag)) {
-      return false;
-    }
-    return true;
-  });
-
   const smartRuleAvailabilityBySection = useMemo(() => calculateSmartRuleAvailability({
-    blockedQuestionIDs: blockedSmartQuestionIDs,
-    paperSpaceID: selectedPaperSpaceID ?? undefined,
-    questionPool,
-    questionScope: smartQuestionScope,
+    countsByType: questionAvailabilityCounts,
     ruleDrafts: smartRuleDrafts,
     sections,
-    selectedTags: smartSelectedTags,
-  }), [blockedSmartQuestionIDs, questionPool, sections, selectedPaperSpaceID, smartQuestionScope, smartRuleDrafts, smartSelectedTags]);
+  }), [questionAvailabilityCounts, sections, smartRuleDrafts]);
   const positiveSmartRuleAvailability = Array.from(smartRuleAvailabilityBySection.values())
     .filter((item) => item.required > 0);
   const satisfiedSmartRuleCount = positiveSmartRuleAvailability
     .filter((item) => item.isSufficient)
     .length;
 
-  const pagedQuestions = filteredQuestions.slice((page - 1) * 10, page * 10);
   const groupedSelectedQuestions = buildSelectedGroups(sections, sectionQuestions, questionMap);
   const selectedQuestionCount = sectionQuestions.length;
   const totalScore = sectionQuestions.reduce((sum, item) => sum + Number(item.score || "0"), 0);
@@ -553,6 +606,10 @@ export function PaperEditorPage({
   }
 
   function handlePaperScopeChange(value: string) {
+    setPage(1);
+    setSelectedType("all");
+    setSelectedDifficulty("all");
+    setSelectedTag("all");
     if (value === "public") {
       setSelectedPaperSpaceID(null);
       return;
@@ -899,17 +956,14 @@ export function PaperEditorPage({
         return;
       }
       await providedPaperApi.generateRuleFixed({ tenantID, paperID: savedPaper.id, blockedQuestionIDs: blockedSmartQuestionIDs });
-      const [nextQuestionPool, snapshot] = await withRefreshFeedback(Promise.all([
-        loadQuestionPool(selectedPaperSpaceID),
-        loadWorkspaceSnapshot(),
-      ]));
+      const snapshot = await withRefreshFeedback(loadWorkspaceSnapshot());
       applyWorkspaceSnapshot(
         snapshot.currentPaper,
         snapshot.nextSections,
         snapshot.nextSectionQuestions,
         snapshot.nextRules,
       );
-      setQuestionPool(nextQuestionPool);
+      setCandidateReloadToken((current) => current + 1);
       showSuccess("智能组卷已生成。");
     } catch (error) {
       showError(formatApiErrorMessage(error, "智能组卷生成失败"));
@@ -963,17 +1017,14 @@ export function PaperEditorPage({
   async function handleRefreshWorkspace() {
     setIsRefreshingWorkspace(true);
     try {
-      const [nextQuestionPool, snapshot] = await withRefreshFeedback(Promise.all([
-        loadQuestionPool(selectedPaperSpaceID),
-        loadWorkspaceSnapshot(),
-      ]));
+      const snapshot = await withRefreshFeedback(loadWorkspaceSnapshot());
       applyWorkspaceSnapshot(
         snapshot.currentPaper,
         snapshot.nextSections,
         snapshot.nextSectionQuestions,
         snapshot.nextRules,
       );
-      setQuestionPool(nextQuestionPool);
+      setCandidateReloadToken((current) => current + 1);
       clearDragState();
     } catch (error) {
       showError(formatApiErrorMessage(error, "组卷数据刷新失败"));
@@ -1401,7 +1452,7 @@ export function PaperEditorPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedQuestions.length === 0 && !canAssemble ? (
+                    {candidateQuestions.length === 0 && !canAssemble ? (
                       <tr>
                         <td colSpan={6}>
                           <div className="exam-paper-editor__locked-state">
@@ -1411,14 +1462,14 @@ export function PaperEditorPage({
                       </tr>
                     ) : (
                       <>
-                        {pagedQuestions.length === 0 && <EmptyTableRow colSpan={6} />}
-                        {pagedQuestions.map((item, index) => {
+                        {candidateQuestions.length === 0 && <EmptyTableRow colSpan={6} />}
+                        {candidateQuestions.map((item, index) => {
                           const selectedQuestion = sectionQuestions.find((current) => current.questionID === item.id);
                           const isSelected = selectedQuestion !== undefined;
 
                           return (
                             <tr key={item.id}>
-                              <td>{index + 1 + ((page - 1) * 10)}</td>
+                              <td>{index + 1 + ((page - 1) * candidateQuestionPageSize)}</td>
                               <td>{questionTypeLabels[item.type]}</td>
                               <td>
                                 <span className={`exam-paper-editor__difficulty exam-paper-editor__difficulty--${item.difficulty}`}>
@@ -1458,13 +1509,13 @@ export function PaperEditorPage({
                 </table>
               </div>
               <div className="exam-paper-editor__pager">
-                <span>共 {filteredQuestions.length} 条</span>
+                <span>共 {candidateQuestionTotal} 条</span>
                 <div className="exam-paper-editor__pager-actions">
                   <Button disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button" variant="secondary">
                     上一页
                   </Button>
                   <Button
-                    disabled={page >= Math.max(1, Math.ceil(filteredQuestions.length / 10))}
+                    disabled={page >= Math.max(1, Math.ceil(candidateQuestionTotal / candidateQuestionPageSize))}
                     onClick={() => setPage((current) => current + 1)}
                     type="button"
                     variant="secondary"
@@ -1582,9 +1633,9 @@ export function PaperEditorPage({
                                       </Tooltip>
                                     </div>
                                   </td>
-                                  <td>{(item.question?.tags.length ?? 0) > 0 ? item.question?.tags.join(" / ") : item.question?.tag ?? "-"}</td>
+                                  <td>{selectedQuestionSourceLabel(item.question)}</td>
                                   <td>
-                                    {item.question === null ? "-" : (
+                                    {item.question?.difficulty === undefined ? "-" : (
                                       <span className={`exam-paper-editor__difficulty exam-paper-editor__difficulty--${item.question.difficulty}`}>
                                         {difficultyLabels[item.question.difficulty]}
                                       </span>
@@ -1996,9 +2047,9 @@ export function PaperEditorPage({
                                       </button>
                                     </Tooltip>
                                   </td>
-                                  <td>{item.question === null ? "题库" : (item.question.tags.length > 0 ? item.question.tags : [item.question.tag]).join(" / ")}</td>
+                                  <td>{selectedQuestionSourceLabel(item.question)}</td>
                                   <td>
-                                    {item.question === null ? "-" : (
+                                    {item.question?.difficulty === undefined ? "-" : (
                                       <span className={`exam-paper-editor__difficulty exam-paper-editor__difficulty--${item.question.difficulty}`}>
                                         {difficultyLabels[item.question.difficulty]}
                                       </span>
@@ -2100,6 +2151,7 @@ function PaperDescriptionMarkdownEditor({
     <div className="field markdown-editor exam-paper-editor__description" data-color-mode="light">
       <span>{label}</span>
       <MDEditor
+        commandsFilter={localizeMarkdownEditorCommand}
         height="auto"
         onChange={(nextValue) => onChange(nextValue ?? "")}
         preview="live"
@@ -2143,7 +2195,7 @@ function FilterSelect({
 function buildSelectedGroups(
   sections: PaperSectionRow[],
   sectionQuestions: ManualQuestionRow[],
-  questionMap: Map<number, QuestionRow>,
+  questionMap: Map<number, SelectedQuestionDisplay>,
 ): SelectedQuestionGroup[] {
   return [...sections]
     .sort((left, right) => left.sortOrder - right.sortOrder)
@@ -2155,6 +2207,16 @@ function buildSelectedGroups(
         .map((item) => ({ ...item, question: questionMap.get(item.questionID) ?? null })),
     }))
     .filter((group) => group.questions.length > 0);
+}
+
+function selectedQuestionSourceLabel(question: SelectedQuestionDisplay | null) {
+  if (question === null) {
+    return "题库";
+  }
+  if (question.tags.length > 0) {
+    return question.tags.join(" / ");
+  }
+  return question.tag || "题库";
 }
 
 function moveQuestionOrder(
@@ -2213,42 +2275,20 @@ function defaultRuleDraftForSection(section: PaperSectionRow, sectionQuestions: 
 }
 
 function calculateSmartRuleAvailability({
-  blockedQuestionIDs,
-  paperSpaceID,
-  questionPool,
-  questionScope,
+  countsByType,
   ruleDrafts,
   sections,
-  selectedTags,
 }: {
-  blockedQuestionIDs: number[];
-  paperSpaceID?: number;
-  questionPool: QuestionRow[];
-  questionScope: SmartQuestionScope;
+  countsByType: Partial<Record<QuestionType, number>>;
   ruleDrafts: Record<number, SmartRuleDraft>;
   sections: PaperSectionRow[];
-  selectedTags: string[];
 }) {
-  const blocked = new Set(blockedQuestionIDs);
-  const requiredTags = questionScope === "tag_filter" ? selectedTags : [];
   const availability = new Map<number, SmartRuleAvailability>();
 
   for (const section of sections) {
     const draft = ruleDrafts[section.id];
     const required = Math.max(0, Number(draft?.questionCount ?? section.questionCount ?? 0) || 0);
-    const available = questionPool.filter((question) => {
-      const inPaperScope = paperSpaceID === undefined
-        ? question.spaceID === undefined
-        : question.spaceID === undefined || question.spaceID === paperSpaceID;
-      if (!inPaperScope || question.status !== "ready" || question.type !== section.questionType || blocked.has(question.id)) {
-        return false;
-      }
-      if (requiredTags.length === 0) {
-        return true;
-      }
-      const questionTags = question.tags.length > 0 ? question.tags : [question.tag].filter(Boolean);
-      return requiredTags.every((tag) => questionTags.includes(tag));
-    }).length;
+    const available = countsByType[section.questionType as QuestionType] ?? 0;
 
     availability.set(section.id, {
       available,
@@ -2462,13 +2502,6 @@ function formatPaperScopeLabel(paperSpaceID: number | null, spaces: SpaceRow[], 
   return paperSpaceID === currentSpaceID ? "当前空间试卷" : `空间 ${paperSpaceID}`;
 }
 
-function questionVisibleForPaperScope(question: QuestionRow, paperSpaceID?: number) {
-  if (paperSpaceID === undefined) {
-    return question.spaceID === undefined;
-  }
-  return question.spaceID === undefined || question.spaceID === paperSpaceID;
-}
-
 function editorBuildModeLabel(buildMode: PaperBuildMode) {
   if (buildMode === "rule_fixed") {
     return "策略组卷";
@@ -2642,4 +2675,23 @@ function paperSearchForScope(currentSearch: string, paperSpaceID: number | null)
   }
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+async function listAllPaperEditorSpaces(api: Pick<SpaceManagementAPI, "listSpaces">, tenantID: number) {
+  const spaces: SpaceRow[] = [];
+  let page = 1;
+
+  while (true) {
+    const data = await api.listSpaces({
+      tenantID,
+      page,
+      pageSize: paperEditorSpacePageSize,
+      filters: { status: "enabled" },
+    });
+    spaces.push(...data.items);
+    if (data.items.length === 0 || data.total === undefined || spaces.length >= data.total) {
+      return spaces;
+    }
+    page += 1;
+  }
 }

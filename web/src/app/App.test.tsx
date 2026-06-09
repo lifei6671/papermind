@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import DatePicker from "antd/es/date-picker";
 import { afterEach, vi } from "vitest";
 import { act } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -107,6 +108,16 @@ function storeForcedPasswordTenantAdminSession() {
     },
   }));
 }
+
+test("AppProviders 为 Ant Design 日期组件注入中文本地化", () => {
+  render(
+    <AppProviders>
+      <DatePicker open />
+    </AppProviders>,
+  );
+
+  expect(screen.getByText("今天")).toBeInTheDocument();
+});
 
 function mockForcedProfileFetch() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -353,25 +364,20 @@ test("后台学生视角试卷预览使用独立学生端布局", async () => {
   storeSpaceTeacherSession();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "/api/v1/papers?tenant_id=77&space_id=301") {
+    if (url === "/api/v1/papers/100?tenant_id=77") {
       return okJSON({
-        items: [{
-          id: 100,
-          tenant_id: 77,
-          space_id: 301,
-          name: "高一语文月考试卷",
-          description: "",
-          duration_minutes: 60,
-          grade_level: "高一",
-          total_score: "5",
-          build_mode: "manual",
-          status: "draft",
-          created_at: 1780373000000,
-          creator_name: "teacher.exam",
-        }],
-        page: 1,
-        page_size: 20,
-        total: 1,
+        id: 100,
+        tenant_id: 77,
+        space_id: 301,
+        name: "高一语文月考试卷",
+        description: "",
+        duration_minutes: 60,
+        grade_level: "高一",
+        total_score: "5",
+        build_mode: "manual",
+        status: "draft",
+        created_at: 1780373000000,
+        creator_name: "teacher.exam",
       });
     }
     if (url === "/api/v1/papers/100/sections?tenant_id=77") {
@@ -761,7 +767,7 @@ test("真实路由渲染空间管理时从 session 派生租户并请求后端 A
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     requestedURLs.push(url);
-    if (url === "/api/v1/tenant/spaces?tenant_id=77") {
+    if (url === "/api/v1/tenant/spaces?tenant_id=77&page=1&page_size=5") {
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
@@ -780,7 +786,7 @@ test("真实路由渲染空间管理时从 session 派生租户并请求后端 A
         },
       }));
     }
-    if (url === "/api/v1/tenant/users?tenant_id=77") {
+    if (url === "/api/v1/tenant/users?tenant_id=77&page=1&page_size=100") {
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
@@ -806,8 +812,8 @@ test("真实路由渲染空间管理时从 session 派生租户并请求后端 A
   renderApp(["/spaces"]);
 
   expect(await screen.findByText("高一 1 班")).toBeInTheDocument();
-  expect(requestedURLs).toContain("/api/v1/tenant/spaces?tenant_id=77");
-  expect(requestedURLs).toContain("/api/v1/tenant/users?tenant_id=77");
+  expect(requestedURLs).toContain("/api/v1/tenant/spaces?tenant_id=77&page=1&page_size=5");
+  expect(requestedURLs).toContain("/api/v1/tenant/users?tenant_id=77&page=1&page_size=100");
   expect(requestedURLs).not.toContain("/api/v1/tenant/spaces?tenant_id=0");
 });
 
@@ -818,7 +824,7 @@ test("租户管理员新建试卷时忽略 URL 中陈旧的空间 ID", async () 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     requestedURLs.push(url);
-    if (url === "/api/v1/questions?tenant_id=77&page=1&page_size=100") {
+    if (url === "/api/v1/questions?tenant_id=77&scope=public&page=1&page_size=10&status=ready") {
       return okJSON({ items: [], page: 1, page_size: 20, total: 0 });
     }
     if (url === "/api/v1/papers" && init?.method === "POST") {
@@ -835,7 +841,7 @@ test("租户管理员新建试卷时忽略 URL 中陈旧的空间 ID", async () 
         creator_name: "tenant.admin",
       });
     }
-    if (url === "/api/v1/papers?tenant_id=77") {
+    if (url === "/api/v1/papers?tenant_id=77&page=1&page_size=20") {
       return okJSON({
         items: [{
           id: 501,
@@ -871,7 +877,7 @@ test("租户管理员新建试卷时忽略 URL 中陈旧的空间 ID", async () 
     name: "租户公共试卷",
   });
   expect(JSON.parse(createBody)).not.toHaveProperty("space_id");
-  expect(requestedURLs).toContain("/api/v1/questions?tenant_id=77&page=1&page_size=100");
+  expect(requestedURLs).toContain("/api/v1/questions?tenant_id=77&scope=public&page=1&page_size=10&status=ready");
   expect(requestedURLs.some((url) => url.startsWith("/api/v1/questions?") && url.includes("space_id=301"))).toBe(false);
 });
 
@@ -881,17 +887,22 @@ test("真实空间成员入口由授权空间列表渲染并读取成员", async
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     requestedURLs.push(url);
-    if (url === "/api/v1/tenant/spaces/301/members?tenant_id=77") {
+    if (url === "/api/v1/tenant/spaces/301/members?tenant_id=77&page=1&page_size=10") {
       return new Response(JSON.stringify({
         code: 0,
         message: "ok",
-        data: [{
-          id: 1,
-          user_id: 55,
-          name: "空间管理员",
-          role: "space_admin",
-          status: "enabled",
-        }],
+        data: {
+          items: [{
+            id: 1,
+            user_id: 55,
+            name: "空间管理员",
+            role: "space_admin",
+            status: "enabled",
+          }],
+          page: 1,
+          page_size: 10,
+          total: 1,
+        },
       }));
     }
     return new Response(JSON.stringify({ code: 50000, message: "unexpected request", data: null }), { status: 500 });
@@ -906,7 +917,7 @@ test("真实空间成员入口由授权空间列表渲染并读取成员", async
   expect(within(memberRow).getByRole("combobox", { name: "修改 空间管理员 的空间身份" })).toHaveValue("space_admin");
   expect(screen.getByText("空间 301")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "创建空间" })).not.toBeInTheDocument();
-  expect(requestedURLs).toEqual(["/api/v1/tenant/spaces/301/members?tenant_id=77"]);
+  expect(requestedURLs).toEqual(["/api/v1/tenant/spaces/301/members?tenant_id=77&page=1&page_size=10"]);
 });
 
 test("租户管理员不展示独立空间成员入口", () => {
@@ -963,8 +974,8 @@ test("真实路由渲染用户管理时从 session 派生租户并请求后端 A
   renderApp(["/users"]);
 
   expect(await screen.findByText("tenant.admin")).toBeInTheDocument();
-  await waitFor(() => expect(usersURL).toBe("/api/v1/tenant/users?tenant_id=77"));
-  await waitFor(() => expect(spacesURL).toBe("/api/v1/tenant/spaces?tenant_id=77"));
+  await waitFor(() => expect(usersURL).toBe("/api/v1/tenant/users?tenant_id=77&page=1&page_size=5"));
+  await waitFor(() => expect(spacesURL).toBe("/api/v1/tenant/spaces?tenant_id=77&page=1&page_size=100"));
 });
 
 test("空间管理员直达成绩页时使用当前空间授权身份", async () => {

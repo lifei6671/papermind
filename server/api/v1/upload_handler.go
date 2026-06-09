@@ -33,6 +33,14 @@ type uploadResponse struct {
 	Size        int64  `json:"size"`
 }
 
+type uploadObjectKeyInput struct {
+	Category    string
+	FileName    string
+	ContentType string
+	FileContent []byte
+	Now         time.Time
+}
+
 func (h uploadHandler) create(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadFileBytes)
 	fileHeader, err := c.FormFile("file")
@@ -66,7 +74,13 @@ func (h uploadHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "不支持的上传文件类型"))
 		return
 	}
-	objectKey, err := buildUploadObjectKey(category, fileHeader.Filename, contentType, fileContent, h.now())
+	objectKey, err := buildUploadObjectKey(uploadObjectKeyInput{
+		Category:    category,
+		FileName:    fileHeader.Filename,
+		ContentType: contentType,
+		FileContent: fileContent,
+		Now:         h.now(),
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "生成上传文件名失败"))
 		return
@@ -121,15 +135,15 @@ func normalizeUploadCategory(raw string) (string, error) {
 	return strings.ToLower(raw), nil
 }
 
-func buildUploadObjectKey(category string, fileName string, contentType string, fileContent []byte, now time.Time) (string, error) {
-	fileTime := now.Format("20060102150405")
-	fileHash := md5.Sum(fileContent)
-	extension := detectUploadExtension(fileName, contentType)
+func buildUploadObjectKey(input uploadObjectKeyInput) (string, error) {
+	fileTime := input.Now.Format("20060102150405")
+	fileHash := md5.Sum(input.FileContent)
+	extension := detectUploadExtension(input.FileName, input.ContentType)
 	uniqueSuffix, err := randomUploadSuffix()
 	if err != nil {
 		return "", err
 	}
-	return category + "/" + now.Format("20060102") + "/" + fileTime + "_" + hex.EncodeToString(fileHash[:])[:16] + "_" + uniqueSuffix + extension, nil
+	return input.Category + "/" + input.Now.Format("20060102") + "/" + fileTime + "_" + hex.EncodeToString(fileHash[:])[:16] + "_" + uniqueSuffix + extension, nil
 }
 
 func randomUploadSuffix() (string, error) {

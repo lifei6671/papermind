@@ -36,13 +36,20 @@ describe("space api", () => {
     );
     const api = createSpaceAPI(createApiClient({ baseUrl: "", fetcher }));
 
-    await expect(api.listSpaces(10)).resolves.toEqual({
+    await expect(api.listSpaces({
+      tenantID: 10,
+      page: 2,
+      pageSize: 50,
+      search: " 高一 ",
+      filters: { status: "enabled" },
+    })).resolves.toEqual({
       items: [{
         id: 301,
         tenantID: 10,
         name: "高一一班",
         description: "理科班",
         logoFileName: "未上传",
+        status: "enabled",
         members: [{
           id: 1,
           userID: 20,
@@ -56,8 +63,11 @@ describe("space api", () => {
           status: "enabled",
         }],
       }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
     });
-    expect(fetcher).toHaveBeenCalledWith("/api/v1/tenant/spaces?tenant_id=10", expect.objectContaining({ method: "GET" }));
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/tenant/spaces?tenant_id=10&page=2&page_size=50&search=%E9%AB%98%E4%B8%80&status=enabled", expect.objectContaining({ method: "GET" }));
   });
 
   test("创建空间会提交真实管理员用户 ID", async () => {
@@ -145,9 +155,40 @@ describe("space api", () => {
     );
   });
 
+  test("禁用空间会调用租户空间禁用接口并映射空间状态", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      okResponse({
+        id: 302,
+        tenant_id: 10,
+        name: "高一二班",
+        logo_url: "next.png",
+        description: "实验班更新",
+        status: "disabled",
+        members: [],
+      }),
+    );
+    const api = createSpaceAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.disableSpace({
+      tenantID: 10,
+      spaceID: 302,
+    })).resolves.toMatchObject({
+      id: 302,
+      status: "disabled",
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/tenant/spaces/302/disable",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ tenant_id: 10 }),
+      }),
+    );
+  });
+
   test("空间成员列表会按授权空间接口读取", async () => {
     const fetcher = vi.fn().mockResolvedValue(
-      okResponse([{
+      okResponse({
+        items: [{
           id: 8,
           user_id: 55,
           name: "阅卷教师",
@@ -157,11 +198,23 @@ describe("space api", () => {
           created_at: 1710000000000,
           role: "space_admin",
           status: "enabled",
-        }]),
+        }],
+        page: 2,
+        page_size: 20,
+        total: 21,
+      }),
     );
     const api = createSpaceAPI(createApiClient({ baseUrl: "", fetcher }));
 
-    await expect(api.listSpaceMembers({ tenantID: 10, spaceID: 301 })).resolves.toEqual({
+    await expect(api.listSpaceMembers({
+      tenantID: 10,
+      spaceID: 301,
+      page: 2,
+      pageSize: 20,
+      search: "阅卷",
+      role: "student",
+      status: "enabled",
+    })).resolves.toEqual({
       items: [{
         id: 8,
         userID: 55,
@@ -173,9 +226,12 @@ describe("space api", () => {
         role: "space_admin",
         status: "enabled",
       }],
+      page: 2,
+      pageSize: 20,
+      total: 21,
     });
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/tenant/spaces/301/members?tenant_id=10",
+      "/api/v1/tenant/spaces/301/members?tenant_id=10&page=2&page_size=20&search=%E9%98%85%E5%8D%B7&role=student&status=enabled",
       expect.objectContaining({ method: "GET" }),
     );
   });

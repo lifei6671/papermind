@@ -236,7 +236,16 @@ func (h questionHandler) startImportQuestionsJob(c *gin.Context) {
 		store = newQuestionImportJobStore()
 	}
 	jobID := store.Create(fileHeader.Filename, tenantID, spaceID)
-	go h.runImportQuestionsJob(jobID, fileHeader.Filename, fileContent, tenantID, spaceID, targetStatus, permissionContext, store)
+	go h.runImportQuestionsJob(questionImportJobInput{
+		JobID:             jobID,
+		FileName:          fileHeader.Filename,
+		FileContent:       fileContent,
+		TenantID:          tenantID,
+		SpaceID:           spaceID,
+		TargetStatus:      targetStatus,
+		PermissionContext: permissionContext,
+		Store:             store,
+	})
 	c.JSON(http.StatusOK, response.OK(startQuestionImportJobResponse{JobID: jobID}))
 }
 
@@ -303,27 +312,38 @@ func (h questionHandler) streamImportQuestionJobEvents(c *gin.Context) {
 	}
 }
 
-func (h questionHandler) runImportQuestionsJob(jobID string, fileName string, fileContent []byte, tenantID uint64, spaceID *uint64, targetStatus string, permissionContext permission.PermissionContext, store *questionImportJobStore) {
-	store.Append(jobID, questionImportJobEvent{jobID: jobID, status: "running", fileName: fileName})
-	rows, parseErrors, err := parseQuestionImportCSVReader(bytes.NewReader(fileContent), h.service.ImportTemplateHeaders())
+type questionImportJobInput struct {
+	JobID             string
+	FileName          string
+	FileContent       []byte
+	TenantID          uint64
+	SpaceID           *uint64
+	TargetStatus      string
+	PermissionContext permission.PermissionContext
+	Store             *questionImportJobStore
+}
+
+func (h questionHandler) runImportQuestionsJob(input questionImportJobInput) {
+	input.Store.Append(input.JobID, questionImportJobEvent{jobID: input.JobID, status: "running", fileName: input.FileName})
+	rows, parseErrors, err := parseQuestionImportCSVReader(bytes.NewReader(input.FileContent), h.service.ImportTemplateHeaders())
 	if err != nil {
-		store.Append(jobID, questionImportJobEvent{jobID: jobID, status: "failed", fileName: fileName, message: err.Error()})
+		input.Store.Append(input.JobID, questionImportJobEvent{jobID: input.JobID, status: "failed", fileName: input.FileName, message: err.Error()})
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	result, err := h.service.ImportQuestions(ctx, servicequestion.ImportQuestionsInput{
-		Permission: permissionContext,
-		TenantID:   tenantID,
-		SpaceID:    spaceID,
-		Status:     targetStatus,
+		Permission: input.PermissionContext,
+		TenantID:   input.TenantID,
+		SpaceID:    input.SpaceID,
+		Status:     input.TargetStatus,
 		Rows:       rows,
 		OnProgress: func(progress servicequestion.ImportProgress) {
 			errorCount := len(parseErrors) + len(progress.Errors)
-			store.Append(jobID, questionImportJobEvent{
-				jobID:          jobID,
+			input.Store.Append(input.JobID, questionImportJobEvent{
+				jobID:          input.JobID,
 				status:         "running",
-				fileName:       fileName,
+				fileName:       input.FileName,
 				totalRows:      progress.TotalRows,
 				processedRows:  progress.ProcessedRows,
 				successCount:   progress.SuccessCount,
@@ -333,14 +353,14 @@ func (h questionHandler) runImportQuestionsJob(jobID string, fileName string, fi
 		},
 	})
 	if err != nil {
-		store.Append(jobID, questionImportJobEvent{jobID: jobID, status: "failed", fileName: fileName, message: err.Error()})
+		input.Store.Append(input.JobID, questionImportJobEvent{jobID: input.JobID, status: "failed", fileName: input.FileName, message: err.Error()})
 		return
 	}
 	result.Errors = append(parseErrors, result.Errors...)
-	store.Append(jobID, questionImportJobEvent{
-		jobID:          jobID,
+	input.Store.Append(input.JobID, questionImportJobEvent{
+		jobID:          input.JobID,
 		status:         "completed",
-		fileName:       fileName,
+		fileName:       input.FileName,
 		totalRows:      len(rows),
 		processedRows:  len(rows),
 		successCount:   result.SuccessCount,
@@ -360,7 +380,6 @@ func (h questionHandler) validateQuestionImportWrite(ctx context.Context, permis
 	})
 	return err
 }
-
 
 func writeQuestionImportSSE(c *gin.Context, event questionImportJobEvent) {
 	payload, err := json.Marshal(questionImportJobEventToResponse(event))

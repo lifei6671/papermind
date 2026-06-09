@@ -740,7 +740,7 @@ test("考试管理菜单支持切换占位标签页", async () => {
 
   expect(await screen.findByRole("tab", { name: "试卷预览" })).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("tabpanel", { name: "试卷预览" })).toBeInTheDocument();
-  expect(paperApi.listPapers).toHaveBeenCalledTimes(1);
+  expect(paperApi.getPaper).toHaveBeenCalledTimes(1);
   expect(paperApi.listSections).toHaveBeenCalledTimes(1);
   expect(paperApi.listSectionQuestions).toHaveBeenCalledTimes(1);
   expect(questionApi.listQuestions).toHaveBeenCalledTimes(1);
@@ -752,7 +752,7 @@ test("考试管理菜单支持切换占位标签页", async () => {
   expect(screen.getByRole("tabpanel", { name: "考试监控" })).toHaveTextContent("考试监控");
   expect(screen.getByRole("tabpanel", { name: "考试监控" })).toHaveTextContent("该模块内容正在接入，当前先保留入口位置。");
   expect(screen.queryByRole("navigation", { name: "试卷结构" })).not.toBeInTheDocument();
-  expect(paperApi.listPapers).toHaveBeenCalledTimes(1);
+  expect(paperApi.getPaper).toHaveBeenCalledTimes(1);
   expect(paperApi.listSections).toHaveBeenCalledTimes(1);
   expect(paperApi.listSectionQuestions).toHaveBeenCalledTimes(1);
   expect(questionApi.listQuestions).toHaveBeenCalledTimes(1);
@@ -2333,7 +2333,14 @@ function createPaperApiDouble(): PaperAPI {
   ];
 
   return {
+    getPaper: vi.fn(async (input) => papers.find((paper) => paper.id === input.paperID) ?? papers[0]),
     listPapers: vi.fn(async () => ({ items: papers })),
+    listPublishPaperCandidates: vi.fn(async () => ({
+      items: papers.slice(0, 10),
+      page: 1,
+      pageSize: 10,
+      total: papers.length,
+    })),
     createPaper: vi.fn(async () => {
       throw new Error("not used");
     }),
@@ -2450,6 +2457,8 @@ function createQuestionApiDouble(): QuestionAPI {
     })),
     startQuestionImportJob: vi.fn(async () => ({ jobID: "job-1" })),
     subscribeQuestionImportJob: vi.fn(() => () => undefined),
+    listQuestionTags: vi.fn(async () => []),
+    countAvailableQuestions: vi.fn(async () => ({})),
   };
 }
 

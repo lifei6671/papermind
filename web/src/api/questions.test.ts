@@ -5,7 +5,7 @@ import { createQuestionAPI } from "./questions";
 describe("questionApi", () => {
   test("题库列表请求携带分页参数并返回分页信息", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/v1/questions?tenant_id=10&space_id=301&page=2&page_size=30&search=%E5%87%BD%E6%95%B0");
+      expect(String(input)).toBe("/api/v1/questions?tenant_id=10&space_id=301&scope=public&page=2&page_size=30&search=%E5%87%BD%E6%95%B0&type=single&difficulty=medium&tag=%E5%87%BD%E6%95%B0&status=ready");
 
       return new Response(JSON.stringify({
         code: 0,
@@ -40,7 +40,18 @@ describe("questionApi", () => {
     });
     const api = createQuestionAPI(createApiClient({ baseUrl: "", fetcher }));
 
-    const result = await api.listQuestions({ tenantID: 10, spaceID: 301, page: 2, pageSize: 30, search: " 函数 " });
+    const result = await api.listQuestions({
+      tenantID: 10,
+      spaceID: 301,
+      scope: "public",
+      page: 2,
+      pageSize: 30,
+      search: " 函数 ",
+      type: "single",
+      difficulty: "medium",
+      tag: " 函数 ",
+      status: "ready",
+    });
 
     expect(result.page).toBe(2);
     expect(result.pageSize).toBe(30);
@@ -48,6 +59,60 @@ describe("questionApi", () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0].id).toBe(100);
     expect(result.items[0].spaceID).toBe(301);
+  });
+
+  test("题目标签候选使用后端范围过滤", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/v1/questions/tags?tenant_id=10&space_id=301&status=ready&search=%E5%87%BD");
+
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: { items: ["函数", "函数压轴"] },
+      }));
+    });
+    const api = createQuestionAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.listQuestionTags({
+      tenantID: 10,
+      spaceID: 301,
+      status: "ready",
+      search: " 函 ",
+    })).resolves.toEqual(["函数", "函数压轴"]);
+  });
+
+  test("题型可用数量使用后端聚合接口", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/v1/questions/availability-counts");
+      expect(init?.method).toBe("POST");
+      expect(init?.body).toBe(JSON.stringify({
+        tenant_id: 10,
+        space_id: 301,
+        status: "ready",
+        tags: ["函数"],
+        exclude_question_ids: [201],
+      }));
+
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [
+            { type: "single", count: 3 },
+            { type: "judge", count: 1 },
+          ],
+        },
+      }));
+    });
+    const api = createQuestionAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await expect(api.countAvailableQuestions({
+      tenantID: 10,
+      spaceID: 301,
+      status: "ready",
+      tags: ["函数"],
+      excludeQuestionIDs: [201],
+    })).resolves.toEqual({ single: 3, judge: 1 });
   });
 
   test("导入题目时使用 multipart 表单提交文件和租户信息", async () => {

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
@@ -24,6 +25,17 @@ type SpaceRepositoryOptions struct {
 	Now func() int64
 }
 
+var spaceMemberRoleSearchLabels = map[string]string{
+	servicespace.RoleSpaceAdmin: "空间管理员",
+	servicespace.RoleTeacher:    "教师",
+	servicespace.RoleStudent:    "学生",
+}
+
+var spaceMemberStatusSearchLabels = map[string]string{
+	servicespace.StatusEnabled:  "启用",
+	servicespace.StatusDisabled: "禁用",
+}
+
 func NewSpaceRepository(gormDB *gorm.DB, options SpaceRepositoryOptions) *SpaceRepository {
 	now := options.Now
 	if now == nil {
@@ -32,11 +44,13 @@ func NewSpaceRepository(gormDB *gorm.DB, options SpaceRepositoryOptions) *SpaceR
 	return &SpaceRepository{db: gormDB, now: now}
 }
 
-func (r *SpaceRepository) ListSpaces(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[servicespace.Space], error) {
-	page = pagination.Normalize(page)
+func (r *SpaceRepository) ListSpaces(ctx context.Context, input servicespace.ListInput) (pagination.Result[servicespace.Space], error) {
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
 	query := r.db.WithContext(ctx).Model(&SpaceDO{}).
-		Where(SpaceColumns.TenantID+" = ?", tenantID).
+		Where(SpaceColumns.TenantID+" = ?", input.TenantID).
 		Where(SpaceColumns.DeletedAt+" = ?", 0)
+	query = r.applySpaceSearch(query, input.Search)
+	query = r.applySpaceStatusFilter(query, input.Status)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return pagination.Result[servicespace.Space]{}, err
@@ -59,6 +73,40 @@ func (r *SpaceRepository) ListSpaces(ctx context.Context, tenantID uint64, page 
 		PageSize: page.PageSize,
 		Total:    total,
 	}, nil
+}
+
+func (r *SpaceRepository) applySpaceStatusFilter(query *gorm.DB, status string) *gorm.DB {
+	switch strings.TrimSpace(status) {
+	case "":
+		return query
+	case servicespace.StatusEnabled, servicespace.StatusDisabled:
+		return query.Where(SpaceColumns.Status+" = ?", strings.TrimSpace(status))
+	default:
+		return query.Where("1 = 0")
+	}
+}
+
+func (r *SpaceRepository) applySpaceSearch(query *gorm.DB, search string) *gorm.DB {
+	keyword := strings.TrimSpace(search)
+	if keyword == "" {
+		return query
+	}
+	pattern := "%" + strings.ToLower(keyword) + "%"
+	return query.Where(
+		r.db.Where("LOWER("+SpaceColumns.Name+") LIKE ?", pattern).
+			Or("LOWER("+SpaceColumns.Description+") LIKE ?", pattern).
+			Or("LOWER("+SpaceColumns.Status+") LIKE ?", pattern).
+			Or(`EXISTS (
+				SELECT 1
+				FROM space_members AS sm
+				JOIN users AS users ON users.id = sm.user_id and users.deleted_at = 0
+				WHERE sm.tenant_id = spaces.tenant_id
+					and sm.space_id = spaces.id
+					and sm.deleted_at = 0
+					and sm.role_in_space = ?
+					and (LOWER(users.username) LIKE ? OR LOWER(users.real_name) LIKE ?)
+			)`, servicespace.RoleSpaceAdmin, pattern, pattern),
+	)
 }
 
 func (r *SpaceRepository) CreateSpace(ctx context.Context, space servicespace.Space, adminUserIDs []uint64) (servicespace.Space, error) {
@@ -130,6 +178,7 @@ func (r *SpaceRepository) UpdateSpaceProfile(ctx context.Context, input services
 	result := r.db.WithContext(ctx).Model(&SpaceDO{}).
 		Where(SpaceColumns.TenantID+" = ?", input.TenantID).
 		Where(SpaceColumns.ID+" = ?", input.SpaceID).
+		Where(SpaceColumns.Status+" = ?", servicespace.StatusEnabled).
 		Where(SpaceColumns.DeletedAt+" = ?", 0).
 		Updates(updates)
 	if result.Error != nil {
@@ -160,6 +209,26 @@ func (r *SpaceRepository) DeleteSpace(ctx context.Context, tenantID uint64, spac
 		return servicespace.ErrSpaceNotFound
 	}
 	return nil
+}
+
+func (r *SpaceRepository) DisableSpace(ctx context.Context, tenantID uint64, spaceID uint64) (servicespace.Space, error) {
+	result := r.db.WithContext(ctx).Model(&SpaceDO{}).
+		Where(SpaceColumns.TenantID+" = ?", tenantID).
+		Where(SpaceColumns.ID+" = ?", spaceID).
+		Where(SpaceColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			SpaceColumns.Status:       servicespace.StatusDisabled,
+			BaseColumns.UpdatedAt:     r.now(),
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if result.Error != nil {
+		return servicespace.Space{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return servicespace.Space{}, servicespace.ErrSpaceNotFound
+	}
+	return r.findSpace(ctx, tenantID, spaceID)
 }
 
 func (r *SpaceRepository) findSpace(ctx context.Context, tenantID uint64, spaceID uint64) (servicespace.Space, error) {
@@ -453,6 +522,9 @@ func (r *SpaceRepository) updateMember(ctx context.Context, tenantID uint64, spa
 	updates[BaseColumns.UpdatedByType] = AuditActorTenantUser
 	updates[BaseColumns.Version] = gorm.Expr(BaseColumns.Version + " + 1")
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := r.validateEnabledSpace(ctx, tx, tenantID, spaceID); err != nil {
+			return err
+		}
 		if err := r.lockSpaceAdminRows(ctx, tx, tenantID, spaceID); err != nil {
 			return err
 		}
@@ -477,13 +549,6 @@ func (r *SpaceRepository) updateMember(ctx context.Context, tenantID uint64, spa
 		}
 		if result.RowsAffected == 0 {
 			return servicespace.ErrMemberNotFound
-		}
-		enabled, err := r.spaceEnabled(ctx, tx, tenantID, spaceID)
-		if err != nil {
-			return err
-		}
-		if !enabled {
-			return nil
 		}
 		count, err := r.countEnabledSpaceAdmins(ctx, tx, tenantID, spaceID)
 		if err != nil {
@@ -584,15 +649,97 @@ func (r *SpaceRepository) validateEnabledTenantUser(ctx context.Context, gormDB 
 
 func (r *SpaceRepository) ListMemberNames(ctx context.Context, tenantID uint64, spaceID uint64) ([]SpaceMemberName, error) {
 	var rows []SpaceMemberName
-	err := r.db.WithContext(ctx).Table(SpaceMemberDO{}.TableName()+" AS sm").
-		Select("sm.id, sm.tenant_id, sm.space_id, sm.user_id, u.real_name AS name, u.username, u.phone, u.email, u.created_at, 'tenant_account' AS register_method, sm.role_in_space AS role, sm.status").
-		Joins("LEFT JOIN users AS u ON u.id = sm.user_id AND u.deleted_at = 0").
-		Where("sm.tenant_id = ?", tenantID).
-		Where("sm.space_id = ?", spaceID).
-		Where("sm.deleted_at = ?", 0).
+	err := r.spaceMemberNameQuery(ctx, SpaceMemberNamePageInput{TenantID: tenantID, SpaceID: spaceID}).
 		Order("sm.id ASC").
 		Scan(&rows).Error
 	return rows, err
+}
+
+type SpaceMemberNamePageInput struct {
+	TenantID uint64
+	SpaceID  uint64
+	Page     pagination.Input
+	Search   string
+	Role     string
+	Status   string
+}
+
+func (r *SpaceRepository) ListMemberNamesPage(ctx context.Context, input SpaceMemberNamePageInput) (pagination.Result[SpaceMemberName], error) {
+	page := pagination.Normalize(input.Page)
+	query := r.spaceMemberNameQuery(ctx, input)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return pagination.Result[SpaceMemberName]{}, err
+	}
+	var rows []SpaceMemberName
+	if err := query.
+		Order("sm.id ASC").
+		Limit(page.PageSize).
+		Offset(pagination.Offset(page)).
+		Scan(&rows).Error; err != nil {
+		return pagination.Result[SpaceMemberName]{}, err
+	}
+	return pagination.Result[SpaceMemberName]{
+		Items:    rows,
+		Page:     page.Page,
+		PageSize: page.PageSize,
+		Total:    total,
+	}, nil
+}
+
+func (r *SpaceRepository) spaceMemberNameQuery(ctx context.Context, input SpaceMemberNamePageInput) *gorm.DB {
+	query := r.db.WithContext(ctx).Table(SpaceMemberDO{}.TableName()+" AS sm").
+		Select("sm.id, sm.tenant_id, sm.space_id, sm.user_id, u.real_name AS name, u.username, u.phone, u.email, u.created_at, 'tenant_account' AS register_method, sm.role_in_space AS role, sm.status").
+		Joins("LEFT JOIN users AS u ON u.id = sm.user_id AND u.deleted_at = 0").
+		Where("sm.tenant_id = ?", input.TenantID).
+		Where("sm.space_id = ?", input.SpaceID).
+		Where("sm.deleted_at = ?", 0)
+	query = r.applySpaceMemberFilters(query, input.Role, input.Status)
+	keyword := strings.TrimSpace(input.Search)
+	if keyword == "" {
+		return query
+	}
+	pattern := "%" + strings.ToLower(keyword) + "%"
+	condition := r.db.Where("LOWER(u.real_name) LIKE ?", pattern).
+		Or("LOWER(u.username) LIKE ?", pattern).
+		Or("LOWER(u.phone) LIKE ?", pattern).
+		Or("LOWER(u.email) LIKE ?", pattern).
+		Or("LOWER(sm.role_in_space) LIKE ?", pattern).
+		Or("LOWER(sm.status) LIKE ?", pattern)
+	for _, role := range localizedEnumMatches(keyword, spaceMemberRoleSearchLabels) {
+		condition = condition.Or("sm.role_in_space = ?", role)
+	}
+	for _, status := range localizedEnumMatches(keyword, spaceMemberStatusSearchLabels) {
+		condition = condition.Or("sm.status = ?", status)
+	}
+	return query.Where(condition)
+}
+
+func (r *SpaceRepository) applySpaceMemberFilters(query *gorm.DB, role string, status string) *gorm.DB {
+	if normalizedRole := strings.TrimSpace(role); normalizedRole != "" {
+		if !validSpaceMemberRoleFilter(normalizedRole) {
+			return query.Where("1 = 0")
+		}
+		query = query.Where("sm.role_in_space = ?", normalizedRole)
+	}
+	if normalizedStatus := strings.TrimSpace(status); normalizedStatus != "" {
+		switch normalizedStatus {
+		case servicespace.StatusEnabled, servicespace.StatusDisabled:
+			query = query.Where("sm.status = ?", normalizedStatus)
+		default:
+			return query.Where("1 = 0")
+		}
+	}
+	return query
+}
+
+func validSpaceMemberRoleFilter(role string) bool {
+	switch role {
+	case servicespace.RoleSpaceAdmin, servicespace.RoleTeacher, servicespace.RoleStudent:
+		return true
+	default:
+		return false
+	}
 }
 
 type SpaceMemberName struct {

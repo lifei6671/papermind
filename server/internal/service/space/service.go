@@ -64,6 +64,8 @@ type ListInput struct {
 	TenantID uint64
 	Page     int
 	PageSize int
+	Search   string
+	Status   string
 }
 
 type UpdateProfileInput struct {
@@ -76,6 +78,11 @@ type UpdateProfileInput struct {
 }
 
 type DeleteInput struct {
+	TenantID uint64 // 所属租户 ID。
+	SpaceID  uint64 // 空间 ID。
+}
+
+type DisableInput struct {
 	TenantID uint64 // 所属租户 ID。
 	SpaceID  uint64 // 空间 ID。
 }
@@ -101,9 +108,10 @@ type ChangeRoleInput struct {
 }
 
 type Repository interface {
-	ListSpaces(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[Space], error)
+	ListSpaces(ctx context.Context, input ListInput) (pagination.Result[Space], error)
 	CreateSpace(ctx context.Context, space Space, adminUserIDs []uint64) (Space, error)
 	UpdateSpaceProfile(ctx context.Context, input UpdateProfileInput) (Space, error)
+	DisableSpace(ctx context.Context, tenantID uint64, spaceID uint64) (Space, error)
 	DeleteSpace(ctx context.Context, tenantID uint64, spaceID uint64) error
 	AddMember(ctx context.Context, member Member) (Member, error)
 	ListEffectiveMembers(ctx context.Context, tenantID uint64, spaceID uint64) ([]Member, error)
@@ -131,7 +139,7 @@ func NewService(options ServiceOptions) *Service {
 }
 
 func (s *Service) List(ctx context.Context, input ListInput) (pagination.Result[Space], error) {
-	return s.repo.ListSpaces(ctx, input.TenantID, pagination.Input{Page: input.Page, PageSize: input.PageSize})
+	return s.repo.ListSpaces(ctx, input)
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Space, error) {
@@ -154,6 +162,10 @@ func (s *Service) UpdateProfile(ctx context.Context, input UpdateProfileInput) (
 
 func (s *Service) Delete(ctx context.Context, input DeleteInput) error {
 	return s.repo.DeleteSpace(ctx, input.TenantID, input.SpaceID)
+}
+
+func (s *Service) Disable(ctx context.Context, input DisableInput) (Space, error) {
+	return s.repo.DisableSpace(ctx, input.TenantID, input.SpaceID)
 }
 
 func (s *Service) JoinMember(ctx context.Context, input JoinMemberInput) (Member, error) {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	dbdao "github.com/lifei6671/papermind/server/internal/dao/db"
+	"github.com/lifei6671/papermind/server/internal/service/pagination"
 	"github.com/lifei6671/papermind/server/internal/service/permission"
 	servicespace "github.com/lifei6671/papermind/server/internal/service/space"
 	servicetenantuser "github.com/lifei6671/papermind/server/internal/service/tenantuser"
@@ -17,6 +18,7 @@ import (
 
 type spaceMemberLister interface {
 	ListMemberNames(ctx context.Context, tenantID uint64, spaceID uint64) ([]dbdao.SpaceMemberName, error)
+	ListMemberNamesPage(ctx context.Context, input dbdao.SpaceMemberNamePageInput) (pagination.Result[dbdao.SpaceMemberName], error)
 	FindMember(ctx context.Context, tenantID uint64, spaceID uint64, userID uint64) (servicespace.Member, error)
 }
 
@@ -45,6 +47,10 @@ type updateSpaceProfileRequest struct {
 	LogoURL     string `json:"logo_url"`
 	Description string `json:"description"`
 	Type        string `json:"type"`
+}
+
+type disableSpaceRequest struct {
+	TenantID uint64 `json:"tenant_id"`
 }
 
 type spaceResponse struct {
@@ -90,6 +96,13 @@ type spaceListResponse struct {
 	Total    int64           `json:"total"`
 }
 
+type spaceMemberListResponse struct {
+	Items    []spaceMemberResponse `json:"items"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"page_size"`
+	Total    int64                 `json:"total"`
+}
+
 func (h spaceHandler) list(c *gin.Context) {
 	principal, ok := currentLiveTenantAdminPrincipal(c, h.users)
 	if !ok {
@@ -100,7 +113,7 @@ func (h spaceHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), servicespace.ListInput{TenantID: principal.TenantID, Page: page, PageSize: pageSize})
+	result, err := h.service.List(c.Request.Context(), servicespace.ListInput{TenantID: principal.TenantID, Page: page, PageSize: pageSize, Search: c.Query("search"), Status: c.Query("status")})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取空间列表失败"))
 		return
@@ -197,6 +210,42 @@ func (h spaceHandler) updateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(result))
 }
 
+func (h spaceHandler) disable(c *gin.Context) {
+	spaceID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space id 必须是正整数"))
+		return
+	}
+	var request disableSpaceRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if request.TenantID == 0 {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 不能为空"))
+		return
+	}
+	principal, ok := currentLiveTenantAdminPrincipal(c, h.users)
+	if !ok {
+		return
+	}
+	// 禁用空间会停止空间下业务操作，只允许租户管理员在确认风险后执行。
+	space, err := h.service.Disable(c.Request.Context(), servicespace.DisableInput{
+		TenantID: principal.TenantID,
+		SpaceID:  spaceID,
+	})
+	if err != nil {
+		writeSpaceServiceError(c, err)
+		return
+	}
+	result, err := h.spaceToResponse(c.Request.Context(), space)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取空间成员失败"))
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(result))
+}
+
 func (h spaceHandler) delete(c *gin.Context) {
 	spaceID, err := readUintParam(c, "id")
 	if err != nil {
@@ -225,12 +274,31 @@ func (h spaceHandler) listMembers(c *gin.Context) {
 	if !ok {
 		return
 	}
-	members, err := h.members.ListMemberNames(c.Request.Context(), tenantID, spaceID)
+	page, pageSize, err := readPaginationQuery(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
+		return
+	}
+	members, err := h.members.ListMemberNamesPage(c.Request.Context(), dbdao.SpaceMemberNamePageInput{
+		TenantID: tenantID,
+		SpaceID:  spaceID,
+		Page:     pagination.Input{Page: page, PageSize: pageSize},
+		Search:   c.Query("search"),
+		Role:     c.Query("role"),
+		Status:   c.Query("status"),
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取空间成员失败"))
 		return
 	}
-	c.JSON(http.StatusOK, response.OK(spaceMemberNamesToResponse(members)))
+	items := spaceMemberNamesToResponse(members.Items)
+	paged := response.Page(items, members.Page, members.PageSize, members.Total)
+	c.JSON(http.StatusOK, response.OK(spaceMemberListResponse{
+		Items:    paged.Items,
+		Page:     paged.Page,
+		PageSize: paged.PageSize,
+		Total:    paged.Total,
+	}))
 }
 
 func (h spaceHandler) addMember(c *gin.Context) {

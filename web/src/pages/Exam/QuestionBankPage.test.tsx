@@ -196,30 +196,45 @@ function createQuestionAPI() {
       });
       return () => undefined;
     }),
+    listQuestionTags: vi.fn().mockResolvedValue([]),
+    countAvailableQuestions: vi.fn().mockResolvedValue({}),
   };
 }
 
 function createSpaceAPI(): Pick<SpaceManagementAPI, "listSpaces"> {
+  const spaces = [
+    {
+      id: 301,
+      tenantID: 10,
+      name: "高一一班",
+      description: "高一一班空间",
+      logoFileName: "class-a.png",
+      status: "enabled" as const,
+      members: [],
+    },
+    {
+      id: 302,
+      tenantID: 10,
+      name: "高一二班",
+      description: "高一二班空间",
+      logoFileName: "class-b.png",
+      status: "enabled" as const,
+      members: [],
+    },
+    {
+      id: 303,
+      tenantID: 10,
+      name: "已禁用班级",
+      description: "禁用空间",
+      logoFileName: "class-disabled.png",
+      status: "disabled" as const,
+      members: [],
+    },
+  ];
   return {
-    listSpaces: vi.fn().mockResolvedValue({
-      items: [
-        {
-          id: 301,
-          tenantID: 10,
-          name: "高一一班",
-          description: "高一一班空间",
-          logoFileName: "class-a.png",
-          members: [],
-        },
-        {
-          id: 302,
-          tenantID: 10,
-          name: "高一二班",
-          description: "高一二班空间",
-          logoFileName: "class-b.png",
-          members: [],
-        },
-      ],
+    listSpaces: vi.fn().mockImplementation(async (input) => {
+      const items = input.filters?.status === undefined ? spaces : spaces.filter((space) => space.status === input.filters?.status);
+      return { items, total: items.length };
     }),
   };
 }
@@ -528,6 +543,11 @@ test("题库分页支持切换页码和每页条数", async () => {
 
   await screen.findByText((content) => content.endsWith("..."));
   expect(screen.getByText("第 1 / 3 页")).toBeInTheDocument();
+  const pagination = screen.getByRole("navigation", { name: "分页" });
+  const pageSize = within(pagination).getByRole("combobox", { name: "每页条数" });
+  const antPagination = pagination.querySelector(".ant-pagination");
+  expect(antPagination).not.toBeNull();
+  expect(pageSize.compareDocumentPosition(antPagination as Element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
   vi.mocked(api.listQuestions).mockResolvedValueOnce({
     page: 2,
@@ -664,7 +684,13 @@ test("租户管理员可以在题库导入抽屉选择导入到具体空间且�
 
   const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
   await within(drawer).findByRole("option", { name: "高一二班" });
-  expect(spaceApi.listSpaces).toHaveBeenCalledWith(10);
+  expect(within(drawer).queryByRole("option", { name: "已禁用班级" })).not.toBeInTheDocument();
+  expect(spaceApi.listSpaces).toHaveBeenCalledWith(expect.objectContaining({
+    tenantID: 10,
+    page: 1,
+    pageSize: 100,
+    filters: { status: "enabled" },
+  }));
   await user.selectOptions(within(drawer).getByLabelText("导入所属空间"), "space:302");
 
   const file = new File(["type,title"], "tenant-space-questions.csv", { type: "text/csv" });
@@ -681,6 +707,78 @@ test("租户管理员可以在题库导入抽屉选择导入到具体空间且�
       search: "",
     });
   });
+});
+
+test("题库导入抽屉会读取后端空间分页的后续页", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  const spaceApi = createSpaceAPI();
+  const firstPageSpaces = Array.from({ length: 100 }, (_, index) => ({
+    id: 300 + index,
+    tenantID: 10,
+    name: `第 ${index + 1} 班`,
+    description: "分页空间",
+    logoFileName: "class.png",
+    status: "enabled" as const,
+    members: [],
+  }));
+  vi.mocked(spaceApi.listSpaces).mockImplementation(async (input) => ({
+    items: input.page === 1
+      ? firstPageSpaces
+      : [{
+        id: 999,
+        tenantID: 10,
+        name: "第 101 班",
+        description: "后续页空间",
+        logoFileName: "class-101.png",
+        status: "enabled",
+        members: [],
+      }],
+    total: 101,
+  }));
+  renderWithFeedback(
+    <QuestionBankPage actorRole="tenant_admin" api={api} spaceApi={spaceApi} tenantID={10} />,
+    "/questions?space_id=999",
+  );
+
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+
+  const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
+  await waitFor(() => expect(spaceApi.listSpaces).toHaveBeenCalledWith(expect.objectContaining({
+    tenantID: 10,
+    page: 2,
+    pageSize: 100,
+    filters: { status: "enabled" },
+  })));
+  expect(within(drawer).getByLabelText("导入所属空间")).toHaveValue("space:999");
+  expect(within(drawer).getByRole("option", { name: "第 101 班" })).toBeInTheDocument();
+});
+
+test("题库导入抽屉不会把已禁用的当前空间作为可提交范围", async () => {
+  const user = userEvent.setup();
+  const api = createQuestionAPI();
+  const spaceApi = createSpaceAPI();
+  renderWithFeedback(
+    <QuestionBankPage actorRole="tenant_admin" api={api} spaceApi={spaceApi} tenantID={10} />,
+    "/questions?space_id=303",
+  );
+
+  await screen.findByText((content) => content.endsWith("..."));
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+
+  const drawer = screen.getByRole("dialog", { name: "题目导入抽屉" });
+  await within(drawer).findByRole("option", { name: "高一一班" });
+  expect(within(drawer).queryByRole("option", { name: "已禁用班级" })).not.toBeInTheDocument();
+  expect(within(drawer).queryByRole("option", { name: "当前空间题库" })).not.toBeInTheDocument();
+  expect(within(drawer).getByLabelText("导入所属空间")).toHaveValue("");
+
+  const file = new File(["type,title"], "disabled-space-questions.csv", { type: "text/csv" });
+  await user.upload(within(drawer).getByLabelText("题目导入文件"), file);
+  await user.click(within(drawer).getByRole("button", { name: "确认导入" }));
+
+  expect(api.startQuestionImportJob).not.toHaveBeenCalled();
+  expect(await screen.findByRole("alert")).toHaveTextContent("请选择有效的导入所属空间");
 });
 
 test("空间管理员在题库导入抽屉中看不到公共题库选项", async () => {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -38,6 +39,16 @@ func TestPaperAPIRoutesListSectionsAndAddManualQuestionWithSQLite(t *testing.T) 
 	}
 	if listBody.Data.Items[0].CreatorName != "teacher.exam" || listBody.Data.Items[0].CreatedAt != fixedAPINow {
 		t.Fatalf("expected creator metadata in paper list, got %#v", listBody.Data.Items[0])
+	}
+
+	getRecorder := httptest.NewRecorder()
+	router.ServeHTTP(getRecorder, authorizedRequest(http.MethodGet, "/api/v1/papers/100?tenant_id=10", nil, authHeader))
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("get paper status = %d, body = %s", getRecorder.Code, getRecorder.Body.String())
+	}
+	getBody := decodeExamAPIResponse[paperResponse](t, getRecorder.Body.Bytes())
+	if getBody.Data.ID != 100 || getBody.Data.Name != "高一语文月考试卷" || getBody.Data.CreatorName != "teacher.exam" {
+		t.Fatalf("unexpected paper detail: %#v", getBody.Data)
 	}
 
 	sectionsRecorder := httptest.NewRecorder()
@@ -90,6 +101,40 @@ func TestPaperAPIRoutesListSectionsAndAddManualQuestionWithSQLite(t *testing.T) 
 	}
 	if paperTotal != "4" {
 		t.Fatalf("expected paper total score recalculated to 4, got %q", paperTotal)
+	}
+}
+
+func TestPaperAPIRoutesListPublishCandidatesForcesEnabledFirstTenWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedPaperAPITestData(t, gormDB)
+	seedExamBusinessLoginAPITestData(t, gormDB)
+	seedPaperTeacherSpaceAPITestData(t, gormDB)
+	seedPublishCandidatePaperAPITestData(t, gormDB)
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher.exam", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodGet, "/api/v1/papers/publish-candidates?tenant_id=10&space_id=301&search=候选绕过&status=draft&page=2&page_size=50", nil, authHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("publish candidates status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[paperListResponse](t, recorder.Body.Bytes())
+	if body.Data.Page != 1 || body.Data.PageSize != 10 {
+		t.Fatalf("expected server-forced first page of 10, got page=%d page_size=%d", body.Data.Page, body.Data.PageSize)
+	}
+	if len(body.Data.Items) != 10 || body.Data.Total != 12 {
+		t.Fatalf("expected first 10 enabled candidates out of 12, got total=%d items=%#v", body.Data.Total, body.Data.Items)
+	}
+	for _, item := range body.Data.Items {
+		if item.Status != constant.PaperStatusEnabled || !strings.Contains(item.Name, "候选绕过") {
+			t.Fatalf("unexpected publish candidate item: %#v", item)
+		}
 	}
 }
 
@@ -315,6 +360,9 @@ func TestPaperAssemblyWorkspaceRoutesManageSectionQuestionsWithSQLite(t *testing
 	}
 	if listBody.Data.Items[0].Title != "病句辨析题" || listBody.Data.Items[0].QuestionType != constant.QuestionTypeSingle {
 		t.Fatalf("expected section question preview fields, got %#v", listBody.Data.Items[0])
+	}
+	if listBody.Data.Items[0].Difficulty != "easy" || !reflect.DeepEqual(listBody.Data.Items[0].TagNames, []string{"阅读理解"}) {
+		t.Fatalf("expected section question display metadata, got %#v", listBody.Data.Items[0])
 	}
 	if len(listBody.Data.Items[0].Options) != 2 || listBody.Data.Items[0].Options[0] != "语序不当" {
 		t.Fatalf("expected sanitized option content, got %#v", listBody.Data.Items[0].Options)
@@ -1528,6 +1576,38 @@ func seedPaperAPITestData(t *testing.T, gormDB *gorm.DB) {
 			(10, 101, 'B', 2, '搭配正确', FALSE, TRUE, ?, ?, '{}')
 	`, fixedAPINow, fixedAPINow, fixedAPINow, fixedAPINow).Error; err != nil {
 		t.Fatalf("seed question options: %v", err)
+	}
+}
+
+func seedPublishCandidatePaperAPITestData(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	for i := 0; i < 12; i++ {
+		if err := gormDB.Exec(`
+			INSERT INTO papers (
+				id, tenant_id, space_id, name, description, total_score, build_mode, status,
+				created_at, created_by, created_by_type, updated_at, updated_by, updated_by_type, ext_json
+			) VALUES (?, ?, ?, ?, '', 0, ?, ?, ?, ?, 'tenant_user', ?, ?, 'tenant_user', '{}')
+		`, 200+i, 10, 301, fmt.Sprintf("候选绕过可发布试卷 %02d", i), constant.BuildModeManual, constant.PaperStatusEnabled, fixedAPINow+int64(i), 501, fixedAPINow+int64(i), 501).Error; err != nil {
+			t.Fatalf("seed publish candidate paper: %v", err)
+		}
+	}
+	for _, seed := range []struct {
+		id     int
+		name   string
+		status string
+	}{
+		{id: 250, name: "候选绕过草稿试卷", status: constant.PaperStatusDraft},
+		{id: 251, name: "候选绕过禁用试卷", status: constant.PaperStatusDisabled},
+	} {
+		if err := gormDB.Exec(`
+			INSERT INTO papers (
+				id, tenant_id, space_id, name, description, total_score, build_mode, status,
+				created_at, created_by, created_by_type, updated_at, updated_by, updated_by_type, ext_json
+			) VALUES (?, ?, ?, ?, '', 0, ?, ?, ?, ?, 'tenant_user', ?, ?, 'tenant_user', '{}')
+		`, seed.id, 10, 301, seed.name, constant.BuildModeManual, seed.status, fixedAPINow+100, 501, fixedAPINow+100, 501).Error; err != nil {
+			t.Fatalf("seed non-publishable candidate paper: %v", err)
+		}
 	}
 }
 

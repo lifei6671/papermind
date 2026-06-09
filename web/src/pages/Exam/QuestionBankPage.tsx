@@ -1,15 +1,15 @@
 import { Button } from "../../components/ui/Button";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
-import { ArrowLeft, Search, X } from "lucide-react";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { FileUploadField } from "../../components/ui/FileUploadField";
 import { Panel } from "../../components/ui/Panel";
 import { Pagination } from "../../components/ui/Pagination";
 import { PlatformDrawer } from "../../components/ui/PlatformDrawer";
+import { PlatformDrawerHeader } from "../../components/ui/PlatformDrawerHeader";
 import { RadioGroup, RadioGroupItem } from "../../components/ui/RadioGroup";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
-import { Select } from "../../components/ui/Select";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Tooltip } from "../../components/ui/Tooltip";
@@ -67,6 +67,7 @@ const questionStatusLabels: Record<QuestionRow["status"], string> = {
 };
 
 const questionPageSizeOptions = [10, 20, 30, 40, 50];
+const questionScopeSpacePageSize = 100;
 
 export function QuestionBankPage({
   api = questionApi,
@@ -89,15 +90,21 @@ export function QuestionBankPage({
   const [isImportDrawerOpen, setIsImportDrawerOpen] = useState(false);
   const [importRecords, setImportRecords] = useState<ImportRecord[]>([]);
   const [importTargetStatus, setImportTargetStatus] = useState<"draft" | "enabled">("draft");
-  const [selectedImportSpaceID, setSelectedImportSpaceID] = useState<number | null>(currentSpaceID ?? null);
+  const [selectedImportSpaceID, setSelectedImportSpaceID] = useState<number | null | undefined>(currentSpaceID ?? null);
   const [isImporting, setIsImporting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [pendingQuestionID, setPendingQuestionID] = useState<number | null>(null);
   const [isQuestionListRefreshing, setIsQuestionListRefreshing] = useState(false);
   const questionCreateHref = `/questions/new${location.search}`;
-  const importScopeSpaceOptions = buildQuestionScopeSpaceOptions(currentSpaceID, canSelectTenantSpaceScope ? questionSpaces : [], selectedImportSpaceID);
-  const selectedImportScopeValue = selectedImportSpaceID === null && canSelectPublicScope
+  const importScopeSpaceOptions = buildQuestionScopeSpaceOptions(
+    canSelectTenantSpaceScope ? undefined : currentSpaceID,
+    canSelectTenantSpaceScope ? questionSpaces : [],
+    canSelectTenantSpaceScope ? undefined : selectedImportSpaceID,
+  );
+  const selectedImportScopeValue = selectedImportSpaceID === undefined
+    ? ""
+    : selectedImportSpaceID === null && canSelectPublicScope
     ? "public"
     : selectedImportSpaceID === null
       ? ""
@@ -137,10 +144,16 @@ export function QuestionBankPage({
 
     let ignore = false;
 
-    spaceApi.listSpaces(tenantID)
-      .then((data) => {
+    listEnabledQuestionSpaces(spaceApi, tenantID)
+      .then((items) => {
         if (!ignore) {
-          setQuestionSpaces(data.items);
+          setQuestionSpaces(items);
+          setSelectedImportSpaceID((current) => {
+            if (current === undefined || current === null) {
+              return current;
+            }
+            return items.some((space) => space.id === current) ? current : undefined;
+          });
         }
       })
       .catch(() => {
@@ -188,6 +201,18 @@ export function QuestionBankPage({
     const pendingRecords = importRecords.filter((record) => record.status === "pending" || record.status === "failed");
     if (pendingRecords.length === 0) {
       showError("请选择题目导入文件");
+      return;
+    }
+    if (selectedImportSpaceID === undefined) {
+      showError("请选择有效的导入所属空间");
+      return;
+    }
+    if (
+      canSelectTenantSpaceScope
+      && selectedImportSpaceID !== null
+      && !questionSpaces.some((space) => space.id === selectedImportSpaceID)
+    ) {
+      showError("请选择有效的导入所属空间");
       return;
     }
 
@@ -444,58 +469,21 @@ export function QuestionBankPage({
             </tbody>
           </table>
         </div>
-        <div className="question-bank-pagination">
-          <div className="question-bank-pagination__page-size">
-            <span>每页条数</span>
-            <div className="question-bank-pagination__page-size-select">
-              <Select
-                ariaLabel="每页条数"
-                onChange={(value) => {
-                  const nextPageSize = Number(value);
-                  setPage(1);
-                  setPageSize(nextPageSize);
-                }}
-                options={questionPageSizeOptions.map((option) => ({
-                  value: String(option),
-                  label: `${option} 条 / 页`,
-                }))}
-                value={String(pageSize)}
-              />
-            </div>
-          </div>
-          <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
-        </div>
+        <Pagination
+          onPageChange={setPage}
+          onPageSizeChange={(nextPageSize) => {
+            setPage(1);
+            setPageSize(nextPageSize);
+          }}
+          page={page}
+          pageSize={pageSize}
+          pageSizeOptions={questionPageSizeOptions}
+          total={total}
+        />
       </Panel>
 
-      {isImportDrawerOpen && (
         <PlatformDrawer ariaLabel="题目导入抽屉" onClose={() => setIsImportDrawerOpen(false)} open={isImportDrawerOpen}>
-            <header className="tenant-resource-drawer__head tenant-resource-drawer__head--inline">
-              <div className="tenant-resource-drawer__return-line">
-                <button
-                  aria-label="返回题库"
-                  className="tenant-resource-drawer__back"
-                  onClick={() => setIsImportDrawerOpen(false)}
-                  type="button"
-                >
-                  <ArrowLeft aria-hidden="true" size={19} />
-                  <span>返回</span>
-                </button>
-                <span aria-hidden="true" className="tenant-resource-drawer__separator">
-                  |
-                </span>
-                <span className="tenant-resource-drawer__space-name">题目导入</span>
-              </div>
-              <div className="tenant-resource-drawer__tools">
-                <button
-                  aria-label="关闭题目导入"
-                  className="tenant-resource-drawer__icon"
-                  onClick={() => setIsImportDrawerOpen(false)}
-                  type="button"
-                >
-                  <X aria-hidden="true" size={19} />
-                </button>
-              </div>
-            </header>
+            <PlatformDrawerHeader backAriaLabel="返回题库" onBack={() => setIsImportDrawerOpen(false)} title="题目导入" />
             <div className="tenant-resource-drawer__body">
               <label className="field question-import-scope-field">
                 <span>所属空间</span>
@@ -504,6 +492,7 @@ export function QuestionBankPage({
                   onChange={(event) => setSelectedImportSpaceID(readQuestionScopeSpaceID(event.target.value))}
                   value={selectedImportScopeValue}
                 >
+                  <option value="">请选择导入所属空间</option>
                   {canSelectPublicScope && <option value="public">公共题库</option>}
                   {importScopeSpaceOptions.map((space) => (
                     <option key={space.id} value={`space:${space.id}`}>
@@ -581,7 +570,6 @@ export function QuestionBankPage({
               </div>
             </div>
         </PlatformDrawer>
-      )}
 
     </section>
   );
@@ -666,13 +654,17 @@ function canManageQuestion(question: QuestionRow, actorRole?: ActorRole) {
   return true;
 }
 
-function buildQuestionScopeSpaceOptions(currentSpaceID: number | undefined, spaces: SpaceRow[], selectedSpaceID: number | null) {
+function buildQuestionScopeSpaceOptions(currentSpaceID: number | undefined, spaces: SpaceRow[], selectedSpaceID: number | null | undefined) {
   const options = spaces.map((space) => ({
-    id: space.id,
-    label: space.name,
-  }));
+      id: space.id,
+      label: space.name,
+    }));
   for (const fallbackSpaceID of [currentSpaceID, selectedSpaceID]) {
-    if (fallbackSpaceID !== undefined && fallbackSpaceID !== null && !options.some((space) => space.id === fallbackSpaceID)) {
+    if (
+      fallbackSpaceID !== undefined
+      && fallbackSpaceID !== null
+      && !options.some((space) => space.id === fallbackSpaceID)
+    ) {
       options.push({
         id: fallbackSpaceID,
         label: fallbackSpaceID === currentSpaceID ? "当前空间题库" : `空间 ${fallbackSpaceID}`,
@@ -682,12 +674,36 @@ function buildQuestionScopeSpaceOptions(currentSpaceID: number | undefined, spac
   return options;
 }
 
+async function listEnabledQuestionSpaces(api: Pick<SpaceManagementAPI, "listSpaces">, tenantID: number) {
+  const spaces: SpaceRow[] = [];
+  let page = 1;
+
+  while (true) {
+    const data = await api.listSpaces({
+      tenantID,
+      page,
+      pageSize: questionScopeSpacePageSize,
+      filters: { status: "enabled" },
+    });
+    spaces.push(...data.items);
+    if (data.items.length === 0 || data.total === undefined || spaces.length >= data.total) {
+      break;
+    }
+    page += 1;
+  }
+
+  return spaces;
+}
+
 function readQuestionScopeSpaceID(value: string) {
+  if (value === "") {
+    return undefined;
+  }
   if (value === "public") {
     return null;
   }
   const parsed = Number.parseInt(value.replace("space:", ""), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function readSpaceIDFromSearch(search: string) {

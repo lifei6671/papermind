@@ -21,6 +21,10 @@ const (
 	StatusDraft = constant.ExamStatusDraft
 	// StatusPublished 表示考试已发布。
 	StatusPublished = constant.ExamStatusPublished
+	// StatusClosed 表示考试已提前结束。
+	StatusClosed = constant.ExamStatusClosed
+	// StatusDisabled 表示考试已禁用。
+	StatusDisabled = constant.ExamStatusDisabled
 
 	// BuildModeManual 表示手动固化组卷。
 	BuildModeManual = constant.BuildModeManual
@@ -86,6 +90,7 @@ var (
 	ErrExamEnded                        = errors.New("exam ended")
 	ErrExamAlreadyStarted               = errors.New("exam already started")
 	ErrExamTargetRequired               = errors.New("exam target required")
+	ErrInvalidExamStatus                = errors.New("invalid exam status")
 	ErrAttemptNotFound                  = errors.New("attempt not found")
 	ErrMaxAttemptsReached               = errors.New("max attempts reached")
 	ErrAttemptUniqueConflict            = errors.New("attempt unique conflict")
@@ -246,9 +251,33 @@ type PublishWithTargetInput struct {
 	ResultStrategy   string   // 成绩策略。
 	PublishMode      string   // 成绩发布模式。
 	ScorePublishTime *int64   // 成绩公布时间。
+	Status           string   // 创建后的考试状态：draft / published；为空时兼容为 published。
 	ActorID          uint64   // 发布人用户 ID，由 API 层从 session 派生。
 	ActorType        string   // 发布人主体类型，由 API 层从 session 派生。
 	ActorRole        string   // 发布人角色快照，由 API 层从 session 派生。
+}
+
+// CreateWithTargetInput 用于一次性创建考试和投放目标。
+// 该类型复用发布请求字段，但允许前端明确选择 draft 或 published。
+type CreateWithTargetInput = PublishWithTargetInput
+
+type UpdateStatusInput struct {
+	TenantID  uint64 // 所属租户 ID。
+	ExamID    uint64 // 考试 ID。
+	Status    string // 目标状态：published / closed / disabled。
+	ActorID   uint64 // 操作人用户 ID，由 API 层从 session 派生。
+	ActorType string // 操作人主体类型，由 API 层从 session 派生。
+	ActorRole string // 操作人角色快照，由 API 层从 session 派生。
+}
+
+type UpdateExamStatusRepositoryInput struct {
+	TenantID       uint64       // 所属租户 ID。
+	ExamID         uint64       // 考试 ID。
+	Status         string       // 目标状态。
+	ExpectedStatus string       // 期望源状态；为空表示不做源状态条件更新。
+	InviteCode     string       // 发布草稿时生成的邀请码；为空表示不变更。
+	EndTime        *int64       // 提前结束时写入当前结束时间；nil 表示不变更。
+	Log            OperationLog // 管理端操作日志。
 }
 
 type UpdateScorePublishConfigInput struct {
@@ -259,6 +288,14 @@ type UpdateScorePublishConfigInput struct {
 	ActorID          uint64 // 发布成绩的用户 ID，由 API 层从 session 派生。
 	ActorType        string // 发布成绩的主体类型，由 API 层从 session 派生。
 	ActorRole        string // 发布成绩的角色快照，由 API 层从 session 派生。
+}
+
+type UpdateScorePublishConfigRepositoryInput struct {
+	TenantID         uint64        // 所属租户 ID。
+	ExamID           uint64        // 考试 ID。
+	PublishMode      string        // 成绩发布模式。
+	ScorePublishTime *int64        // 成绩公布时间。
+	Log              *OperationLog // 操作日志；nil 表示不写日志。
 }
 
 type AddTargetInput struct {
@@ -293,6 +330,7 @@ type GenerateSnapshotInput struct {
 type ListInput struct {
 	TenantID uint64  // 所属租户 ID。
 	SpaceID  *uint64 // 可见空间范围；nil 表示租户管理员全租户范围。
+	PaperID  *uint64 // 关联试卷过滤；nil 表示不过滤试卷。
 	Page     int     // 页码，从 1 开始。
 	PageSize int     // 每页数量。
 }
@@ -354,9 +392,10 @@ type Repository interface {
 	GetPaper(ctx context.Context, tenantID uint64, paperID uint64) (Paper, error)
 	InviteCodeExists(ctx context.Context, tenantID uint64, code string) (bool, error)
 	ListRuleLiveCandidates(ctx context.Context, tenantID uint64, paperID uint64) ([]LivePoolItem, error)
-	PublishExamAndFreezeLivePool(ctx context.Context, exam Exam, pool []LivePoolItem) (Exam, error)
+	PublishExamAndFreezeLivePool(ctx context.Context, exam Exam, pool []LivePoolItem, expectedStatus string, log *OperationLog) (Exam, error)
 	CreatePublishedExamWithTarget(ctx context.Context, exam Exam, pool []LivePoolItem, target Target, log *OperationLog) (Exam, error)
 	CreatePublishedExamWithTargets(ctx context.Context, exam Exam, pool []LivePoolItem, targets []Target, log *OperationLog) (Exam, error)
+	UpdateExamStatus(ctx context.Context, input UpdateExamStatusRepositoryInput) (Exam, error)
 	TargetExists(ctx context.Context, tenantID uint64, examID uint64, targetType string, targetID uint64) (bool, error)
 	AddTarget(ctx context.Context, target Target) error
 	FindExamByInviteCode(ctx context.Context, inviteCode string) (Exam, error)
@@ -370,7 +409,7 @@ type Repository interface {
 	ListFixedSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]SnapshotSourceQuestion, error)
 	ListFrozenLiveSnapshotQuestions(ctx context.Context, tenantID uint64, examID uint64) ([]SnapshotSourceQuestion, error)
 	SaveAttemptQuestions(ctx context.Context, questions []AttemptQuestion) ([]AttemptQuestion, error)
-	UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64, log *OperationLog) (Exam, error)
+	UpdateScorePublishConfig(ctx context.Context, input UpdateScorePublishConfigRepositoryInput) (Exam, error)
 }
 
 type CodeGenerator interface {
@@ -454,13 +493,47 @@ func (s *Service) Publish(ctx context.Context, input PublishInput) (Exam, error)
 	if err != nil {
 		return Exam{}, err
 	}
-	return s.repo.PublishExamAndFreezeLivePool(ctx, exam, pool)
+	return s.repo.PublishExamAndFreezeLivePool(ctx, exam, pool, "", nil)
 }
 
 func (s *Service) PublishWithTarget(ctx context.Context, input PublishWithTargetInput) (Exam, error) {
+	input.Status = StatusPublished
+	return s.CreateWithTarget(ctx, input)
+}
+
+func (s *Service) CreateWithTarget(ctx context.Context, input CreateWithTargetInput) (Exam, error) {
 	targets, err := normalizePublishTargets(input)
 	if err != nil {
 		return Exam{}, err
+	}
+	status := input.Status
+	if status == "" {
+		status = StatusPublished
+	}
+	if status == StatusDraft {
+		exam, err := s.buildDraftExamWithSettings(ctx, publishSettingsInput{
+			TenantID:         input.TenantID,
+			PaperID:          input.PaperID,
+			Name:             input.Name,
+			StartTime:        input.StartTime,
+			EndTime:          input.EndTime,
+			DurationMinutes:  input.DurationMinutes,
+			MaxAttempts:      input.MaxAttempts,
+			ResultStrategy:   input.ResultStrategy,
+			PublishMode:      input.PublishMode,
+			ScorePublishTime: input.ScorePublishTime,
+		})
+		if err != nil {
+			return Exam{}, err
+		}
+		created, err := s.repo.CreatePublishedExamWithTargets(ctx, exam, nil, targets, nil)
+		if err != nil {
+			return Exam{}, err
+		}
+		return hideDraftInviteCode(created), nil
+	}
+	if status != StatusPublished {
+		return Exam{}, ErrInvalidExamStatus
 	}
 	exam, pool, err := s.buildPublishedExam(ctx, publishSettingsInput{
 		TenantID:         input.TenantID,
@@ -490,6 +563,92 @@ func (s *Service) PublishWithTarget(ctx context.Context, input PublishWithTarget
 		CreatedByType:   input.ActorType,
 	}
 	return s.repo.CreatePublishedExamWithTargets(ctx, exam, pool, targets, &log)
+}
+
+func (s *Service) UpdateStatus(ctx context.Context, input UpdateStatusInput) (Exam, error) {
+	switch input.Status {
+	case StatusPublished:
+		exam, err := s.repo.GetExam(ctx, input.TenantID, input.ExamID)
+		if err != nil {
+			return Exam{}, err
+		}
+		if exam.Status == StatusPublished {
+			return exam, nil
+		}
+		if exam.Status != StatusDraft {
+			return Exam{}, ErrInvalidExamStatus
+		}
+		if len(exam.Targets) == 0 {
+			return Exam{}, ErrExamTargetRequired
+		}
+		published, pool, err := s.buildPublishedExam(ctx, publishSettingsInput{
+			ExamID:           exam.ID,
+			TenantID:         exam.TenantID,
+			PaperID:          exam.PaperID,
+			Name:             exam.Name,
+			StartTime:        exam.StartTime,
+			EndTime:          exam.EndTime,
+			DurationMinutes:  exam.DurationMinutes,
+			MaxAttempts:      exam.MaxAttempts,
+			ResultStrategy:   exam.ResultStrategy,
+			PublishMode:      exam.PublishMode,
+			ScorePublishTime: exam.ScorePublishTime,
+		})
+		if err != nil {
+			return Exam{}, err
+		}
+		log := OperationLog{
+			TenantID:        input.TenantID,
+			ExamID:          input.ExamID,
+			OperationType:   OperationTypePublishExam,
+			OperationTitle:  "发布考试",
+			OperationDetail: "发布草稿考试",
+			ActorID:         input.ActorID,
+			ActorType:       input.ActorType,
+			ActorRole:       input.ActorRole,
+			CreatedAt:       s.now(),
+			CreatedBy:       input.ActorID,
+			CreatedByType:   input.ActorType,
+		}
+		return s.repo.PublishExamAndFreezeLivePool(ctx, published, pool, StatusDraft, &log)
+	case StatusClosed:
+		exam, err := s.repo.GetExam(ctx, input.TenantID, input.ExamID)
+		if err != nil {
+			return Exam{}, err
+		}
+		if exam.Status != StatusPublished {
+			return Exam{}, ErrInvalidExamStatus
+		}
+		endTime := s.now()
+		return s.repo.UpdateExamStatus(ctx, UpdateExamStatusRepositoryInput{
+			TenantID:       input.TenantID,
+			ExamID:         input.ExamID,
+			Status:         StatusClosed,
+			ExpectedStatus: StatusPublished,
+			EndTime:        &endTime,
+			Log:            s.statusOperationLog(input, "提前结束考试"),
+		})
+	case StatusDisabled:
+		exam, err := s.repo.GetExam(ctx, input.TenantID, input.ExamID)
+		if err != nil {
+			return Exam{}, err
+		}
+		if exam.Status == StatusDisabled {
+			return exam, nil
+		}
+		if exam.Status != StatusPublished {
+			return Exam{}, ErrInvalidExamStatus
+		}
+		return s.repo.UpdateExamStatus(ctx, UpdateExamStatusRepositoryInput{
+			TenantID:       input.TenantID,
+			ExamID:         input.ExamID,
+			Status:         StatusDisabled,
+			ExpectedStatus: StatusPublished,
+			Log:            s.statusOperationLog(input, "禁用考试"),
+		})
+	default:
+		return Exam{}, ErrInvalidExamStatus
+	}
 }
 
 // normalizePublishTargets 归一化发布目标，保证 service 之后只处理去重后的多目标列表。
@@ -524,6 +683,22 @@ func normalizePublishTargets(input PublishWithTargetInput) ([]Target, error) {
 	return targets, nil
 }
 
+func (s *Service) statusOperationLog(input UpdateStatusInput, title string) OperationLog {
+	return OperationLog{
+		TenantID:        input.TenantID,
+		ExamID:          input.ExamID,
+		OperationType:   OperationTypeUpdateSettings,
+		OperationTitle:  title,
+		OperationDetail: title,
+		ActorID:         input.ActorID,
+		ActorType:       input.ActorType,
+		ActorRole:       input.ActorRole,
+		CreatedAt:       s.now(),
+		CreatedBy:       input.ActorID,
+		CreatedByType:   input.ActorType,
+	}
+}
+
 type publishSettingsInput struct {
 	ExamID           uint64
 	TenantID         uint64
@@ -539,25 +714,64 @@ type publishSettingsInput struct {
 }
 
 func (s *Service) buildPublishedExam(ctx context.Context, input publishSettingsInput) (Exam, []LivePoolItem, error) {
-	if int64(input.DurationMinutes)*millisPerMinute > input.EndTime-input.StartTime {
-		return Exam{}, nil, ErrDurationExceedsExamWindow
-	}
-	paper, err := s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
+	exam, paper, err := s.buildPublishableExam(ctx, input)
 	if err != nil {
 		return Exam{}, nil, err
-	}
-	if paper.Status != constant.PaperStatusEnabled {
-		return Exam{}, nil, ErrPaperNotEnabled
-	}
-	if paper.ContainsShortText && input.MaxAttempts > 1 {
-		return Exam{}, nil, ErrShortTextCannotRepeatAttempt
-	}
-	if paper.ContainsShortText && input.PublishMode == PublishModeImmediateScore {
-		return Exam{}, nil, ErrShortTextCannotImmediateScore
 	}
 	inviteCode, err := s.nextUniqueInviteCode(ctx, input.TenantID)
 	if err != nil {
 		return Exam{}, nil, err
+	}
+	exam.InviteCode = inviteCode
+	exam.Status = StatusPublished
+	var pool []LivePoolItem
+	if paper.BuildMode == BuildModeRuleLive {
+		pool, err = s.repo.ListRuleLiveCandidates(ctx, input.TenantID, input.PaperID)
+		if err != nil {
+			return Exam{}, nil, err
+		}
+	}
+	return exam, pool, nil
+}
+
+func (s *Service) buildDraftExamWithSettings(ctx context.Context, input publishSettingsInput) (Exam, error) {
+	exam, _, err := s.buildPublishableExam(ctx, input)
+	if err != nil {
+		return Exam{}, err
+	}
+	inviteCode, err := s.nextDraftInviteCode(ctx, input.TenantID)
+	if err != nil {
+		return Exam{}, err
+	}
+	// 数据库对 invite_code 仍有全局唯一约束；草稿使用内部占位码入库，对外保持空邀请码语义。
+	exam.InviteCode = inviteCode
+	exam.Status = StatusDraft
+	return exam, nil
+}
+
+func hideDraftInviteCode(exam Exam) Exam {
+	if exam.Status == StatusDraft {
+		exam.InviteCode = ""
+	}
+	return exam
+}
+
+func (s *Service) buildPublishableExam(ctx context.Context, input publishSettingsInput) (Exam, Paper, error) {
+	if int64(input.DurationMinutes)*millisPerMinute > input.EndTime-input.StartTime {
+		return Exam{}, Paper{}, ErrDurationExceedsExamWindow
+	}
+	paper, err := s.repo.GetPaper(ctx, input.TenantID, input.PaperID)
+	if err != nil {
+		return Exam{}, Paper{}, err
+	}
+	if paper.Status != constant.PaperStatusEnabled {
+		return Exam{}, Paper{}, ErrPaperNotEnabled
+	}
+	if paper.ContainsShortText && input.MaxAttempts != 1 {
+		return Exam{}, Paper{}, ErrShortTextCannotRepeatAttempt
+	}
+	if paper.ContainsShortText && input.PublishMode == PublishModeImmediateScore {
+		return Exam{}, Paper{}, ErrShortTextCannotImmediateScore
 	}
 	exam := Exam{
 		ID:               input.ExamID,
@@ -571,18 +785,9 @@ func (s *Service) buildPublishedExam(ctx context.Context, input publishSettingsI
 		ResultStrategy:   input.ResultStrategy,
 		PublishMode:      input.PublishMode,
 		ScorePublishTime: input.ScorePublishTime,
-		InviteCode:       inviteCode,
-		Status:           StatusPublished,
 		BuildMode:        paper.BuildMode,
 	}
-	var pool []LivePoolItem
-	if paper.BuildMode == BuildModeRuleLive {
-		pool, err = s.repo.ListRuleLiveCandidates(ctx, input.TenantID, input.PaperID)
-		if err != nil {
-			return Exam{}, nil, err
-		}
-	}
-	return exam, pool, nil
+	return exam, paper, nil
 }
 
 func (s *Service) AddTarget(ctx context.Context, input AddTargetInput) error {
@@ -605,13 +810,23 @@ func (s *Service) ResolveInvite(ctx context.Context, input ResolveInviteInput) (
 	if input.UserID == 0 {
 		return Exam{}, ErrLoginRequiredForInvite
 	}
-	return s.repo.FindExamByInviteCode(ctx, input.InviteCode)
+	exam, err := s.repo.FindExamByInviteCode(ctx, input.InviteCode)
+	if err != nil {
+		return Exam{}, err
+	}
+	if exam.Status != StatusPublished {
+		return Exam{}, ErrExamNotEligible
+	}
+	return exam, nil
 }
 
 func (s *Service) StartExam(ctx context.Context, input StartInput) (StartResult, error) {
 	exam, err := s.repo.GetExam(ctx, input.TenantID, input.ExamID)
 	if err != nil {
 		return StartResult{}, err
+	}
+	if exam.Status != StatusPublished {
+		return StartResult{}, ErrExamNotEligible
 	}
 	eligible, err := s.repo.IsEligible(ctx, input.TenantID, input.ExamID, input.UserID)
 	if err != nil {
@@ -636,7 +851,7 @@ func (s *Service) StartExam(ctx context.Context, input StartInput) (StartResult,
 	if err != nil {
 		return StartResult{}, err
 	}
-	if count >= exam.MaxAttempts {
+	if exam.MaxAttempts > 0 && count >= exam.MaxAttempts {
 		return StartResult{}, ErrMaxAttemptsReached
 	}
 	token, err := s.tokenIssuer.IssueToken()
@@ -731,7 +946,13 @@ func (s *Service) UpdateScorePublishConfig(ctx context.Context, input UpdateScor
 		CreatedBy:       input.ActorID,
 		CreatedByType:   input.ActorType,
 	}
-	return s.repo.UpdateScorePublishConfig(ctx, input.TenantID, input.ExamID, input.PublishMode, input.ScorePublishTime, &log)
+	return s.repo.UpdateScorePublishConfig(ctx, UpdateScorePublishConfigRepositoryInput{
+		TenantID:         input.TenantID,
+		ExamID:           input.ExamID,
+		PublishMode:      input.PublishMode,
+		ScorePublishTime: input.ScorePublishTime,
+		Log:              &log,
+	})
 }
 
 func (s *Service) ValidateExamToken(ctx context.Context, token string, attemptID uint64) (Attempt, error) {
@@ -767,6 +988,24 @@ func (s *Service) nextUniqueInviteCode(ctx context.Context, tenantID uint64) (st
 		if err != nil {
 			return "", err
 		}
+		exists, err := s.repo.InviteCodeExists(ctx, tenantID, code)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return code, nil
+		}
+	}
+	return "", ErrInviteCodeCollision
+}
+
+func (s *Service) nextDraftInviteCode(ctx context.Context, tenantID uint64) (string, error) {
+	for range 8 {
+		buffer := make([]byte, 16)
+		if _, err := io.ReadFull(rand.Reader, buffer); err != nil {
+			return "", err
+		}
+		code := "__draft__:" + hex.EncodeToString(buffer)
 		exists, err := s.repo.InviteCodeExists(ctx, tenantID, code)
 		if err != nil {
 			return "", err

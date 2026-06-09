@@ -76,6 +76,12 @@ type publishExamRequest struct {
 	ResultStrategy   string                     `json:"result_strategy"`
 	PublishMode      string                     `json:"publish_mode"`
 	ScorePublishTime *int64                     `json:"score_publish_time"`
+	Status           string                     `json:"status"`
+}
+
+type examStatusRequest struct {
+	TenantID uint64 `json:"tenant_id"`
+	Status   string `json:"status"`
 }
 
 type resolveExamInviteRequest struct {
@@ -584,6 +590,11 @@ func (h examHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space_id 必须是正整数"))
 		return
 	}
+	paperID, err := readOptionalUintQuery(c, "paper_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "paper_id 必须是正整数"))
+		return
+	}
 	if _, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.tenantUsers); err != nil {
 		writePermissionOrInternalError(c, err, "构建考试权限上下文失败")
 		return
@@ -593,7 +604,7 @@ func (h examHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), serviceexam.ListInput{TenantID: tenantID, SpaceID: spaceID, Page: page, PageSize: pageSize})
+	result, err := h.service.List(c.Request.Context(), serviceexam.ListInput{TenantID: tenantID, SpaceID: spaceID, PaperID: paperID, Page: page, PageSize: pageSize})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试列表失败"))
 		return
@@ -1122,7 +1133,7 @@ func (h examHandler) publish(c *gin.Context) {
 			ScopeSpaceIDs: scopeSpaceIDs,
 		})
 	}
-	published, err := h.service.PublishWithTarget(c.Request.Context(), serviceexam.PublishWithTargetInput{
+	created, err := h.service.CreateWithTarget(c.Request.Context(), serviceexam.CreateWithTargetInput{
 		TenantID:         request.TenantID,
 		PaperID:          request.PaperID,
 		Name:             request.Name,
@@ -1134,6 +1145,7 @@ func (h examHandler) publish(c *gin.Context) {
 		ResultStrategy:   request.ResultStrategy,
 		PublishMode:      request.PublishMode,
 		ScorePublishTime: request.ScorePublishTime,
+		Status:           request.normalizedStatus(),
 		ActorID:          principal.UserID,
 		ActorType:        principal.SubjectType,
 		ActorRole:        principal.Role,
@@ -1142,10 +1154,70 @@ func (h examHandler) publish(c *gin.Context) {
 		writeExamServiceError(c, err)
 		return
 	}
-	result := examToResponse(published)
+	result := examToResponse(created)
 	result.TargetType = targets[0].TargetType
 	result.TargetID = targets[0].TargetID
 	c.JSON(http.StatusOK, response.OK(result))
+}
+
+func (h examHandler) updateStatus(c *gin.Context) {
+	examID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "考试 ID 必须是正整数"))
+		return
+	}
+	var request examStatusRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if !h.authorizeExamBusiness(c, request.TenantID) {
+		return
+	}
+	principal, err := h.liveTenantPrincipal(c, request.TenantID)
+	if err != nil {
+		writePermissionContextError(c, err, "读取当前操作人失败")
+		return
+	}
+	permissionContext, err := h.managementPermissionContext(c, request.TenantID, 0)
+	if err != nil {
+		writePermissionContextError(c, err, "构建考试状态权限上下文失败")
+		return
+	}
+	detail, err := h.management.GetDetail(c.Request.Context(), serviceexam.ManagementDetailInput{
+		Permission: permissionContext,
+		TenantID:   request.TenantID,
+		ExamID:     examID,
+	})
+	if err != nil {
+		if errors.Is(err, permission.ErrForbidden) {
+			writePermissionOrInternalError(c, err, "无权更新考试状态")
+			return
+		}
+		writeExamServiceError(c, err)
+		return
+	}
+	if !detail.Permissions.CanUpdateSettings {
+		writePermissionOrInternalError(c, permission.ErrForbidden, "无权更新考试状态")
+		return
+	}
+	updated, err := h.service.UpdateStatus(c.Request.Context(), serviceexam.UpdateStatusInput{
+		TenantID:  request.TenantID,
+		ExamID:    examID,
+		Status:    request.Status,
+		ActorID:   principal.UserID,
+		ActorType: principal.SubjectType,
+		ActorRole: principal.Role,
+	})
+	if err != nil {
+		writeExamServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(examToResponse(updated)))
 }
 
 func (h examHandler) authorizeExamBusiness(c *gin.Context, tenantID uint64) bool {
@@ -1664,6 +1736,7 @@ func (h examHandler) listPendingReviews(c *gin.Context) {
 		Permission: permissionContext,
 		TenantID:   tenantID,
 		ExamID:     examID,
+		Keyword:    c.Query("search"),
 	})
 	if err != nil {
 		writePermissionOrInternalError(c, err, "读取待阅卷列表失败")
@@ -1894,6 +1967,14 @@ func validPublishMode(mode string) bool {
 	return mode == serviceexam.PublishModeImmediateScore || mode == serviceexam.PublishModeManualPublish
 }
 
+func validCreateExamStatus(status string) bool {
+	return status == "" || status == serviceexam.StatusDraft || status == serviceexam.StatusPublished
+}
+
+func validUpdateExamStatus(status string) bool {
+	return status == serviceexam.StatusPublished || status == serviceexam.StatusClosed || status == serviceexam.StatusDisabled
+}
+
 func (r publishExamRequest) validate() error {
 	if r.TenantID == 0 {
 		return errors.New("tenant_id 必须是正整数")
@@ -1910,8 +1991,8 @@ func (r publishExamRequest) validate() error {
 	if r.DurationMinutes <= 0 {
 		return errors.New("duration_minutes 必须是正整数")
 	}
-	if r.MaxAttempts <= 0 {
-		return errors.New("max_attempts 必须是正整数")
+	if r.MaxAttempts < 0 {
+		return errors.New("max_attempts 必须是 0 或正整数")
 	}
 	if r.ResultStrategy == "" {
 		return errors.New("result_strategy 不能为空")
@@ -1927,6 +2008,26 @@ func (r publishExamRequest) validate() error {
 	}
 	if r.StartTime <= 0 || r.EndTime <= r.StartTime {
 		return errors.New("考试时间范围不合法")
+	}
+	if !validCreateExamStatus(r.Status) {
+		return errors.New("status 只能是 draft 或 published")
+	}
+	return nil
+}
+
+func (r publishExamRequest) normalizedStatus() string {
+	if r.Status == "" {
+		return serviceexam.StatusPublished
+	}
+	return r.Status
+}
+
+func (r examStatusRequest) validate() error {
+	if r.TenantID == 0 {
+		return errors.New("tenant_id 必须是正整数")
+	}
+	if !validUpdateExamStatus(r.Status) {
+		return errors.New("status 只能是 published、closed 或 disabled")
 	}
 	return nil
 }
@@ -1980,6 +2081,7 @@ func writeExamServiceError(c *gin.Context, err error) {
 		errors.Is(err, serviceexam.ErrPaperNotEnabled) ||
 		errors.Is(err, serviceexam.ErrDuplicateExamTarget) ||
 		errors.Is(err, serviceexam.ErrExamTargetRequired) ||
+		errors.Is(err, serviceexam.ErrInvalidExamStatus) ||
 		errors.Is(err, serviceexam.ErrRuleLiveQuestionPoolInsufficient) ||
 		errors.Is(err, serviceexam.ErrLoginRequiredForInvite) ||
 		errors.Is(err, serviceexam.ErrMaxAttemptsReached) ||
@@ -2301,12 +2403,19 @@ func examToResponse(exam serviceexam.Exam) examResponse {
 		ResultStrategy:   exam.ResultStrategy,
 		PublishMode:      exam.PublishMode,
 		ScorePublishTime: exam.ScorePublishTime,
-		InviteCode:       exam.InviteCode,
+		InviteCode:       examInviteCodeForResponse(exam),
 		Status:           exam.Status,
 		TargetType:       exam.TargetType,
 		TargetID:         exam.TargetID,
 		Targets:          targets,
 	}
+}
+
+func examInviteCodeForResponse(exam serviceexam.Exam) string {
+	if exam.Status == serviceexam.StatusDraft {
+		return ""
+	}
+	return exam.InviteCode
 }
 
 func examManagementDetailToResponse(detail serviceexam.ManagementDetail) examManagementDetailResponse {

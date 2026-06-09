@@ -74,6 +74,21 @@ func TestCreateDraftAndPublishExamValidatesSettingsAndFreezesRuleLivePool(t *tes
 
 	_, err = svc.Publish(context.Background(), PublishInput{
 		TenantID:        10,
+		ExamID:          2,
+		PaperID:         101,
+		StartTime:       fixedUnixMilli,
+		EndTime:         fixedUnixMilli + 120*minuteMillis,
+		DurationMinutes: 60,
+		MaxAttempts:     0,
+		ResultStrategy:  ResultStrategyHighest,
+		PublishMode:     PublishModeManualPublish,
+	})
+	if !errors.Is(err, ErrShortTextCannotRepeatAttempt) {
+		t.Fatalf("expected unlimited short text exam to return ErrShortTextCannotRepeatAttempt, got %v", err)
+	}
+
+	_, err = svc.Publish(context.Background(), PublishInput{
+		TenantID:        10,
 		ExamID:          3,
 		PaperID:         101,
 		StartTime:       fixedUnixMilli,
@@ -156,6 +171,7 @@ func TestTargetsRejectDuplicatesAndInviteRequiresLogin(t *testing.T) {
 		},
 		examsByInvite: map[string]Exam{
 			"INVITE001": {ID: 1, TenantID: 10, Status: StatusPublished},
+			"DISABLED":  {ID: 2, TenantID: 10, Status: StatusDisabled},
 		},
 	}
 	svc := NewService(ServiceOptions{Repo: repo, Now: fixedNow})
@@ -188,6 +204,11 @@ func TestTargetsRejectDuplicatesAndInviteRequiresLogin(t *testing.T) {
 	}
 	if exam.ID != 1 {
 		t.Fatalf("expected exam ID 1, got %d", exam.ID)
+	}
+
+	_, err = svc.ResolveInvite(context.Background(), ResolveInviteInput{InviteCode: "DISABLED", UserID: 20})
+	if !errors.Is(err, ErrExamNotEligible) {
+		t.Fatalf("expected ErrExamNotEligible for disabled invite, got %v", err)
 	}
 }
 
@@ -253,6 +274,431 @@ func TestPublishWithTargetSupportsMultipleTargetsAndKeepsSingleTargetCompatibili
 	}
 	if len(repo.addedTargets) != 1 || repo.addedTargets[0].TargetID != 302 {
 		t.Fatalf("expected compatible single target, got %#v", repo.addedTargets)
+	}
+}
+
+func TestCreateWithTargetCanSaveDraftAndPublishLater(t *testing.T) {
+	repo := &fakeRepository{
+		inviteCodes: map[string]bool{},
+		papers: map[uint64]Paper{
+			100: {ID: 100, BuildMode: BuildModeManual, Status: constant.PaperStatusEnabled},
+		},
+		exams: map[uint64]Exam{},
+	}
+	svc := NewService(ServiceOptions{
+		Repo:          repo,
+		CodeGenerator: &fakeCodeGenerator{codes: []string{"INVITE-DRAFT"}},
+		TokenIssuer:   fakeTokenIssuer{token: "exam-token"},
+		Now:           fixedNow,
+	})
+
+	draft, err := svc.CreateWithTarget(context.Background(), CreateWithTargetInput{
+		TenantID:        10,
+		PaperID:         100,
+		Name:            "草稿考试",
+		Status:          StatusDraft,
+		Targets:         []Target{{TargetType: TargetTypeSpace, TargetID: 301}},
+		StartTime:       fixedUnixMilli,
+		EndTime:         fixedUnixMilli + 120*minuteMillis,
+		DurationMinutes: 60,
+		MaxAttempts:     1,
+		ResultStrategy:  ResultStrategyLatest,
+		PublishMode:     PublishModeManualPublish,
+	})
+	if err != nil {
+		t.Fatalf("CreateWithTarget draft returned error: %v", err)
+	}
+	if draft.Status != StatusDraft || draft.InviteCode != "" {
+		t.Fatalf("expected draft without invite code, got %#v", draft)
+	}
+	if len(repo.addedTargets) != 1 || repo.addedTargets[0].TargetID != 301 {
+		t.Fatalf("expected draft target saved, got %#v", repo.addedTargets)
+	}
+
+	published, err := svc.UpdateStatus(context.Background(), UpdateStatusInput{
+		TenantID: 10,
+		ExamID:   draft.ID,
+		Status:   StatusPublished,
+		ActorID:  501,
+	})
+	if err != nil {
+		t.Fatalf("UpdateStatus publish returned error: %v", err)
+	}
+	if published.Status != StatusPublished || published.InviteCode != "INVITE-DRAFT" {
+		t.Fatalf("expected published draft with invite code, got %#v", published)
+	}
+	if len(repo.operationLogs) != 1 || repo.operationLogs[0].OperationType != OperationTypePublishExam || repo.operationLogs[0].ActorID != 501 {
+		t.Fatalf("expected publish operation log for draft publish, got %#v", repo.operationLogs)
+	}
+}
+
+func TestUpdateStatusRejectsRepublishingClosedOrDisabledExam(t *testing.T) {
+	for _, item := range []struct {
+		name   string
+		status string
+	}{
+		{name: "closed", status: StatusClosed},
+		{name: "disabled", status: StatusDisabled},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			repo := &fakeRepository{
+				inviteCodes: map[string]bool{},
+				papers: map[uint64]Paper{
+					100: {ID: 100, BuildMode: BuildModeManual, Status: constant.PaperStatusEnabled},
+				},
+				exams: map[uint64]Exam{
+					501: {
+						ID:              501,
+						TenantID:        10,
+						PaperID:         100,
+						Name:            "不可重新发布考试",
+						StartTime:       fixedUnixMilli - 60*minuteMillis,
+						EndTime:         fixedUnixMilli,
+						DurationMinutes: 60,
+						MaxAttempts:     1,
+						ResultStrategy:  ResultStrategyLatest,
+						PublishMode:     PublishModeManualPublish,
+						InviteCode:      "PM2026",
+						Status:          item.status,
+					},
+				},
+			}
+			svc := NewService(ServiceOptions{
+				Repo:          repo,
+				CodeGenerator: &fakeCodeGenerator{codes: []string{"SHOULD-NOT-REPUBLISH"}},
+				Now:           fixedNow,
+			})
+
+			_, err := svc.UpdateStatus(context.Background(), UpdateStatusInput{
+				TenantID: 10,
+				ExamID:   501,
+				Status:   StatusPublished,
+				ActorID:  501,
+			})
+			if !errors.Is(err, ErrInvalidExamStatus) {
+				t.Fatalf("expected ErrInvalidExamStatus, got %v", err)
+			}
+			if repo.exams[501].Status != item.status || repo.exams[501].InviteCode != "PM2026" {
+				t.Fatalf("expected exam to remain unchanged, got %#v", repo.exams[501])
+			}
+		})
+	}
+}
+
+func TestUpdateStatusRejectsClosingDraftOrDisabledExam(t *testing.T) {
+	for _, item := range []struct {
+		name   string
+		status string
+	}{
+		{name: "draft", status: StatusDraft},
+		{name: "disabled", status: StatusDisabled},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			repo := &fakeRepository{
+				exams: map[uint64]Exam{
+					501: {
+						ID:              501,
+						TenantID:        10,
+						PaperID:         100,
+						Name:            "不可提前结束考试",
+						StartTime:       fixedUnixMilli - 60*minuteMillis,
+						EndTime:         fixedUnixMilli + 60*minuteMillis,
+						DurationMinutes: 60,
+						MaxAttempts:     1,
+						ResultStrategy:  ResultStrategyLatest,
+						PublishMode:     PublishModeManualPublish,
+						InviteCode:      "PM2026",
+						Status:          item.status,
+					},
+				},
+			}
+			svc := NewService(ServiceOptions{
+				Repo: repo,
+				Now:  fixedNow,
+			})
+
+			_, err := svc.UpdateStatus(context.Background(), UpdateStatusInput{
+				TenantID: 10,
+				ExamID:   501,
+				Status:   StatusClosed,
+				ActorID:  501,
+			})
+			if !errors.Is(err, ErrInvalidExamStatus) {
+				t.Fatalf("expected ErrInvalidExamStatus, got %v", err)
+			}
+			if repo.exams[501].Status != item.status || repo.exams[501].EndTime != fixedUnixMilli+60*minuteMillis {
+				t.Fatalf("expected exam to remain unchanged, got %#v", repo.exams[501])
+			}
+			if len(repo.operationLogs) != 0 {
+				t.Fatalf("expected no close operation log, got %#v", repo.operationLogs)
+			}
+		})
+	}
+}
+
+func TestUpdateStatusRejectsDisablingDraftOrClosedExam(t *testing.T) {
+	for _, item := range []struct {
+		name   string
+		status string
+	}{
+		{name: "draft", status: StatusDraft},
+		{name: "closed", status: StatusClosed},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			repo := &fakeRepository{
+				exams: map[uint64]Exam{
+					501: {
+						ID:              501,
+						TenantID:        10,
+						PaperID:         100,
+						Name:            "不可禁用考试",
+						StartTime:       fixedUnixMilli - 60*minuteMillis,
+						EndTime:         fixedUnixMilli + 60*minuteMillis,
+						DurationMinutes: 60,
+						MaxAttempts:     1,
+						ResultStrategy:  ResultStrategyLatest,
+						PublishMode:     PublishModeManualPublish,
+						InviteCode:      "PM2026",
+						Status:          item.status,
+					},
+				},
+			}
+			svc := NewService(ServiceOptions{
+				Repo: repo,
+				Now:  fixedNow,
+			})
+
+			_, err := svc.UpdateStatus(context.Background(), UpdateStatusInput{
+				TenantID: 10,
+				ExamID:   501,
+				Status:   StatusDisabled,
+				ActorID:  501,
+			})
+			if !errors.Is(err, ErrInvalidExamStatus) {
+				t.Fatalf("expected ErrInvalidExamStatus, got %v", err)
+			}
+			if repo.exams[501].Status != item.status {
+				t.Fatalf("expected exam to remain %q, got %#v", item.status, repo.exams[501])
+			}
+			if len(repo.operationLogs) != 0 {
+				t.Fatalf("expected no disable operation log, got %#v", repo.operationLogs)
+			}
+		})
+	}
+}
+
+func TestUpdateStatusRejectsPublishingDraftWithoutTarget(t *testing.T) {
+	repo := &fakeRepository{
+		inviteCodes: map[string]bool{},
+		papers: map[uint64]Paper{
+			100: {ID: 100, BuildMode: BuildModeManual, Status: constant.PaperStatusEnabled},
+		},
+		exams: map[uint64]Exam{
+			501: {
+				ID:              501,
+				TenantID:        10,
+				PaperID:         100,
+				Name:            "无范围草稿考试",
+				StartTime:       fixedUnixMilli,
+				EndTime:         fixedUnixMilli + 120*minuteMillis,
+				DurationMinutes: 60,
+				MaxAttempts:     1,
+				ResultStrategy:  ResultStrategyLatest,
+				PublishMode:     PublishModeManualPublish,
+				Status:          StatusDraft,
+			},
+		},
+	}
+	svc := NewService(ServiceOptions{
+		Repo:          repo,
+		CodeGenerator: &fakeCodeGenerator{codes: []string{"SHOULD-NOT-PUBLISH"}},
+		Now:           fixedNow,
+	})
+
+	_, err := svc.UpdateStatus(context.Background(), UpdateStatusInput{
+		TenantID: 10,
+		ExamID:   501,
+		Status:   StatusPublished,
+		ActorID:  501,
+	})
+	if !errors.Is(err, ErrExamTargetRequired) {
+		t.Fatalf("expected ErrExamTargetRequired, got %v", err)
+	}
+	if repo.exams[501].Status != StatusDraft || repo.exams[501].InviteCode != "" {
+		t.Fatalf("expected draft to remain unchanged, got %#v", repo.exams[501])
+	}
+	if len(repo.operationLogs) != 0 {
+		t.Fatalf("expected no publish operation log, got %#v", repo.operationLogs)
+	}
+}
+
+func TestUpdateStatusRejectsConcurrentDraftPublishChange(t *testing.T) {
+	repo := &fakeRepository{
+		inviteCodes: map[string]bool{},
+		papers: map[uint64]Paper{
+			100: {ID: 100, BuildMode: BuildModeManual, Status: constant.PaperStatusEnabled},
+		},
+		exams: map[uint64]Exam{
+			501: {
+				ID:              501,
+				TenantID:        10,
+				PaperID:         100,
+				Name:            "并发发布考试",
+				StartTime:       fixedUnixMilli,
+				EndTime:         fixedUnixMilli + 120*minuteMillis,
+				DurationMinutes: 60,
+				MaxAttempts:     1,
+				ResultStrategy:  ResultStrategyLatest,
+				PublishMode:     PublishModeManualPublish,
+				Status:          StatusDraft,
+				Targets:         []Target{{TenantID: 10, ExamID: 501, TargetType: TargetTypeSpace, TargetID: 301}},
+			},
+		},
+		managementTargets: map[uint64][]Target{
+			501: {{TenantID: 10, ExamID: 501, TargetType: TargetTypeSpace, TargetID: 301}},
+		},
+		statusBeforePublish: StatusDisabled,
+	}
+	svc := NewService(ServiceOptions{
+		Repo:          repo,
+		CodeGenerator: &fakeCodeGenerator{codes: []string{"SHOULD-NOT-PUBLISH"}},
+		Now:           fixedNow,
+	})
+
+	_, err := svc.UpdateStatus(context.Background(), UpdateStatusInput{
+		TenantID: 10,
+		ExamID:   501,
+		Status:   StatusPublished,
+		ActorID:  501,
+	})
+	if !errors.Is(err, ErrInvalidExamStatus) {
+		t.Fatalf("expected ErrInvalidExamStatus, got %v", err)
+	}
+	if repo.exams[501].Status != StatusDisabled || repo.exams[501].InviteCode != "" {
+		t.Fatalf("expected concurrent status to stay unchanged, got %#v", repo.exams[501])
+	}
+	if len(repo.operationLogs) != 0 {
+		t.Fatalf("expected no publish operation log, got %#v", repo.operationLogs)
+	}
+}
+
+func TestUpdateStatusRejectsConcurrentCloseOrDisableChange(t *testing.T) {
+	for _, item := range []struct {
+		name       string
+		nextStatus string
+		stale      string
+	}{
+		{name: "close", nextStatus: StatusClosed, stale: StatusDisabled},
+		{name: "disable", nextStatus: StatusDisabled, stale: StatusClosed},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			repo := &fakeRepository{
+				exams: map[uint64]Exam{
+					501: {
+						ID:              501,
+						TenantID:        10,
+						PaperID:         100,
+						Name:            "并发状态考试",
+						StartTime:       fixedUnixMilli - 60*minuteMillis,
+						EndTime:         fixedUnixMilli + 60*minuteMillis,
+						DurationMinutes: 60,
+						MaxAttempts:     1,
+						ResultStrategy:  ResultStrategyLatest,
+						PublishMode:     PublishModeManualPublish,
+						InviteCode:      "PM2026",
+						Status:          StatusPublished,
+					},
+				},
+				statusBeforeUpdate: item.stale,
+			}
+			svc := NewService(ServiceOptions{
+				Repo: repo,
+				Now:  fixedNow,
+			})
+
+			_, err := svc.UpdateStatus(context.Background(), UpdateStatusInput{
+				TenantID: 10,
+				ExamID:   501,
+				Status:   item.nextStatus,
+				ActorID:  501,
+			})
+			if !errors.Is(err, ErrInvalidExamStatus) {
+				t.Fatalf("expected ErrInvalidExamStatus, got %v", err)
+			}
+			if repo.exams[501].Status != item.stale {
+				t.Fatalf("expected concurrent status %q to remain, got %#v", item.stale, repo.exams[501])
+			}
+			if len(repo.operationLogs) != 0 {
+				t.Fatalf("expected no operation log, got %#v", repo.operationLogs)
+			}
+		})
+	}
+}
+
+func TestUpdateStatusClosesAndDisablesExam(t *testing.T) {
+	repo := &fakeRepository{
+		exams: map[uint64]Exam{
+			501: {
+				ID:              501,
+				TenantID:        10,
+				PaperID:         100,
+				Name:            "已发布考试",
+				StartTime:       fixedUnixMilli - 60*minuteMillis,
+				EndTime:         fixedUnixMilli + 60*minuteMillis,
+				DurationMinutes: 60,
+				MaxAttempts:     1,
+				ResultStrategy:  ResultStrategyLatest,
+				PublishMode:     PublishModeManualPublish,
+				InviteCode:      "PM2026",
+				Status:          StatusPublished,
+			},
+			502: {
+				ID:              502,
+				TenantID:        10,
+				PaperID:         100,
+				Name:            "待禁用考试",
+				StartTime:       fixedUnixMilli - 60*minuteMillis,
+				EndTime:         fixedUnixMilli + 60*minuteMillis,
+				DurationMinutes: 60,
+				MaxAttempts:     1,
+				ResultStrategy:  ResultStrategyLatest,
+				PublishMode:     PublishModeManualPublish,
+				InviteCode:      "PM2027",
+				Status:          StatusPublished,
+			},
+		},
+	}
+	svc := NewService(ServiceOptions{
+		Repo:          repo,
+		CodeGenerator: &fakeCodeGenerator{codes: []string{"SHOULD-NOT-USE"}},
+		TokenIssuer:   fakeTokenIssuer{token: "exam-token"},
+		Now:           fixedNow,
+	})
+
+	closed, err := svc.UpdateStatus(context.Background(), UpdateStatusInput{
+		TenantID: 10,
+		ExamID:   501,
+		Status:   StatusClosed,
+		ActorID:  501,
+	})
+	if err != nil {
+		t.Fatalf("UpdateStatus closed returned error: %v", err)
+	}
+	if closed.Status != StatusClosed || closed.EndTime != fixedUnixMilli {
+		t.Fatalf("expected closed exam end_time to be now, got %#v", closed)
+	}
+
+	disabled, err := svc.UpdateStatus(context.Background(), UpdateStatusInput{
+		TenantID: 10,
+		ExamID:   502,
+		Status:   StatusDisabled,
+		ActorID:  501,
+	})
+	if err != nil {
+		t.Fatalf("UpdateStatus disabled returned error: %v", err)
+	}
+	if disabled.Status != StatusDisabled {
+		t.Fatalf("expected disabled exam, got %#v", disabled)
 	}
 }
 
@@ -1044,6 +1490,18 @@ func TestStartExamIsIdempotentAndIssuesOpaqueAttemptToken(t *testing.T) {
 		t.Fatalf("expected ErrMaxAttemptsReached, got %v", err)
 	}
 
+	repo.exams[1] = Exam{ID: 1, TenantID: 10, PaperID: 100, StartTime: fixedUnixMilli - minuteMillis, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30, MaxAttempts: 0, Status: StatusPublished}
+	repo.attemptCount = 50
+	repo.createdAttempt = Attempt{}
+	started, err = svc.StartExam(context.Background(), StartInput{TenantID: 10, ExamID: 1, UserID: 20})
+	if err != nil {
+		t.Fatalf("StartExam with unlimited attempts returned error: %v", err)
+	}
+	if repo.createdAttempt.AttemptNo != 51 {
+		t.Fatalf("expected unlimited exam to create attempt no 51, got %d", repo.createdAttempt.AttemptNo)
+	}
+
+	repo.exams[1] = Exam{ID: 1, TenantID: 10, PaperID: 100, StartTime: fixedUnixMilli - minuteMillis, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30, MaxAttempts: 2, Status: StatusPublished}
 	repo.attemptCount = 1
 	repo.createdAttempt = Attempt{}
 	started, err = svc.StartExam(context.Background(), StartInput{TenantID: 10, ExamID: 1, UserID: 20})
@@ -1108,6 +1566,7 @@ func TestStartExamValidatesQualificationAndTime(t *testing.T) {
 		exams: map[uint64]Exam{
 			1: {ID: 1, TenantID: 10, StartTime: fixedUnixMilli + minuteMillis, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30, MaxAttempts: 1, Status: StatusPublished},
 			2: {ID: 2, TenantID: 10, StartTime: fixedUnixMilli - 60*minuteMillis, EndTime: fixedUnixMilli - minuteMillis, DurationMinutes: 30, MaxAttempts: 1, Status: StatusPublished},
+			3: {ID: 3, TenantID: 10, StartTime: fixedUnixMilli - minuteMillis, EndTime: fixedUnixMilli + 60*minuteMillis, DurationMinutes: 30, MaxAttempts: 1, Status: StatusDraft},
 		},
 		eligible: false,
 	}
@@ -1127,6 +1586,11 @@ func TestStartExamValidatesQualificationAndTime(t *testing.T) {
 	_, err = svc.StartExam(context.Background(), StartInput{TenantID: 10, ExamID: 2, UserID: 20})
 	if !errors.Is(err, ErrExamEnded) {
 		t.Fatalf("expected ErrExamEnded, got %v", err)
+	}
+
+	_, err = svc.StartExam(context.Background(), StartInput{TenantID: 10, ExamID: 3, UserID: 20})
+	if !errors.Is(err, ErrExamNotEligible) {
+		t.Fatalf("expected ErrExamNotEligible for draft exam, got %v", err)
 	}
 }
 
@@ -1269,6 +1733,9 @@ type fakeRepository struct {
 	liveQuestions      []SnapshotSourceQuestion
 	usedFixedQuestions bool
 	usedFrozenPool     bool
+
+	statusBeforePublish string
+	statusBeforeUpdate  string
 }
 
 func (r *fakeRepository) ListExams(ctx context.Context, input ListInput) (pagination.Result[Exam], error) {
@@ -1289,6 +1756,9 @@ func (r *fakeRepository) ListExams(ctx context.Context, input ListInput) (pagina
 
 func (r *fakeRepository) CreateExam(ctx context.Context, exam Exam) (Exam, error) {
 	exam.ID = 1
+	if r.exams != nil {
+		r.exams[exam.ID] = exam
+	}
 	return exam, nil
 }
 
@@ -1304,10 +1774,27 @@ func (r *fakeRepository) ListRuleLiveCandidates(ctx context.Context, tenantID ui
 	return r.liveCandidates, nil
 }
 
-func (r *fakeRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam Exam, pool []LivePoolItem) (Exam, error) {
+func (r *fakeRepository) PublishExamAndFreezeLivePool(ctx context.Context, exam Exam, pool []LivePoolItem, expectedStatus string, log *OperationLog) (Exam, error) {
+	if r.statusBeforePublish != "" {
+		stale := r.exams[exam.ID]
+		stale.Status = r.statusBeforePublish
+		stale.InviteCode = ""
+		r.exams[exam.ID] = stale
+	}
+	if expectedStatus != "" && r.exams[exam.ID].Status != expectedStatus {
+		return Exam{}, ErrInvalidExamStatus
+	}
 	r.updatedExam = exam
 	r.frozeLivePool = len(pool) > 0
 	r.frozenPool = append([]LivePoolItem(nil), pool...)
+	if r.exams != nil {
+		r.exams[exam.ID] = exam
+	}
+	if log != nil {
+		publishLog := *log
+		publishLog.ExamID = exam.ID
+		r.operationLogs = append(r.operationLogs, publishLog)
+	}
 	return exam, nil
 }
 
@@ -1335,6 +1822,35 @@ func (r *fakeRepository) CreatePublishedExamWithTargets(ctx context.Context, exa
 		publishLog.ExamID = exam.ID
 		// fake 仓储同步记录发布日志，保证 service 测试能发现审计日志遗漏。
 		r.operationLogs = append(r.operationLogs, publishLog)
+	}
+	if r.exams != nil {
+		stored := exam
+		stored.Targets = append([]Target(nil), r.addedTargets...)
+		r.exams[stored.ID] = stored
+	}
+	return exam, nil
+}
+
+func (r *fakeRepository) UpdateExamStatus(ctx context.Context, input UpdateExamStatusRepositoryInput) (Exam, error) {
+	if r.statusBeforeUpdate != "" {
+		stale := r.exams[input.ExamID]
+		stale.Status = r.statusBeforeUpdate
+		r.exams[input.ExamID] = stale
+	}
+	if input.ExpectedStatus != "" && r.exams[input.ExamID].Status != input.ExpectedStatus {
+		return Exam{}, ErrInvalidExamStatus
+	}
+	exam := r.exams[input.ExamID]
+	exam.Status = input.Status
+	if input.InviteCode != "" {
+		exam.InviteCode = input.InviteCode
+	}
+	if input.EndTime != nil {
+		exam.EndTime = *input.EndTime
+	}
+	r.exams[input.ExamID] = exam
+	if input.Log.OperationType != "" {
+		r.operationLogs = append(r.operationLogs, input.Log)
 	}
 	return exam, nil
 }
@@ -1558,14 +2074,14 @@ func (r *fakeRepository) SaveAttemptQuestions(ctx context.Context, questions []A
 	return append([]AttemptQuestion(nil), questions...), nil
 }
 
-func (r *fakeRepository) UpdateScorePublishConfig(ctx context.Context, tenantID uint64, examID uint64, publishMode string, scorePublishTime *int64, log *OperationLog) (Exam, error) {
-	exam := r.exams[examID]
-	exam.PublishMode = publishMode
-	exam.ScorePublishTime = scorePublishTime
-	r.exams[examID] = exam
-	if log != nil {
-		publishLog := *log
-		publishLog.ExamID = examID
+func (r *fakeRepository) UpdateScorePublishConfig(ctx context.Context, input UpdateScorePublishConfigRepositoryInput) (Exam, error) {
+	exam := r.exams[input.ExamID]
+	exam.PublishMode = input.PublishMode
+	exam.ScorePublishTime = input.ScorePublishTime
+	r.exams[input.ExamID] = exam
+	if input.Log != nil {
+		publishLog := *input.Log
+		publishLog.ExamID = input.ExamID
 		// fake 仓储记录成绩发布日志，避免 service 测试遗漏发布审计。
 		r.operationLogs = append(r.operationLogs, publishLog)
 	}

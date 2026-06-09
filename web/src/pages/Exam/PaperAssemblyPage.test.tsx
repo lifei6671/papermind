@@ -1,4 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -92,17 +94,34 @@ test("教师新建试卷需要先填写基础信息再进入组卷页", async ()
   await screen.findByRole("row", { name: /高一语文月考试卷/ });
   await user.click(screen.getByRole("button", { name: "新建试卷" }));
 
-  expect(screen.getAllByText("新建试卷").some((node) => node.classList.contains("ant-modal-title"))).toBe(true);
-  const dialog = screen.getByRole("dialog");
+  const dialog = screen.getByRole("dialog", { name: "新建试卷抽屉" });
   expect(dialog).toBeInTheDocument();
-  expect(dialog).toHaveClass("ant-modal");
-  expect(document.querySelector(".platform-dialog")).not.toBeInTheDocument();
+  expect(dialog.closest(".ant-drawer")).toBeInTheDocument();
+  expect(document.querySelector(".ant-modal")).not.toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "返回" })).toBeInTheDocument();
+  expect(within(dialog).getByText("|")).toHaveClass("tenant-resource-drawer__separator");
+  expect(within(dialog).getByText("新建试卷")).toHaveClass("tenant-resource-drawer__space-name");
+  for (const label of ["试卷名称", "组卷方式", "考试时长", "适用年级"]) {
+    const field = screen.getByLabelText(label).closest(".field");
+    expect(field).not.toBeNull();
+    expect(within(field as HTMLElement).getByText("*")).toHaveClass("required-marker");
+  }
   await user.type(screen.getByLabelText("试卷名称"), "高一数学周测");
   await user.selectOptions(screen.getByLabelText("组卷方式"), "rule_fixed");
   await user.clear(screen.getByLabelText("考试时长"));
   await user.type(screen.getByLabelText("考试时长"), "90");
   await user.clear(screen.getByLabelText("适用年级"));
   await user.type(screen.getByLabelText("适用年级"), "高一");
+  const descriptionEditor = screen.getByLabelText("试卷说明").closest(".markdown-editor");
+  expect(descriptionEditor).not.toBeNull();
+  expect(descriptionEditor?.querySelector(".w-md-editor")).toBeInTheDocument();
+  expect(within(descriptionEditor as HTMLElement).getByTitle("加粗（Ctrl+B）")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("试卷说明"), {
+    target: { value: "## 周测说明\n- 覆盖函数与导数\n- **允许草稿纸**" },
+  });
+  await waitFor(() => {
+    expect(within(descriptionEditor as HTMLElement).getByRole("heading", { name: "周测说明" })).toBeInTheDocument();
+  });
   await user.click(screen.getByRole("button", { name: "保存并组卷" }));
 
   await waitFor(() => {
@@ -110,7 +129,7 @@ test("教师新建试卷需要先填写基础信息再进入组卷页", async ()
       tenantID: 10,
       spaceID: 301,
       name: "高一数学周测",
-      description: "",
+      description: "## 周测说明\n- 覆盖函数与导数\n- **允许草稿纸**",
       durationMinutes: 90,
       gradeLevel: "高一",
     });
@@ -125,20 +144,35 @@ test("教师新建试卷需要先填写基础信息再进入组卷页", async ()
   expect(await screen.findByText("/papers/101/edit")).toBeInTheDocument();
 });
 
+test("新建试卷抽屉表单保持紧凑控件高度", () => {
+  const css = readFileSync(join(process.cwd(), "src/styles/global.css"), "utf8");
+  const formRule = css.match(/\.exam-paper-create-form\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const nativeControlRule = css.match(/\.exam-paper-create-form \.field > input,[\s\S]*?\.exam-paper-create-form \.field > select\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const actionButtonRule = css.match(/\.exam-paper-create-form \.platform-dialog__actions \.primary-button,[\s\S]*?\.exam-paper-create-form \.platform-dialog__actions \.secondary-button\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const editorContentRule = css.match(/\.exam-paper-create-form \.markdown-editor \.w-md-editor-show-live \.w-md-editor-content,[\s\S]*?\.exam-paper-create-form \.markdown-editor \.w-md-editor-show-live \.w-md-editor-text-input\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  expect(formRule).toContain("align-content: start");
+  expect(nativeControlRule).toContain("height: 38px !important");
+  expect(nativeControlRule).toContain("min-height: 38px !important");
+  expect(actionButtonRule).toContain("height: 38px");
+  expect(actionButtonRule).toContain("min-height: 38px");
+  expect(editorContentRule).toContain("min-height: 180px !important");
+});
+
 test("教师可以搜索和刷新试卷列表", async () => {
   const user = userEvent.setup();
   const api = createPaperApiDouble();
   renderPaperAssemblyRoutes(api);
 
   await screen.findByRole("row", { name: /高一语文月考试卷/ });
-  const refreshResult = deferred<Awaited<ReturnType<PaperAssemblyAPI["listPapers"]>>>();
-  vi.mocked(api.listPapers).mockReturnValueOnce(refreshResult.promise);
 
   await user.type(screen.getByLabelText("搜索试卷"), "不存在");
   await user.click(screen.getByRole("button", { name: "搜索" }));
 
-  expect(screen.queryByRole("row", { name: /高一语文月考试卷/ })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole("row", { name: /高一语文月考试卷/ })).not.toBeInTheDocument());
 
+  const refreshResult = deferred<Awaited<ReturnType<PaperAssemblyAPI["listPapers"]>>>();
+  vi.mocked(api.listPapers).mockReturnValueOnce(refreshResult.promise);
   await user.click(screen.getByRole("button", { name: "刷新试卷列表" }));
   expect(screen.getByRole("button", { name: "刷新试卷列表" }).querySelector("svg")).toHaveClass(
     "tenant-refresh-icon--spinning",
@@ -163,7 +197,13 @@ test("教师可以搜索和刷新试卷列表", async () => {
 test("试卷列表支持分页切换", async () => {
   const user = userEvent.setup();
   const api = createPaperApiDouble();
-  vi.mocked(api.listPapers).mockResolvedValueOnce({ items: createPaperRows(21) });
+  const paperRows = createPaperRows(21);
+  vi.mocked(api.listPapers).mockImplementation(async (input) => ({
+    items: paperRows.slice(((input.page ?? 1) - 1) * (input.pageSize ?? 20), (input.page ?? 1) * (input.pageSize ?? 20)),
+    page: input.page ?? 1,
+    pageSize: input.pageSize ?? 20,
+    total: paperRows.length,
+  }));
 
   renderPaperAssemblyRoutes(api);
 
@@ -172,6 +212,11 @@ test("试卷列表支持分页切换", async () => {
   expect(screen.queryByRole("row", { name: /模拟试卷 21/ })).not.toBeInTheDocument();
   expect(screen.getByText("共 21 条")).toBeInTheDocument();
   expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
+  const pagination = screen.getByRole("navigation", { name: "分页" });
+  const pageSize = within(pagination).getByRole("combobox", { name: "每页条数" });
+  const antPagination = pagination.querySelector(".ant-pagination");
+  expect(antPagination).not.toBeNull();
+  expect(pageSize.compareDocumentPosition(antPagination as Element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
   await user.click(screen.getByRole("button", { name: "下一页" }));
 
@@ -310,18 +355,36 @@ function LocationProbe() {
 }
 
 function createPaperApiDouble(): PaperAssemblyAPI {
+  const defaultPapers = [{
+    id: 100,
+    tenantID: 10,
+    name: "高一语文月考试卷",
+    totalScore: "0",
+    buildMode: "rule_fixed" as const,
+    status: "draft" as const,
+    createdAt: new Date("2026-06-02T09:30:00+08:00").getTime(),
+    creatorName: "teacher.exam",
+  }];
+
   return {
-    listPapers: vi.fn(async () => ({
-      items: [{
-        id: 100,
-        tenantID: 10,
-        name: "高一语文月考试卷",
-        totalScore: "0",
-        buildMode: "rule_fixed",
-        status: "draft" as const,
-        createdAt: new Date("2026-06-02T09:30:00+08:00").getTime(),
-        creatorName: "teacher.exam",
-      }],
+    getPaper: vi.fn(async (input) => defaultPapers.find((paper) => paper.id === input.paperID) ?? defaultPapers[0]),
+    listPapers: vi.fn(async (input) => {
+      const keyword = input.search?.trim().toLowerCase() ?? "";
+      const matchedPapers = keyword
+        ? defaultPapers.filter((paper) => [paper.name, paper.creatorName, paper.buildMode, paper.status].some((value) => value.toLowerCase().includes(keyword)))
+        : defaultPapers;
+      return {
+        items: matchedPapers.slice(((input.page ?? 1) - 1) * (input.pageSize ?? 20), (input.page ?? 1) * (input.pageSize ?? 20)),
+        page: input.page ?? 1,
+        pageSize: input.pageSize ?? 20,
+        total: matchedPapers.length,
+      };
+    }),
+    listPublishPaperCandidates: vi.fn(async () => ({
+      items: defaultPapers.slice(0, 10),
+      page: 1,
+      pageSize: 10,
+      total: defaultPapers.length,
     })),
     createPaper: vi.fn(async (input) => ({
       id: 101,

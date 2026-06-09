@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
@@ -36,9 +37,22 @@ type tenantUserRow struct {
 	ForcePasswordChange bool
 	LastLoginIP         string
 	LastLoginAt         int64
+	CreatedAt           int64
+	UpdatedAt           int64
 	Role                string
 	MembershipStatus    string
 	AccountStatus       string
+}
+
+var tenantUserRoleSearchLabels = map[string]string{
+	servicetenantuser.RoleTenantAdmin: "租户管理员",
+	servicetenantuser.RoleTeacher:     "教师",
+	servicetenantuser.RoleStudent:     "学生",
+}
+
+var tenantUserStatusSearchLabels = map[string]string{
+	servicetenantuser.StatusEnabled:  "启用",
+	servicetenantuser.StatusDisabled: "禁用",
 }
 
 func NewTenantUserRepository(gormDB *gorm.DB, options TenantUserRepositoryOptions) *TenantUserRepository {
@@ -49,9 +63,12 @@ func NewTenantUserRepository(gormDB *gorm.DB, options TenantUserRepositoryOption
 	return &TenantUserRepository{db: gormDB, now: now}
 }
 
-func (r *TenantUserRepository) ListUsers(ctx context.Context, tenantID uint64, page pagination.Input) (pagination.Result[servicetenantuser.User], error) {
-	page = pagination.Normalize(page)
-	query := r.tenantUserQuery(ctx).Where("tum."+UserRoleColumns.TenantID+" = ?", tenantID)
+func (r *TenantUserRepository) ListUsers(ctx context.Context, input servicetenantuser.ListInput) (pagination.Result[servicetenantuser.User], error) {
+	page := pagination.Normalize(pagination.Input{Page: input.Page, PageSize: input.PageSize})
+	query := r.tenantUserQuery(ctx).Where("tum."+UserRoleColumns.TenantID+" = ?", input.TenantID)
+	query = r.applyTenantUserFilters(query, input.Role, input.Status)
+	query = r.applyTenantUserSpaceExclusion(query, input.TenantID, input.ExcludeSpaceID)
+	query = r.applyTenantUserSearch(query, input.Search)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return pagination.Result[servicetenantuser.User]{}, err
@@ -76,6 +93,81 @@ func (r *TenantUserRepository) ListUsers(ctx context.Context, tenantID uint64, p
 		PageSize: page.PageSize,
 		Total:    total,
 	}, nil
+}
+
+func (r *TenantUserRepository) applyTenantUserSpaceExclusion(query *gorm.DB, tenantID uint64, excludeSpaceID uint64) *gorm.DB {
+	if excludeSpaceID == 0 {
+		return query
+	}
+	return query.Where(
+		`NOT EXISTS (
+				SELECT 1
+				FROM space_members AS sm
+				WHERE sm.tenant_id = ?
+					and sm.space_id = ?
+					and sm.user_id = users.id
+					and sm.deleted_at = 0
+			)`,
+		tenantID,
+		excludeSpaceID,
+	)
+}
+
+func (r *TenantUserRepository) applyTenantUserFilters(query *gorm.DB, role string, status string) *gorm.DB {
+	if normalizedRole := strings.TrimSpace(role); normalizedRole != "" {
+		if !validTenantUserRoleFilter(normalizedRole) {
+			return query.Where("1 = 0")
+		}
+		query = query.Where("tum."+UserRoleColumns.Role+" = ?", normalizedRole)
+	}
+	if normalizedStatus := strings.TrimSpace(status); normalizedStatus != "" {
+		query = query.Where(r.tenantUserStatusCondition(normalizedStatus))
+	}
+	return query
+}
+
+func (r *TenantUserRepository) applyTenantUserSearch(query *gorm.DB, search string) *gorm.DB {
+	keyword := strings.TrimSpace(search)
+	if keyword == "" {
+		return query
+	}
+	pattern := "%" + strings.ToLower(keyword) + "%"
+	condition := r.db.Where("LOWER(users."+UserColumns.Username+") LIKE ?", pattern).
+		Or("LOWER(users."+UserColumns.RealName+") LIKE ?", pattern).
+		Or("LOWER(users."+UserColumns.Phone+") LIKE ?", pattern).
+		Or("LOWER(users."+UserColumns.Email+") LIKE ?", pattern).
+		Or("LOWER(tum."+UserRoleColumns.Role+") LIKE ?", pattern).
+		Or("LOWER(tum."+UserRoleColumns.Status+") LIKE ?", pattern).
+		Or("LOWER(users."+UserColumns.Status+") LIKE ?", pattern)
+	for _, role := range localizedEnumMatches(keyword, tenantUserRoleSearchLabels) {
+		condition = condition.Or("tum."+UserRoleColumns.Role+" = ?", role)
+	}
+	for _, status := range localizedEnumMatches(keyword, tenantUserStatusSearchLabels) {
+		condition = condition.Or(r.tenantUserStatusCondition(status))
+	}
+	return query.Where(condition)
+}
+
+func (r *TenantUserRepository) tenantUserStatusCondition(status string) *gorm.DB {
+	switch strings.TrimSpace(status) {
+	case servicetenantuser.StatusEnabled:
+		return r.db.Where("tum."+UserRoleColumns.Status+" = ?", servicetenantuser.StatusEnabled).
+			Where("users."+UserColumns.Status+" = ?", servicetenantuser.StatusEnabled)
+	case servicetenantuser.StatusDisabled:
+		return r.db.Where("tum."+UserRoleColumns.Status+" = ?", servicetenantuser.StatusDisabled).
+			Or("users."+UserColumns.Status+" = ?", servicetenantuser.StatusDisabled)
+	default:
+		return r.db.Where("1 = 0")
+	}
+}
+
+func validTenantUserRoleFilter(role string) bool {
+	switch role {
+	case servicetenantuser.RoleTenantAdmin, servicetenantuser.RoleTeacher, servicetenantuser.RoleStudent:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *TenantUserRepository) FindUserByID(ctx context.Context, tenantID uint64, userID uint64) (servicetenantuser.User, error) {
@@ -253,20 +345,30 @@ func (r *TenantUserRepository) UpdateLoginAudit(ctx context.Context, tenantID ui
 }
 
 func (r *TenantUserRepository) UpdateProfile(ctx context.Context, input servicetenantuser.UpdateProfileInput) (servicetenantuser.User, error) {
-	err := r.db.WithContext(ctx).Model(&UserDO{}).
+	query := r.db.WithContext(ctx).Model(&UserDO{}).
 		Where(UserColumns.ID+" = ?", input.UserID).
-		Where(UserColumns.DeletedAt+" = ?", 0).
-		Updates(map[string]any{
-			UserColumns.RealName:      input.DisplayName,
-			UserColumns.AvatarURL:     input.AvatarURL,
-			UserColumns.Phone:         input.Phone,
-			UserColumns.Email:         input.Email,
-			BaseColumns.UpdatedAt:     r.now(),
-			BaseColumns.UpdatedByType: AuditActorTenantUser,
-			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
-		}).Error
-	if err != nil {
-		return servicetenantuser.User{}, err
+		Where(UserColumns.DeletedAt+" = ?", 0)
+	if input.TenantID != 0 {
+		query = query.Where(`
+			EXISTS (
+				SELECT 1
+				FROM tenant_user_memberships AS tum
+				WHERE tum.tenant_id = ?
+					and tum.user_id = users.id
+			)
+		`, input.TenantID)
+	}
+	result := query.Updates(map[string]any{
+		UserColumns.RealName:      input.DisplayName,
+		UserColumns.AvatarURL:     input.AvatarURL,
+		UserColumns.Phone:         input.Phone,
+		UserColumns.Email:         input.Email,
+		BaseColumns.UpdatedAt:     r.now(),
+		BaseColumns.UpdatedByType: AuditActorTenantUser,
+		BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+	})
+	if result.Error != nil {
+		return servicetenantuser.User{}, result.Error
 	}
 	if input.TenantID == 0 {
 		return r.FindGlobalUserByID(ctx, input.UserID)
@@ -650,7 +752,8 @@ func (r *TenantUserRepository) tenantUserQuery(ctx context.Context) *gorm.DB {
 
 func (r *TenantUserRepository) tenantUserSelectColumns() string {
 	return "users.id, tum.tenant_id, users.username, users.real_name, users.avatar_url, users.phone, users.email, " +
-		"users.password_hash, users.force_password_change, users.last_login_ip, users.last_login_at, tum.role, tum.status AS membership_status, users.status AS account_status"
+		"users.password_hash, users.force_password_change, users.last_login_ip, users.last_login_at, users.created_at, users.updated_at, " +
+		"tum.role, tum.status AS membership_status, users.status AS account_status"
 }
 
 func (r *TenantUserRepository) findUserByIDWithDB(ctx context.Context, gormDB *gorm.DB, tenantID uint64, userID uint64) (servicetenantuser.User, error) {
@@ -701,6 +804,8 @@ func tenantUserFromRow(row tenantUserRow) servicetenantuser.User {
 		ForcePasswordChange: row.ForcePasswordChange,
 		LastLoginIP:         row.LastLoginIP,
 		LastLoginAt:         row.LastLoginAt,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
 		Role:                roleOrStudent(row.Role),
 		Status:              tenantMembershipStatus(row.MembershipStatus, row.AccountStatus),
 	}
@@ -719,6 +824,8 @@ func tenantUserFromGlobal(row UserDO, tenantID uint64, role string, status strin
 		ForcePasswordChange: row.ForcePasswordChange,
 		LastLoginIP:         row.LastLoginIP,
 		LastLoginAt:         row.LastLoginAt,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
 		Role:                role,
 		Status:              status,
 	}

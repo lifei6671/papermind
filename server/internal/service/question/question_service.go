@@ -110,11 +110,33 @@ type CreateQuestionInput struct {
 }
 
 type ListQuestionsInput struct {
+	TenantID   uint64
+	SpaceID    *uint64
+	Scope      string
+	Page       int
+	PageSize   int
+	Search     string
+	Type       string
+	Difficulty string
+	Tag        string
+	Status     string
+}
+
+type QuestionTagListInput struct {
 	TenantID uint64
 	SpaceID  *uint64
-	Page     int
-	PageSize int
+	Scope    string
+	Status   string
 	Search   string
+}
+
+type QuestionAvailabilityInput struct {
+	TenantID           uint64
+	SpaceID            *uint64
+	Scope              string
+	Status             string
+	Tags               []string
+	ExcludeQuestionIDs []uint64
 }
 
 type GetQuestionInput struct {
@@ -230,6 +252,8 @@ type QuestionRepository interface {
 	CreateQuestion(ctx context.Context, item Question, options []QuestionOption, tags []string) (Question, error)
 	GetQuestion(ctx context.Context, tenantID uint64, questionID uint64) (Question, error)
 	ListVisibleQuestions(ctx context.Context, input ListQuestionsInput) (pagination.Result[Question], error)
+	ListVisibleQuestionTags(ctx context.Context, input QuestionTagListInput) ([]string, error)
+	CountVisibleQuestionsByType(ctx context.Context, input QuestionAvailabilityInput) (map[string]int64, error)
 	QuestionTitleExists(ctx context.Context, tenantID uint64, spaceID *uint64, title string) (bool, error)
 	UpdateQuestion(ctx context.Context, item Question, options []QuestionOption, tags []string) (Question, error)
 	UpdateQuestionStatus(ctx context.Context, tenantID uint64, questionID uint64, status string, actorID uint64) (Question, error)
@@ -293,6 +317,14 @@ func (s *QuestionService) GetQuestion(ctx context.Context, input GetQuestionInpu
 
 func (s *QuestionService) ListVisibleQuestions(ctx context.Context, input ListQuestionsInput) (pagination.Result[Question], error) {
 	return s.repo.ListVisibleQuestions(ctx, input)
+}
+
+func (s *QuestionService) ListVisibleQuestionTags(ctx context.Context, input QuestionTagListInput) ([]string, error) {
+	return s.repo.ListVisibleQuestionTags(ctx, input)
+}
+
+func (s *QuestionService) CountVisibleQuestionsByType(ctx context.Context, input QuestionAvailabilityInput) (map[string]int64, error) {
+	return s.repo.CountVisibleQuestionsByType(ctx, input)
 }
 
 func (s *QuestionService) UpdateQuestion(ctx context.Context, input UpdateQuestionInput) (Question, error) {

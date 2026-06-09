@@ -31,6 +31,7 @@ function createSpaceAPI(): Pick<SpaceManagementAPI, "listSpaces"> {
           name: "高一一班",
           description: "高一一班空间",
           logoFileName: "class-a.png",
+          status: "enabled",
           members: [],
         },
         {
@@ -39,9 +40,13 @@ function createSpaceAPI(): Pick<SpaceManagementAPI, "listSpaces"> {
           name: "高一二班",
           description: "高一二班空间",
           logoFileName: "class-b.png",
+          status: "enabled",
           members: [],
         },
       ],
+      page: 1,
+      pageSize: 100,
+      total: 2,
     }),
   };
 }
@@ -131,9 +136,68 @@ test("租户管理员可以在题目导入页选择导入到具体空间", async
 
   expect(screen.getByLabelText("导入所属空间").closest(".question-import-scope-field")).not.toBeNull();
   await screen.findByRole("option", { name: "高一二班" });
-  expect(spaceApi.listSpaces).toHaveBeenCalledWith(10);
+  expect(spaceApi.listSpaces).toHaveBeenCalledWith(expect.objectContaining({
+    tenantID: 10,
+    page: 1,
+    pageSize: 100,
+    filters: { status: "enabled" },
+  }));
 
   await user.selectOptions(screen.getByLabelText("导入所属空间"), "space:302");
+  await user.upload(screen.getByLabelText("题目导入文件"), new File(["title,type"], "questions.csv", { type: "text/csv" }));
+  await user.click(screen.getByRole("button", { name: "确认导入" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("已导入 1 道题");
+});
+
+test("租户管理员题目导入页会读取空间分页的后续页", async () => {
+  const user = userEvent.setup();
+  const api: QuestionImportAPI = {
+    importQuestions: async (input) => {
+      expect(input.spaceID).toBe(401);
+      return { successCount: 1, duplicateCount: 0, errors: [] };
+    },
+  };
+  const firstPageSpaces = Array.from({ length: 100 }, (_, index) => ({
+    id: 3000 + index,
+    tenantID: 10,
+    name: `前页空间 ${index + 1}`,
+    description: "",
+    logoFileName: "未上传",
+    status: "enabled" as const,
+    members: [],
+  }));
+  const spaceApi: Pick<SpaceManagementAPI, "listSpaces"> = {
+    listSpaces: vi.fn(async (input) => ({
+      items: input.page === 1
+        ? firstPageSpaces
+        : [{
+            id: 401,
+            tenantID: 10,
+            name: "后页空间",
+            description: "",
+            logoFileName: "未上传",
+            status: "enabled" as const,
+            members: [],
+          }],
+      page: input.page,
+      pageSize: input.pageSize,
+      total: 101,
+    })),
+  };
+  renderTenantAdminImportPage(api, spaceApi);
+
+  await user.click(screen.getByRole("button", { name: "导入题目" }));
+
+  await screen.findByRole("option", { name: "后页空间" });
+  expect(spaceApi.listSpaces).toHaveBeenCalledWith(expect.objectContaining({
+    tenantID: 10,
+    page: 2,
+    pageSize: 100,
+    filters: { status: "enabled" },
+  }));
+
+  await user.selectOptions(screen.getByLabelText("导入所属空间"), "space:401");
   await user.upload(screen.getByLabelText("题目导入文件"), new File(["title,type"], "questions.csv", { type: "text/csv" }));
   await user.click(screen.getByRole("button", { name: "确认导入" }));
 

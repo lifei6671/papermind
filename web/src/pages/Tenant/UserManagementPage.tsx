@@ -1,18 +1,22 @@
 import { Button } from "../../components/ui/Button";
+import Checkbox from "antd/es/checkbox";
 import Descriptions from "antd/es/descriptions";
+import Input from "antd/es/input";
+import AntSelect from "antd/es/select";
 import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
 import { useFeedback } from "../../app/feedback-context";
 import { Pagination } from "../../components/ui/Pagination";
-import { Search, X } from "lucide-react";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { PlatformDrawer } from "../../components/ui/PlatformDrawer";
+import { PlatformDrawerHeader } from "../../components/ui/PlatformDrawerHeader";
 import { PlatformModal } from "../../components/ui/PlatformModal";
 import { RefreshIcon } from "../../components/ui/RefreshIcon";
 import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { spaceApi as defaultSpaceApi } from "../../api/spaces";
-import type { MemberRole, SpaceManagementAPI, SpaceMemberAPI, SpaceRow } from "../../api/spaces";
+import type { ListSpacesFilters, MemberRole, SpaceManagementAPI, SpaceMemberAPI, SpaceRow } from "../../api/spaces";
 import { formatApiErrorMessage } from "../../api/client";
 import { userApi } from "../../api/users";
 import type { TenantUserRow, UserManagementAPI, UserRole } from "../../api/users";
@@ -22,7 +26,14 @@ const roleLabels: Record<UserRole, string> = {
   teacher: "教师",
   student: "学生",
 };
-const userPageSize = 5;
+const memberRoleLabels: Record<MemberRole, string> = {
+  space_admin: "空间管理员",
+  teacher: "教师",
+  student: "学生",
+};
+const userPageSizeOptions = [5, 10, 20, 50];
+const defaultUserPageSize = 5;
+const managementSpacePageSize = 100;
 
 
 type UserManagementPageProps = {
@@ -48,10 +59,17 @@ export function UserManagementPage({
   const [selectedCreateSpaceIDs, setSelectedCreateSpaceIDs] = useState<number[]>([]);
   const [detailTarget, setDetailTarget] = useState<TenantUserRow | null>(null);
   const [editTarget, setEditTarget] = useState<TenantUserRow | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
   const [selectedEditSpaceIDs, setSelectedEditSpaceIDs] = useState<number[]>([]);
   const [disableTarget, setDisableTarget] = useState<TenantUserRow | null>(null);
   const [isCreateDrawerOpen, setIsCreateDrawerOpen] = useState(false);
+  const [isEditDrawerOpen, setIsEditDrawerOpen] = useState(false);
+  const [isDetailDrawerOpen, setIsDetailDrawerOpen] = useState(false);
   const [userPage, setUserPage] = useState(1);
+  const [userPageSize, setUserPageSize] = useState(defaultUserPageSize);
+  const [userTotal, setUserTotal] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedSearchQuery, setAppliedSearchQuery] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -66,17 +84,24 @@ export function UserManagementPage({
 
     let ignore = false;
     const currentTenantID = tenantID;
-
-    Promise.all([api.listUsers(currentTenantID), spaceApi.listSpaces(currentTenantID)])
+    Promise.all([
+      appliedSearchQuery.trim()
+        ? api.listUsers({ tenantID: currentTenantID, page: userPage, pageSize: userPageSize, search: appliedSearchQuery })
+        : api.listUsers({ tenantID: currentTenantID, page: userPage, pageSize: userPageSize }),
+      listAllManagementSpaces(spaceApi, currentTenantID),
+    ])
       .then(([userData, spaceData]) => {
         if (!ignore) {
           setUsers(userData.items);
+          setUserTotal(userData.total ?? userData.items.length);
           setSpaces(spaceData.items);
           setLoadError("");
         }
       })
       .catch(() => {
         if (!ignore) {
+          setUsers([]);
+          setUserTotal(0);
           setLoadError("用户或空间列表加载失败");
         }
       });
@@ -84,30 +109,11 @@ export function UserManagementPage({
     return () => {
       ignore = true;
     };
-  }, [api, spaceApi, tenantID]);
+  }, [api, spaceApi, tenantID, userPage, userPageSize, appliedSearchQuery]);
 
-  const filteredUsers = users.filter((item) => {
-    const keyword = appliedSearchQuery.trim().toLowerCase();
-    if (!keyword) {
-      return true;
-    }
-
-    // 用户列表搜索只匹配当前表格可见字段，便于租户管理员按姓名、账号、角色或状态定位。
-    return [
-      item.name,
-      item.username,
-      item.avatarFileName,
-      roleLabels[item.role],
-      userSpaceAssignmentLabel(item, spaces),
-      item.status === "enabled" ? "启用" : "禁用",
-    ].some((value) => value.toLowerCase().includes(keyword));
-  });
-  const totalUserPages = Math.max(1, Math.ceil(filteredUsers.length / userPageSize));
+  const userPaginationTotal = userTotal;
+  const totalUserPages = Math.max(1, Math.ceil(userPaginationTotal / userPageSize));
   const currentUserPage = Math.min(userPage, totalUserPages);
-  const pagedUsers = filteredUsers.slice(
-    (currentUserPage - 1) * userPageSize,
-    currentUserPage * userPageSize,
-  );
 
   async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -128,7 +134,11 @@ export function UserManagementPage({
       });
 
       await syncUserSpaceAssignments(nextUser, role, selectedCreateSpaceIDs);
-      setUsers((items) => [nextUser, ...items]);
+      const userData = appliedSearchQuery.trim()
+        ? await api.listUsers({ tenantID, page: 1, pageSize: userPageSize, search: appliedSearchQuery })
+        : await api.listUsers({ tenantID, page: 1, pageSize: userPageSize });
+      setUsers(userData.items);
+      setUserTotal(userData.total ?? userData.items.length);
       setUserPage(1);
       closeCreateDrawer();
     } catch (error) {
@@ -141,23 +151,46 @@ export function UserManagementPage({
   }
 
   function closeCreateDrawer() {
+    setIsCreateDrawerOpen(false);
+  }
+
+  function resetCreateDrawerForm() {
     setName("");
     setUsername("");
     setPassword("");
     setRole("student");
     setForcePasswordChange(true);
     setSelectedCreateSpaceIDs([]);
-    setIsCreateDrawerOpen(false);
   }
 
   function openEditDrawer(user: TenantUserRow) {
     setEditTarget(user);
+    setEditName(user.name);
+    setEditPhone(user.phone ?? "");
+    setEditEmail(user.email ?? "");
     setSelectedEditSpaceIDs(assignedSpaceIDs(user, spaces));
+    setIsEditDrawerOpen(true);
   }
 
   function closeEditDrawer() {
+    setIsEditDrawerOpen(false);
+  }
+
+  function clearEditDrawerTarget() {
     setEditTarget(null);
+    setEditName("");
+    setEditPhone("");
+    setEditEmail("");
     setSelectedEditSpaceIDs([]);
+  }
+
+  function openDetailDrawer(user: TenantUserRow) {
+    setDetailTarget(user);
+    setIsDetailDrawerOpen(true);
+  }
+
+  function closeDetailDrawer() {
+    setIsDetailDrawerOpen(false);
   }
 
   async function handleEditUser(event: React.FormEvent<HTMLFormElement>) {
@@ -172,8 +205,23 @@ export function UserManagementPage({
     }
 
     try {
-      await syncUserSpaceAssignments(editTarget, editTarget.role, selectedEditSpaceIDs);
-      setUsers((items) => items.map((item) => (item.id === editTarget.id ? editTarget : item)));
+      const updatedUser = await api.updateUser({
+        tenantID,
+        userID: editTarget.id,
+        name: editName,
+        phone: editPhone,
+        email: editEmail,
+      });
+      await syncUserSpaceAssignments(updatedUser, updatedUser.role, selectedEditSpaceIDs);
+      setUsers((items) => items.map((item) => (item.id === editTarget.id ? updatedUser : item)));
+      setSpaces((items) =>
+        items.map((space) => ({
+          ...space,
+          members: space.members.map((member) =>
+            member.userID === updatedUser.id ? { ...member, name: updatedUser.name } : member,
+          ),
+        })),
+      );
       closeEditDrawer();
     } catch (error) {
       showError(formatApiErrorMessage(error, "保存用户失败"));
@@ -187,10 +235,13 @@ export function UserManagementPage({
 
   async function reloadUsersAndSpaces(currentTenantID: number) {
     const [userData, spaceData] = await Promise.all([
-      api.listUsers(currentTenantID),
-      spaceApi.listSpaces(currentTenantID),
+      appliedSearchQuery.trim()
+        ? api.listUsers({ tenantID: currentTenantID, page: userPage, pageSize: userPageSize, search: appliedSearchQuery })
+        : api.listUsers({ tenantID: currentTenantID, page: userPage, pageSize: userPageSize }),
+      listAllManagementSpaces(spaceApi, currentTenantID),
     ]);
     setUsers(userData.items);
+    setUserTotal(userData.total ?? userData.items.length);
     setSpaces(spaceData.items);
     setLoadError("");
   }
@@ -203,6 +254,9 @@ export function UserManagementPage({
     const nextMemberRole = memberRoleForUserRole(nextRole);
     const selectedIDs = new Set(nextMemberRole ? selectedSpaceIDs : []);
     const operations = spaces.map(async (space) => {
+      if (space.status === "disabled") {
+        return;
+      }
       const currentMember = space.members.find((member) => member.userID === user.id);
       if (currentMember?.role === "space_admin") {
         return;
@@ -227,6 +281,9 @@ export function UserManagementPage({
     await Promise.all(operations);
     setSpaces((items) =>
       items.map((space) => {
+        if (space.status === "disabled") {
+          return space;
+        }
         const shouldAssign = selectedIDs.has(space.id);
         const existingMember = space.members.find((member) => member.userID === user.id);
         if (existingMember?.role === "space_admin") {
@@ -328,9 +385,13 @@ export function UserManagementPage({
     setIsUserListRefreshing(true);
     try {
       const [userData, spaceData] = await withRefreshFeedback(
-        Promise.all([api.listUsers(tenantID), spaceApi.listSpaces(tenantID)]),
+        Promise.all([
+          api.listUsers({ tenantID, page: 1, pageSize: userPageSize }),
+          listAllManagementSpaces(spaceApi, tenantID),
+        ]),
       );
       setUsers(userData.items);
+      setUserTotal(userData.total ?? userData.items.length);
       setSpaces(spaceData.items);
       setLoadError("");
     } catch {
@@ -415,8 +476,8 @@ export function UserManagementPage({
               </tr>
             </thead>
             <tbody>
-              {filteredUsers.length === 0 && <EmptyTableRow colSpan={7} />}
-              {pagedUsers.map((item) => (
+              {users.length === 0 && <EmptyTableRow colSpan={7} />}
+              {users.map((item) => (
                 <tr key={item.id}>
                   <td>{item.name}</td>
                   <td>{item.username}</td>
@@ -431,7 +492,7 @@ export function UserManagementPage({
                   <td>
                     <Button
                       variant="actionOpen"
-                      onClick={() => setDetailTarget(item)}
+                      onClick={() => openDetailDrawer(item)}
                       type="button"
                     >
                       查看详情
@@ -469,41 +530,42 @@ export function UserManagementPage({
           </table>
         </div>
         <Pagination
+          onPageSizeChange={(nextPageSize) => {
+            setUserPage(1);
+            setUserPageSize(nextPageSize);
+          }}
           page={currentUserPage}
           pageSize={userPageSize}
-          total={filteredUsers.length}
+          pageSizeOptions={userPageSizeOptions}
+          total={userPaginationTotal}
           onPageChange={setUserPage}
         />
       </Panel>
 
-      <PlatformDrawer ariaLabel="创建用户抽屉" onClose={closeCreateDrawer} open={isCreateDrawerOpen}>
-        <header className="tenant-resource-drawer__head tenant-resource-drawer__head--inline">
-          <div className="tenant-resource-drawer__title">
-            <span>新建用户</span>
-            <h2>创建用户</h2>
-          </div>
-          <button
-            aria-label="关闭抽屉"
-            className="tenant-resource-drawer__icon"
-            onClick={closeCreateDrawer}
-            type="button"
-          >
-            <X aria-hidden="true" size={16} />
-          </button>
-        </header>
+      <PlatformDrawer
+        afterOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            resetCreateDrawerForm();
+          }
+        }}
+        ariaLabel="创建用户抽屉"
+        onClose={closeCreateDrawer}
+        open={isCreateDrawerOpen}
+      >
+        <PlatformDrawerHeader onBack={closeCreateDrawer} title="创建用户" />
 
-        <form className="platform-form tenant-user-drawer-form" onSubmit={handleCreateUser}>
+        <form className="platform-form tenant-user-drawer-form tenant-user-create-form" onSubmit={handleCreateUser}>
           <label className="field">
             <RequiredLabel>姓名</RequiredLabel>
-            <input aria-label="姓名" onChange={(event) => setName(event.target.value)} required value={name} />
+            <Input aria-label="姓名" onChange={(event) => setName(event.target.value)} required value={name} />
           </label>
           <label className="field">
             <RequiredLabel>账号</RequiredLabel>
-            <input aria-label="账号" onChange={(event) => setUsername(event.target.value)} required value={username} />
+            <Input aria-label="账号" onChange={(event) => setUsername(event.target.value)} required value={username} />
           </label>
           <label className="field">
             <RequiredLabel>初始密码</RequiredLabel>
-            <input
+            <Input.Password
               aria-label="初始密码"
               minLength={8}
               onChange={(event) => setPassword(event.target.value)}
@@ -512,21 +574,29 @@ export function UserManagementPage({
               value={password}
             />
           </label>
-          <label className="platform-check">
-            <input
+          <div className="platform-check tenant-user-force-password-field">
+            <Checkbox
+              aria-label="首次登录必须修改密码"
               checked={forcePasswordChange}
               onChange={(event) => setForcePasswordChange(event.target.checked)}
-              type="checkbox"
-            />
-            <span>首次登录必须修改密码</span>
-          </label>
+            >
+              首次登录必须修改密码
+            </Checkbox>
+          </div>
           <label className="field">
             <RequiredLabel>角色</RequiredLabel>
-            <select aria-label="角色" onChange={(event) => setRole(event.target.value as UserRole)} required value={role}>
-              <option value="tenant_admin">租户管理员角色</option>
-              <option value="teacher">教师角色</option>
-              <option value="student">学生角色</option>
-            </select>
+            <AntSelect
+              aria-label="角色"
+              className="tenant-user-role-select"
+              onChange={(value: UserRole) => setRole(value)}
+              options={[
+                { value: "tenant_admin", label: "租户管理员角色" },
+                { value: "teacher", label: "教师角色" },
+                { value: "student", label: "学生角色" },
+              ]}
+              value={role}
+              virtual={false}
+            />
           </label>
           <SpaceAssignmentField
             role={role}
@@ -546,37 +616,55 @@ export function UserManagementPage({
       </PlatformDrawer>
 
       {editTarget && (
-        <PlatformDrawer ariaLabel="编辑用户抽屉" onClose={closeEditDrawer} open={editTarget !== null}>
-          <header className="tenant-resource-drawer__head tenant-resource-drawer__head--inline">
-            <div className="tenant-resource-drawer__title">
-              <span>编辑用户</span>
-              <h2>{editTarget.name}</h2>
-            </div>
-            <button
-              aria-label="关闭抽屉"
-              className="tenant-resource-drawer__icon"
-              onClick={closeEditDrawer}
-              type="button"
-            >
-              <X aria-hidden="true" size={16} />
-            </button>
-          </header>
+        <PlatformDrawer
+          afterOpenChange={(nextOpen) => {
+            if (!nextOpen) {
+              clearEditDrawerTarget();
+            }
+          }}
+          ariaLabel="编辑用户抽屉"
+          onClose={closeEditDrawer}
+          open={isEditDrawerOpen}
+        >
+          <PlatformDrawerHeader onBack={closeEditDrawer} title={editTarget.name} />
 
           <form className="platform-form tenant-user-drawer-form" onSubmit={handleEditUser}>
             <label className="field">
-              <span>姓名</span>
-              <input aria-label="姓名" readOnly value={editTarget.name} />
+              <RequiredLabel>姓名</RequiredLabel>
+              <input
+                aria-label="姓名"
+                onChange={(event) => setEditName(event.target.value)}
+                required
+                value={editName}
+              />
             </label>
             <label className="field">
               <span>账号</span>
               <input aria-label="账号" readOnly value={editTarget.username} />
             </label>
             <label className="field">
+              <span>手机号</span>
+              <input
+                aria-label="手机号"
+                onChange={(event) => setEditPhone(event.target.value)}
+                value={editPhone}
+              />
+            </label>
+            <label className="field">
+              <span>邮箱</span>
+              <input
+                aria-label="邮箱"
+                onChange={(event) => setEditEmail(event.target.value)}
+                type="email"
+                value={editEmail}
+              />
+            </label>
+            <label className="field">
               <span>角色</span>
               <input aria-label="角色" readOnly value={roleLabels[editTarget.role]} />
             </label>
             <SpaceAssignmentField
-              lockedSpaceIDs={protectedAssignedSpaceIDs(editTarget, spaces)}
+              lockedSpaceIDs={readonlyAssignedSpaceIDs(editTarget, spaces)}
               role={editTarget.role}
               selectedSpaceIDs={selectedEditSpaceIDs}
               spaces={spaces}
@@ -595,21 +683,17 @@ export function UserManagementPage({
       )}
 
       {detailTarget && (
-        <PlatformDrawer ariaLabel="用户详情" onClose={() => setDetailTarget(null)} open={detailTarget !== null}>
-          <header className="tenant-resource-drawer__head tenant-resource-drawer__head--inline">
-            <div className="tenant-resource-drawer__title">
-              <span>用户详情</span>
-              <h2>{detailTarget.name}</h2>
-            </div>
-            <button
-              aria-label="关闭抽屉"
-              className="tenant-resource-drawer__icon"
-              onClick={() => setDetailTarget(null)}
-              type="button"
-            >
-              <X aria-hidden="true" size={16} />
-            </button>
-          </header>
+        <PlatformDrawer
+          afterOpenChange={(nextOpen) => {
+            if (!nextOpen) {
+              setDetailTarget(null);
+            }
+          }}
+          ariaLabel="用户详情"
+          onClose={closeDetailDrawer}
+          open={isDetailDrawerOpen}
+        >
+          <PlatformDrawerHeader onBack={closeDetailDrawer} title={detailTarget.name} />
 
           <Descriptions
             bordered
@@ -619,11 +703,32 @@ export function UserManagementPage({
           >
             <Descriptions.Item label="账号">{detailTarget.username}</Descriptions.Item>
             <Descriptions.Item label="角色">{roleLabels[detailTarget.role]}</Descriptions.Item>
-            <Descriptions.Item label="空间分配">
-              {userSpaceAssignmentLabel(detailTarget, spaces)}
-            </Descriptions.Item>
             <Descriptions.Item label="状态">
               {detailTarget.status === "enabled" ? "启用" : "禁用"}
+            </Descriptions.Item>
+            <Descriptions.Item label="强制改密">
+              {detailTarget.forcePasswordChange ? "是" : "否"}
+            </Descriptions.Item>
+            <Descriptions.Item label="手机号">
+              {displayOptionalText(detailTarget.phone)}
+            </Descriptions.Item>
+            <Descriptions.Item label="邮箱">
+              {displayOptionalText(detailTarget.email)}
+            </Descriptions.Item>
+            <Descriptions.Item label="创建时间">
+              {formatTenantUserDateTime(detailTarget.createdAt)}
+            </Descriptions.Item>
+            <Descriptions.Item label="最后活跃时间">
+              {formatTenantUserDateTime(detailTarget.updatedAt)}
+            </Descriptions.Item>
+            <Descriptions.Item label="最后登录时间">
+              {formatTenantUserDateTime(detailTarget.lastLoginAt)}
+            </Descriptions.Item>
+            <Descriptions.Item label="最后登录 IP">
+              {displayOptionalText(detailTarget.lastLoginIP)}
+            </Descriptions.Item>
+            <Descriptions.Item label="加入空间">
+              <UserJoinedSpaces user={detailTarget} spaces={spaces} />
             </Descriptions.Item>
           </Descriptions>
         </PlatformDrawer>
@@ -658,6 +763,51 @@ function RequiredLabel({ children }: { children: string }) {
   );
 }
 
+async function listAllManagementSpaces(
+  api: Pick<SpaceManagementAPI, "listSpaces">,
+  tenantID: number,
+  filters?: ListSpacesFilters,
+) {
+  const spaces: SpaceRow[] = [];
+  let page = 1;
+
+  while (true) {
+    const data = filters === undefined
+      ? await api.listSpaces({ tenantID, page, pageSize: managementSpacePageSize })
+      : await api.listSpaces({ tenantID, page, pageSize: managementSpacePageSize, filters });
+    spaces.push(...data.items);
+    if (data.items.length === 0 || data.total === undefined || spaces.length >= data.total) {
+      break;
+    }
+    page += 1;
+  }
+
+  return { items: spaces, total: spaces.length };
+}
+
+function UserJoinedSpaces({ user, spaces }: { user: TenantUserRow; spaces: SpaceRow[] }) {
+  const joinedSpaces = assignedSpaceDetails(user, spaces);
+
+  if (user.role === "tenant_admin") {
+    return <span>不适用</span>;
+  }
+
+  if (joinedSpaces.length === 0) {
+    return <span>暂未分配空间</span>;
+  }
+
+  return (
+    <div className="tenant-user-joined-spaces">
+      {joinedSpaces.map((space) => (
+        <div className="tenant-user-joined-space" key={space.id}>
+          <span>{space.name}</span>
+          <small>空间角色：{memberRoleLabels[space.role]}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 type SpaceAssignmentFieldProps = {
   lockedSpaceIDs?: number[];
   onChange: (spaceIDs: number[]) => void;
@@ -680,37 +830,34 @@ function SpaceAssignmentField({ lockedSpaceIDs = [], onChange, role, selectedSpa
 
   const selectedIDs = new Set(selectedSpaceIDs);
   const lockedIDs = new Set(lockedSpaceIDs);
+  const selectableSpaces = spaces.filter((space) => space.status === "enabled" || selectedIDs.has(space.id));
+  const options = selectableSpaces.map((space) => ({
+    disabled: lockedIDs.has(space.id) || space.status === "disabled",
+    label: spaceAssignmentOptionLabel(space, lockedIDs),
+    value: space.id,
+  }));
 
   return (
-    <fieldset className="tenant-user-space-field">
-      <legend>分配空间</legend>
-      {spaces.length === 0 ? (
+    <label className="tenant-user-space-field">
+      <span className="field-label">分配空间</span>
+      {selectableSpaces.length === 0 ? (
         <p>暂无可分配空间</p>
       ) : (
-        <div className="tenant-user-space-options">
-          {spaces.map((space) => (
-            <label className="tenant-user-space-option" key={space.id}>
-              <input
-                disabled={lockedIDs.has(space.id)}
-                checked={selectedIDs.has(space.id)}
-                onChange={(event) => {
-                  if (lockedIDs.has(space.id)) {
-                    return;
-                  }
-                  if (event.target.checked) {
-                    onChange([...selectedSpaceIDs, space.id]);
-                    return;
-                  }
-                  onChange(selectedSpaceIDs.filter((spaceID) => spaceID !== space.id));
-                }}
-                type="checkbox"
-              />
-              <span>{space.name}</span>
-            </label>
-          ))}
-        </div>
+        <AntSelect
+          aria-label="分配空间"
+          className="tenant-user-space-select"
+          mode="multiple"
+          onChange={(values) => {
+            const nextIDs = Array.from(new Set([...lockedSpaceIDs, ...values.map(Number)]));
+            onChange(nextIDs);
+          }}
+          options={options}
+          placeholder="请选择空间"
+          value={selectedSpaceIDs}
+          virtual={false}
+        />
       )}
-    </fieldset>
+    </label>
   );
 }
 
@@ -744,6 +891,29 @@ function assignedSpaceIDs(user: TenantUserRow, spaces: SpaceRow[]) {
     .map((space) => space.id);
 }
 
+function assignedSpaceDetails(user: TenantUserRow, spaces: SpaceRow[]) {
+  if (user.role === "tenant_admin") {
+    return [];
+  }
+
+  return spaces.flatMap((space) => {
+    const member = space.members.find((item) =>
+      item.userID === user.id &&
+      item.status === "enabled" &&
+      memberRoleMatchesUserRole(user.role, item.role),
+    );
+    if (!member) {
+      return [];
+    }
+
+    return [{
+      id: space.id,
+      name: space.name,
+      role: member.role,
+    }];
+  });
+}
+
 function protectedAssignedSpaceIDs(user: TenantUserRow, spaces: SpaceRow[]) {
   return spaces
     .filter((space) =>
@@ -754,6 +924,40 @@ function protectedAssignedSpaceIDs(user: TenantUserRow, spaces: SpaceRow[]) {
       ),
     )
     .map((space) => space.id);
+}
+
+function disabledAssignedSpaceIDs(user: TenantUserRow, spaces: SpaceRow[]) {
+  if (user.role === "tenant_admin") {
+    return [];
+  }
+
+  return spaces
+    .filter((space) =>
+      space.status === "disabled" &&
+      space.members.some((member) =>
+        member.userID === user.id &&
+        member.status === "enabled" &&
+        memberRoleMatchesUserRole(user.role, member.role),
+      ),
+    )
+    .map((space) => space.id);
+}
+
+function readonlyAssignedSpaceIDs(user: TenantUserRow, spaces: SpaceRow[]) {
+  return Array.from(new Set([
+    ...protectedAssignedSpaceIDs(user, spaces),
+    ...disabledAssignedSpaceIDs(user, spaces),
+  ]));
+}
+
+function spaceAssignmentOptionLabel(space: SpaceRow, lockedIDs: Set<number>) {
+  if (space.status === "disabled") {
+    return `${space.name}（已禁用）`;
+  }
+  if (lockedIDs.has(space.id)) {
+    return `${space.name}（空间管理员）`;
+  }
+  return space.name;
 }
 
 function memberRoleMatchesUserRole(userRole: UserRole, memberRole: MemberRole) {
@@ -769,4 +973,20 @@ function memberRoleForUserRole(role: UserRole): MemberRole | null {
   }
 
   return role;
+}
+
+function displayOptionalText(value: string | null | undefined) {
+  const text = value?.trim();
+  return text ? text : "—";
+}
+
+function formatTenantUserDateTime(value: number | null | undefined) {
+  if (!value) {
+    return "—";
+  }
+
+  const date = new Date(value);
+  const pad = (part: number) => String(part).padStart(2, "0");
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }

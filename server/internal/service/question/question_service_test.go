@@ -738,6 +738,8 @@ type fakeQuestionRepository struct {
 
 	visibleQuestions  []Question
 	listVisibleCalled bool
+	visibleTags       []string
+	availability      map[string]int64
 
 	replaceOptionsInTransaction bool
 	replacedQuestionID          uint64
@@ -774,6 +776,14 @@ func (r *fakeQuestionRepository) ListVisibleQuestions(ctx context.Context, input
 		PageSize: page.PageSize,
 		Total:    int64(len(r.visibleQuestions)),
 	}, nil
+}
+
+func (r *fakeQuestionRepository) ListVisibleQuestionTags(ctx context.Context, input QuestionTagListInput) ([]string, error) {
+	return r.visibleTags, nil
+}
+
+func (r *fakeQuestionRepository) CountVisibleQuestionsByType(ctx context.Context, input QuestionAvailabilityInput) (map[string]int64, error) {
+	return r.availability, nil
 }
 
 func (r *fakeQuestionRepository) QuestionTitleExists(ctx context.Context, tenantID uint64, spaceID *uint64, title string) (bool, error) {
