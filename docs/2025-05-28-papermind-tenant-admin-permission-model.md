@@ -1084,7 +1084,7 @@ updated_by
 
 `created_by` / `updated_by` 继续保存操作者 ID，新增的两个类型字段负责解释 ID 来源。
 
-当前项目早期权限模型仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；审计主体类型、全局 `users` 表、`tenant_user_memberships` 租户成员关系表和单角色唯一约束直接落在 `001_tenant_space.sql` 初始建库脚本中。该权限模型需求不新增 `002_audit_actor_type.sql`；后续考试管理详情阶段已通过 `002_exam_management_detail.sql`、`003_exam_target_scope_spaces.sql` 追加审计日志、成绩汇总索引和发布目标作用空间迁移。
+当前项目早期权限模型和考试管理详情仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；审计主体类型、全局 `users` 表、`tenant_user_memberships` 租户成员关系表、单角色唯一约束、考试管理详情审计日志、成绩汇总索引和发布目标作用空间都直接落在各库目录的 `001_tenant_space.sql` 初始建库脚本中。该阶段不新增 `002_audit_actor_type.sql`、`002_exam_management_detail.sql` 或 `003_exam_target_scope_spaces.sql`。
 
 至少覆盖：
 

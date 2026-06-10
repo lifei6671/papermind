@@ -45,7 +45,7 @@ func TestExamBusinessFieldsUseColumnMappings(t *testing.T) {
 		{model: ExamAttemptQuestionDO{}, names: []string{"TenantID", "AttemptID", "SectionID", "QuestionID", "SectionSnapshot", "SortOrder", "Score", "QuestionSnapshot", "OptionSnapshot", "CorrectAnswerSnapshot"}},
 		{model: ExamAnswerDO{}, names: []string{"TenantID", "AttemptID", "AttemptQuestionID", "AnswerContent", "Score", "GradingStatus", "GradedBy", "GradedAt", "GraderComment"}},
 		{model: ExamEventDO{}, names: []string{"TenantID", "AttemptID", "EventType", "EventTime", "Payload"}},
-		{model: ExamOperationLogDO{}, names: []string{"TenantID", "ExamID", "OperationType", "OperationTitle", "OperationDetail", "ActorID", "ActorType", "ActorRole", "SpaceID"}},
+		{model: ExamOperationLogDO{}, names: []string{"TenantID", "ExamID", "OperationType", "OperationTitle", "OperationDetail", "ActorID", "ActorType", "ActorRole", "SpaceID", "OperationGroupID"}},
 	}
 
 	for _, tt := range tests {
@@ -80,6 +80,9 @@ func TestExamColumnMappings(t *testing.T) {
 	}
 	if ExamOperationLogColumns.OperationType != "operation_type" {
 		t.Fatalf("ExamOperationLogColumns.OperationType = %q", ExamOperationLogColumns.OperationType)
+	}
+	if ExamOperationLogColumns.OperationGroupID != "operation_group_id" {
+		t.Fatalf("ExamOperationLogColumns.OperationGroupID = %q", ExamOperationLogColumns.OperationGroupID)
 	}
 }
 

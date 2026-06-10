@@ -24,10 +24,10 @@ COMMENT ON COLUMN tenants.description IS '企业或机构描述';
 COMMENT ON COLUMN tenants.tenant_code IS '租户码，用于注册归属';
 COMMENT ON COLUMN tenants.allow_register IS '是否允许该租户用户自注册';
 COMMENT ON COLUMN tenants.status IS '租户状态：enabled / disabled';
-COMMENT ON COLUMN tenants.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN tenants.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN tenants.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN tenants.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN tenants.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN tenants.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN tenants.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN tenants.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN tenants.version IS '数据版本号，用于乐观锁';
@@ -61,10 +61,10 @@ COMMENT ON COLUMN spaces.logo_url IS '空间 Logo 地址，可为空';
 COMMENT ON COLUMN spaces.description IS '空间描述，可为空';
 COMMENT ON COLUMN spaces.type IS '空间类型：class / major / course / training / custom';
 COMMENT ON COLUMN spaces.status IS '空间状态：enabled / disabled';
-COMMENT ON COLUMN spaces.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN spaces.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN spaces.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN spaces.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN spaces.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN spaces.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN spaces.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN spaces.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN spaces.version IS '数据版本号，用于乐观锁';
@@ -96,10 +96,10 @@ COMMENT ON COLUMN space_members.space_id IS '空间 ID';
 COMMENT ON COLUMN space_members.user_id IS '租户用户 ID';
 COMMENT ON COLUMN space_members.role_in_space IS '空间内角色：space_admin / teacher / student';
 COMMENT ON COLUMN space_members.status IS '空间成员状态：enabled / disabled';
-COMMENT ON COLUMN space_members.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN space_members.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN space_members.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN space_members.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN space_members.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN space_members.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN space_members.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN space_members.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN space_members.version IS '数据版本号，用于乐观锁';
@@ -133,10 +133,10 @@ COMMENT ON COLUMN space_configs.config_key IS '配置键，例如 default_exam_d
 COMMENT ON COLUMN space_configs.config_value IS '配置值，按字符串保存';
 COMMENT ON COLUMN space_configs.value_type IS '配置值类型：string / number / bool / json';
 COMMENT ON COLUMN space_configs.description IS '配置说明';
-COMMENT ON COLUMN space_configs.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN space_configs.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN space_configs.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN space_configs.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN space_configs.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN space_configs.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN space_configs.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN space_configs.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN space_configs.version IS '数据版本号，用于乐观锁';
@@ -171,12 +171,12 @@ COMMENT ON COLUMN platform_users.phone IS '手机号，可用于登录或找回�
 COMMENT ON COLUMN platform_users.email IS '邮箱，可用于登录或通知';
 COMMENT ON COLUMN platform_users.password_hash IS '密码哈希';
 COMMENT ON COLUMN platform_users.last_login_ip IS '最后登录 IP';
-COMMENT ON COLUMN platform_users.last_login_at IS '最后登录时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN platform_users.last_login_at IS '最后登录时间，Unix 秒时间戳';
 COMMENT ON COLUMN platform_users.status IS '平台管理员状态：enabled / disabled';
-COMMENT ON COLUMN platform_users.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN platform_users.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN platform_users.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN platform_users.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN platform_users.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN platform_users.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN platform_users.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN platform_users.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN platform_users.version IS '数据版本号，用于乐观锁';
@@ -207,10 +207,10 @@ COMMENT ON COLUMN platform_configs.config_key IS '配置键，例如 allow_regis
 COMMENT ON COLUMN platform_configs.config_value IS '配置值，按字符串保存';
 COMMENT ON COLUMN platform_configs.value_type IS '配置值类型：string / number / bool / json';
 COMMENT ON COLUMN platform_configs.description IS '配置说明';
-COMMENT ON COLUMN platform_configs.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN platform_configs.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN platform_configs.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN platform_configs.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN platform_configs.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN platform_configs.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN platform_configs.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN platform_configs.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN platform_configs.version IS '数据版本号，用于乐观锁';
@@ -249,12 +249,12 @@ COMMENT ON COLUMN users.email IS '邮箱，可用于登录或通知';
 COMMENT ON COLUMN users.password_hash IS '密码哈希';
 COMMENT ON COLUMN users.force_password_change IS '是否要求用户下次登录后修改密码';
 COMMENT ON COLUMN users.last_login_ip IS '最后登录 IP';
-COMMENT ON COLUMN users.last_login_at IS '最后登录时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN users.last_login_at IS '最后登录时间，Unix 秒时间戳';
 COMMENT ON COLUMN users.status IS '用户状态：enabled / disabled';
-COMMENT ON COLUMN users.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN users.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN users.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN users.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN users.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN users.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN users.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN users.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN users.version IS '数据版本号，用于乐观锁';
@@ -285,10 +285,10 @@ COMMENT ON COLUMN tenant_user_memberships.tenant_id IS '所属租户 ID';
 COMMENT ON COLUMN tenant_user_memberships.user_id IS '全局用户 ID';
 COMMENT ON COLUMN tenant_user_memberships.role IS '租户固定角色：tenant_admin / teacher / student';
 COMMENT ON COLUMN tenant_user_memberships.status IS '租户成员状态：enabled / disabled';
-COMMENT ON COLUMN tenant_user_memberships.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN tenant_user_memberships.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN tenant_user_memberships.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN tenant_user_memberships.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN tenant_user_memberships.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN tenant_user_memberships.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN tenant_user_memberships.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN tenant_user_memberships.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN tenant_user_memberships.version IS '数据版本号，用于乐观锁';
@@ -336,10 +336,10 @@ COMMENT ON COLUMN questions.quality_score IS '题目质量分，0-10，智能组
 COMMENT ON COLUMN questions.choice_display_count IS '选择题展示选项数量，可为空';
 COMMENT ON COLUMN questions.shuffle_options IS '题库默认选项随机设置';
 COMMENT ON COLUMN questions.status IS '题目状态：draft / enabled / disabled';
-COMMENT ON COLUMN questions.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN questions.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN questions.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN questions.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN questions.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN questions.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN questions.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN questions.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN questions.version IS '数据版本号，用于乐观锁';
@@ -375,10 +375,10 @@ COMMENT ON COLUMN question_options.sort_order IS '选项原始排序';
 COMMENT ON COLUMN question_options.content IS '选项内容';
 COMMENT ON COLUMN question_options.is_correct IS '是否为正确答案';
 COMMENT ON COLUMN question_options.is_distractor IS '是否可作为随机补位干扰项';
-COMMENT ON COLUMN question_options.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN question_options.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN question_options.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN question_options.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN question_options.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN question_options.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN question_options.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN question_options.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN question_options.version IS '数据版本号，用于乐观锁';
@@ -405,10 +405,10 @@ COMMENT ON TABLE tags IS '标签表，保存知识点、章节、技能点等题
 COMMENT ON COLUMN tags.id IS '标签主键 ID';
 COMMENT ON COLUMN tags.tenant_id IS '所属租户 ID';
 COMMENT ON COLUMN tags.name IS '标签名称，例如知识点、章节、技能点';
-COMMENT ON COLUMN tags.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN tags.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN tags.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN tags.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN tags.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN tags.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN tags.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN tags.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN tags.version IS '数据版本号，用于乐观锁';
@@ -432,7 +432,7 @@ COMMENT ON COLUMN question_tags.id IS '题目标签关系主键 ID';
 COMMENT ON COLUMN question_tags.tenant_id IS '所属租户 ID';
 COMMENT ON COLUMN question_tags.question_id IS '题目 ID';
 COMMENT ON COLUMN question_tags.tag_id IS '标签 ID';
-COMMENT ON COLUMN question_tags.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN question_tags.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN question_tags.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN question_tags.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN question_tags.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
@@ -475,10 +475,10 @@ COMMENT ON COLUMN papers.build_mode IS '组卷方式：manual / rule_fixed / rul
 COMMENT ON COLUMN papers.shuffle_questions IS '是否对每个考生随机题目顺序';
 COMMENT ON COLUMN papers.show_analysis IS '成绩可见后是否向考生展示题目解析';
 COMMENT ON COLUMN papers.status IS '试卷状态：draft / enabled / disabled';
-COMMENT ON COLUMN papers.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN papers.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN papers.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN papers.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN papers.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN papers.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN papers.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN papers.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN papers.version IS '数据版本号，用于乐观锁';
@@ -516,10 +516,10 @@ COMMENT ON COLUMN paper_sections.question_type IS '大题题型';
 COMMENT ON COLUMN paper_sections.instructions IS '大题作答说明';
 COMMENT ON COLUMN paper_sections.total_score IS '大题小计分，由系统聚合计算';
 COMMENT ON COLUMN paper_sections.question_count IS '大题题目数量，由系统聚合计算';
-COMMENT ON COLUMN paper_sections.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN paper_sections.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN paper_sections.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN paper_sections.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN paper_sections.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN paper_sections.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN paper_sections.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN paper_sections.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN paper_sections.version IS '数据版本号，用于乐观锁';
@@ -556,10 +556,10 @@ COMMENT ON COLUMN paper_section_questions.question_id IS '题目 ID';
 COMMENT ON COLUMN paper_section_questions.sort_order IS '题目在大题中的排序';
 COMMENT ON COLUMN paper_section_questions.score IS '该题在本试卷中的分值';
 COMMENT ON COLUMN paper_section_questions.shuffle_options IS '手动或固化组卷下该题是否随机选项，NULL 表示回退题库默认值';
-COMMENT ON COLUMN paper_section_questions.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN paper_section_questions.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN paper_section_questions.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN paper_section_questions.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN paper_section_questions.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN paper_section_questions.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN paper_section_questions.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN paper_section_questions.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN paper_section_questions.version IS '数据版本号，用于乐观锁';
@@ -599,10 +599,10 @@ COMMENT ON COLUMN paper_section_rules.tag_filter IS '标签过滤条件，JSON �
 COMMENT ON COLUMN paper_section_rules.question_count IS '该规则抽题数量';
 COMMENT ON COLUMN paper_section_rules.score_per_question IS '该规则下每题分值';
 COMMENT ON COLUMN paper_section_rules.shuffle_options IS '规则组卷下是否随机选项，NULL 表示回退题库默认值';
-COMMENT ON COLUMN paper_section_rules.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN paper_section_rules.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN paper_section_rules.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN paper_section_rules.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN paper_section_rules.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN paper_section_rules.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN paper_section_rules.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN paper_section_rules.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN paper_section_rules.version IS '数据版本号，用于乐观锁';
@@ -638,8 +638,8 @@ COMMENT ON COLUMN exams.id IS '考试主键 ID';
 COMMENT ON COLUMN exams.tenant_id IS '所属租户 ID';
 COMMENT ON COLUMN exams.paper_id IS '关联试卷 ID';
 COMMENT ON COLUMN exams.name IS '考试名称';
-COMMENT ON COLUMN exams.start_time IS '考试开始时间，Unix 毫秒时间戳';
-COMMENT ON COLUMN exams.end_time IS '考试结束时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exams.start_time IS '考试开始时间，Unix 秒时间戳';
+COMMENT ON COLUMN exams.end_time IS '考试结束时间，Unix 秒时间戳';
 COMMENT ON COLUMN exams.duration_minutes IS '单次作答时长，单位分钟';
 COMMENT ON COLUMN exams.max_attempts IS '每名考生最多作答次数';
 COMMENT ON COLUMN exams.result_strategy IS '多次作答成绩策略：latest / highest';
@@ -647,10 +647,10 @@ COMMENT ON COLUMN exams.publish_mode IS '成绩发布模式：immediate_score / 
 COMMENT ON COLUMN exams.score_publish_time IS '统一成绩公布时间，可为空';
 COMMENT ON COLUMN exams.invite_code IS '考试邀请码';
 COMMENT ON COLUMN exams.status IS '考试状态：draft / published / closed';
-COMMENT ON COLUMN exams.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exams.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN exams.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN exams.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN exams.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exams.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN exams.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN exams.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN exams.version IS '数据版本号，用于乐观锁';
@@ -675,7 +675,7 @@ COMMENT ON COLUMN exam_targets.tenant_id IS '所属租户 ID';
 COMMENT ON COLUMN exam_targets.exam_id IS '考试 ID';
 COMMENT ON COLUMN exam_targets.target_type IS '发布目标类型：space / user';
 COMMENT ON COLUMN exam_targets.target_id IS '发布目标 ID';
-COMMENT ON COLUMN exam_targets.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_targets.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_targets.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN exam_targets.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN exam_targets.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
@@ -700,7 +700,7 @@ COMMENT ON COLUMN exam_live_question_pools.exam_id IS '考试 ID';
 COMMENT ON COLUMN exam_live_question_pools.section_id IS '大题 ID';
 COMMENT ON COLUMN exam_live_question_pools.rule_id IS '大题抽题规则 ID';
 COMMENT ON COLUMN exam_live_question_pools.question_id IS '候选题目 ID';
-COMMENT ON COLUMN exam_live_question_pools.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_live_question_pools.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_live_question_pools.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN exam_live_question_pools.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN exam_live_question_pools.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
@@ -736,17 +736,17 @@ COMMENT ON COLUMN exam_attempts.exam_id IS '考试 ID';
 COMMENT ON COLUMN exam_attempts.user_id IS '考生用户 ID';
 COMMENT ON COLUMN exam_attempts.attempt_no IS '第几次作答，从 1 开始';
 COMMENT ON COLUMN exam_attempts.status IS '作答状态：in_progress / submitted / graded';
-COMMENT ON COLUMN exam_attempts.started_at IS '开始作答时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_attempts.started_at IS '开始作答时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_attempts.submitted_at IS '提交时间，可为空';
 COMMENT ON COLUMN exam_attempts.exam_token_hash IS '考试过程 token 哈希';
 COMMENT ON COLUMN exam_attempts.exam_token_expires_at IS '考试过程 token 过期时间';
 COMMENT ON COLUMN exam_attempts.objective_score IS '客观题得分';
 COMMENT ON COLUMN exam_attempts.subjective_score IS '主观题得分';
 COMMENT ON COLUMN exam_attempts.total_score IS '总分';
-COMMENT ON COLUMN exam_attempts.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_attempts.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_attempts.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN exam_attempts.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN exam_attempts.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_attempts.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_attempts.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN exam_attempts.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN exam_attempts.version IS '数据版本号，用于乐观锁';
@@ -787,10 +787,10 @@ COMMENT ON COLUMN exam_attempt_questions.score IS '该题在本次作答中的�
 COMMENT ON COLUMN exam_attempt_questions.question_snapshot IS '题干快照 JSON';
 COMMENT ON COLUMN exam_attempt_questions.option_snapshot IS '选项快照 JSON';
 COMMENT ON COLUMN exam_attempt_questions.correct_answer_snapshot IS '正确答案快照 JSON';
-COMMENT ON COLUMN exam_attempt_questions.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_attempt_questions.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_attempt_questions.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN exam_attempt_questions.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN exam_attempt_questions.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_attempt_questions.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_attempt_questions.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN exam_attempt_questions.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN exam_attempt_questions.version IS '数据版本号，用于乐观锁';
@@ -827,10 +827,10 @@ COMMENT ON COLUMN exam_answers.grading_status IS '阅卷状态：auto / pending 
 COMMENT ON COLUMN exam_answers.graded_by IS '阅卷人用户 ID，0 表示未阅卷';
 COMMENT ON COLUMN exam_answers.graded_at IS '阅卷时间，可为空';
 COMMENT ON COLUMN exam_answers.grader_comment IS '阅卷评语';
-COMMENT ON COLUMN exam_answers.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_answers.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_answers.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN exam_answers.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
-COMMENT ON COLUMN exam_answers.updated_at IS '更新时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_answers.updated_at IS '更新时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_answers.updated_by IS '更新人主体 ID';
 COMMENT ON COLUMN exam_answers.updated_by_type IS '更新人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN exam_answers.version IS '数据版本号，用于乐观锁';
@@ -854,9 +854,85 @@ COMMENT ON COLUMN exam_events.id IS '考试事件主键 ID';
 COMMENT ON COLUMN exam_events.tenant_id IS '所属租户 ID';
 COMMENT ON COLUMN exam_events.attempt_id IS '作答 ID';
 COMMENT ON COLUMN exam_events.event_type IS '事件类型：blur / focus / auto_save / submit / auto_submit';
-COMMENT ON COLUMN exam_events.event_time IS '事件发生时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_events.event_time IS '事件发生时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_events.payload IS '事件负载 JSON';
-COMMENT ON COLUMN exam_events.created_at IS '创建时间，Unix 毫秒时间戳';
+COMMENT ON COLUMN exam_events.created_at IS '创建时间，Unix 秒时间戳';
 COMMENT ON COLUMN exam_events.created_by IS '创建人主体 ID';
 COMMENT ON COLUMN exam_events.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
 COMMENT ON COLUMN exam_events.ext_json IS 'JSON 扩展字段，保存非主流程元数据';
+
+CREATE TABLE IF NOT EXISTS exam_operation_logs (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    exam_id BIGINT NOT NULL,
+    operation_type VARCHAR(64) NOT NULL,
+    operation_title VARCHAR(128) NOT NULL,
+    operation_detail TEXT NOT NULL DEFAULT '',
+    actor_id BIGINT NOT NULL DEFAULT 0,
+    actor_type VARCHAR(32) NOT NULL DEFAULT 'system',
+    actor_role VARCHAR(32) NOT NULL DEFAULT '',
+    space_id BIGINT,
+    operation_group_id VARCHAR(64) NOT NULL,
+    created_at BIGINT NOT NULL,
+    created_by BIGINT NOT NULL DEFAULT 0,
+    created_by_type VARCHAR(32) NOT NULL DEFAULT 'system',
+    ext_json JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+COMMENT ON TABLE exam_operation_logs IS '考试管理端操作日志表，记录发布、导入考生、导出成绩、发布成绩、设置变更和阅卷等审计事件';
+COMMENT ON COLUMN exam_operation_logs.id IS '管理端操作日志主键 ID';
+COMMENT ON COLUMN exam_operation_logs.tenant_id IS '所属租户 ID';
+COMMENT ON COLUMN exam_operation_logs.exam_id IS '考试 ID';
+COMMENT ON COLUMN exam_operation_logs.operation_type IS '操作类型，例如 publish_exam / send_invite';
+COMMENT ON COLUMN exam_operation_logs.operation_title IS '操作标题，用于操作日志列表展示';
+COMMENT ON COLUMN exam_operation_logs.operation_detail IS '操作详情摘要，避免前端拼接审计文案';
+COMMENT ON COLUMN exam_operation_logs.actor_id IS '操作人用户 ID，由后端 session 派生';
+COMMENT ON COLUMN exam_operation_logs.actor_type IS '操作人主体类型，例如 tenant_user / system';
+COMMENT ON COLUMN exam_operation_logs.actor_role IS '操作时的租户级角色快照';
+COMMENT ON COLUMN exam_operation_logs.space_id IS '操作关联空间，租户级操作为空';
+COMMENT ON COLUMN exam_operation_logs.operation_group_id IS '操作组 ID，用于多空间操作日志聚合';
+COMMENT ON COLUMN exam_operation_logs.created_at IS '创建时间，Unix 秒时间戳';
+COMMENT ON COLUMN exam_operation_logs.created_by IS '创建人主体 ID，通常与 actor_id 一致';
+COMMENT ON COLUMN exam_operation_logs.created_by_type IS '创建人主体类型，通常与 actor_type 一致';
+COMMENT ON COLUMN exam_operation_logs.ext_json IS 'JSON 扩展字段，只保存展示类非核心元数据';
+
+CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_status_submitted
+    ON exam_attempts (tenant_id, exam_id, status, submitted_at);
+CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_user
+    ON exam_attempts (tenant_id, exam_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_id
+    ON exam_attempts (tenant_id, exam_id, id);
+CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_score_rank
+    ON exam_attempts (tenant_id, exam_id, total_score, submitted_at, id);
+CREATE INDEX IF NOT EXISTS idx_exam_answers_attempt_grading
+    ON exam_answers (tenant_id, attempt_id, grading_status);
+CREATE INDEX IF NOT EXISTS idx_exam_operation_logs_exam_time
+    ON exam_operation_logs (tenant_id, exam_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_exam_operation_logs_exam_group
+    ON exam_operation_logs (tenant_id, exam_id, operation_group_id);
+
+CREATE TABLE IF NOT EXISTS exam_target_scope_spaces (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    exam_id BIGINT NOT NULL,
+    exam_target_id BIGINT NOT NULL,
+    space_id BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    created_by BIGINT NOT NULL DEFAULT 0,
+    created_by_type VARCHAR(32) NOT NULL DEFAULT 'system',
+    ext_json JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+COMMENT ON TABLE exam_target_scope_spaces IS '考试发布目标作用空间表，保存用户直投等目标的空间归属';
+COMMENT ON COLUMN exam_target_scope_spaces.id IS '考试发布目标作用空间主键 ID';
+COMMENT ON COLUMN exam_target_scope_spaces.tenant_id IS '所属租户 ID';
+COMMENT ON COLUMN exam_target_scope_spaces.exam_id IS '考试 ID';
+COMMENT ON COLUMN exam_target_scope_spaces.exam_target_id IS '考试发布目标 ID';
+COMMENT ON COLUMN exam_target_scope_spaces.space_id IS '目标作用空间 ID';
+COMMENT ON COLUMN exam_target_scope_spaces.created_at IS '创建时间，Unix 秒时间戳';
+COMMENT ON COLUMN exam_target_scope_spaces.created_by IS '创建人主体 ID';
+COMMENT ON COLUMN exam_target_scope_spaces.created_by_type IS '创建人主体类型：platform_user / tenant_user / system';
+COMMENT ON COLUMN exam_target_scope_spaces.ext_json IS 'JSON 扩展字段，只保存展示类非核心元数据';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exam_target_scope_spaces_target_space
+    ON exam_target_scope_spaces (tenant_id, exam_target_id, space_id);
+CREATE INDEX IF NOT EXISTS idx_exam_target_scope_spaces_exam_space
+    ON exam_target_scope_spaces (tenant_id, exam_id, space_id);

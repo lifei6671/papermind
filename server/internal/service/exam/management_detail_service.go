@@ -2,11 +2,9 @@ package exam
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
@@ -1026,11 +1024,8 @@ func dedupeOperationLogsByGroup(logs []OperationLog) []OperationLog {
 }
 
 func operationLogGroupKey(log OperationLog) string {
-	var payload struct {
-		OperationGroupID string `json:"operation_group_id"`
-	}
-	if strings.TrimSpace(log.ExtJSON) != "" && json.Unmarshal([]byte(log.ExtJSON), &payload) == nil && payload.OperationGroupID != "" {
-		return payload.OperationGroupID
+	if log.OperationGroupID != "" {
+		return log.OperationGroupID
 	}
 	return strconv.FormatUint(log.ID, 10)
 }

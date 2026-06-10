@@ -101,7 +101,7 @@ func TestExamSchemaMigrationContainsRequiredTablesAndConstraints(t *testing.T) {
 	}
 }
 
-func TestExamManagementDetailMigrationContainsOperationLogTableAndIndexes(t *testing.T) {
+func TestExamManagementDetailBaselineContainsOperationLogTableAndIndexes(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
@@ -109,10 +109,11 @@ func TestExamManagementDetailMigrationContainsOperationLogTableAndIndexes(t *tes
 	}{
 		{
 			name: "postgres",
-			path: filepath.Join("..", "..", "data", "migrations", "postgres", "002_exam_management_detail.sql"),
+			path: filepath.Join("..", "..", "data", "migrations", "postgres", "001_tenant_space.sql"),
 			want: []string{
 				"CREATE TABLE IF NOT EXISTS exam_operation_logs",
 				"operation_type VARCHAR(64) NOT NULL",
+				"operation_group_id VARCHAR(64) NOT NULL",
 				"COMMENT ON TABLE exam_operation_logs IS '考试管理端操作日志表",
 				"CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_status_submitted",
 				"CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_user",
@@ -120,35 +121,40 @@ func TestExamManagementDetailMigrationContainsOperationLogTableAndIndexes(t *tes
 				"CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_score_rank",
 				"CREATE INDEX IF NOT EXISTS idx_exam_answers_attempt_grading",
 				"CREATE INDEX IF NOT EXISTS idx_exam_operation_logs_exam_time",
+				"CREATE INDEX IF NOT EXISTS idx_exam_operation_logs_exam_group",
 			},
 		},
 		{
 			name: "mysql",
-			path: filepath.Join("..", "..", "data", "migrations", "mysql", "002_exam_management_detail.sql"),
+			path: filepath.Join("..", "..", "data", "migrations", "mysql", "001_tenant_space.sql"),
 			want: []string{
 				"CREATE TABLE IF NOT EXISTS exam_operation_logs",
 				"operation_type VARCHAR(64) NOT NULL COMMENT '操作类型",
+				"operation_group_id VARCHAR(64) NOT NULL COMMENT '操作组 ID",
 				"ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='考试管理端操作日志表",
-				"CREATE INDEX idx_exam_attempts_exam_status_submitted",
-				"CREATE INDEX idx_exam_attempts_exam_user",
-				"CREATE INDEX idx_exam_attempts_exam_id",
-				"CREATE INDEX idx_exam_attempts_exam_score_rank",
-				"CREATE INDEX idx_exam_answers_attempt_grading",
+				"KEY idx_exam_attempts_exam_status_submitted",
+				"KEY idx_exam_attempts_exam_user",
+				"KEY idx_exam_attempts_exam_id",
+				"KEY idx_exam_attempts_exam_score_rank",
+				"KEY idx_exam_answers_attempt_grading",
 				"KEY idx_exam_operation_logs_exam_time",
+				"KEY idx_exam_operation_logs_exam_group",
 			},
 		},
 		{
 			name: "sqlite",
-			path: filepath.Join("..", "..", "data", "migrations", "sqlite", "002_exam_management_detail.sql"),
+			path: filepath.Join("..", "..", "data", "migrations", "sqlite", "001_tenant_space.sql"),
 			want: []string{
 				"CREATE TABLE IF NOT EXISTS exam_operation_logs",
 				"operation_type TEXT NOT NULL",
+				"operation_group_id TEXT NOT NULL",
 				"CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_status_submitted",
 				"CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_user",
 				"CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_id",
 				"CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam_score_rank",
 				"CREATE INDEX IF NOT EXISTS idx_exam_answers_attempt_grading",
 				"CREATE INDEX IF NOT EXISTS idx_exam_operation_logs_exam_time",
+				"CREATE INDEX IF NOT EXISTS idx_exam_operation_logs_exam_group",
 			},
 		},
 	}
@@ -170,31 +176,7 @@ func TestExamManagementDetailMigrationContainsOperationLogTableAndIndexes(t *tes
 	}
 }
 
-func TestMySQLExamManagementDetailMigrationGuardsStandaloneIndexes(t *testing.T) {
-	path := filepath.Join("..", "..", "data", "migrations", "mysql", "002_exam_management_detail.sql")
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-
-	sql := string(content)
-	for _, indexName := range []string{
-		"idx_exam_attempts_exam_status_submitted",
-		"idx_exam_attempts_exam_user",
-		"idx_exam_attempts_exam_id",
-		"idx_exam_attempts_exam_score_rank",
-		"idx_exam_answers_attempt_grading",
-	} {
-		if !strings.Contains(sql, "information_schema.statistics") || !strings.Contains(sql, "index_name = '"+indexName+"'") {
-			t.Fatalf("mysql migration should guard index %s with information_schema.statistics", indexName)
-		}
-	}
-	if strings.Contains(sql, "\nCREATE INDEX idx_exam_attempts_") || strings.Contains(sql, "\nCREATE INDEX idx_exam_answers_") {
-		t.Fatalf("mysql migration should not use bare CREATE INDEX for standalone indexes")
-	}
-}
-
-func TestExamTargetScopeSpacesMigrationContainsTableAndIndexes(t *testing.T) {
+func TestExamTargetScopeSpacesBaselineContainsTableAndIndexes(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
@@ -202,7 +184,7 @@ func TestExamTargetScopeSpacesMigrationContainsTableAndIndexes(t *testing.T) {
 	}{
 		{
 			name: "postgres",
-			path: filepath.Join("..", "..", "data", "migrations", "postgres", "003_exam_target_scope_spaces.sql"),
+			path: filepath.Join("..", "..", "data", "migrations", "postgres", "001_tenant_space.sql"),
 			want: []string{
 				"CREATE TABLE IF NOT EXISTS exam_target_scope_spaces",
 				"exam_target_id BIGINT NOT NULL",
@@ -213,7 +195,7 @@ func TestExamTargetScopeSpacesMigrationContainsTableAndIndexes(t *testing.T) {
 		},
 		{
 			name: "mysql",
-			path: filepath.Join("..", "..", "data", "migrations", "mysql", "003_exam_target_scope_spaces.sql"),
+			path: filepath.Join("..", "..", "data", "migrations", "mysql", "001_tenant_space.sql"),
 			want: []string{
 				"CREATE TABLE IF NOT EXISTS exam_target_scope_spaces",
 				"exam_target_id BIGINT UNSIGNED NOT NULL COMMENT '考试发布目标 ID'",
@@ -224,7 +206,7 @@ func TestExamTargetScopeSpacesMigrationContainsTableAndIndexes(t *testing.T) {
 		},
 		{
 			name: "sqlite",
-			path: filepath.Join("..", "..", "data", "migrations", "sqlite", "003_exam_target_scope_spaces.sql"),
+			path: filepath.Join("..", "..", "data", "migrations", "sqlite", "001_tenant_space.sql"),
 			want: []string{
 				"CREATE TABLE IF NOT EXISTS exam_target_scope_spaces",
 				"exam_target_id INTEGER NOT NULL",
@@ -249,5 +231,16 @@ func TestExamTargetScopeSpacesMigrationContainsTableAndIndexes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestExamSchemaUsesSingleBaselineFilePerDatabase(t *testing.T) {
+	for _, driver := range []string{"postgres", "mysql", "sqlite"} {
+		for _, filename := range []string{"002_exam_management_detail.sql", "003_exam_target_scope_spaces.sql"} {
+			path := filepath.Join("..", "..", "data", "migrations", driver, filename)
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("%s should be merged into 001_tenant_space.sql and removed, stat error = %v", path, err)
+			}
+		}
 	}
 }

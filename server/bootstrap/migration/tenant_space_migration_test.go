@@ -66,6 +66,7 @@ func TestSQLiteExamManagementDetailMigrationCreatesOperationLogTableAndIndexes(t
 		"actor_type",
 		"actor_role",
 		"space_id",
+		"operation_group_id",
 		"created_at",
 		"created_by",
 		"created_by_type",
@@ -79,68 +80,35 @@ func TestSQLiteExamManagementDetailMigrationCreatesOperationLogTableAndIndexes(t
 	assertSQLiteIndexColumns(t, gormDB, "idx_exam_attempts_exam_score_rank", []string{"tenant_id", "exam_id", "total_score", "submitted_at", "id"})
 	assertSQLiteIndexColumns(t, gormDB, "idx_exam_answers_attempt_grading", []string{"tenant_id", "attempt_id", "grading_status"})
 	assertSQLiteIndexColumns(t, gormDB, "idx_exam_operation_logs_exam_time", []string{"tenant_id", "exam_id", "created_at", "id"})
+	assertSQLiteIndexColumns(t, gormDB, "idx_exam_operation_logs_exam_group", []string{"tenant_id", "exam_id", "operation_group_id"})
 }
 
-func TestSQLiteExamTargetScopeSpacesMigrationBackfillsHistoricalUserTargets(t *testing.T) {
+func TestSQLiteExamTargetScopeSpacesBaselineCreatesTableAndIndexes(t *testing.T) {
 	gormDB, closeDB := openSQLiteForActualMigrationTest(t)
 	defer closeDB()
 
 	migrationDir := filepath.Join("..", "..", "data", "migrations", "sqlite")
-	migrations, err := loadMigrationFiles(migrationDir)
-	if err != nil {
-		t.Fatalf("loadMigrationFiles() error = %v", err)
-	}
-	if err := ensureSchemaMigrationsTable(gormDB); err != nil {
-		t.Fatalf("ensure schema migrations: %v", err)
-	}
-	for _, migration := range migrations {
-		if migration.Version > 2 {
-			break
-		}
-		if err := applyMigration(gormDB, migration); err != nil {
-			t.Fatalf("apply migration %d: %v", migration.Version, err)
-		}
+	if err := Run(gormDB, migrationDir); err != nil {
+		t.Fatalf("Run(sqlite migrations) error = %v", err)
 	}
 
-	if err := gormDB.Exec(`
-		INSERT INTO papers (
-			id, tenant_id, name, description, total_score, build_mode, status,
-			created_at, updated_at, ext_json
-		) VALUES (100, 10, '历史试卷', '', 100, 'manual', 'enabled', 1000, 1000, '{}')
-	`).Error; err != nil {
-		t.Fatalf("seed historical paper: %v", err)
+	if !gormDB.Migrator().HasTable("exam_target_scope_spaces") {
+		t.Fatalf("table exam_target_scope_spaces missing")
 	}
-	if err := gormDB.Exec(`
-		INSERT INTO exams (
-			id, tenant_id, paper_id, name, start_time, end_time, duration_minutes,
-			max_attempts, result_strategy, publish_mode, invite_code, status,
-			created_at, updated_at, ext_json
-		) VALUES (900, 10, 100, '历史考试', 1000, 2000, 60, 1, 'latest', 'manual_publish', 'HISTORY', 'published', 1000, 1000, '{}')
-	`).Error; err != nil {
-		t.Fatalf("seed historical exam: %v", err)
+	for _, column := range []string{
+		"tenant_id",
+		"exam_id",
+		"exam_target_id",
+		"space_id",
+		"created_at",
+		"created_by",
+		"created_by_type",
+		"ext_json",
+	} {
+		assertSQLiteColumnExists(t, gormDB, "exam_target_scope_spaces", column)
 	}
-	if err := gormDB.Exec(`
-		INSERT INTO exam_targets (
-			id, tenant_id, exam_id, target_type, target_id, created_at, created_by,
-			created_by_type, ext_json
-		) VALUES
-			(1, 10, 900, 'user', 21, 1000, 0, 'system', '{"space_ids":[301,302,301]}'),
-			(2, 10, 900, 'user', 22, 1000, 0, 'system', '{}')
-	`).Error; err != nil {
-		t.Fatalf("seed historical targets: %v", err)
-	}
-
-	for _, migration := range migrations {
-		if migration.Version != 3 {
-			continue
-		}
-		if err := applyMigration(gormDB, migration); err != nil {
-			t.Fatalf("apply migration %d: %v", migration.Version, err)
-		}
-	}
-
-	assertSQLiteExamTargetScopeSpaces(t, gormDB, 1, []uint64{301, 302})
-	assertSQLiteExamTargetScopeSpaces(t, gormDB, 2, nil)
+	assertSQLiteIndexColumns(t, gormDB, "uk_exam_target_scope_spaces_target_space", []string{"tenant_id", "exam_target_id", "space_id"})
+	assertSQLiteIndexColumns(t, gormDB, "idx_exam_target_scope_spaces_exam_space", []string{"tenant_id", "exam_id", "space_id"})
 }
 
 func TestSQLiteUsersAllowMultipleEmptyOptionalContacts(t *testing.T) {
@@ -283,26 +251,5 @@ func assertSQLiteIndexColumns(t *testing.T, gormDB *gorm.DB, indexName string, c
 
 	if !sqliteIndexColumnsMatch(t, gormDB, indexName, columns) {
 		t.Fatalf("index %s columns should be %s", indexName, strings.Join(columns, ","))
-	}
-}
-
-func assertSQLiteExamTargetScopeSpaces(t *testing.T, gormDB *gorm.DB, examTargetID uint64, want []uint64) {
-	t.Helper()
-
-	var got []uint64
-	if err := gormDB.Table("exam_target_scope_spaces").
-		Select("space_id").
-		Where("exam_target_id = ?", examTargetID).
-		Order("space_id ASC").
-		Scan(&got).Error; err != nil {
-		t.Fatalf("query exam target scope spaces: %v", err)
-	}
-	if len(got) != len(want) {
-		t.Fatalf("expected scope spaces %#v, got %#v", want, got)
-	}
-	for index := range want {
-		if got[index] != want[index] {
-			t.Fatalf("expected scope spaces %#v, got %#v", want, got)
-		}
 	}
 }

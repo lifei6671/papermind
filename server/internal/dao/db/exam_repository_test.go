@@ -1940,16 +1940,16 @@ func TestExamRepositoryAppendAndListOperationLogs(t *testing.T) {
 
 	logs := []serviceexam.OperationLog{
 		{
-			TenantID:        10,
-			ExamID:          900,
-			OperationType:   serviceexam.OperationTypePublishExam,
-			OperationTitle:  "发布考试",
-			OperationDetail: "发布到高一一班",
-			ActorID:         11,
-			ActorType:       AuditActorTenantUser,
-			ActorRole:       "tenant_admin",
-			SpaceID:         &spaceID,
-			ExtJSON:         `{"operation_group_id":"group-1"}`,
+			TenantID:         10,
+			ExamID:           900,
+			OperationType:    serviceexam.OperationTypePublishExam,
+			OperationTitle:   "发布考试",
+			OperationDetail:  "发布到高一一班",
+			ActorID:          11,
+			ActorType:        AuditActorTenantUser,
+			ActorRole:        "tenant_admin",
+			SpaceID:          &spaceID,
+			OperationGroupID: "group-1",
 		},
 		{
 			TenantID:        10,
@@ -1991,8 +1991,11 @@ func TestExamRepositoryAppendAndListOperationLogs(t *testing.T) {
 	if allLogs.Items[0].OperationType != serviceexam.OperationTypeSendInvite || allLogs.Items[1].OperationType != serviceexam.OperationTypePublishExam {
 		t.Fatalf("expected logs ordered by created_at desc and id desc, got %#v", allLogs.Items)
 	}
-	if allLogs.Items[1].ExtJSON != `{"operation_group_id":"group-1"}` {
-		t.Fatalf("expected ext json to round trip, got %s", allLogs.Items[1].ExtJSON)
+	if allLogs.Items[1].OperationGroupID != "group-1" {
+		t.Fatalf("expected operation group id to round trip, got %s", allLogs.Items[1].OperationGroupID)
+	}
+	if allLogs.Items[1].ExtJSON != `{}` {
+		t.Fatalf("expected core operation group to stay out of ext_json, got %s", allLogs.Items[1].ExtJSON)
 	}
 
 	spaceLogs, err := repo.ListOperationLogs(t.Context(), serviceexam.ListOperationLogsInput{TenantID: 10, ExamID: 900, SpaceID: &spaceID, Page: 1, PageSize: 10})
@@ -2018,7 +2021,7 @@ func TestExamRepositoryAppendAndListOperationLogs(t *testing.T) {
 	}
 }
 
-func TestOperationGroupExtJSONGeneratesDistinctGroupIDsWithinSameMillisecond(t *testing.T) {
+func TestOperationGroupIDGeneratesDistinctGroupIDsWithinSameMillisecond(t *testing.T) {
 	log := serviceexam.OperationLog{
 		TenantID:      10,
 		ExamID:        900,
@@ -2026,26 +2029,18 @@ func TestOperationGroupExtJSONGeneratesDistinctGroupIDsWithinSameMillisecond(t *
 		ActorID:       11,
 	}
 
-	first := operationGroupExtJSON(log, 1800)
-	second := operationGroupExtJSON(log, 1800)
+	first := operationGroupID(log, 1800)
+	second := operationGroupID(log, 1800)
 
-	var firstPayload map[string]string
-	if err := json.Unmarshal([]byte(first), &firstPayload); err != nil {
-		t.Fatalf("unmarshal first ext json: %v", err)
-	}
-	var secondPayload map[string]string
-	if err := json.Unmarshal([]byte(second), &secondPayload); err != nil {
-		t.Fatalf("unmarshal second ext json: %v", err)
-	}
-	if firstPayload["operation_group_id"] == "" || secondPayload["operation_group_id"] == "" {
+	if first == "" || second == "" {
 		t.Fatalf("expected operation_group_id in both payloads, got %q and %q", first, second)
 	}
-	if firstPayload["operation_group_id"] == secondPayload["operation_group_id"] {
-		t.Fatalf("expected distinct operation_group_id values within same millisecond, got %q", firstPayload["operation_group_id"])
+	if first == second {
+		t.Fatalf("expected distinct operation_group_id values within same millisecond, got %q", first)
 	}
 }
 
-func TestOperationGroupExtJSONDoesNotDependOnProcessLocalSequence(t *testing.T) {
+func TestOperationGroupIDDoesNotDependOnProcessLocalSequence(t *testing.T) {
 	log := serviceexam.OperationLog{
 		TenantID:      10,
 		ExamID:        900,
@@ -2054,21 +2049,13 @@ func TestOperationGroupExtJSONDoesNotDependOnProcessLocalSequence(t *testing.T) 
 	}
 
 	operationGroupSequence = 0
-	first := operationGroupExtJSON(log, 1800)
+	first := operationGroupID(log, 1800)
 	// 模拟另一个新进程从相同的本地 sequence 起点生成同一业务操作的 group id。
 	operationGroupSequence = 0
-	second := operationGroupExtJSON(log, 1800)
+	second := operationGroupID(log, 1800)
 
-	var firstPayload map[string]string
-	if err := json.Unmarshal([]byte(first), &firstPayload); err != nil {
-		t.Fatalf("unmarshal first ext json: %v", err)
-	}
-	var secondPayload map[string]string
-	if err := json.Unmarshal([]byte(second), &secondPayload); err != nil {
-		t.Fatalf("unmarshal second ext json: %v", err)
-	}
-	if firstPayload["operation_group_id"] == secondPayload["operation_group_id"] {
-		t.Fatalf("expected operation_group_id to remain distinct across simulated process restarts, got %q", firstPayload["operation_group_id"])
+	if first == second {
+		t.Fatalf("expected operation_group_id to remain distinct across simulated process restarts, got %q", first)
 	}
 }
 
@@ -2156,13 +2143,9 @@ func assertOperationLogsShareGroupAndSpaces(t *testing.T, logs []serviceexam.Ope
 			t.Fatalf("expected scoped operation log, got nil space in %#v", log)
 		}
 		seenSpaces[*log.SpaceID] = struct{}{}
-		var ext map[string]string
-		if err := json.Unmarshal([]byte(log.ExtJSON), &ext); err != nil {
-			t.Fatalf("operation log ext_json should be valid JSON, got %q: %v", log.ExtJSON, err)
-		}
-		currentGroupID := ext["operation_group_id"]
+		currentGroupID := log.OperationGroupID
 		if currentGroupID == "" {
-			t.Fatalf("expected operation_group_id in ext_json, got %q", log.ExtJSON)
+			t.Fatalf("expected operation_group_id explicit column, got %#v", log)
 		}
 		if groupID == "" {
 			groupID = currentGroupID

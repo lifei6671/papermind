@@ -2822,7 +2822,7 @@ func examOperationLogsToResponse(logs serviceexam.OperationLogListData) examOper
 			ActorID:          item.ActorID,
 			ActorType:        item.ActorType,
 			ActorRole:        item.ActorRole,
-			OperationGroupID: operationGroupIDFromExtJSON(item.ExtJSON),
+			OperationGroupID: item.OperationGroupID,
 			SpaceID:          item.SpaceID,
 			CreatedAt:        item.CreatedAt,
 		})
@@ -2835,18 +2835,6 @@ func examOperationLogsToResponse(logs serviceexam.OperationLogListData) examOper
 		Total:       logs.Total,
 		Permissions: managementPermissionsToResponse(logs.Detail.Permissions),
 	}
-}
-
-// operationGroupIDFromExtJSON 只从审计扩展字段中提取可用于前端聚合的组 ID。
-// 完整 ext_json 可能继续承载内部审计元数据，不能直接透出给前端。
-func operationGroupIDFromExtJSON(extJSON string) string {
-	var payload struct {
-		OperationGroupID string `json:"operation_group_id"`
-	}
-	if err := json.Unmarshal([]byte(extJSON), &payload); err != nil {
-		return ""
-	}
-	return payload.OperationGroupID
 }
 
 func examImportCandidatesToResponse(result serviceexam.ImportCandidatesResult) examCandidateImportResponse {

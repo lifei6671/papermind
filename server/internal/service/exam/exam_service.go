@@ -148,20 +148,21 @@ type Target struct {
 // OperationLog 表示管理端考试操作审计记录。
 // service 和 API 层使用该对象传递日志，避免直接依赖数据库 DO 和 JSON 字段实现。
 type OperationLog struct {
-	ID              uint64  // 操作日志主键 ID。
-	TenantID        uint64  // 所属租户 ID。
-	ExamID          uint64  // 考试 ID。
-	OperationType   string  // 操作类型，例如 publish_exam / send_invite。
-	OperationTitle  string  // 操作标题，用于操作日志列表展示。
-	OperationDetail string  // 操作详情摘要，避免前端拼接审计文案。
-	ActorID         uint64  // 操作人用户 ID，由后端 session 派生。
-	ActorType       string  // 操作人主体类型，例如 tenant_user / system。
-	ActorRole       string  // 操作发生时的租户级角色快照。
-	SpaceID         *uint64 // 操作关联空间；nil 表示租户级操作。
-	CreatedAt       int64   // 操作日志创建时间，Unix 毫秒时间戳。
-	CreatedBy       uint64  // 创建人主体 ID，通常与 ActorID 一致。
-	CreatedByType   string  // 创建人主体类型，通常与 ActorType 一致。
-	ExtJSON         string  // JSON 扩展字段，用于保存 operation_group_id 等元数据。
+	ID               uint64  // 操作日志主键 ID。
+	TenantID         uint64  // 所属租户 ID。
+	ExamID           uint64  // 考试 ID。
+	OperationType    string  // 操作类型，例如 publish_exam / send_invite。
+	OperationTitle   string  // 操作标题，用于操作日志列表展示。
+	OperationDetail  string  // 操作详情摘要，避免前端拼接审计文案。
+	ActorID          uint64  // 操作人用户 ID，由后端 session 派生。
+	ActorType        string  // 操作人主体类型，例如 tenant_user / system。
+	ActorRole        string  // 操作发生时的租户级角色快照。
+	SpaceID          *uint64 // 操作关联空间；nil 表示租户级操作。
+	OperationGroupID string  // 操作组 ID，用于聚合同一次业务动作产生的多条空间日志。
+	CreatedAt        int64   // 操作日志创建时间，Unix 毫秒时间戳。
+	CreatedBy        uint64  // 创建人主体 ID，通常与 ActorID 一致。
+	CreatedByType    string  // 创建人主体类型，通常与 ActorType 一致。
+	ExtJSON          string  // JSON 扩展字段，只保存展示类非核心元数据。
 }
 
 type LivePoolItem struct {

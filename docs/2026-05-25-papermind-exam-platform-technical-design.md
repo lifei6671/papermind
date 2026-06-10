@@ -281,7 +281,7 @@ server/data/migrations
 - 服务启动时根据 `database.driver` 自动选择迁移目录，并按版本号从小到大执行。
 - 已执行版本记录到 `schema_migrations`，重复执行时自动跳过。
 - 已发布或已执行的迁移版本不得改写；项目进入生产或存在历史库后，新增字段、索引调整和约束收口必须通过更高版本追加迁移落地，避免旧库因版本已记录而跳过结构变更。
-- 早期权限模型调整仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；该阶段不新增 `002_audit_actor_type.sql`，审计主体类型字段、全局 `users` 表、`tenant_user_memberships` 租户成员关系表和单角色唯一约束直接写入 `001_tenant_space.sql`。考试管理详情阶段的审计日志、成绩汇总索引和发布目标作用空间通过后续 `002_exam_management_detail.sql`、`003_exam_target_scope_spaces.sql` 增量迁移落地。
+- 早期权限模型和考试管理详情仍处于新项目初始化建库阶段，不存在历史生产库升级诉求；该阶段不新增 `002_audit_actor_type.sql`、`002_exam_management_detail.sql` 或 `003_exam_target_scope_spaces.sql`。审计主体类型字段、全局 `users` 表、`tenant_user_memberships` 租户成员关系表、单角色唯一约束、考试管理详情审计日志、成绩汇总索引和发布目标作用空间都直接写入各库目录的 `001_tenant_space.sql`。
 - 任意迁移失败必须立即停止启动流程，禁止服务运行在半迁移状态。
 - 首版不提供单独数据库迁移脚本，避免部署流程和应用启动流程产生两套迁移入口。
 - 迁移期间 HTTP 层必须返回“系统升级中”的中间页或稳定 JSON 响应，并带 `Retry-After`，避免迁移耗时较长时前端白屏或接口表现为未知错误。

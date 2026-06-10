@@ -311,16 +311,17 @@ var ExamEventColumns = struct {
 // ExamOperationLogDO 是考试管理端操作日志表的 GORM 映射。
 // 该表只追加写入，不允许业务更新，因此嵌入 EventFields 而不是 BaseFields。
 type ExamOperationLogDO struct {
-	EventFields             // 追加写日志表公共字段。
-	TenantID        uint64  `gorm:"column:tenant_id"`        // 所属租户 ID。
-	ExamID          uint64  `gorm:"column:exam_id"`          // 考试 ID。
-	OperationType   string  `gorm:"column:operation_type"`   // 操作类型，例如 publish_exam / send_invite。
-	OperationTitle  string  `gorm:"column:operation_title"`  // 操作标题，用于操作日志列表展示。
-	OperationDetail string  `gorm:"column:operation_detail"` // 操作详情摘要，避免前端拼接审计文案。
-	ActorID         uint64  `gorm:"column:actor_id"`         // 操作人用户 ID，由后端 session 派生。
-	ActorType       string  `gorm:"column:actor_type"`       // 操作人主体类型，例如 tenant_user / system。
-	ActorRole       string  `gorm:"column:actor_role"`       // 操作时的租户级角色快照。
-	SpaceID         *uint64 `gorm:"column:space_id"`         // 操作关联空间；nil 表示租户级操作。
+	EventFields              // 追加写日志表公共字段。
+	TenantID         uint64  `gorm:"column:tenant_id"`          // 所属租户 ID。
+	ExamID           uint64  `gorm:"column:exam_id"`            // 考试 ID。
+	OperationType    string  `gorm:"column:operation_type"`     // 操作类型，例如 publish_exam / send_invite。
+	OperationTitle   string  `gorm:"column:operation_title"`    // 操作标题，用于操作日志列表展示。
+	OperationDetail  string  `gorm:"column:operation_detail"`   // 操作详情摘要，避免前端拼接审计文案。
+	ActorID          uint64  `gorm:"column:actor_id"`           // 操作人用户 ID，由后端 session 派生。
+	ActorType        string  `gorm:"column:actor_type"`         // 操作人主体类型，例如 tenant_user / system。
+	ActorRole        string  `gorm:"column:actor_role"`         // 操作时的租户级角色快照。
+	SpaceID          *uint64 `gorm:"column:space_id"`           // 操作关联空间；nil 表示租户级操作。
+	OperationGroupID string  `gorm:"column:operation_group_id"` // 操作组 ID，用于多空间操作日志聚合。
 }
 
 func (ExamOperationLogDO) TableName() string {
@@ -329,25 +330,27 @@ func (ExamOperationLogDO) TableName() string {
 
 // ExamOperationLogColumns 与 ExamOperationLogDO 同文件维护，操作日志按考试和空间过滤时必须引用这里的列名。
 var ExamOperationLogColumns = struct {
-	ID              string
-	TenantID        string
-	ExamID          string
-	OperationType   string
-	OperationTitle  string
-	OperationDetail string
-	ActorID         string
-	ActorType       string
-	ActorRole       string
-	SpaceID         string
+	ID               string
+	TenantID         string
+	ExamID           string
+	OperationType    string
+	OperationTitle   string
+	OperationDetail  string
+	ActorID          string
+	ActorType        string
+	ActorRole        string
+	SpaceID          string
+	OperationGroupID string
 }{
-	ID:              EventColumns.ID,
-	TenantID:        "tenant_id",
-	ExamID:          "exam_id",
-	OperationType:   "operation_type",
-	OperationTitle:  "operation_title",
-	OperationDetail: "operation_detail",
-	ActorID:         "actor_id",
-	ActorType:       "actor_type",
-	ActorRole:       "actor_role",
-	SpaceID:         "space_id",
+	ID:               EventColumns.ID,
+	TenantID:         "tenant_id",
+	ExamID:           "exam_id",
+	OperationType:    "operation_type",
+	OperationTitle:   "operation_title",
+	OperationDetail:  "operation_detail",
+	ActorID:          "actor_id",
+	ActorType:        "actor_type",
+	ActorRole:        "actor_role",
+	SpaceID:          "space_id",
+	OperationGroupID: "operation_group_id",
 }

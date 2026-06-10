@@ -4204,14 +4204,15 @@ func seedTakingAPITestData(t *testing.T, gormDB *gorm.DB) {
 func seedExamOperationLogAPITestData(t *testing.T, gormDB *gorm.DB) {
 	t.Helper()
 	if err := gormDB.Exec(`
-		INSERT INTO exam_operation_logs (
-			id, tenant_id, exam_id, operation_type, operation_title, operation_detail,
-			actor_id, actor_type, actor_role, space_id, created_at, created_by, created_by_type, ext_json
-		) VALUES
-			(3001, 10, 1, ?, '导入考生', '导入 1 名考生', 99, 'tenant_user', 'tenant_admin', NULL, ?, 99, 'tenant_user', '{}'),
-			(3002, 10, 1, ?, '重发邀请码', '重发 1 名考生邀请码', 20, 'tenant_user', 'space_admin', 100, ?, 20, 'tenant_user', '{"operation_group_id":"seed-group-1"}'),
-			(3003, 10, 1, ?, '修改考试设置', '修改成绩发布配置', 99, 'tenant_user', 'tenant_admin', 200, ?, 99, 'tenant_user', '{}')
-	`, serviceexam.OperationTypeImportCandidates, fixedAPINow+1_000, serviceexam.OperationTypeSendInvite, fixedAPINow+2_000, serviceexam.OperationTypeUpdateSettings, fixedAPINow+3_000).Error; err != nil {
+			INSERT INTO exam_operation_logs (
+				id, tenant_id, exam_id, operation_type, operation_title, operation_detail,
+				actor_id, actor_type, actor_role, space_id, operation_group_id,
+				created_at, created_by, created_by_type, ext_json
+			) VALUES
+				(3001, 10, 1, ?, '导入考生', '导入 1 名考生', 99, 'tenant_user', 'tenant_admin', NULL, 'seed-group-0', ?, 99, 'tenant_user', '{}'),
+				(3002, 10, 1, ?, '重发邀请码', '重发 1 名考生邀请码', 20, 'tenant_user', 'space_admin', 100, 'seed-group-1', ?, 20, 'tenant_user', '{}'),
+				(3003, 10, 1, ?, '修改考试设置', '修改成绩发布配置', 99, 'tenant_user', 'tenant_admin', 200, 'seed-group-2', ?, 99, 'tenant_user', '{}')
+		`, serviceexam.OperationTypeImportCandidates, fixedAPINow+1_000, serviceexam.OperationTypeSendInvite, fixedAPINow+2_000, serviceexam.OperationTypeUpdateSettings, fixedAPINow+3_000).Error; err != nil {
 		t.Fatalf("seed operation logs: %v", err)
 	}
 }

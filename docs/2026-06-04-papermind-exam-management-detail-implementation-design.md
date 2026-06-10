@@ -81,6 +81,7 @@ exam_operation_logs
 ├── actor_type            # 操作人主体类型：tenant_user / system
 ├── actor_role            # 操作时的租户级角色快照
 ├── space_id              # 操作关联空间，租户级操作可为空
+├── operation_group_id    # 操作组 ID，必须显式列化，不能继续依赖 ext_json
 ├── created_at            # 创建时间
 ├── created_by            # 创建人用户 ID
 ├── created_by_type       # 创建人主体类型
@@ -104,9 +105,11 @@ exam_operation_logs
 - 写入日志不能依赖前端传入的操作者字段，必须从 session principal 派生。
 - 关键写操作的日志建议同事务写入；日志写入失败时关键操作回滚，避免审计缺失。
 - 异步补充类日志写入失败时不回滚主业务，但必须记录 ERROR 日志。
-- 一次操作影响多个空间时，按受影响空间写多条日志，并在 `ext_json.operation_group_id`
-  中保存同一个操作组 ID；租户管理员页面可按操作组聚合展示，空间管理员和教师按
-  `space_id` 精确过滤。
+- 一次操作影响多个空间时，按受影响空间写多条日志，并用同一个
+  `operation_group_id` 聚合；租户管理员页面可按操作组聚合展示，空间管理员和教师按
+  `space_id` 精确过滤。早期实现曾把 `operation_group_id` 放在
+  `ext_json.operation_group_id`，后续实现和已有本地数据修复必须以显式列为准，不能继续
+  依赖 `ext_json` 做聚合、去重、分页或权限裁剪。
 - 租户级操作 `space_id` 为空；用户直投操作按目标用户当前启用空间展开日志可见范围。
 
 新增 `exam_target_scope_spaces`，用于把 `exam_targets` 的每条发布目标映射到真实作用空间：
@@ -189,9 +192,13 @@ INDEX idx_exam_answers_attempt_grading
 -- 操作日志按考试时间倒序分页。
 INDEX idx_exam_operation_logs_exam_time
   ON exam_operation_logs (tenant_id, exam_id, created_at, id);
+
+-- 操作日志按操作组聚合。
+INDEX idx_exam_operation_logs_exam_group
+  ON exam_operation_logs (tenant_id, exam_id, operation_group_id);
 ```
 
-三套迁移必须同步补充：
+当前仍处于初始化建库阶段，考试管理详情结构直接合并进三套数据库基准脚本：
 
 - `server/data/migrations/postgres`
 - `server/data/migrations/mysql`
@@ -199,12 +206,12 @@ INDEX idx_exam_operation_logs_exam_time
 
 迁移要求：
 
-- 已发布版本不改写，新增更高版本迁移。
-- PostgreSQL 使用 `COMMENT ON TABLE/COLUMN`。
-- MySQL 使用 `COMMENT`。
-- SQLite 使用 `--` 注释说明表和字段含义。
+- 每个数据库目录只保留 `001_tenant_space.sql` 作为当前基准结构。
+- `002_exam_management_detail.sql` / `003_exam_target_scope_spaces.sql` 不再保留；其目标表结构和索引已合并进 `001_tenant_space.sql`。
+- 基准 SQL 只表达最终表结构和索引，不包含历史回填、防重复执行或方言动态 DDL。
+- 后续项目进入生产或存在历史库后，新增字段、索引和回填逻辑必须重新按递增版本追加迁移。
 - SQLite 继续要求 `_foreign_keys=on`，涉及 JSON 查询的测试继续带 `-tags json1`。
-- 新增迁移后必须补齐三套数据库的表、索引和 DAO 映射测试，不能只验证 SQLite。
+- 新增运行时迁移后必须补齐三套数据库的表、索引和 DAO 映射测试，不能只验证 SQLite。
 
 ## 4. 后端接口设计
 
@@ -599,6 +606,9 @@ go test -tags json1 ./...
 - 新建考试多目标发布要验证全部成功、部分目标无权限整体失败和重复目标去重。
 - 三套数据库迁移必须分别通过迁移加载或 DAO 初始化验证，至少覆盖
   `exam_operation_logs` 表结构和新增索引。
+- 后续 `operation_group_id` 显式列迁移以
+  `docs/2026-06-10-papermind-grading-module-technical-design.md` 和三套
+  `001_tenant_space.sql` 为准；`ext_json.operation_group_id` 是旧实现，不能继续作为聚合依据。
 
 ### 8.3 前端验证
 
@@ -660,7 +670,7 @@ npm run build
 
 交付物：
 
-- 三套数据库迁移。
+- 三套数据库基准 SQL：`server/data/migrations/{postgres,mysql,sqlite}/001_tenant_space.sql`。
 - `ExamOperationLogDO` 和列映射。
 - 操作日志 repository。
 - 新增索引。
@@ -669,6 +679,8 @@ npm run build
 任务：
 
 - [x] 新增 `exam_operation_logs` 表，覆盖 PostgreSQL、MySQL、SQLite。
+- [ ] 补充 `exam_operation_logs.operation_group_id` 显式列，替代旧版
+  `ext_json.operation_group_id` 聚合设计。
 - [x] 新增 `exam_target_scope_spaces` 表，覆盖 PostgreSQL、MySQL、SQLite。
 - [x] 新增 `idx_exam_attempts_exam_status_submitted`。
 - [x] 新增 `idx_exam_attempts_exam_user`。
@@ -686,6 +698,8 @@ npm run build
 - [x] SQLite 迁移可通过实际加载测试，PostgreSQL/MySQL 8.0+ 迁移通过静态结构检查。
 - [x] 操作日志按 `created_at DESC, id DESC` 稳定分页。
 - [x] 多空间操作可用 `operation_group_id` 聚合，空间过滤不串数据。
+- [ ] 操作日志聚合、去重和分页只读取 `operation_group_id` 显式列，不读取
+  `ext_json.operation_group_id`。
 
 退出条件：
 

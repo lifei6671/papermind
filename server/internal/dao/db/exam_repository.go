@@ -1048,15 +1048,16 @@ func (r *ExamRepository) appendOperationLogInTx(tx *gorm.DB, log serviceexam.Ope
 			CreatedByType: createdByType,
 			ExtJSON:       datatypes.JSON([]byte(extJSON)),
 		},
-		TenantID:        log.TenantID,
-		ExamID:          log.ExamID,
-		OperationType:   log.OperationType,
-		OperationTitle:  log.OperationTitle,
-		OperationDetail: log.OperationDetail,
-		ActorID:         log.ActorID,
-		ActorType:       log.ActorType,
-		ActorRole:       log.ActorRole,
-		SpaceID:         log.SpaceID,
+		TenantID:         log.TenantID,
+		ExamID:           log.ExamID,
+		OperationType:    log.OperationType,
+		OperationTitle:   log.OperationTitle,
+		OperationDetail:  log.OperationDetail,
+		ActorID:          log.ActorID,
+		ActorType:        log.ActorType,
+		ActorRole:        log.ActorRole,
+		SpaceID:          log.SpaceID,
+		OperationGroupID: operationGroupID(log, now),
 	}
 	return tx.Create(&row).Error
 }
@@ -1068,12 +1069,12 @@ func (r *ExamRepository) appendOperationLogsForSpacesInTx(tx *gorm.DB, log servi
 	if len(scopedSpaceIDs) == 0 {
 		return r.appendOperationLogInTx(tx, log)
 	}
-	groupExtJSON := operationGroupExtJSON(log, r.now())
+	groupID := operationGroupID(log, r.now())
 	for _, spaceID := range scopedSpaceIDs {
 		scopedSpaceID := spaceID
 		scopedLog := log
 		scopedLog.SpaceID = &scopedSpaceID
-		scopedLog.ExtJSON = groupExtJSON
+		scopedLog.OperationGroupID = groupID
 		if err := r.appendOperationLogInTx(tx, scopedLog); err != nil {
 			return err
 		}
@@ -1081,21 +1082,11 @@ func (r *ExamRepository) appendOperationLogsForSpacesInTx(tx *gorm.DB, log servi
 	return nil
 }
 
-// operationGroupExtJSON 在日志扩展字段中补齐 operation_group_id。
-// 这里保留调用方已有扩展字段，只在缺少组 ID 时写入当前操作生成的稳定审计组。
-func operationGroupExtJSON(log serviceexam.OperationLog, now int64) string {
-	ext := map[string]any{}
-	if strings.TrimSpace(log.ExtJSON) != "" {
-		_ = json.Unmarshal([]byte(log.ExtJSON), &ext)
+func operationGroupID(log serviceexam.OperationLog, now int64) string {
+	if log.OperationGroupID != "" {
+		return log.OperationGroupID
 	}
-	if groupID, ok := ext["operation_group_id"].(string); !ok || groupID == "" {
-		ext["operation_group_id"] = newOperationGroupID(log, now)
-	}
-	payload, err := json.Marshal(ext)
-	if err != nil {
-		return `{}`
-	}
-	return string(payload)
+	return newOperationGroupID(log, now)
 }
 
 func newOperationGroupID(log serviceexam.OperationLog, now int64) string {
@@ -4017,20 +4008,21 @@ func examFromDO(row ExamDO, buildMode string) serviceexam.Exam {
 // JSON 扩展字段以字符串传出，避免 service 和 API 层依赖 GORM 的 datatypes.JSON 类型。
 func operationLogFromDO(row ExamOperationLogDO) serviceexam.OperationLog {
 	return serviceexam.OperationLog{
-		ID:              row.ID,
-		TenantID:        row.TenantID,
-		ExamID:          row.ExamID,
-		OperationType:   row.OperationType,
-		OperationTitle:  row.OperationTitle,
-		OperationDetail: row.OperationDetail,
-		ActorID:         row.ActorID,
-		ActorType:       row.ActorType,
-		ActorRole:       row.ActorRole,
-		SpaceID:         row.SpaceID,
-		CreatedAt:       row.CreatedAt,
-		CreatedBy:       row.CreatedBy,
-		CreatedByType:   row.CreatedByType,
-		ExtJSON:         string(row.ExtJSON),
+		ID:               row.ID,
+		TenantID:         row.TenantID,
+		ExamID:           row.ExamID,
+		OperationType:    row.OperationType,
+		OperationTitle:   row.OperationTitle,
+		OperationDetail:  row.OperationDetail,
+		ActorID:          row.ActorID,
+		ActorType:        row.ActorType,
+		ActorRole:        row.ActorRole,
+		SpaceID:          row.SpaceID,
+		OperationGroupID: row.OperationGroupID,
+		CreatedAt:        row.CreatedAt,
+		CreatedBy:        row.CreatedBy,
+		CreatedByType:    row.CreatedByType,
+		ExtJSON:          string(row.ExtJSON),
 	}
 }
 
