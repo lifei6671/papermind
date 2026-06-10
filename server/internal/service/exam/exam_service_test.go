@@ -1876,6 +1876,15 @@ func (r *fakeRepository) UpdateExamStatus(ctx context.Context, input UpdateExamS
 	return exam, nil
 }
 
+func (r *fakeRepository) DeleteDraftExam(ctx context.Context, input DeleteDraftInput) error {
+	exam := r.exams[input.ExamID]
+	if exam.Status != StatusDraft {
+		return ErrInvalidExamStatus
+	}
+	delete(r.exams, input.ExamID)
+	return nil
+}
+
 func (r *fakeRepository) TargetExists(ctx context.Context, tenantID uint64, examID uint64, targetType string, targetID uint64) (bool, error) {
 	return r.targets[targetKey{tenantID: tenantID, examID: examID, targetType: targetType, targetID: targetID}], nil
 }

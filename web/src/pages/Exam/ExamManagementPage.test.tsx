@@ -807,7 +807,88 @@ test("考试列表支持发布、提前结束和禁用考试", async () => {
   expect(within(closedRow).getByRole("link", { name: "详情" })).toHaveAttribute("href", "/exams/12");
 });
 
-test("空间教师查看考试列表时只展示自己考试的编辑和状态操作", async () => {
+test("考试列表支持删除草稿考试", async () => {
+  const user = userEvent.setup();
+  const api = {
+    listExams: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 31,
+          tenantID: 10,
+          paperID: 333,
+          name: "待删除草稿",
+          paperName: "语文试卷",
+          inviteCode: "",
+          target: "指定空间",
+          createdBy: 501,
+          status: "draft",
+          targets: [{ targetID: 301, targetType: "space" }],
+          startTime: new Date("2026-05-30T09:00:00+08:00").getTime(),
+          endTime: new Date("2026-05-30T11:00:00+08:00").getTime(),
+          startAt: "2026-05-30 09:00",
+          endAt: "2026-05-30 11:00",
+          durationMinutes: 120,
+          maxAttempts: 1,
+          resultStrategy: "latest",
+          publishMode: "manual_publish",
+          scorePublishTime: null,
+        },
+        {
+          id: 32,
+          tenantID: 10,
+          paperID: 334,
+          name: "已发布考试",
+          paperName: "数学试卷",
+          inviteCode: "PM3200",
+          target: "指定空间",
+          createdBy: 501,
+          status: "published",
+          targets: [{ targetID: 301, targetType: "space" }],
+          startTime: new Date("2026-05-30T09:00:00+08:00").getTime(),
+          endTime: new Date("2026-05-30T11:00:00+08:00").getTime(),
+          startAt: "2026-05-30 09:00",
+          endAt: "2026-05-30 11:00",
+          durationMinutes: 120,
+          maxAttempts: 1,
+          resultStrategy: "latest",
+          publishMode: "manual_publish",
+          scorePublishTime: null,
+        },
+      ],
+      total: 2,
+    }),
+    publishExam: vi.fn(),
+    deleteDraftExam: vi.fn().mockResolvedValue(undefined),
+  };
+  const paperApi = { listPublishPaperCandidates: vi.fn().mockResolvedValue({ items: [] }) };
+  const spaceApi = {
+    listSpaces: vi.fn().mockResolvedValue({ items: [] }),
+    listSpaceMembers: vi.fn(),
+  };
+  const userApi = { listUsers: vi.fn().mockResolvedValue({ items: [] }) };
+
+  renderExamManagementPage(<ExamManagementPage api={api} paperApi={paperApi} spaceApi={spaceApi} userApi={userApi} tenantID={10} />);
+
+  const draftRow = await screen.findByRole("row", { name: /待删除草稿/ });
+  expect(within(draftRow).getByRole("button", { name: "删除考试" })).toBeInTheDocument();
+  const publishedRow = await screen.findByRole("row", { name: /已发布考试/ });
+  expect(within(publishedRow).queryByRole("button", { name: "删除考试" })).not.toBeInTheDocument();
+
+  await user.click(within(draftRow).getByRole("button", { name: "删除考试" }));
+  const deleteConfirm = screen.getByRole("dialog", { name: "确认删除考试" });
+  expect(deleteConfirm).toHaveTextContent("待删除草稿");
+  expect(deleteConfirm).toHaveTextContent("删除后将不再出现在考试列表中");
+  await user.click(within(deleteConfirm).getByRole("button", { name: "取消" }));
+  expect(api.deleteDraftExam).not.toHaveBeenCalled();
+
+  await user.click(within(draftRow).getByRole("button", { name: "删除考试" }));
+  await user.click(within(screen.getByRole("dialog", { name: "确认删除考试" })).getByRole("button", { name: "确认删除" }));
+  expect(api.deleteDraftExam).toHaveBeenCalledWith({ tenantID: 10, examID: 31 });
+  expect(screen.queryByText("待删除草稿")).not.toBeInTheDocument();
+  expect(await screen.findByText("待删除草稿 已删除")).toBeInTheDocument();
+});
+
+test("空间教师查看考试列表时无权限操作按钮置为禁用", async () => {
   const user = userEvent.setup();
   const api = {
     listExams: vi.fn().mockResolvedValue({
@@ -841,7 +922,7 @@ test("空间教师查看考试列表时只展示自己考试的编辑和状态�
           paperName: "数学试卷",
           inviteCode: "PM2200",
           target: "当前空间",
-          createdBy: 777,
+          createdBy: 0,
           status: "published",
           targets: [{ targetID: 301, targetType: "space" }],
           startTime: new Date("2026-05-30T09:00:00+08:00").getTime(),
@@ -854,8 +935,29 @@ test("空间教师查看考试列表时只展示自己考试的编辑和状态�
           publishMode: "manual_publish",
           scorePublishTime: null,
         },
+        {
+          id: 23,
+          tenantID: 10,
+          paperID: 335,
+          name: "他人草稿考试",
+          paperName: "英语试卷",
+          inviteCode: "",
+          target: "当前空间",
+          createdBy: 777,
+          status: "draft",
+          targets: [{ targetID: 301, targetType: "space" }],
+          startTime: new Date("2026-05-30T09:00:00+08:00").getTime(),
+          endTime: new Date("2026-05-30T11:00:00+08:00").getTime(),
+          startAt: "2026-05-30 09:00",
+          endAt: "2026-05-30 11:00",
+          durationMinutes: 120,
+          maxAttempts: 1,
+          resultStrategy: "latest",
+          publishMode: "manual_publish",
+          scorePublishTime: null,
+        },
       ],
-      total: 2,
+      total: 3,
     }),
     publishExam: vi.fn(),
     updateDraftExam: vi.fn(async (input) => ({
@@ -918,12 +1020,18 @@ test("空间教师查看考试列表时只展示自己考试的编辑和状态�
 
   const draftRow = await screen.findByRole("row", { name: /空间草稿考试/ });
   const publishedRow = await screen.findByRole("row", { name: /空间进行中考试/ });
+  const peerDraftRow = await screen.findByRole("row", { name: /他人草稿考试/ });
   expect(within(draftRow).getByRole("link", { name: "详情" })).toHaveAttribute("href", "/exams/21");
   expect(within(draftRow).getByRole("button", { name: "编辑草稿" })).toBeInTheDocument();
+  expect(within(draftRow).getByRole("button", { name: "删除考试" })).toBeEnabled();
   expect(within(draftRow).getByRole("button", { name: "发布考试" })).toBeInTheDocument();
   expect(within(publishedRow).getByRole("link", { name: "详情" })).toHaveAttribute("href", "/exams/22");
-  expect(within(publishedRow).queryByRole("button", { name: "提前结束考试" })).not.toBeInTheDocument();
-  expect(within(publishedRow).queryByRole("button", { name: "禁用考试" })).not.toBeInTheDocument();
+  expect(within(publishedRow).getByRole("button", { name: "提前结束考试" })).toBeDisabled();
+  expect(within(publishedRow).getByRole("button", { name: "禁用考试" })).toBeDisabled();
+  expect(within(peerDraftRow).getByRole("button", { name: "删除考试" })).toBeDisabled();
+  await user.click(within(publishedRow).getByRole("button", { name: "提前结束考试" }));
+  expect(screen.queryByRole("dialog", { name: "确认提前结束考试" })).not.toBeInTheDocument();
+  expect(api.updateExamStatus).not.toHaveBeenCalled();
 
   await user.click(within(draftRow).getByRole("button", { name: "编辑草稿" }));
   const editDialog = screen.getByRole("dialog", { name: "编辑草稿抽屉" });
@@ -939,6 +1047,64 @@ test("空间教师查看考试列表时只展示自己考试的编辑和状态�
     status: "draft",
     targets: [{ scopeSpaceIDs: [301], targetID: 601, targetType: "user" }],
   }));
+});
+
+test("空间教师可以操作当前空间内旧草稿考试", async () => {
+  const api = {
+    listExams: vi.fn().mockResolvedValue({
+      items: [{
+        id: 41,
+        tenantID: 10,
+        paperID: 333,
+        name: "旧草稿考试",
+        paperName: "语文试卷",
+        inviteCode: "待生成",
+        target: "指定空间",
+        createdBy: 0,
+        status: "draft",
+        targets: [{ targetID: 301, targetType: "space" }],
+        startTime: new Date("2026-05-30T09:00:00+08:00").getTime(),
+        endTime: new Date("2026-05-30T11:00:00+08:00").getTime(),
+        startAt: "2026-05-30 09:00",
+        endAt: "2026-05-30 11:00",
+        durationMinutes: 120,
+        maxAttempts: 1,
+        resultStrategy: "latest",
+        publishMode: "manual_publish",
+        scorePublishTime: null,
+      }],
+      total: 1,
+    }),
+    publishExam: vi.fn(),
+    updateDraftExam: vi.fn(),
+    updateExamStatus: vi.fn(),
+  };
+  const paperApi = { listPublishPaperCandidates: vi.fn().mockResolvedValue({ items: [] }) };
+  const spaceApi = {
+    listSpaces: vi.fn(),
+    listSpaceMembers: vi.fn().mockResolvedValue({ items: [] }),
+  };
+  const userApi = { listUsers: vi.fn().mockResolvedValue({ items: [] }) };
+
+  renderExamManagementPage(
+    <ExamManagementPage
+      actorID={501}
+      actorRole="teacher"
+      api={api}
+      canManageTenantTargets={false}
+      paperApi={paperApi}
+      spaceApi={spaceApi}
+      userApi={userApi}
+      tenantID={10}
+      spaceID={301}
+    />,
+  );
+
+  const row = await screen.findByRole("row", { name: /旧草稿考试/ });
+  expect(row).toHaveTextContent("待生成");
+  expect(row).toHaveTextContent("指定空间");
+  expect(within(row).getByRole("button", { name: "编辑草稿" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "发布考试" })).toBeInTheDocument();
 });
 
 test("空间管理员可以操作自己创建的空间草稿考试", async () => {

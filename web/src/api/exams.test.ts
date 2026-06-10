@@ -12,6 +12,7 @@ describe("examApi", () => {
           id: 8,
           tenant_id: 10,
           paper_id: 100,
+          paper_name: "高一数学试卷",
           name: "高一数学月考",
           start_time: 1779792000000,
           end_time: 1779799200000,
@@ -47,9 +48,9 @@ describe("examApi", () => {
         tenantID: 10,
         paperID: 100,
         name: "高一数学月考",
-        paperName: "试卷 100",
+        paperName: "高一数学试卷",
         inviteCode: "PM8888",
-        target: "空间 301、用户 501",
+        target: "指定空间、指定考生",
         targets: [
           { targetType: "space", targetID: 301 },
           { targetType: "user", targetID: 501, scopeSpaceIDs: [301] },
@@ -69,6 +70,37 @@ describe("examApi", () => {
       page: 2,
       pageSize: 50,
       total: 128,
+    });
+  });
+
+  test("草稿考试列表显示待生成邀请码并使用试卷名和范围类型", async () => {
+    const fetcher = vi.fn(async () => jsonResponse({
+      items: [{
+        id: 9,
+        tenant_id: 10,
+        paper_id: 101,
+        paper_name: "高二数学期中试卷",
+        name: "高二数学期中考试",
+        start_time: 1779792000000,
+        end_time: 1779799200000,
+        duration_minutes: 45,
+        invite_code: "",
+        status: "draft",
+        created_by: 501,
+        targets: [{ target_type: "space", target_id: 301 }],
+      }],
+      page: 1,
+      page_size: 5,
+      total: 1,
+    }));
+    const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.listExams({ tenantID: 10, spaceID: 301 });
+
+    expect(result.items[0]).toMatchObject({
+      paperName: "高二数学期中试卷",
+      inviteCode: "待生成",
+      target: "指定空间",
     });
   });
 
@@ -158,7 +190,7 @@ describe("examApi", () => {
       "/api/v1/exams",
       expect.objectContaining({ method: "POST" }),
     );
-    expect(result.target).toBe("空间 301、用户 501");
+    expect(result.target).toBe("指定空间、指定考生");
   });
 
   test("考试状态更新请求发送目标状态并回填考试", async () => {
@@ -192,6 +224,19 @@ describe("examApi", () => {
     });
 
     expect(result.status).toBe("closed");
+  });
+
+  test("删除草稿考试请求使用 DELETE 并携带租户参数", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/v1/exams/8?tenant_id=10");
+      expect(init?.method).toBe("DELETE");
+      return jsonResponse({ deleted: true });
+    });
+    const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await api.deleteDraftExam!({ tenantID: 10, examID: 8 });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   test("草稿考试更新请求发送草稿配置和目标范围", async () => {
@@ -251,7 +296,7 @@ describe("examApi", () => {
     });
 
     expect(result.status).toBe("draft");
-    expect(result.inviteCode).toBe("");
+    expect(result.inviteCode).toBe("待生成");
     expect(result.targets).toEqual([{ targetType: "space", targetID: 301 }]);
   });
 

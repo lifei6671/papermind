@@ -1,3 +1,7 @@
+import "@uiw/react-markdown-preview/markdown.css";
+import MarkdownPreview from "@uiw/react-markdown-preview/nohighlight";
+import rehypeKatex from "rehype-katex";
+import remarkMath from "remark-math";
 import {
   ArrowLeft,
   Award,
@@ -13,9 +17,8 @@ import {
   Search,
   Send,
   Sigma,
-  Upload,
 } from "lucide-react";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ApiError, formatApiErrorMessage } from "../../api/client";
@@ -48,7 +51,11 @@ import { useFeedback } from "../../app/feedback-context";
 import type { AuthSession } from "../../auth/session-context";
 import { SessionContext } from "../../auth/session-context";
 import { Button } from "../../components/ui/Button";
+import { EmptyTableRow } from "../../components/ui/EmptyTableRow";
+import { Pagination } from "../../components/ui/Pagination";
 import { Panel } from "../../components/ui/Panel";
+import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
 import { Select } from "../../components/ui/Select";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 
@@ -128,11 +135,11 @@ const questionTypeLabels: Record<QuestionType, string> = {
 };
 
 const pageSizeOptions = [
-  { value: "1", label: "1" },
   { value: "5", label: "5" },
   { value: "10", label: "10" },
   { value: "20", label: "20" },
 ];
+const resultPageSizeOptions = [5, 10, 20, 50];
 
 const examOverviewStats = {
   planned: 128,
@@ -261,23 +268,25 @@ export function PaperPreviewPage({
   const [previewTotal, setPreviewTotal] = useState(0);
   const [activeFilter, setActiveFilter] = useState<PreviewFilter>("all");
   const [activeTab, setActiveTab] = useState<PreviewTab>("试卷预览");
-  const [pageSize, setPageSize] = useState("1");
+  const [pageSize, setPageSize] = useState("10");
   const [candidateStatusFilter, setCandidateStatusFilter] = useState("all");
   const [candidateKeyword, setCandidateKeyword] = useState("");
   const [candidatePage, setCandidatePage] = useState(1);
   const [candidateData, setCandidateData] = useState<ExamCandidateListData | null>(null);
   const [isCandidatesLoading, setIsCandidatesLoading] = useState(false);
   const [candidateReloadKey, setCandidateReloadKey] = useState(0);
-  const [candidateImportDraft, setCandidateImportDraft] = useState("");
-  const [isCandidateImportOpen, setIsCandidateImportOpen] = useState(false);
   const [isCandidateActionPending, setIsCandidateActionPending] = useState(false);
   const [resultStatusFilter, setResultStatusFilter] = useState("all");
   const [resultKeyword, setResultKeyword] = useState("");
   const [resultPage, setResultPage] = useState(1);
+  const [resultPageSize, setResultPageSize] = useState(20);
+  const [resultReloadKey, setResultReloadKey] = useState(0);
   const [resultSummary, setResultSummary] = useState<ExamResultSummaryData | null>(null);
   const [resultData, setResultData] = useState<ExamResultListData | null>(null);
   const [isResultsLoading, setIsResultsLoading] = useState(false);
+  const [isResultListRefreshing, setIsResultListRefreshing] = useState(false);
   const [isResultExporting, setIsResultExporting] = useState(false);
+  const resultRefreshPendingRef = useRef(false);
   const [selectedResult, setSelectedResult] = useState<ResultRow | ExamDetailResultRow | null>(null);
   const [answerSheet, setAnswerSheet] = useState<ExamAnswerSheetData | null>(null);
   const [isAnswerSheetLoading, setIsAnswerSheetLoading] = useState(false);
@@ -476,7 +485,7 @@ export function PaperPreviewPage({
       setResultSummary(null);
       setResultData(null);
       try {
-        const [summaryData, listData] = await Promise.all([
+        const request = Promise.all([
           providedExamDetailApi.getResultsSummary({
             tenantID,
             examID,
@@ -489,12 +498,15 @@ export function PaperPreviewPage({
             keyword: resultKeyword.trim() || undefined,
             status: resultStatusFilter === "all" ? undefined : (resultStatusFilter as ExamResultStatus),
             page: resultPage,
-            pageSize: 20,
+            pageSize: resultPageSize,
           }),
         ]);
+        const [nextSummaryData, nextListData] = resultRefreshPendingRef.current
+          ? await withRefreshFeedback(request)
+          : await request;
         if (!ignore) {
-          setResultSummary(summaryData);
-          setResultData(listData);
+          setResultSummary(nextSummaryData);
+          setResultData(nextListData);
         }
       } catch (error) {
         if (!ignore) {
@@ -503,7 +515,9 @@ export function PaperPreviewPage({
       } finally {
         if (!ignore) {
           setIsResultsLoading(false);
+          setIsResultListRefreshing(false);
         }
+        resultRefreshPendingRef.current = false;
       }
     }
 
@@ -512,7 +526,7 @@ export function PaperPreviewPage({
     return () => {
       ignore = true;
     };
-  }, [currentActiveTab, detailPermissions?.canViewResults, examID, isExamDetailMode, loadError, providedExamDetailApi, resultKeyword, resultPage, resultStatusFilter, showError, spaceID, tenantID]);
+  }, [currentActiveTab, detailPermissions?.canViewResults, examID, isExamDetailMode, loadError, providedExamDetailApi, resultKeyword, resultPage, resultPageSize, resultReloadKey, resultStatusFilter, showError, spaceID, tenantID]);
 
   useEffect(() => {
     if (!isExamDetailMode || currentActiveTab !== "操作日志" || loadError || !detailPermissions?.canViewLogs) {
@@ -570,7 +584,9 @@ export function PaperPreviewPage({
     ? Math.max(previewTotal, previewQuestions.length)
     : filteredQuestions.length;
   const previewDisplayTotal = isExamDetailMode ? previewPagerTotal : totalQuestionCount;
-  const maxPreviewStartIndex = Math.max(previewPagerTotal - previewPageSize, 0);
+  const maxPreviewStartIndex = previewPagerTotal > 0
+    ? Math.floor((previewPagerTotal - 1) / previewPageSize) * previewPageSize
+    : 0;
   const previewStartIndex = Math.min(previewStartIndexForRequest, maxPreviewStartIndex);
   const displayQuestions = isExamDetailMode
     ? filteredQuestions.map((item, index) => ({ ...item, globalIndex: previewStartIndex + index + 1 }))
@@ -592,35 +608,6 @@ export function PaperPreviewPage({
         startIndex: Math.min(Math.max(startIndex, 0), maxPreviewStartIndex),
       };
     });
-  }
-
-  async function handleImportCandidates() {
-    const userIDs = parseCandidateUserIDs(candidateImportDraft);
-    if (!isExamDetailMode) {
-      showError("旧试卷预览入口不支持导入考生，请进入考试详情页操作。");
-      return;
-    }
-    if (userIDs.length === 0) {
-      showError("请输入要导入的考生用户 ID");
-      return;
-    }
-    setIsCandidateActionPending(true);
-    try {
-      const result = await providedExamDetailApi.importCandidates({
-        tenantID,
-        examID,
-        ...(spaceID === undefined ? {} : { spaceID }),
-        userIDs,
-      });
-      showSuccess(`已导入 ${result.importedCount} 名考生，跳过 ${result.skippedCount} 名`);
-      setCandidateImportDraft("");
-      setIsCandidateImportOpen(false);
-      setCandidateReloadKey((value) => value + 1);
-    } catch (error) {
-      showError(formatApiErrorMessage(error, "导入考生失败"));
-    } finally {
-      setIsCandidateActionPending(false);
-    }
   }
 
   async function handleResendInvitations(userIDs: number[]) {
@@ -678,6 +665,10 @@ export function PaperPreviewPage({
       showError("当前无法导出成绩，请确认登录身份和考试上下文。");
       return;
     }
+    if ((resultData?.total ?? 0) <= 0) {
+      showError("暂无成绩数据可导出");
+      return;
+    }
     setIsResultExporting(true);
     try {
       const result = await resultsApi.exportResults({
@@ -725,6 +716,15 @@ export function PaperPreviewPage({
       pathname: "/grading",
       search: managementRouteSearch({ examID, spaceID, attemptID }),
     });
+  }
+
+  function handleRefreshResults() {
+    if (isResultListRefreshing) {
+      return;
+    }
+    resultRefreshPendingRef.current = true;
+    setIsResultListRefreshing(true);
+    setResultReloadKey((value) => value + 1);
   }
 
   return (
@@ -898,29 +898,20 @@ export function PaperPreviewPage({
         <CandidateManagementTabPanel
           canManageCandidates={canManageCandidates}
           candidateData={candidateData}
-          candidateImportDraft={candidateImportDraft}
           candidateKeyword={candidateKeyword}
           candidateStatusFilter={candidateStatusFilter}
           isExamDetailMode={isExamDetailMode}
           isCandidateActionPending={isCandidateActionPending}
-          isCandidateImportOpen={isCandidateImportOpen}
           isLoading={isCandidatesLoading}
           onCandidateKeywordChange={(value) => {
             setCandidateKeyword(value);
             setCandidatePage(1);
           }}
           onCandidatePageChange={setCandidatePage}
-          onCandidateImportDraftChange={setCandidateImportDraft}
           onCandidateStatusFilterChange={(value) => {
             setCandidateStatusFilter(value);
             setCandidatePage(1);
           }}
-          onCloseCandidateImport={() => {
-            setIsCandidateImportOpen(false);
-            setCandidateImportDraft("");
-          }}
-          onImportCandidates={handleImportCandidates}
-          onOpenCandidateImport={() => setIsCandidateImportOpen(true)}
           onResendCandidates={handleResendInvitations}
           onViewAnswerSheet={(attemptID) => void handleOpenAnswerSheet(attemptID)}
           overview={overview}
@@ -930,16 +921,21 @@ export function PaperPreviewPage({
           isExporting={isResultExporting}
           isExamDetailMode={isExamDetailMode}
           isLoading={isResultsLoading}
-          onConfigurePublish={() => setActiveTab("考试设置")}
+          isRefreshing={isResultListRefreshing}
           onExportResults={() => void handleExportResults()}
           onOpenAnswerSheet={(attemptID) => void handleOpenAnswerSheet(attemptID)}
           onOpenGrading={openGradingPage}
           onOpenScoreDetail={setSelectedResult}
+          onRefreshResults={handleRefreshResults}
           onResultKeywordChange={(value) => {
             setResultKeyword(value);
             setResultPage(1);
           }}
           onResultPageChange={setResultPage}
+          onResultPageSizeChange={(value) => {
+            setResultPage(1);
+            setResultPageSize(value);
+          }}
           onResultStatusFilterChange={(value) => {
             setResultStatusFilter(value);
             setResultPage(1);
@@ -947,6 +943,7 @@ export function PaperPreviewPage({
           permissions={detailPermissions}
           resultData={resultData}
           resultKeyword={resultKeyword}
+          resultPageSize={resultPageSize}
           resultStatusFilter={resultStatusFilter}
           resultSummary={resultSummary}
         />
@@ -1133,40 +1130,28 @@ function ExamSettingsTabPanel({
 function CandidateManagementTabPanel({
   canManageCandidates,
   candidateData,
-  candidateImportDraft,
   candidateKeyword,
   candidateStatusFilter,
   isExamDetailMode,
   isCandidateActionPending,
-  isCandidateImportOpen,
   isLoading,
-  onCandidateImportDraftChange,
   onCandidateKeywordChange,
   onCandidatePageChange,
   onCandidateStatusFilterChange,
-  onCloseCandidateImport,
-  onImportCandidates,
-  onOpenCandidateImport,
   onResendCandidates,
   onViewAnswerSheet,
   overview,
 }: {
   canManageCandidates: boolean;
   candidateData: ExamCandidateListData | null;
-  candidateImportDraft: string;
   candidateKeyword: string;
   candidateStatusFilter: string;
   isExamDetailMode: boolean;
   isCandidateActionPending: boolean;
-  isCandidateImportOpen: boolean;
   isLoading: boolean;
-  onCandidateImportDraftChange: (value: string) => void;
   onCandidateKeywordChange: (value: string) => void;
   onCandidatePageChange: (page: number) => void;
   onCandidateStatusFilterChange: (value: string) => void;
-  onCloseCandidateImport: () => void;
-  onImportCandidates: () => void;
-  onOpenCandidateImport: () => void;
   onResendCandidates: (userIDs: number[]) => void;
   onViewAnswerSheet: (attemptID?: number | null) => void;
   overview: ExamOverviewData | null;
@@ -1226,15 +1211,6 @@ function CandidateManagementTabPanel({
           <div className="paper-candidates-toolbar">
             <div className="paper-candidates-toolbar__actions">
               <Button
-                className="paper-candidates-import-button"
-                disabled={!canManageCandidates || isCandidateActionPending}
-                onClick={onOpenCandidateImport}
-                variant="primary"
-              >
-                <Upload aria-hidden="true" size={15} />
-                <span>批量导入考生</span>
-              </Button>
-              <Button
                 className="paper-candidates-send-button"
                 disabled={!canManageCandidates || isCandidateActionPending || (isExamDetailMode && visibleNotStartedUserIDs.length === 0)}
                 onClick={() => onResendCandidates(visibleNotStartedUserIDs)}
@@ -1262,28 +1238,6 @@ function CandidateManagementTabPanel({
               </div>
             </div>
           </div>
-          {isCandidateImportOpen && (
-            <div className="paper-candidates-import-panel">
-              <label>
-                <span>导入考生用户 ID</span>
-                <textarea
-                  aria-label="导入考生用户 ID"
-                  onChange={(event) => onCandidateImportDraftChange(event.target.value)}
-                  placeholder="请输入考生用户 ID，多个 ID 可用逗号、空格或换行分隔"
-                  value={candidateImportDraft}
-                />
-              </label>
-              <p>导入会追加用户直投目标，后端会校验租户、空间权限和考试状态。</p>
-              <div className="paper-candidates-import-panel__actions">
-                <Button disabled={isCandidateActionPending} onClick={onImportCandidates} variant="primary">
-                  确认导入
-                </Button>
-                <Button disabled={isCandidateActionPending} onClick={onCloseCandidateImport} variant="secondary">
-                  取消
-                </Button>
-              </div>
-            </div>
-          )}
 
           <div className="paper-candidates-table-wrap">
             <table aria-label="考生列表" className="paper-candidates-table">
@@ -1592,17 +1546,20 @@ type ResultManagementTabPanelProps = {
   isExporting: boolean;
   isExamDetailMode: boolean;
   isLoading: boolean;
-  onConfigurePublish: () => void;
+  isRefreshing: boolean;
   onExportResults: () => void;
   onOpenAnswerSheet: (attemptID?: number) => void;
   onOpenGrading: (attemptID?: number) => void;
   onOpenScoreDetail: (result: ResultRow | ExamDetailResultRow) => void;
+  onRefreshResults: () => void;
   onResultKeywordChange: (value: string) => void;
   onResultPageChange: (page: number) => void;
+  onResultPageSizeChange: (pageSize: number) => void;
   onResultStatusFilterChange: (value: string) => void;
   permissions: ExamDetailPermissions | null;
   resultData: ExamResultListData | null;
   resultKeyword: string;
+  resultPageSize: number;
   resultStatusFilter: string;
   resultSummary: ExamResultSummaryData | null;
 };
@@ -1611,17 +1568,20 @@ function ResultManagementTabPanel({
   isExporting,
   isExamDetailMode,
   isLoading,
-  onConfigurePublish,
+  isRefreshing,
   onExportResults,
   onOpenAnswerSheet,
   onOpenGrading,
   onOpenScoreDetail,
+  onRefreshResults,
   onResultKeywordChange,
   onResultPageChange,
+  onResultPageSizeChange,
   onResultStatusFilterChange,
   permissions,
   resultData,
   resultKeyword,
+  resultPageSize,
   resultStatusFilter,
   resultSummary,
 }: ResultManagementTabPanelProps) {
@@ -1640,16 +1600,10 @@ function ResultManagementTabPanel({
     : isExamDetailMode ? [] : resultQuestionTypeRates;
   const rows = isExamDetailMode ? (resultData?.items ?? []) : examResultRows;
   const currentPage = isExamDetailMode ? resultData?.page ?? 1 : 1;
-  const pageSize = isExamDetailMode ? resultData?.pageSize ?? 20 : 20;
+  const pageSize = isExamDetailMode ? resultPageSize : 20;
   const total = isExamDetailMode ? resultData?.total ?? 0 : examResultRows.length;
-  const pageCount = Math.max(1, Math.ceil(total / Math.max(pageSize, 1)));
   const maxDistributionCount = Math.max(1, ...scoreDistribution.map((item) => item.count));
-  const canPublishResults = effectivePermissions?.canPublishResults ?? true;
   const canExportResults = effectivePermissions?.canExportResults ?? true;
-  const pageOptions = Array.from({ length: pageCount }, (_, index) => ({
-    value: String(index + 1),
-    label: `${index + 1} / ${pageCount} 页`,
-  }));
 
   return (
     <div
@@ -1723,12 +1677,6 @@ function ResultManagementTabPanel({
         <section aria-label="成绩管理列表" className="paper-results-panel">
           <div className="paper-results-toolbar">
             <div className="paper-results-toolbar__actions">
-              {canPublishResults ? (
-                <Button className="paper-results-publish-button" onClick={onConfigurePublish} variant="primary">
-                  <Send aria-hidden="true" size={15} />
-                  <span>配置成绩发布</span>
-                </Button>
-              ) : null}
               {canExportResults ? (
                 <Button className="paper-results-export-button" disabled={isExporting} onClick={onExportResults} variant="secondary">
                   <Download aria-hidden="true" size={15} />
@@ -1737,13 +1685,22 @@ function ResultManagementTabPanel({
               ) : null}
             </div>
             <div className="paper-results-toolbar__filters">
+              <div className="paper-results-select">
+                <Select ariaLabel="成绩状态筛选" onChange={onResultStatusFilterChange} options={resultStatusOptions} value={resultStatusFilter} />
+              </div>
               <label className="paper-candidates-search paper-results-search">
                 <Search aria-hidden="true" size={15} />
                 <input onChange={(event) => onResultKeywordChange(event.target.value)} placeholder="搜索姓名、学号或班级" type="search" value={resultKeyword} />
               </label>
-              <div className="paper-results-select">
-                <Select ariaLabel="成绩状态筛选" onChange={onResultStatusFilterChange} options={resultStatusOptions} value={resultStatusFilter} />
-              </div>
+              <Button
+                aria-label="刷新成绩列表"
+                className="paper-results-refresh-button"
+                disabled={isRefreshing || isLoading}
+                onClick={onRefreshResults}
+                variant="secondary"
+              >
+                <RefreshIcon active={isRefreshing} size={15} />
+              </Button>
             </div>
           </div>
 
@@ -1772,33 +1729,20 @@ function ResultManagementTabPanel({
                     result={result}
                   />
                 ))}
+                {!isLoading && rows.length === 0 ? <EmptyTableRow colSpan={9} label="暂无成绩数据" /> : null}
               </tbody>
             </table>
             {isLoading ? <p className="paper-preview-empty">正在加载成绩列表</p> : null}
-            {!isLoading && rows.length === 0 ? <p className="paper-preview-empty">暂无成绩数据</p> : null}
           </div>
 
-          <div className="paper-results-pagination">
-            <button
-              aria-label="上一页"
-              disabled={currentPage <= 1}
-              onClick={() => onResultPageChange(Math.max(1, currentPage - 1))}
-              type="button"
-            >
-              <ChevronLeft aria-hidden="true" size={15} />
-            </button>
-            <div className="paper-results-pagination__select">
-              <Select ariaLabel="成绩分页" onChange={(value) => onResultPageChange(Number(value))} options={pageOptions} value={String(currentPage)} />
-            </div>
-            <button
-              aria-label="下一页"
-              disabled={currentPage >= pageCount}
-              onClick={() => onResultPageChange(Math.min(pageCount, currentPage + 1))}
-              type="button"
-            >
-              <ChevronRight aria-hidden="true" size={15} />
-            </button>
-          </div>
+          <Pagination
+            onPageChange={onResultPageChange}
+            onPageSizeChange={onResultPageSizeChange}
+            page={currentPage}
+            pageSize={pageSize}
+            pageSizeOptions={resultPageSizeOptions}
+            total={total}
+          />
         </section>
       </Panel>
     </div>
@@ -2108,15 +2052,6 @@ function candidateStatusLabel(status: ExamCandidateStatus) {
     case "submitted":
       return "已交卷";
   }
-}
-
-// parseCandidateUserIDs 将输入框里的用户 ID 列表转换为后端需要的正整数数组，并在前端先去重。
-function parseCandidateUserIDs(value: string) {
-  const ids = value
-    .split(/[\s,，;；]+/)
-    .map((item) => Number(item.trim()))
-    .filter((item) => Number.isInteger(item) && item > 0);
-  return Array.from(new Set(ids));
 }
 
 // candidateRowFromAPI 将后端考生分页行转换为当前表格展示结构。
@@ -2568,6 +2503,7 @@ function QuestionCard({ item, totalQuestionCount }: { item: PreviewQuestion; tot
   const question = item.question;
   const type = previewQuestionType(item);
   const title = question?.stem || question?.title || `题目 ${item.questionID}`;
+  const options = previewQuestionOptions(question, type);
 
   return (
     <article aria-label={`第 ${item.globalIndex} 题`} className="paper-preview-question-card">
@@ -2576,24 +2512,65 @@ function QuestionCard({ item, totalQuestionCount }: { item: PreviewQuestion; tot
         <strong>{item.globalIndex} / {Math.max(totalQuestionCount, item.globalIndex)}</strong>
         <span>[分值 {formatScore(item.score)}分]</span>
       </div>
-      <p className="paper-preview-question-card__stem">{title}</p>
-      {question?.options && question.options.length > 0 ? (
+      <MarkdownText className="paper-preview-question-card__stem" value={title} />
+      {options.length > 0 ? (
         <ol className="paper-preview-question-options">
-          {question.options.map((option, index) => (
+          {options.map((option, index) => (
             <li key={`${item.questionID}-${index}`}>
               <span>{String.fromCharCode(65 + index)}</span>
-              <p className="paper-preview-question-card__option-text">{option}</p>
+              <MarkdownText className="paper-preview-question-card__option-text" value={option} />
             </li>
           ))}
         </ol>
       ) : (
         <div className="paper-preview-answer-box">
           <NotebookText aria-hidden="true" size={16} />
-          <span>{question?.referenceAnswer || question?.standardAnswer || "主观题作答区"}</span>
+          <MarkdownText value={question?.referenceAnswer || question?.standardAnswer || "主观题作答区"} />
         </div>
       )}
+      {question?.analysis?.trim() ? (
+        <div className="paper-preview-question-card__analysis">
+          <strong>解析</strong>
+          <MarkdownText value={question.analysis} />
+        </div>
+      ) : null}
     </article>
   );
+}
+
+function previewQuestionOptions(question: QuestionRow | null, type: PreviewFilter) {
+  if (question?.options && question.options.length > 0) {
+    return question.options;
+  }
+  return type === "judge" ? ["正确", "错误"] : [];
+}
+
+function MarkdownText({ className, value }: { className?: string; value: string }) {
+  return (
+    <MarkdownPreview
+      className={className}
+      rehypePlugins={[rehypeKatex]}
+      remarkPlugins={[remarkMath]}
+      source={value}
+      urlTransform={safeMarkdownURL}
+    />
+  );
+}
+
+function safeMarkdownURL(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (/^(#|\/(?!\/)|\.{1,2}\/|\?)/.test(trimmed)) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    return ["http:", "https:", "mailto:"].includes(parsed.protocol) ? trimmed : "";
+  } catch {
+    return "";
+  }
 }
 
 async function loadQuestionPool(api: QuestionAPI, tenantID: number, spaceID: number | undefined) {

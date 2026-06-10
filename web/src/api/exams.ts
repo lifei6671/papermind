@@ -60,6 +60,11 @@ export type UpdateExamStatusInput = {
   status: ExamStatusUpdate;
 };
 
+export type DeleteDraftExamInput = {
+  tenantID: number;
+  examID: number;
+};
+
 export type UpdateDraftExamInput = PublishExamInput & {
   examID: number;
   status: "draft";
@@ -90,6 +95,7 @@ export type ExamManagementAPI = {
   publishExam(input: PublishExamInput): Promise<ExamRow>;
   updateDraftExam?(input: UpdateDraftExamInput): Promise<ExamRow>;
   updateExamStatus?(input: UpdateExamStatusInput): Promise<ExamRow>;
+  deleteDraftExam?(input: DeleteDraftExamInput): Promise<void>;
 };
 
 export type ExamEntryAPI = {
@@ -177,6 +183,7 @@ type ExamAPIResponse = {
   id: number;
   tenant_id: number;
   paper_id: number;
+  paper_name?: string;
   name: string;
   start_time: number;
   end_time: number;
@@ -325,6 +332,11 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
       });
       return mapExamResponse(data);
     },
+    async deleteDraftExam(input) {
+      await apiClient.request<{ deleted: boolean }>(`/api/v1/exams/${input.examID}?tenant_id=${input.tenantID}`, {
+        method: "DELETE",
+      });
+    },
     async resolveInvite(input) {
       const data = await apiClient.post<ExamAPIResponse>("/api/v1/exam-entry/invite/resolve", {
         invite_code: input.inviteCode,
@@ -419,8 +431,8 @@ function mapExamResponse(row: ExamAPIResponse): ExamRow {
     tenantID: row.tenant_id,
     paperID: row.paper_id,
     name: row.name,
-    paperName: "试卷 " + row.paper_id,
-    inviteCode: row.invite_code,
+    paperName: row.paper_name ?? "试卷 " + row.paper_id,
+    inviteCode: row.status === "draft" ? "待生成" : row.invite_code,
     targets: mapExamTargets(row.targets, row.target_type, row.target_id),
     target: formatTargets(row.targets, row.target_type, row.target_id),
     createdBy: row.created_by ?? 0,
@@ -443,7 +455,11 @@ function mapExamTargets(
   targetID: number | undefined,
 ): PublishExamTargetInput[] {
   if (targets !== undefined && targets.length > 0) {
-    return targets.map((target) => ({ targetType: target.target_type, targetID: target.target_id, scopeSpaceIDs: target.scope_space_ids }));
+    return targets.map((target) => ({
+      ...(target.scope_space_ids !== undefined ? { scopeSpaceIDs: target.scope_space_ids } : {}),
+      targetType: target.target_type,
+      targetID: target.target_id,
+    }));
   }
   if (targetType !== undefined && targetID !== undefined) {
     return [{ targetType, targetID }];
@@ -456,9 +472,9 @@ function formatTarget(targetType: "space" | "user" | undefined, targetID: number
     return "未配置";
   }
   if (targetType === "space") {
-    return "空间 " + targetID;
+    return "指定空间";
   }
-  return "用户 " + targetID;
+  return "指定考生";
 }
 
 function formatTargets(

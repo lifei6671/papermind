@@ -3638,6 +3638,7 @@ code {
   display: block;
   transform-box: fill-box;
   transform-origin: center;
+  transition: transform 180ms ease, color 180ms ease;
 }
 
 .tenant-refresh-icon--spinning {
@@ -6915,7 +6916,13 @@ body:has(.exam-paper-editor-page) {
   gap: 28px;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.paper-preview-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .paper-preview-tabs__item {
@@ -7824,16 +7831,15 @@ body:has(.exam-paper-editor-page) {
 }
 
 .paper-candidates-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 18px;
   padding: 18px 20px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.paper-candidates-toolbar__actions,
-.paper-candidates-toolbar__filters {
+.paper-candidates-toolbar__actions {
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -7841,7 +7847,16 @@ body:has(.exam-paper-editor-page) {
   flex-wrap: wrap;
 }
 
-.paper-candidates-import-button,
+.paper-candidates-toolbar__filters {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 136px 136px;
+  align-items: center;
+  justify-self: end;
+  gap: 12px;
+  width: min(560px, 100%);
+  min-width: 0;
+}
+
 .paper-candidates-send-button {
   display: inline-flex;
   align-items: center;
@@ -7851,57 +7866,8 @@ body:has(.exam-paper-editor-page) {
   font-weight: 900;
 }
 
-.paper-candidates-import-button {
-  box-shadow: 0 8px 18px rgb(240 107 53 / 20%);
-}
-
 .paper-candidates-send-button {
   color: var(--text-secondary);
-}
-
-.paper-candidates-import-panel {
-  display: grid;
-  gap: 12px;
-  margin: 0 20px 18px;
-  padding: 16px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-wash);
-}
-
-.paper-candidates-import-panel label {
-  display: grid;
-  gap: 8px;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.paper-candidates-import-panel textarea {
-  min-height: 76px;
-  resize: vertical;
-  border: 1px solid var(--border-subtle);
-  border-radius: 7px;
-  background: var(--surface-panel);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.6;
-}
-
-.paper-candidates-import-panel p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.paper-candidates-import-panel__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .paper-candidates-search {
@@ -7909,7 +7875,7 @@ body:has(.exam-paper-editor-page) {
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
-  width: min(300px, 100%);
+  width: 100%;
   min-height: 42px;
   padding: 0 12px;
   border: 1px solid var(--border-subtle);
@@ -7935,7 +7901,7 @@ body:has(.exam-paper-editor-page) {
 }
 
 .paper-candidates-select {
-  width: 170px;
+  width: 100%;
 }
 
 .paper-candidates-select .ui-select-trigger,
@@ -8321,16 +8287,15 @@ body:has(.exam-paper-editor-page) {
 }
 
 .paper-results-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.paper-results-toolbar__actions,
-.paper-results-toolbar__filters {
+.paper-results-toolbar__actions {
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -8338,7 +8303,15 @@ body:has(.exam-paper-editor-page) {
   flex-wrap: wrap;
 }
 
-.paper-results-publish-button,
+.paper-results-toolbar__filters {
+  display: grid;
+  grid-template-columns: 180px minmax(260px, 300px) 42px;
+  align-items: center;
+  justify-self: end;
+  gap: 12px;
+  min-width: 0;
+}
+
 .paper-results-export-button {
   display: inline-flex;
   align-items: center;
@@ -8348,24 +8321,35 @@ body:has(.exam-paper-editor-page) {
   font-weight: 900;
 }
 
-.paper-results-publish-button {
-  box-shadow: 0 8px 18px rgb(240 107 53 / 20%);
-}
-
 .paper-results-export-button {
   color: var(--text-secondary);
 }
 
 .paper-results-search {
-  width: 300px;
+  width: 100%;
 }
 
 .paper-results-select {
-  width: 210px;
+  width: 100%;
 }
 
-.paper-results-select .ui-select-trigger,
-.paper-results-pagination__select .ui-select-trigger {
+.paper-results-refresh-button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  min-width: 42px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.paper-results-refresh-button:hover:not(:disabled) .tenant-refresh-icon {
+  transform: rotate(45deg);
+  color: var(--brand-accent);
+}
+
+.paper-results-select .ui-select-trigger {
   min-height: 40px;
   border-radius: 6px;
   background: var(--surface-panel);
@@ -8735,8 +8719,10 @@ body:has(.exam-paper-editor-page) {
 }
 
 .paper-preview-pager__controls {
-  min-height: 50px;
-  padding: 6px;
+  height: 38px;
+  min-height: 38px;
+  padding: 2px 6px;
+  flex-wrap: nowrap;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--surface-panel);
@@ -8746,8 +8732,8 @@ body:has(.exam-paper-editor-page) {
 .paper-preview-pager__controls button {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -8815,6 +8801,57 @@ body:has(.exam-paper-editor-page) {
   line-height: 1.8;
   /* 题干可能包含图片占位、URL 或公式原文，必须在卡片内断行，避免撑宽预览页。 */
   overflow-wrap: anywhere;
+}
+
+.paper-preview-question-card__stem.wmde-markdown,
+.paper-preview-question-card__option-text.wmde-markdown,
+.paper-preview-answer-box .wmde-markdown {
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+}
+
+.paper-preview-question-card__stem.wmde-markdown p,
+.paper-preview-question-card__option-text.wmde-markdown p,
+.paper-preview-answer-box .wmde-markdown p {
+  margin: 0;
+}
+
+.paper-preview-question-card__option-text.wmde-markdown ul,
+.paper-preview-question-card__option-text.wmde-markdown ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.paper-preview-question-card__analysis {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.paper-preview-question-card__analysis > strong {
+  color: var(--text-primary);
+}
+
+.paper-preview-question-card__analysis .wmde-markdown {
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+}
+
+.paper-preview-question-card__analysis .wmde-markdown p {
+  margin: 0;
+}
+
+.paper-preview-question-card__analysis .wmde-markdown ul,
+.paper-preview-question-card__analysis .wmde-markdown ol {
+  margin: 0;
+  padding-left: 20px;
 }
 
 .paper-preview-question-options {
@@ -8927,16 +8964,13 @@ body:has(.exam-paper-editor-page) {
   }
 
   .paper-candidates-toolbar {
+    grid-template-columns: 1fr;
     align-items: stretch;
-    flex-direction: column;
   }
 
   .paper-candidates-toolbar__filters {
-    justify-content: space-between;
-  }
-
-  .paper-candidates-search {
-    flex: 1 1 280px;
+    justify-self: stretch;
+    width: 100%;
   }
 
   .paper-results-metrics {
@@ -8948,16 +8982,13 @@ body:has(.exam-paper-editor-page) {
   }
 
   .paper-results-toolbar {
+    grid-template-columns: 1fr;
     align-items: stretch;
-    flex-direction: column;
   }
 
   .paper-results-toolbar__filters {
-    justify-content: space-between;
-  }
-
-  .paper-results-search {
-    flex: 1 1 280px;
+    justify-self: stretch;
+    justify-content: end;
   }
 }
 
@@ -9070,13 +9101,15 @@ body:has(.exam-paper-editor-page) {
     padding: 16px;
   }
 
-  .paper-candidates-toolbar__actions,
-  .paper-candidates-toolbar__filters {
+  .paper-candidates-toolbar__actions {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .paper-candidates-import-button,
+  .paper-candidates-toolbar__filters {
+    grid-template-columns: 1fr;
+  }
+
   .paper-candidates-send-button,
   .paper-candidates-search,
   .paper-candidates-select {
@@ -9122,14 +9155,17 @@ body:has(.exam-paper-editor-page) {
     padding: 16px;
   }
 
-  .paper-results-toolbar__actions,
-  .paper-results-toolbar__filters {
+  .paper-results-toolbar__actions {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .paper-results-publish-button,
+  .paper-results-toolbar__filters {
+    grid-template-columns: 1fr;
+  }
+
   .paper-results-export-button,
+  .paper-results-refresh-button,
   .paper-results-search,
   .paper-results-select {
     width: 100%;

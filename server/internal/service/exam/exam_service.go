@@ -111,6 +111,7 @@ type Exam struct {
 	ID               uint64 // 考试主键 ID。
 	TenantID         uint64 // 所属租户 ID。
 	PaperID          uint64 // 关联试卷 ID。
+	PaperName        string // 关联试卷名称，用于管理端列表展示。
 	Name             string // 考试名称。
 	StartTime        int64  // 考试开始时间，Unix 毫秒时间戳。
 	EndTime          int64  // 考试结束时间，Unix 毫秒时间戳。
@@ -272,6 +273,11 @@ type UpdateStatusInput struct {
 	ActorRole string // 操作人角色快照，由 API 层从 session 派生。
 }
 
+type DeleteDraftInput struct {
+	TenantID uint64 // 所属租户 ID。
+	ExamID   uint64 // 草稿考试 ID。
+}
+
 type UpdateDraftWithTargetInput struct {
 	TenantID         uint64   // 所属租户 ID。
 	ExamID           uint64   // 草稿考试 ID。
@@ -426,6 +432,7 @@ type Repository interface {
 	CreatePublishedExamWithTargets(ctx context.Context, exam Exam, pool []LivePoolItem, targets []Target, log *OperationLog) (Exam, error)
 	UpdateDraftWithTargets(ctx context.Context, input UpdateDraftWithTargetsRepositoryInput) (Exam, error)
 	UpdateExamStatus(ctx context.Context, input UpdateExamStatusRepositoryInput) (Exam, error)
+	DeleteDraftExam(ctx context.Context, input DeleteDraftInput) error
 	TargetExists(ctx context.Context, tenantID uint64, examID uint64, targetType string, targetID uint64) (bool, error)
 	AddTarget(ctx context.Context, target Target) error
 	FindExamByInviteCode(ctx context.Context, inviteCode string) (Exam, error)
@@ -734,6 +741,17 @@ func (s *Service) UpdateStatus(ctx context.Context, input UpdateStatusInput) (Ex
 	default:
 		return Exam{}, ErrInvalidExamStatus
 	}
+}
+
+func (s *Service) DeleteDraft(ctx context.Context, input DeleteDraftInput) error {
+	exam, err := s.repo.GetExam(ctx, input.TenantID, input.ExamID)
+	if err != nil {
+		return err
+	}
+	if exam.Status != StatusDraft {
+		return ErrInvalidExamStatus
+	}
+	return s.repo.DeleteDraftExam(ctx, input)
 }
 
 // normalizePublishTargets 归一化发布目标，保证 service 之后只处理去重后的多目标列表。

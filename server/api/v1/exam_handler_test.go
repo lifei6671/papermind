@@ -384,6 +384,163 @@ func TestExamAPIStatusUpdateRejectsTeacherWhoDidNotCreateExam(t *testing.T) {
 	}
 }
 
+func TestExamAPIStatusUpdateAllowsTeacherForLegacyScopedDraftWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+	seedExamDetailTarget(t, gormDB, 1, serviceexam.TargetTypeSpace, 100)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash legacy teacher password: %v", err)
+	}
+	if err := gormDB.Table("users").Where("username = ?", "teacher_li").Update("password_hash", passwordHash).Error; err != nil {
+		t.Fatalf("update legacy teacher password: %v", err)
+	}
+	if err := gormDB.Table("exams").Where("tenant_id = ? AND id = ?", 10, 1).Updates(map[string]any{
+		"created_by":      0,
+		"created_by_type": "system",
+		"status":          serviceexam.StatusDraft,
+	}).Error; err != nil {
+		t.Fatalf("mark legacy draft: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:            gormDB,
+		Now:           func() int64 { return fixedAPINow },
+		CodeGenerator: fixedCodeGenerator{code: "PMLEGACY"},
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/exams/1/status", []byte(`{
+		"tenant_id": 10,
+		"status": "published"
+	}`), authHeader))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("legacy teacher publish status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeExamAPIResponse[examResponse](t, recorder.Body.Bytes())
+	if body.Data.Status != serviceexam.StatusPublished || body.Data.InviteCode != "PMLEGACY" {
+		t.Fatalf("expected legacy scoped draft publish, got %#v", body.Data)
+	}
+}
+
+func TestExamAPIStatusUpdateRejectsTeacherForLegacyPublishedExamWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+	seedExamDetailTarget(t, gormDB, 1, serviceexam.TargetTypeSpace, 100)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash legacy published teacher password: %v", err)
+	}
+	if err := gormDB.Table("users").Where("username = ?", "teacher_li").Update("password_hash", passwordHash).Error; err != nil {
+		t.Fatalf("update legacy published teacher password: %v", err)
+	}
+	if err := gormDB.Table("exams").Where("tenant_id = ? AND id = ?", 10, 1).Updates(map[string]any{
+		"created_by":      0,
+		"created_by_type": "system",
+		"status":          serviceexam.StatusPublished,
+	}).Error; err != nil {
+		t.Fatalf("mark legacy published exam: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	authHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedRequest(http.MethodPost, "/api/v1/exams/1/status", []byte(`{
+		"tenant_id": 10,
+		"status": "closed"
+	}`), authHeader))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected legacy published status update forbidden, got status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestExamAPIDeleteDraftExamWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedExamAPITestData(t, gormDB)
+	seedSpaceAPITestData(t, gormDB)
+	passwordHash, err := crypto.HashPassword("papermind123")
+	if err != nil {
+		t.Fatalf("hash delete draft teacher passwords: %v", err)
+	}
+	for _, username := range []string{"teacher_li", "teacher_zhao"} {
+		if err := gormDB.Table("users").Where("username = ?", username).Update("password_hash", passwordHash).Error; err != nil {
+			t.Fatalf("update %s password: %v", username, err)
+		}
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO space_members (
+			id, tenant_id, space_id, user_id, role_in_space, status,
+			created_at, updated_at, ext_json
+		) VALUES (120, 10, 100, 22, 'teacher', 'enabled', ?, ?, '{}')
+	`, fixedAPINow, fixedAPINow).Error; err != nil {
+		t.Fatalf("seed peer teacher member: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:            gormDB,
+		Now:           func() int64 { return fixedAPINow },
+		CodeGenerator: fixedCodeGenerator{code: "PMDELETE"},
+	})
+	creatorHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+	peerHeader := tenantAuthHeader(t, router, 10, "teacher_zhao", "papermind123")
+	adminHeader := tenantAuthHeader(t, router, 10, "tenant.admin", "papermind123")
+
+	createRecorder := httptest.NewRecorder()
+	router.ServeHTTP(createRecorder, authorizedRequest(http.MethodPost, "/api/v1/exams", []byte(`{
+		"tenant_id": 10,
+		"paper_id": 100,
+		"name": "待删除草稿",
+		"target_type": "space",
+		"target_id": 100,
+		"start_time": 1772269200000,
+		"end_time": 1772276400000,
+		"duration_minutes": 120,
+		"max_attempts": 1,
+		"result_strategy": "latest",
+		"publish_mode": "manual_publish",
+		"status": "draft"
+	}`), creatorHeader))
+	if createRecorder.Code != http.StatusOK {
+		t.Fatalf("creator create deletable draft status = %d, body = %s", createRecorder.Code, createRecorder.Body.String())
+	}
+	createBody := decodeExamAPIResponse[examResponse](t, createRecorder.Body.Bytes())
+
+	peerDeleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(peerDeleteRecorder, authorizedRequest(http.MethodDelete, fmt.Sprintf("/api/v1/exams/%d?tenant_id=10", createBody.Data.ID), nil, peerHeader))
+	if peerDeleteRecorder.Code != http.StatusForbidden {
+		t.Fatalf("expected peer teacher delete forbidden, got status = %d, body = %s", peerDeleteRecorder.Code, peerDeleteRecorder.Body.String())
+	}
+
+	deleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deleteRecorder, authorizedRequest(http.MethodDelete, fmt.Sprintf("/api/v1/exams/%d?tenant_id=10", createBody.Data.ID), nil, creatorHeader))
+	if deleteRecorder.Code != http.StatusOK {
+		t.Fatalf("creator delete draft status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+	var deletedAt int64
+	if err := gormDB.Table("exams").Select("deleted_at").Where("tenant_id = ? AND id = ?", 10, createBody.Data.ID).Scan(&deletedAt).Error; err != nil {
+		t.Fatalf("query deleted draft: %v", err)
+	}
+	if deletedAt == 0 {
+		t.Fatalf("expected draft exam to be soft deleted")
+	}
+
+	publishedDeleteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(publishedDeleteRecorder, authorizedRequest(http.MethodDelete, "/api/v1/exams/1?tenant_id=10", nil, adminHeader))
+	if publishedDeleteRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected published exam delete rejected, got status = %d, body = %s", publishedDeleteRecorder.Code, publishedDeleteRecorder.Body.String())
+	}
+}
+
 func TestExamAPITeacherCanUpdateCurrentSpaceDraftWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

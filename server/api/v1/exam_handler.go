@@ -168,6 +168,7 @@ type examResponse struct {
 	ID               uint64                         `json:"id"`
 	TenantID         uint64                         `json:"tenant_id"`
 	PaperID          uint64                         `json:"paper_id"`
+	PaperName        string                         `json:"paper_name,omitempty"`
 	Name             string                         `json:"name"`
 	StartTime        int64                          `json:"start_time"`
 	EndTime          int64                          `json:"end_time"`
@@ -1286,6 +1287,38 @@ func (h examHandler) updateStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(examToResponse(updated)))
 }
 
+func (h examHandler) deleteDraft(c *gin.Context) {
+	examID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "考试 ID 必须是正整数"))
+		return
+	}
+	tenantID, err := readUintQuery(c, "tenant_id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "tenant_id 必须是正整数"))
+		return
+	}
+	if !h.authorizeExamBusiness(c, tenantID) {
+		return
+	}
+	principal, err := h.liveTenantPrincipal(c, tenantID)
+	if err != nil {
+		writePermissionContextError(c, err, "读取当前操作人失败")
+		return
+	}
+	if !h.authorizeExamStatusUpdate(c, tenantID, examID, principal.UserID) {
+		return
+	}
+	if err := h.service.DeleteDraft(c.Request.Context(), serviceexam.DeleteDraftInput{
+		TenantID: tenantID,
+		ExamID:   examID,
+	}); err != nil {
+		writeExamServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response.OK(gin.H{"deleted": true}))
+}
+
 func (h examHandler) authorizeExamStatusUpdate(c *gin.Context, tenantID uint64, examID uint64, actorID uint64) bool {
 	permissionContext, err := h.managementPermissionContext(c, tenantID, 0)
 	if err != nil {
@@ -1308,7 +1341,7 @@ func (h examHandler) authorizeExamStatusUpdate(c *gin.Context, tenantID uint64, 
 	if detail.Permissions.CanUpdateSettings {
 		return true
 	}
-	if detail.Exam.CreatedBy == actorID && examTargetSpacesCoveredByAllowedSpaces(detail.TargetSpaceIDs, detail.AllowedSpaceIDs) {
+	if (detail.Exam.CreatedBy == actorID || (detail.Exam.Status == serviceexam.StatusDraft && detail.Exam.CreatedBy == 0)) && examTargetSpacesCoveredByAllowedSpaces(detail.TargetSpaceIDs, detail.AllowedSpaceIDs) {
 		return true
 	}
 	writePermissionOrInternalError(c, permission.ErrForbidden, "无权更新考试状态")
@@ -2514,6 +2547,7 @@ func examToResponse(exam serviceexam.Exam) examResponse {
 		ID:               exam.ID,
 		TenantID:         exam.TenantID,
 		PaperID:          exam.PaperID,
+		PaperName:        exam.PaperName,
 		Name:             exam.Name,
 		StartTime:        exam.StartTime,
 		EndTime:          exam.EndTime,

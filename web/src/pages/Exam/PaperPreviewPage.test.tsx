@@ -7,7 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { ApiError } from "../../api/client";
-import type { ExamDetailAPI, ExamDetailExam, ExamDetailPermissions } from "../../api/examDetail";
+import type { ExamDetailAPI, ExamDetailExam, ExamDetailPermissions, ExamResultListData } from "../../api/examDetail";
 import { SessionContext } from "../../auth/session-context";
 import type { PaperAPI, PaperRow, PaperSectionRow, ManualQuestionRow } from "../../api/papers";
 import type { QuestionAPI, QuestionRow } from "../../api/questions";
@@ -54,6 +54,55 @@ test("试卷统计区在窄视口下有媒体查询兜底避免右侧裁切", ()
   expect(css).toMatch(/\.paper-preview-tab-panel\s*>\s*\.paper-preview-summary-card\s+\.paper-preview-summary\s*\{[\s\S]*?grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\)/);
   expect(css).toMatch(/@container\s*\(max-width:\s*1280px\)\s*\{[\s\S]*?\.paper-preview-tab-panel\s*>\s*\.paper-preview-summary-card\s+\.paper-preview-summary\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
   expect(css).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*?\.paper-preview-tab-panel\s*>\s*\.paper-preview-summary-card\s+\.paper-preview-summary\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+});
+
+test("考试详情页签隐藏滚动条且试卷分页控件高度与每页题数一致", () => {
+  const css = readFileSync(join(process.cwd(), "src/styles/global.css"), "utf8");
+  const tabsRule = css.match(/\.paper-preview-tabs\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const tabsScrollbarRule = css.match(/\.paper-preview-tabs::-webkit-scrollbar\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const selectTriggerRule = css.match(/\.paper-preview-pager__select\s+\.ui-select-trigger\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const pagerControlsRules = Array.from(css.matchAll(/\.paper-preview-pager__controls\s*\{[\s\S]*?\}/g)).map((match) => match[0]);
+  const pagerControlsRule = pagerControlsRules.at(-1) ?? "";
+
+  expect(tabsRule).toMatch(/overflow-x:\s*auto/);
+  expect(tabsRule).toMatch(/overflow-y:\s*hidden/);
+  expect(tabsRule).toMatch(/scrollbar-width:\s*none/);
+  expect(tabsScrollbarRule).toMatch(/display:\s*none/);
+  expect(selectTriggerRule).toMatch(/min-height:\s*38px/);
+  expect(pagerControlsRule).toMatch(/height:\s*38px/);
+  expect(pagerControlsRule).toMatch(/min-height:\s*38px/);
+  expect(pagerControlsRule).toMatch(/flex-wrap:\s*nowrap/);
+});
+
+test("考生管理筛选区三项控件保持同一行对齐", () => {
+  const css = readFileSync(join(process.cwd(), "src/styles/global.css"), "utf8");
+  const filtersRule = css.match(/\.paper-candidates-toolbar__filters\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  expect(filtersRule).toMatch(/display:\s*grid/);
+  expect(filtersRule).toMatch(/grid-template-columns:\s*minmax\(260px,\s*1fr\)\s+136px\s+136px/);
+  expect(filtersRule).toMatch(/align-items:\s*center/);
+  expect(filtersRule).toMatch(/justify-self:\s*end/);
+});
+
+test("成绩管理筛选区按状态下拉、搜索、刷新按钮紧凑排列", () => {
+  const css = readFileSync(join(process.cwd(), "src/styles/global.css"), "utf8");
+  const filtersRule = css.match(/\.paper-results-toolbar__filters\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const narrowFiltersRule = css.match(/@media\s*\(max-width:\s*1280px\)[\s\S]*?\.paper-results-toolbar__filters\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  expect(filtersRule).toMatch(/display:\s*grid/);
+  expect(filtersRule).toMatch(/grid-template-columns:\s*180px\s+minmax\(260px,\s*300px\)\s+42px/);
+  expect(filtersRule).toMatch(/gap:\s*12px/);
+  expect(narrowFiltersRule).toMatch(/justify-content:\s*end/);
+  expect(narrowFiltersRule).not.toMatch(/justify-content:\s*space-between/);
+});
+
+test("刷新图标具备过渡和旋转动画", () => {
+  const css = readFileSync(join(process.cwd(), "src/styles/global.css"), "utf8");
+  const iconRule = css.match(/\.tenant-refresh-icon\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const spinningRule = css.match(/\.tenant-refresh-icon--spinning\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  expect(iconRule).toMatch(/transition:\s*transform\s+180ms\s+ease,\s*color\s+180ms\s+ease/);
+  expect(spinningRule).toMatch(/animation:\s*tenant-action-spin\s+720ms\s+linear\s+infinite/);
 });
 
 test("试卷预览页按考试预览布局展示试卷结构和题目", async () => {
@@ -111,20 +160,82 @@ test("试卷预览页按考试预览布局展示试卷结构和题目", async ()
   expect(screen.getByRole("button", { name: "填空题" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "解答题" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "应用题" })).not.toBeInTheDocument();
-  expectSelectText(screen.getByLabelText("每页题数"), "1");
+  expectSelectText(screen.getByLabelText("每页题数"), "10");
   expect(screen.getByText("1 / 33 题")).toBeInTheDocument();
+  await userEvent.click(screen.getByLabelText("每页题数"));
+  expect(screen.queryByRole("option", { name: "1" })).not.toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
 
   const firstQuestion = screen.getByRole("article", { name: "第 1 题" });
   expect(within(firstQuestion).getByText("单选题")).toBeInTheDocument();
   expect(within(firstQuestion).getByText("1 / 33")).toBeInTheDocument();
   expect(within(firstQuestion).getByText("[分值 3分]")).toBeInTheDocument();
-  expect(within(firstQuestion).getByText("已知集合 A = {x | -2 ≤ x ≤ 4}，B = {x | x > 1}，则 A∩B =（ ）")).toBeInTheDocument();
-  expect(within(firstQuestion).getByText("{x | -2 ≤ x < 1}")).toHaveClass("paper-preview-question-card__option-text");
+  expect(firstQuestion.querySelector(".paper-preview-question-card__stem")?.textContent).toContain("已知集合");
+  expect(within(firstQuestion).getByText("A = {x | -2 ≤ x ≤ 4}")).toBeInTheDocument();
+  expect(within(firstQuestion).getByText("{x | -2 ≤ x < 1}").tagName).toBe("STRONG");
   expect(within(firstQuestion).getByText("{x | 1 < x < 4}")).toBeInTheDocument();
-  expect(screen.queryByRole("article", { name: "第 2 题" })).not.toBeInTheDocument();
+  expect(within(firstQuestion).getByText("排除端点")).toBeInTheDocument();
+  expect(firstQuestion.querySelector(".paper-preview-question-card__option-text ul")).toBeInTheDocument();
+  expect(within(firstQuestion).getByText("交集取公共部分").tagName).toBe("STRONG");
+  expect(within(firstQuestion).getByText("排除空集")).toBeInTheDocument();
+  expect(screen.getByRole("article", { name: "第 2 题" })).toBeInTheDocument();
+  expect(screen.queryByRole("article", { name: "第 3 题" })).not.toBeInTheDocument();
 });
 
-test("试卷预览页的每页题数和上下题控件会切换当前展示题目", async () => {
+test("试卷预览 Markdown 链接会过滤可执行协议", async () => {
+  const unsafeQuestion: QuestionRow = {
+    id: 201,
+    tenantID: 10,
+    spaceID: 301,
+    type: "single",
+    title: "[危险题干](javascript:alert(1))",
+    stem: "[危险题干](javascript:alert(1))",
+    options: ["[危险选项](javascript:alert(2))", "[安全选项](https://example.com)"],
+    correctOptionIndexes: [1],
+    analysis: "[危险解析](javascript:alert(3))",
+    difficulty: "easy",
+    tag: "安全",
+    tags: ["安全"],
+    scoreDefault: "3",
+    status: "ready",
+  };
+  const questionApi: QuestionAPI = {
+    ...createQuestionApiDouble(),
+    listQuestions: vi.fn(async () => ({
+      items: [unsafeQuestion],
+      page: 1,
+      pageSize: 100,
+      total: 1,
+    })),
+  };
+
+  render(
+    <FeedbackProvider>
+      <MemoryRouter initialEntries={["/papers/100/preview?space_id=301"]}>
+        <Routes>
+          <Route
+            path="/papers/:paperID/preview"
+            element={(
+              <PaperPreviewPage
+                paperApi={createPaperApiDouble()}
+                questionApi={questionApi}
+                tenantID={10}
+                spaceID={301}
+              />
+            )}
+          />
+        </Routes>
+      </MemoryRouter>
+    </FeedbackProvider>,
+  );
+
+  const firstQuestion = await screen.findByRole("article", { name: "第 1 题" });
+  const links = within(firstQuestion).getAllByRole("link");
+  expect(links.map((link) => link.getAttribute("href"))).not.toContainEqual(expect.stringMatching(/^javascript:/i));
+  expect(within(firstQuestion).getByRole("link", { name: "安全选项" })).toHaveAttribute("href", "https://example.com");
+});
+
+test("试卷预览页默认每页 10 题并移除 1 题选项", async () => {
   const user = userEvent.setup();
 
   render(
@@ -148,15 +259,12 @@ test("试卷预览页的每页题数和上下题控件会切换当前展示题�
   );
 
   expect(await screen.findByRole("article", { name: "第 1 题" })).toBeInTheDocument();
-  expect(screen.queryByRole("article", { name: "第 2 题" })).not.toBeInTheDocument();
-
-  await user.click(screen.getByRole("button", { name: "下一题" }));
-
-  expect(await screen.findByRole("article", { name: "第 2 题" })).toBeInTheDocument();
-  expect(screen.queryByRole("article", { name: "第 1 题" })).not.toBeInTheDocument();
-  expect(screen.getByText("2 / 33 题")).toBeInTheDocument();
+  expect(screen.getByRole("article", { name: "第 2 题" })).toBeInTheDocument();
+  expect(screen.queryByRole("article", { name: "第 3 题" })).not.toBeInTheDocument();
+  expectSelectText(screen.getByLabelText("每页题数"), "10");
 
   await user.click(screen.getByLabelText("每页题数"));
+  expect(screen.queryByRole("option", { name: "1" })).not.toBeInTheDocument();
   await user.click(await screen.findByRole("option", { name: "5" }));
 
   expect(await screen.findByRole("article", { name: "第 1 题" })).toBeInTheDocument();
@@ -221,25 +329,85 @@ test("考试详情 canonical 路由使用考试详情接口渲染基础数据", 
     spaceID: 301,
     questionType: undefined,
     page: 1,
-    pageSize: 1,
+    pageSize: 10,
   });
   expect(paperApi.listPapers).not.toHaveBeenCalled();
   expect(questionApi.listQuestions).not.toHaveBeenCalled();
+});
+
+test("考试详情判断题没有选项时仍按客观题渲染正确错误选项", async () => {
+  const paperApi = createUnusedPaperApiDouble();
+  const questionApi = createUnusedQuestionApiDouble();
+  const examDetailApi: ExamDetailAPI = {
+    ...createExamDetailApiDouble(),
+    getPaperPreview: vi.fn(async () => ({
+      exam: examDetailExam(),
+      sections: [{
+        sectionID: 12,
+        sectionName: "二、判断题",
+        questionType: "judge",
+        questionCount: 1,
+        totalScore: "1",
+      }],
+      items: [{
+        sectionID: 12,
+        sectionName: "二、判断题",
+        questionID: 301,
+        questionType: "judge",
+        title: "判断题题干",
+        score: "1",
+        blankCount: 0,
+        sortOrder: 1,
+        options: [],
+      }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      permissions: examDetailPermissions(),
+    })),
+  };
+
+  render(
+    <FeedbackProvider>
+      <MemoryRouter initialEntries={["/exams/8?space_id=301"]}>
+        <Routes>
+          <Route
+            path="/exams/:examID"
+            element={(
+              <PaperPreviewPage
+                examDetailApi={examDetailApi}
+                paperApi={paperApi}
+                questionApi={questionApi}
+                tenantID={10}
+                spaceID={301}
+              />
+            )}
+          />
+        </Routes>
+      </MemoryRouter>
+    </FeedbackProvider>,
+  );
+
+  const question = await screen.findByRole("article", { name: "第 1 题" });
+  expect(within(question).getByText("判断题题干")).toBeInTheDocument();
+  expect(within(question).getByText("正确")).toBeInTheDocument();
+  expect(within(question).getByText("错误")).toBeInTheDocument();
+  expect(within(question).queryByText("主观题作答区")).not.toBeInTheDocument();
 });
 
 test("考试详情 canonical 路由按 UI 分页请求试卷预览", async () => {
   const examDetailApi: ExamDetailAPI = {
     ...createExamDetailApiDouble(),
     getPaperPreview: vi.fn(async (input) => {
-      if (input.page === 1 && input.pageSize === 1) {
+      if (input.page === 1 && (input.pageSize === 10 || input.pageSize === 5)) {
         return {
           exam: examDetailExam(),
           sections: [{
             sectionID: 11,
             sectionName: "一、单项选择题",
             questionType: "single",
-            questionCount: 2,
-            totalScore: "6",
+            questionCount: 6,
+            totalScore: "18",
           }],
           items: [
             {
@@ -256,19 +424,19 @@ test("考试详情 canonical 路由按 UI 分页请求试卷预览", async () =>
           ],
           page: 1,
           pageSize: input.pageSize,
-          total: 2,
+          total: 6,
           permissions: examDetailPermissions(),
         };
       }
-      if (input.page === 2 && input.pageSize === 1) {
+      if (input.page === 2 && input.pageSize === 5) {
         return {
           exam: examDetailExam(),
           sections: [{
             sectionID: 11,
             sectionName: "一、单项选择题",
             questionType: "single",
-            questionCount: 2,
-            totalScore: "6",
+            questionCount: 6,
+            totalScore: "18",
           }],
           items: [
             {
@@ -317,26 +485,36 @@ test("考试详情 canonical 路由按 UI 分页请求试卷预览", async () =>
   const user = userEvent.setup();
   expect(await screen.findByText("第一页题干")).toBeInTheDocument();
   expect(screen.queryByText("第二页题干")).not.toBeInTheDocument();
-  expect(screen.getByText("1 / 2 题")).toBeInTheDocument();
+  expect(screen.getByText("1 / 6 题")).toBeInTheDocument();
+  await user.click(screen.getByLabelText("每页题数"));
+  await user.click(await screen.findByRole("option", { name: "5" }));
+  expect(await screen.findByText("第一页题干")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "下一题" }));
   expect(await screen.findByText("第二页题干")).toBeInTheDocument();
-  expect(screen.getByText("2 / 2 题")).toBeInTheDocument();
-  expect(examDetailApi.getPaperPreview).toHaveBeenCalledTimes(2);
+  expect(examDetailApi.getPaperPreview).toHaveBeenCalledTimes(3);
   expect(examDetailApi.getPaperPreview).toHaveBeenNthCalledWith(1, {
     tenantID: 10,
     examID: 8,
     spaceID: 301,
     questionType: undefined,
     page: 1,
-    pageSize: 1,
+    pageSize: 10,
   });
   expect(examDetailApi.getPaperPreview).toHaveBeenNthCalledWith(2, {
     tenantID: 10,
     examID: 8,
     spaceID: 301,
     questionType: undefined,
+    page: 1,
+    pageSize: 5,
+  });
+  expect(examDetailApi.getPaperPreview).toHaveBeenNthCalledWith(3, {
+    tenantID: 10,
+    examID: 8,
+    spaceID: 301,
+    questionType: undefined,
     page: 2,
-    pageSize: 1,
+    pageSize: 5,
   });
 });
 
@@ -442,7 +620,7 @@ test("考试详情题型筛选后按后端筛选总数限制分页", async () =>
     spaceID: 301,
     questionType: "fill_blank",
     page: 1,
-    pageSize: 1,
+    pageSize: 10,
   });
 });
 
@@ -884,7 +1062,7 @@ test("基本信息标签页展示考试配置详情", async () => {
   expect(within(schedule).getByText("2 分")).toBeInTheDocument();
 });
 
-test("考生管理标签页展示考生列表和批量操作", async () => {
+test("考生管理标签页展示考生列表和邀请操作", async () => {
   const user = userEvent.setup();
   render(
     <FeedbackProvider>
@@ -923,7 +1101,7 @@ test("考生管理标签页展示考生列表和批量操作", async () => {
   expect(within(stats).getByText("已交卷")).toBeInTheDocument();
   expect(within(stats).getByText("84")).toBeInTheDocument();
 
-  expect(within(panel).getByRole("button", { name: "批量导入考生" })).toBeInTheDocument();
+  expect(within(panel).queryByRole("button", { name: "批量导入考生" })).not.toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "发送邀请码" })).toBeInTheDocument();
   expect(within(panel).getByPlaceholderText("搜索姓名、学号或班级")).toBeInTheDocument();
   expectSelectText(within(panel).getByLabelText("考试状态筛选"), "全部状态");
@@ -1553,7 +1731,7 @@ test("考试设置标签页不展示未接入真实字段的公平性静态配�
   expect(within(panel).queryByText("题目顺序随机：")).not.toBeInTheDocument();
 });
 
-test("考试详情考生管理标签页支持导入考生和重发邀请码", async () => {
+test("考试详情考生管理标签页支持重发邀请码", async () => {
   const user = userEvent.setup();
   const getCandidates = vi.fn(async () => ({
     exam: examDetailExam(),
@@ -1577,11 +1755,6 @@ test("考试详情考生管理标签页支持导入考生和重发邀请码", as
     total: 1,
     permissions: examDetailPermissions(),
   }));
-  const importCandidates = vi.fn(async () => ({
-    importedCount: 2,
-    skippedCount: 0,
-    permissions: examDetailPermissions(),
-  }));
   const resendInvitations = vi.fn(async () => ({
     sentCount: 1,
     skippedCount: 0,
@@ -1591,7 +1764,6 @@ test("考试详情考生管理标签页支持导入考生和重发邀请码", as
   const examDetailApi: ExamDetailAPI = {
     ...createExamDetailApiDouble(),
     getCandidates,
-    importCandidates,
     resendInvitations,
   };
 
@@ -1622,18 +1794,8 @@ test("考试详情考生管理标签页支持导入考生和重发邀请码", as
 
   const panel = await screen.findByRole("tabpanel", { name: "考生管理" });
   expect(await within(panel).findByText("待邀请考生")).toBeInTheDocument();
-
-  await user.click(within(panel).getByRole("button", { name: "批量导入考生" }));
-  await user.type(within(panel).getByLabelText("导入考生用户 ID"), "31, 32");
-  await user.click(within(panel).getByRole("button", { name: "确认导入" }));
-
-  expect(importCandidates).toHaveBeenCalledWith({
-    tenantID: 10,
-    examID: 8,
-    spaceID: 301,
-    userIDs: [31, 32],
-  });
-  expect(await screen.findByText("已导入 2 名考生，跳过 0 名")).toBeInTheDocument();
+  expect(within(panel).queryByRole("button", { name: "批量导入考生" })).not.toBeInTheDocument();
+  expect(within(panel).queryByLabelText("导入考生用户 ID")).not.toBeInTheDocument();
 
   await user.click(within(panel).getByRole("button", { name: "重发邀请码" }));
 
@@ -1644,7 +1806,7 @@ test("考试详情考生管理标签页支持导入考生和重发邀请码", as
     userIDs: [21],
   });
   expect(await screen.findByText("已发送 1 名考生邀请码，跳过 0 名，邀请码 PM8888")).toBeInTheDocument();
-  expect(getCandidates).toHaveBeenCalledTimes(3);
+  expect(getCandidates).toHaveBeenCalledTimes(2);
 });
 
 test("考试详情考生管理标签页按权限禁用导入和邀请操作", async () => {
@@ -1672,11 +1834,6 @@ test("考试详情考生管理标签页按权限禁用导入和邀请操作", as
     total: 1,
     permissions: readonlyPermissions,
   }));
-  const importCandidates = vi.fn(async () => ({
-    importedCount: 1,
-    skippedCount: 0,
-    permissions: readonlyPermissions,
-  }));
   const resendInvitations = vi.fn(async () => ({
     sentCount: 1,
     skippedCount: 0,
@@ -1686,7 +1843,6 @@ test("考试详情考生管理标签页按权限禁用导入和邀请操作", as
   const examDetailApi: ExamDetailAPI = {
     ...createExamDetailApiDouble(),
     getCandidates,
-    importCandidates,
     resendInvitations,
   };
 
@@ -1718,14 +1874,12 @@ test("考试详情考生管理标签页按权限禁用导入和邀请操作", as
   const panel = await screen.findByRole("tabpanel", { name: "考生管理" });
   expect(await within(panel).findByText("只读考生")).toBeInTheDocument();
 
-  expect(within(panel).getByRole("button", { name: "批量导入考生" })).toBeDisabled();
+  expect(within(panel).queryByRole("button", { name: "批量导入考生" })).not.toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "发送邀请码" })).toBeDisabled();
   expect(within(panel).getByRole("button", { name: "重发邀请码" })).toBeDisabled();
-  await user.click(within(panel).getByRole("button", { name: "批量导入考生" }));
   await user.click(within(panel).getByRole("button", { name: "发送邀请码" }));
   await user.click(within(panel).getByRole("button", { name: "重发邀请码" }));
 
-  expect(importCandidates).not.toHaveBeenCalled();
   expect(resendInvitations).not.toHaveBeenCalled();
   expect(within(panel).queryByLabelText("导入考生用户 ID")).not.toBeInTheDocument();
 });
@@ -1781,10 +1935,16 @@ test("成绩管理标签页展示成绩分析和成绩列表", async () => {
   expect(within(typeAnalysis).getByText("单选题")).toBeInTheDocument();
   expect(within(typeAnalysis).getAllByText("100%").length).toBeGreaterThan(0);
 
-  expect(within(panel).getByRole("button", { name: "配置成绩发布" })).toBeInTheDocument();
+  expect(within(panel).queryByRole("button", { name: "配置成绩发布" })).not.toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "导出成绩" })).toBeInTheDocument();
-  expect(within(panel).getByPlaceholderText("搜索姓名、学号或班级")).toBeInTheDocument();
-  expectSelectText(within(panel).getByLabelText("成绩状态筛选"), "全部成绩状态");
+  const resultStatusSelect = within(panel).getByLabelText("成绩状态筛选");
+  const resultSearchInput = within(panel).getByPlaceholderText("搜索姓名、学号或班级");
+  const refreshButton = within(panel).getByRole("button", { name: "刷新成绩列表" });
+  expect(resultSearchInput).toBeInTheDocument();
+  expect(refreshButton).toBeInTheDocument();
+  expectSelectText(resultStatusSelect, "全部成绩状态");
+  expect(resultStatusSelect.compareDocumentPosition(resultSearchInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(resultSearchInput.compareDocumentPosition(refreshButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
   const table = within(panel).getByRole("table", { name: "成绩列表" });
   expect(table).toHaveTextContent("排名");
@@ -1800,7 +1960,10 @@ test("成绩管理标签页展示成绩分析和成绩列表", async () => {
   expect(table).toHaveTextContent("已发布");
   expect(within(table).getAllByRole("button", { name: "查看成绩" })).toHaveLength(1);
   expect(within(table).getAllByRole("button", { name: "查看答卷" })).toHaveLength(1);
-  expectSelectText(within(panel).getByLabelText("成绩分页"), "1 / 1 页");
+  const pagination = within(panel).getByRole("navigation", { name: "分页" });
+  expect(within(pagination).getByText("每页条数")).toBeInTheDocument();
+  expect(within(pagination).getByText("共 1 条")).toBeInTheDocument();
+  expect(within(pagination).getByText("第 1 / 1 页")).toBeInTheDocument();
 });
 
 test("成绩管理标签页按后端权限隐藏发布和导出入口", async () => {
@@ -1852,7 +2015,7 @@ test("成绩管理标签页按后端权限隐藏发布和导出入口", async ()
   expect(within(panel).getByRole("table", { name: "成绩列表" })).toBeInTheDocument();
 });
 
-test("成绩管理配置按钮会切换到考试设置标签页", async () => {
+test("成绩管理不展示配置成绩发布入口", async () => {
   const user = userEvent.setup();
 
   render(
@@ -1880,10 +2043,9 @@ test("成绩管理配置按钮会切换到考试设置标签页", async () => {
 
   await user.click(screen.getByRole("tab", { name: "成绩管理" }));
   const panel = await screen.findByRole("tabpanel", { name: "成绩管理" });
-  await user.click(within(panel).getByRole("button", { name: "配置成绩发布" }));
 
-  expect(screen.getByRole("tab", { name: "考试设置" })).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByRole("tabpanel", { name: "考试设置" })).toBeInTheDocument();
+  expect(within(panel).queryByRole("button", { name: "配置成绩发布" })).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "成绩管理" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("成绩管理标签页导出成绩按钮调用真实导出接口", async () => {
@@ -1936,8 +2098,187 @@ test("成绩管理标签页导出成绩按钮调用真实导出接口", async ()
     });
   });
   expect(anchorClick).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("alert")).toHaveTextContent("已导出 1 条成绩记录");
+  expect(await screen.findByText("已导出 1 条成绩记录")).toBeInTheDocument();
   anchorClick.mockRestore();
+});
+
+test("成绩管理没有成绩数据时不会调用导出接口", async () => {
+  const user = userEvent.setup();
+  exportResultsMock.mockClear();
+  const examDetailApi: ExamDetailAPI = {
+    ...createExamDetailApiDouble(),
+    getResultsSummary: vi.fn(async () => ({
+      exam: examDetailExam(),
+      stats: {
+        submitted: 0,
+        averageScore: "0",
+        highestScore: "0",
+        passRate: "0%",
+        pendingSubjective: 0,
+      },
+      scoreDistribution: [],
+      questionTypeRates: [],
+      permissions: examDetailPermissions(),
+    })),
+    getResults: vi.fn(async () => ({
+      exam: examDetailExam(),
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+      permissions: examDetailPermissions(),
+    })),
+  };
+
+  render(
+    <SessionContext.Provider value={{
+      session: {
+        selectedSpaceID: 301,
+        profileSpaces: [{ id: 1, tenantID: 10, spaceID: 301, role: "space_admin", status: "enabled" }],
+        user: { userID: 11, displayName: "阅卷老师", role: "teacher", tenantID: 10 },
+      },
+      signIn: vi.fn(),
+      signOut: vi.fn(),
+    }}>
+      <FeedbackProvider>
+        <MemoryRouter initialEntries={["/exams/8?space_id=301"]}>
+          <Routes>
+            <Route
+              path="/exams/:examID"
+              element={(
+                <PaperPreviewPage
+                  examDetailApi={examDetailApi}
+                  paperApi={createUnusedPaperApiDouble()}
+                  questionApi={createUnusedQuestionApiDouble()}
+                  tenantID={10}
+                  spaceID={301}
+                />
+              )}
+            />
+          </Routes>
+        </MemoryRouter>
+      </FeedbackProvider>
+    </SessionContext.Provider>,
+  );
+
+  expect(await screen.findByRole("heading", { name: "后端考试详情" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "成绩管理" }));
+  const panel = await screen.findByRole("tabpanel", { name: "成绩管理" });
+  const emptyDescription = await within(panel).findByText("暂无成绩数据");
+  expect(emptyDescription.closest(".ant-empty")).toBeInTheDocument();
+
+  await user.click(within(panel).getByRole("button", { name: "导出成绩" }));
+
+  expect(exportResultsMock).not.toHaveBeenCalled();
+  expect(await screen.findByText("暂无成绩数据可导出")).toBeInTheDocument();
+});
+
+test("成绩管理刷新按钮重新请求当前成绩列表", async () => {
+  const user = userEvent.setup();
+  let resolveRefresh: ((value: ExamResultListData) => void) | undefined;
+  const getResults = vi.fn<ExamDetailAPI["getResults"]>(async () => ({
+    exam: examDetailExam(),
+    items: [{
+      rank: 1,
+      attemptID: 1801,
+      userID: 21,
+      username: "2024100999",
+      realName: "刷新前考生",
+      spaceID: 301,
+      spaceName: "后端空间",
+      objectiveScore: "91",
+      subjectiveScore: "0",
+      totalScore: "91",
+      status: "published" as const,
+      submittedAt: 1779795600000,
+    }],
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    permissions: examDetailPermissions(),
+  }));
+  getResults.mockImplementationOnce(async () => ({
+    exam: examDetailExam(),
+    items: [{
+      rank: 1,
+      attemptID: 1801,
+      userID: 21,
+      username: "2024100999",
+      realName: "刷新前考生",
+      spaceID: 301,
+      spaceName: "后端空间",
+      objectiveScore: "91",
+      subjectiveScore: "0",
+      totalScore: "91",
+      status: "published" as const,
+      submittedAt: 1779795600000,
+    }],
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    permissions: examDetailPermissions(),
+  }));
+  getResults.mockImplementationOnce(() => new Promise<ExamResultListData>((resolve) => {
+    resolveRefresh = resolve;
+  }));
+  const examDetailApi: ExamDetailAPI = {
+    ...createExamDetailApiDouble(),
+    getResults,
+  };
+
+  render(
+    <FeedbackProvider>
+      <MemoryRouter initialEntries={["/exams/8?space_id=301"]}>
+        <Routes>
+          <Route
+            path="/exams/:examID"
+            element={(
+              <PaperPreviewPage
+                examDetailApi={examDetailApi}
+                paperApi={createUnusedPaperApiDouble()}
+                questionApi={createUnusedQuestionApiDouble()}
+                tenantID={10}
+                spaceID={301}
+              />
+            )}
+          />
+        </Routes>
+      </MemoryRouter>
+    </FeedbackProvider>,
+  );
+
+  expect(await screen.findByRole("heading", { name: "后端考试详情" })).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "成绩管理" }));
+  const panel = await screen.findByRole("tabpanel", { name: "成绩管理" });
+  expect(await within(panel).findByText("刷新前考生")).toBeInTheDocument();
+
+  await user.click(within(panel).getByRole("button", { name: "刷新成绩列表" }));
+
+  await waitFor(() => expect(getResults).toHaveBeenCalledTimes(2));
+  expect(within(panel).getByRole("button", { name: "刷新成绩列表" }).querySelector(".tenant-refresh-icon--spinning")).toBeInTheDocument();
+  resolveRefresh?.({
+    exam: examDetailExam(),
+    items: [{
+      rank: 1,
+      attemptID: 1802,
+      userID: 22,
+      username: "2024101000",
+      realName: "刷新后考生",
+      spaceID: 301,
+      spaceName: "后端空间",
+      objectiveScore: "92",
+      subjectiveScore: "0",
+      totalScore: "92",
+      status: "published" as const,
+      submittedAt: 1779795600000,
+    }],
+    page: 1,
+    pageSize: 20,
+    total: 1,
+    permissions: examDetailPermissions(),
+  });
+
+  expect(await within(panel).findByText("刷新后考生")).toBeInTheDocument();
 });
 
 test("成绩管理行操作会打开成绩详情并直达指定阅卷记录", async () => {
@@ -2398,11 +2739,11 @@ function createQuestionApiDouble(): QuestionAPI {
       tenantID: 10,
       spaceID: 301,
       type: "single",
-      title: "已知集合 A = {x | -2 ≤ x ≤ 4}，B = {x | x > 1}，则 A∩B =（ ）",
-      stem: "已知集合 A = {x | -2 ≤ x ≤ 4}，B = {x | x > 1}，则 A∩B =（ ）",
-      options: ["{x | -2 ≤ x < 1}", "{x | 1 < x < 4}", "{x | 1 ≤ x ≤ 4}", "{x | -2 ≤ x ≤ 1}"],
+      title: "已知集合 **A = {x | -2 ≤ x ≤ 4}**，B = {x | x > 1}，则 A∩B =（ ）",
+      stem: "已知集合 **A = {x | -2 ≤ x ≤ 4}**，B = {x | x > 1}，则 A∩B =（ ）",
+      options: ["**{x | -2 ≤ x < 1}**", "{x | 1 < x < 4}\n\n- 排除端点", "{x | 1 ≤ x ≤ 4}", "{x | -2 ≤ x ≤ 1}"],
       correctOptionIndexes: [1],
-      analysis: "交集取公共部分。",
+      analysis: "**交集取公共部分**\n\n- 排除空集",
       difficulty: "easy",
       tag: "集合",
       tags: ["集合", "高一"],

@@ -817,31 +817,34 @@ describe("paperApi", () => {
   });
 
   test("发布试卷候选检索不向后端传递状态或分页参数", async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
-      code: 0,
-      message: "ok",
-      data: {
-        items: [{
-          id: 200,
-          tenant_id: 10,
-          space_id: 301,
-          name: "高三语文期末考试",
-          description: "可发布",
-          duration_minutes: 120,
-          grade_level: "高三",
-          total_score: "100",
-          build_mode: "manual",
-          shuffle_questions: false,
-          show_analysis: true,
-          status: "enabled",
-          created_at: 1717291800000,
-          creator_name: "teacher.exam",
-        }],
-        page: 1,
-        page_size: 10,
-        total: 1,
-      },
-    })));
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      void input;
+      return new Response(JSON.stringify({
+        code: 0,
+        message: "ok",
+        data: {
+          items: [{
+            id: 200,
+            tenant_id: 10,
+            space_id: 301,
+            name: "高三语文期末考试",
+            description: "可发布",
+            duration_minutes: 120,
+            grade_level: "高三",
+            total_score: "100",
+            build_mode: "manual",
+            shuffle_questions: false,
+            show_analysis: true,
+            status: "enabled",
+            created_at: 1717291800000,
+            creator_name: "teacher.exam",
+          }],
+          page: 1,
+          page_size: 10,
+          total: 1,
+        },
+      }));
+    });
     const api = createPaperAPI(createApiClient({ baseUrl: "", fetcher }));
 
     await expect(api.listPublishPaperCandidates({ tenantID: 10, spaceID: 301, search: " 期末 " })).resolves.toMatchObject({

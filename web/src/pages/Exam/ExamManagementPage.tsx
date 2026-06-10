@@ -57,6 +57,9 @@ type PendingStatusAction = {
   exam: ExamRow;
   status: ExamStatusUpdate;
 };
+type PendingDeleteAction = {
+  exam: ExamRow;
+};
 
 const dateFormat = "YYYY-MM-DD";
 const timeFormat = "HH:mm";
@@ -117,6 +120,7 @@ export function ExamManagementPage({
   const [publishMode, setPublishMode] = useState<"immediate_score" | "manual_publish">("manual_publish");
   const [scorePublishDateTime, setScorePublishDateTime] = useState("");
   const [pendingStatusAction, setPendingStatusAction] = useState<PendingStatusAction | null>(null);
+  const [pendingDeleteAction, setPendingDeleteAction] = useState<PendingDeleteAction | null>(null);
   const [editingExam, setEditingExam] = useState<ExamRow | null>(null);
   const [examPage, setExamPage] = useState(1);
   const [examPageSize, setExamPageSize] = useState(defaultExamPageSize);
@@ -552,6 +556,10 @@ export function ExamManagementPage({
     setPendingStatusAction({ exam, status });
   }
 
+  function requestDeleteDraftExam(exam: ExamRow) {
+    setPendingDeleteAction({ exam });
+  }
+
   async function confirmUpdateExamStatus() {
     if (!pendingStatusAction) {
       return;
@@ -572,6 +580,26 @@ export function ExamManagementPage({
       showSuccess(statusSuccessMessage(status, updated));
     } catch {
       showError("考试状态更新失败");
+    }
+  }
+
+  async function confirmDeleteDraftExam() {
+    if (!pendingDeleteAction) {
+      return;
+    }
+    const { exam } = pendingDeleteAction;
+    setPendingDeleteAction(null);
+    if (!api.deleteDraftExam) {
+      showError("删除考试失败");
+      return;
+    }
+    try {
+      await api.deleteDraftExam({ tenantID, examID: exam.id });
+      setExams((items) => items.filter((item) => item.id !== exam.id));
+      setExamTotal((total) => Math.max(0, total - 1));
+      showSuccess(`${exam.name} 已删除`);
+    } catch {
+      showError("删除考试失败");
     }
   }
 
@@ -665,15 +693,20 @@ export function ExamManagementPage({
             </thead>
             <tbody>
               {exams.length === 0 && <EmptyTableRow colSpan={7} />}
-              {exams.map((exam) => (
-                <ExamTableRow
-                  canManageActions={canManageTenantTargets || (canManageOwnSpaceExam && exam.createdBy === actorID)}
-                  exam={exam}
-                  key={exam.id}
-                  onEditDraft={openDraftEditor}
-                  onUpdate={requestUpdateExamStatus}
-                />
-              ))}
+              {exams.map((exam) => {
+                const canManageActions = canManageTenantTargets ||
+                  (canManageOwnSpaceExam && (exam.createdBy === actorID || (exam.status === "draft" && exam.createdBy === 0)));
+                return (
+                  <ExamTableRow
+                    canManageActions={canManageActions}
+                    exam={exam}
+                    key={exam.id}
+                    onDelete={requestDeleteDraftExam}
+                    onEditDraft={openDraftEditor}
+                    onUpdate={requestUpdateExamStatus}
+                  />
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1088,6 +1121,11 @@ export function ExamManagementPage({
           onCancel={() => setPendingStatusAction(null)}
           onConfirm={confirmUpdateExamStatus}
         />
+        <ExamDeleteConfirmModal
+          action={pendingDeleteAction}
+          onCancel={() => setPendingDeleteAction(null)}
+          onConfirm={confirmDeleteDraftExam}
+        />
     </section>
   );
 }
@@ -1095,11 +1133,12 @@ export function ExamManagementPage({
 type ExamTableRowProps = {
   canManageActions: boolean;
   exam: ExamRow;
+  onDelete(exam: ExamRow): void;
   onEditDraft(exam: ExamRow): void;
   onUpdate(exam: ExamRow, status: ExamStatusUpdate): void;
 };
 
-function ExamTableRow({ canManageActions, exam, onEditDraft, onUpdate }: ExamTableRowProps) {
+function ExamTableRow({ canManageActions, exam, onDelete, onEditDraft, onUpdate }: ExamTableRowProps) {
   return (
     <tr>
       <td>{exam.name}</td>
@@ -1114,9 +1153,11 @@ function ExamTableRow({ canManageActions, exam, onEditDraft, onUpdate }: ExamTab
       </td>
       <td>
         <ExamRowActions
+          canDeleteDraft={canManageActions}
           canEditDraft={canManageActions}
           canUpdateStatus={canManageActions}
           exam={exam}
+          onDelete={onDelete}
           onEditDraft={onEditDraft}
           onUpdate={onUpdate}
         />
@@ -1126,26 +1167,35 @@ function ExamTableRow({ canManageActions, exam, onEditDraft, onUpdate }: ExamTab
 }
 
 type ExamRowActionsProps = {
+  canDeleteDraft: boolean;
   canEditDraft: boolean;
   canUpdateStatus: boolean;
   exam: ExamRow;
+  onDelete(exam: ExamRow): void;
   onEditDraft(exam: ExamRow): void;
   onUpdate(exam: ExamRow, status: ExamStatusUpdate): void;
 };
 
-function ExamRowActions({ canEditDraft, canUpdateStatus, exam, onEditDraft, onUpdate }: ExamRowActionsProps) {
-  const actions = canUpdateStatus ? examStatusActions(exam.status) : [];
-  const showEditDraft = canEditDraft && exam.status === "draft";
+function ExamRowActions({ canDeleteDraft, canEditDraft, canUpdateStatus, exam, onDelete, onEditDraft, onUpdate }: ExamRowActionsProps) {
+  const actions = examStatusActions(exam.status);
+  const showEditDraft = exam.status === "draft";
+  const showDeleteDraft = exam.status === "draft";
   return (
     <div className="tenant-actions">
       <Link className="tenant-action-button" to={`/exams/${exam.id}`}>详情</Link>
       {showEditDraft && (
-        <Button onClick={() => onEditDraft(exam)} type="button" variant="actionOpen">
+        <Button disabled={!canEditDraft} onClick={() => onEditDraft(exam)} type="button" variant="actionOpen">
           编辑草稿
+        </Button>
+      )}
+      {showDeleteDraft && (
+        <Button disabled={!canDeleteDraft} onClick={() => onDelete(exam)} type="button" variant="actionClose">
+          删除考试
         </Button>
       )}
       {actions.map((action) => (
         <Button
+          disabled={!canUpdateStatus}
           key={action.status}
           onClick={() => onUpdate(exam, action.status)}
           type="button"
@@ -1234,6 +1284,36 @@ function ExamStatusConfirmModal({ action, onCancel, onConfirm }: ExamStatusConfi
         </Button>
         <Button variant={content.confirmVariant} onClick={onConfirm} type="button">
           {content.confirmLabel}
+        </Button>
+      </div>
+    </PlatformModal>
+  );
+}
+
+type ExamDeleteConfirmModalProps = {
+  action: PendingDeleteAction | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+};
+
+function ExamDeleteConfirmModal({ action, onCancel, onConfirm }: ExamDeleteConfirmModalProps) {
+  if (!action) {
+    return null;
+  }
+  return (
+    <PlatformModal onClose={onCancel} open title="确认删除考试">
+      <p className="tenant-dialog-copy">
+        {action.exam.name}
+      </p>
+      <p className="tenant-dialog-copy">
+        删除后将不再出现在考试列表中。已发布、已结束或已禁用的考试不能删除。
+      </p>
+      <div className="platform-dialog__actions">
+        <Button variant="secondary" onClick={onCancel} type="button">
+          取消
+        </Button>
+        <Button variant="primary" onClick={onConfirm} type="button">
+          确认删除
         </Button>
       </div>
     </PlatformModal>

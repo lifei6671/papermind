@@ -19,6 +19,7 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/plugin/soft_delete"
 
 	serviceexam "github.com/lifei6671/papermind/server/internal/service/exam"
 	"github.com/lifei6671/papermind/server/internal/service/pagination"
@@ -105,6 +106,10 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 		Find(&rows).Error; err != nil {
 		return pagination.Result[serviceexam.Exam]{}, err
 	}
+	paperNames, err := r.examPaperNames(ctx, input.TenantID, rows)
+	if err != nil {
+		return pagination.Result[serviceexam.Exam]{}, err
+	}
 	targetGroups := make(map[uint64][]serviceexam.Target, len(rows))
 	if len(rows) > 0 {
 		examIDs := make([]uint64, 0, len(rows))
@@ -162,6 +167,7 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 	exams := make([]serviceexam.Exam, 0, len(rows))
 	for _, row := range rows {
 		exam := examFromDO(row, "")
+		exam.PaperName = paperNames[row.PaperID]
 		if targets, ok := targetGroups[row.ID]; ok {
 			exam.Targets = append([]serviceexam.Target(nil), targets...)
 			exam.TargetType = targets[0].TargetType
@@ -175,6 +181,36 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 		PageSize: page.PageSize,
 		Total:    total,
 	}, nil
+}
+
+type examPaperNameRow struct {
+	ID   uint64
+	Name string
+}
+
+func (r *ExamRepository) examPaperNames(ctx context.Context, tenantID uint64, exams []ExamDO) (map[uint64]string, error) {
+	paperIDs := make([]uint64, 0, len(exams))
+	for _, exam := range exams {
+		paperIDs = append(paperIDs, exam.PaperID)
+	}
+	paperIDs = uniqueSortedOperationSpaceIDs(paperIDs)
+	names := make(map[uint64]string, len(paperIDs))
+	if len(paperIDs) == 0 {
+		return names, nil
+	}
+	var rows []examPaperNameRow
+	if err := r.db.WithContext(ctx).Model(&PaperDO{}).
+		Select(PaperColumns.ID+", "+PaperColumns.Name).
+		Where(PaperColumns.TenantID+" = ?", tenantID).
+		Where(PaperColumns.ID+" IN ?", paperIDs).
+		Where(PaperColumns.DeletedAt+" = ?", 0).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		names[row.ID] = row.Name
+	}
+	return names, nil
 }
 
 func (r *ExamRepository) applyExamListSearch(query *gorm.DB, input serviceexam.ListInput) *gorm.DB {
@@ -3469,6 +3505,30 @@ func (r *ExamRepository) UpdateExamStatus(ctx context.Context, input serviceexam
 		return serviceexam.Exam{}, err
 	}
 	return r.GetExam(ctx, input.TenantID, input.ExamID)
+}
+
+// DeleteDraftExam 软删除草稿考试。
+// 已发布、已结束或已禁用考试必须保留考试记录和作答链路，不能通过删除接口移除。
+func (r *ExamRepository) DeleteDraftExam(ctx context.Context, input serviceexam.DeleteDraftInput) error {
+	now := r.now()
+	result := r.db.WithContext(ctx).Model(&ExamDO{}).
+		Where(ExamColumns.TenantID+" = ?", input.TenantID).
+		Where(ExamColumns.ID+" = ?", input.ExamID).
+		Where(ExamColumns.Status+" = ?", serviceexam.StatusDraft).
+		Where(ExamColumns.DeletedAt+" = ?", 0).
+		Updates(map[string]any{
+			ExamColumns.DeletedAt:     soft_delete.DeletedAt(now),
+			BaseColumns.UpdatedAt:     now,
+			BaseColumns.UpdatedByType: AuditActorTenantUser,
+			BaseColumns.Version:       gorm.Expr(BaseColumns.Version + " + 1"),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return r.examStatusPreconditionError(r.db.WithContext(ctx), input.TenantID, input.ExamID, serviceexam.StatusDraft)
+	}
+	return nil
 }
 
 func (r *ExamRepository) examStatusPreconditionError(tx *gorm.DB, tenantID uint64, examID uint64, expectedStatus string) error {
