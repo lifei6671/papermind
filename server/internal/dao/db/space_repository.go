@@ -91,11 +91,11 @@ func (r *SpaceRepository) applySpaceSearch(query *gorm.DB, search string) *gorm.
 	if keyword == "" {
 		return query
 	}
-	pattern := "%" + strings.ToLower(keyword) + "%"
+	pattern := likeIgnoreCasePattern(keyword)
 	return query.Where(
-		r.db.Where("LOWER("+SpaceColumns.Name+") LIKE ?", pattern).
-			Or("LOWER("+SpaceColumns.Description+") LIKE ?", pattern).
-			Or("LOWER("+SpaceColumns.Status+") LIKE ?", pattern).
+		LikeIgnoreCase(r.db, SpaceColumns.Name, keyword).
+			Or(LikeIgnoreCase(r.db, SpaceColumns.Description, keyword)).
+			Or(LikeIgnoreCase(r.db, SpaceColumns.Status, keyword)).
 			Or(`EXISTS (
 				SELECT 1
 				FROM space_members AS sm
@@ -104,7 +104,7 @@ func (r *SpaceRepository) applySpaceSearch(query *gorm.DB, search string) *gorm.
 					and sm.space_id = spaces.id
 					and sm.deleted_at = 0
 					and sm.role_in_space = ?
-					and (LOWER(users.username) LIKE ? OR LOWER(users.real_name) LIKE ?)
+					and (`+likeIgnoreCaseClause(r.db, "users.username")+` OR `+likeIgnoreCaseClause(r.db, "users.real_name")+`)
 			)`, servicespace.RoleSpaceAdmin, pattern, pattern),
 	)
 }
@@ -699,13 +699,12 @@ func (r *SpaceRepository) spaceMemberNameQuery(ctx context.Context, input SpaceM
 	if keyword == "" {
 		return query
 	}
-	pattern := "%" + strings.ToLower(keyword) + "%"
-	condition := r.db.Where("LOWER(u.real_name) LIKE ?", pattern).
-		Or("LOWER(u.username) LIKE ?", pattern).
-		Or("LOWER(u.phone) LIKE ?", pattern).
-		Or("LOWER(u.email) LIKE ?", pattern).
-		Or("LOWER(sm.role_in_space) LIKE ?", pattern).
-		Or("LOWER(sm.status) LIKE ?", pattern)
+	condition := LikeIgnoreCase(r.db, "u.real_name", keyword).
+		Or(LikeIgnoreCase(r.db, "u.username", keyword)).
+		Or(LikeIgnoreCase(r.db, "u.phone", keyword)).
+		Or(LikeIgnoreCase(r.db, "u.email", keyword)).
+		Or(LikeIgnoreCase(r.db, "sm.role_in_space", keyword)).
+		Or(LikeIgnoreCase(r.db, "sm.status", keyword))
 	for _, role := range localizedEnumMatches(keyword, spaceMemberRoleSearchLabels) {
 		condition = condition.Or("sm.role_in_space = ?", role)
 	}

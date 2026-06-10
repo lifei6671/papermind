@@ -270,7 +270,7 @@ func (h spaceHandler) listMembers(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "space id 必须是正整数"))
 		return
 	}
-	tenantID, ok := h.authorizeSpaceMembers(c, spaceID)
+	tenantID, ok := h.authorizeListSpaceMembers(c, spaceID)
 	if !ok {
 		return
 	}
@@ -416,6 +416,42 @@ func (h spaceHandler) authorizeSpaceMembers(c *gin.Context, spaceID uint64) (uin
 		return 0, false
 	}
 	return tenantID, true
+}
+
+func (h spaceHandler) authorizeListSpaceMembers(c *gin.Context, spaceID uint64) (uint64, bool) {
+	principal, ok := currentAuthPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, response.Fail(code.InvalidParam, "请先登录"))
+		return 0, false
+	}
+	if principal.SubjectType != permission.SubjectTenantUser || principal.TenantID == 0 {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return 0, false
+	}
+	tenantID := principal.TenantID
+	if principal.Role == permission.RoleTenantAdmin {
+		if _, ok := currentLiveTenantAdminPrincipal(c, h.users); !ok {
+			return 0, false
+		}
+		return tenantID, true
+	}
+	member, err := h.members.FindMember(c.Request.Context(), tenantID, spaceID, principal.UserID)
+	if err != nil || member.Status != servicespace.StatusEnabled {
+		c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+		return 0, false
+	}
+	if member.Role == servicespace.RoleSpaceAdmin {
+		return tenantID, true
+	}
+	if member.Role == servicespace.RoleTeacher && isStudentCandidateMemberQuery(c) {
+		return tenantID, true
+	}
+	c.JSON(http.StatusForbidden, response.Fail(code.InvalidParam, "无权执行当前操作"))
+	return 0, false
+}
+
+func isStudentCandidateMemberQuery(c *gin.Context) bool {
+	return c.Query("role") == servicespace.RoleStudent && c.Query("status") == servicespace.StatusEnabled
 }
 
 func readSpaceMemberParams(c *gin.Context) (uint64, uint64, bool) {

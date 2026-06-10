@@ -122,6 +122,8 @@ type Exam struct {
 	InviteCode       string // 考试邀请码。
 	Status           string // 考试状态。
 	BuildMode        string // 冗余的试卷组卷模式，便于快照生成。
+	CreatedBy        uint64 // 创建人用户 ID，用于空间角色限制只能操作自己创建的考试。
+	CreatedByType    string // 创建人主体类型。
 	Targets          []Target
 	TargetType       string // 列表和兼容响应使用的首个发布目标类型。
 	TargetID         uint64 // 列表和兼容响应使用的首个发布目标 ID。
@@ -270,6 +272,26 @@ type UpdateStatusInput struct {
 	ActorRole string // 操作人角色快照，由 API 层从 session 派生。
 }
 
+type UpdateDraftWithTargetInput struct {
+	TenantID         uint64   // 所属租户 ID。
+	ExamID           uint64   // 草稿考试 ID。
+	PaperID          uint64   // 关联试卷 ID。
+	Name             string   // 考试名称。
+	TargetType       string   // 发布目标类型。
+	TargetID         uint64   // 发布目标 ID。
+	Targets          []Target // 发布目标列表；非空时优先于 TargetType 和 TargetID。
+	StartTime        int64    // 开始时间。
+	EndTime          int64    // 结束时间。
+	DurationMinutes  int      // 单次作答时长。
+	MaxAttempts      int      // 最大作答次数。
+	ResultStrategy   string   // 成绩策略。
+	PublishMode      string   // 成绩发布模式。
+	ScorePublishTime *int64   // 成绩公布时间。
+	ActorID          uint64   // 操作人用户 ID，由 API 层从 session 派生。
+	ActorType        string   // 操作人主体类型，由 API 层从 session 派生。
+	ActorRole        string   // 操作人角色快照，由 API 层从 session 派生。
+}
+
 type UpdateExamStatusRepositoryInput struct {
 	TenantID       uint64       // 所属租户 ID。
 	ExamID         uint64       // 考试 ID。
@@ -278,6 +300,12 @@ type UpdateExamStatusRepositoryInput struct {
 	InviteCode     string       // 发布草稿时生成的邀请码；为空表示不变更。
 	EndTime        *int64       // 提前结束时写入当前结束时间；nil 表示不变更。
 	Log            OperationLog // 管理端操作日志。
+}
+
+type UpdateDraftWithTargetsRepositoryInput struct {
+	Exam    Exam          // 更新后的草稿考试基础配置。
+	Targets []Target      // 更新后的投放目标。
+	Log     *OperationLog // 操作日志；nil 表示不写日志。
 }
 
 type UpdateScorePublishConfigInput struct {
@@ -331,6 +359,7 @@ type ListInput struct {
 	TenantID uint64  // 所属租户 ID。
 	SpaceID  *uint64 // 可见空间范围；nil 表示租户管理员全租户范围。
 	PaperID  *uint64 // 关联试卷过滤；nil 表示不过滤试卷。
+	Search   string  // 考试名称、试卷名称、邀请码或目标空间名称搜索关键字。
 	Page     int     // 页码，从 1 开始。
 	PageSize int     // 每页数量。
 }
@@ -395,6 +424,7 @@ type Repository interface {
 	PublishExamAndFreezeLivePool(ctx context.Context, exam Exam, pool []LivePoolItem, expectedStatus string, log *OperationLog) (Exam, error)
 	CreatePublishedExamWithTarget(ctx context.Context, exam Exam, pool []LivePoolItem, target Target, log *OperationLog) (Exam, error)
 	CreatePublishedExamWithTargets(ctx context.Context, exam Exam, pool []LivePoolItem, targets []Target, log *OperationLog) (Exam, error)
+	UpdateDraftWithTargets(ctx context.Context, input UpdateDraftWithTargetsRepositoryInput) (Exam, error)
 	UpdateExamStatus(ctx context.Context, input UpdateExamStatusRepositoryInput) (Exam, error)
 	TargetExists(ctx context.Context, tenantID uint64, examID uint64, targetType string, targetID uint64) (bool, error)
 	AddTarget(ctx context.Context, target Target) error
@@ -526,6 +556,8 @@ func (s *Service) CreateWithTarget(ctx context.Context, input CreateWithTargetIn
 		if err != nil {
 			return Exam{}, err
 		}
+		exam.CreatedBy = input.ActorID
+		exam.CreatedByType = input.ActorType
 		created, err := s.repo.CreatePublishedExamWithTargets(ctx, exam, nil, targets, nil)
 		if err != nil {
 			return Exam{}, err
@@ -550,6 +582,8 @@ func (s *Service) CreateWithTarget(ctx context.Context, input CreateWithTargetIn
 	if err != nil {
 		return Exam{}, err
 	}
+	exam.CreatedBy = input.ActorID
+	exam.CreatedByType = input.ActorType
 	log := OperationLog{
 		TenantID:        input.TenantID,
 		OperationType:   OperationTypePublishExam,
@@ -563,6 +597,57 @@ func (s *Service) CreateWithTarget(ctx context.Context, input CreateWithTargetIn
 		CreatedByType:   input.ActorType,
 	}
 	return s.repo.CreatePublishedExamWithTargets(ctx, exam, pool, targets, &log)
+}
+
+func (s *Service) UpdateDraftWithTarget(ctx context.Context, input UpdateDraftWithTargetInput) (Exam, error) {
+	targets, err := normalizePublishTargets(PublishWithTargetInput{
+		TargetType: input.TargetType,
+		TargetID:   input.TargetID,
+		Targets:    input.Targets,
+	})
+	if err != nil {
+		return Exam{}, err
+	}
+	exam, _, err := s.buildPublishableExam(ctx, publishSettingsInput{
+		ExamID:           input.ExamID,
+		TenantID:         input.TenantID,
+		PaperID:          input.PaperID,
+		Name:             input.Name,
+		StartTime:        input.StartTime,
+		EndTime:          input.EndTime,
+		DurationMinutes:  input.DurationMinutes,
+		MaxAttempts:      input.MaxAttempts,
+		ResultStrategy:   input.ResultStrategy,
+		PublishMode:      input.PublishMode,
+		ScorePublishTime: input.ScorePublishTime,
+	})
+	if err != nil {
+		return Exam{}, err
+	}
+	exam.ID = input.ExamID
+	exam.Status = StatusDraft
+	log := OperationLog{
+		TenantID:        input.TenantID,
+		ExamID:          input.ExamID,
+		OperationType:   OperationTypeUpdateSettings,
+		OperationTitle:  "修改草稿考试",
+		OperationDetail: "修改草稿考试配置",
+		ActorID:         input.ActorID,
+		ActorType:       input.ActorType,
+		ActorRole:       input.ActorRole,
+		CreatedAt:       s.now(),
+		CreatedBy:       input.ActorID,
+		CreatedByType:   input.ActorType,
+	}
+	updated, err := s.repo.UpdateDraftWithTargets(ctx, UpdateDraftWithTargetsRepositoryInput{
+		Exam:    exam,
+		Targets: targets,
+		Log:     &log,
+	})
+	if err != nil {
+		return Exam{}, err
+	}
+	return hideDraftInviteCode(updated), nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, input UpdateStatusInput) (Exam, error) {

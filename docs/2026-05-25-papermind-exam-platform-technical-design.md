@@ -874,7 +874,7 @@ paper_section_rules
 - `papers.space_id` 可为空；为空表示租户级公共试卷，非空表示空间内试卷。
 - 公共试卷只允许 `tenant_admin` 创建、修改和删除；`tenant_admin` 可以把未被考试引用的公共试卷迁移到空间，或把空间试卷迁移为公共试卷。目标空间的 `space_admin` 可以把未被考试引用的公共试卷归属到自己授权空间，但不能维护公共试卷内容或把空间试卷迁回公共范围。空间试卷仍允许本租户管理员或对应启用空间内的 `space_admin` / `teacher` 管理。
 - 试卷已被未删除考试引用后，禁止删除和修改 `papers.space_id`；基础信息、组卷内容和规则修改继续受既有发布/撤回状态规则约束。
-- `space_admin` / `teacher` 可以在发布考试等流程中读取公共试卷，但是否允许引用公共试卷必须由对应业务 service 显式校验，不能把公共试卷视为任意教师可写资源。
+- `space_admin` / `teacher` 可以在发布考试流程中只读引用启用公共试卷，但发布范围必须由目标空间或指定学生的有效空间成员关系裁剪到当前调用方有发布权的空间；公共试卷不能因此变成教师可维护资源。
 - `papers.duration_minutes` 保存试卷草稿的默认考试时长；创建、编辑和草稿保存都必须走真实试卷 API 持久化该字段，后续发布考试时可复用为默认值。
 - `papers.shuffle_questions` 控制整张试卷的题目顺序是否对每个考生随机。
 - `papers.show_analysis` 控制成绩可见后是否展示题目解析；未公布成绩前不展示解析。
@@ -975,7 +975,7 @@ exams
 ├── version               # 数据版本号，用于乐观锁
 └── ext_json              # JSON 扩展字段，保存非主流程元数据
 
-`invite_code` 必须全局唯一。公开入口只按邀请码解析已发布考试，数据库唯一约束和服务端生成碰撞检查都必须避免两个租户生成相同邀请码。考试可先以 `draft` 保存发布目标和时间配置，后续通过状态更新发布为 `published` 时再生成邀请码并冻结 `rule_live` 题池；`closed` 表示提前结束考试并把 `end_time` 写为操作时间，`disabled` 表示禁用考试，非 `published` 状态不得解析邀请码或开始作答。
+`invite_code` 必须全局唯一。公开入口只按邀请码解析已发布考试，数据库唯一约束和服务端生成碰撞检查都必须避免两个租户生成相同邀请码。考试可先以 `draft` 保存发布目标和时间配置，草稿态允许在原考试范围授权内继续调整试卷、时间、作答规则、成绩发布规则和投放目标；后续通过状态更新发布为 `published` 时再生成邀请码并冻结 `rule_live` 题池。空间角色执行发布、提前结束或禁用时，后端必须确认考试所有 `exam_target_scope_spaces` 均落在当前账号启用授权空间内；`closed` 表示提前结束考试并把 `end_time` 写为操作时间，`disabled` 表示禁用考试，非 `published` 状态不得解析邀请码或开始作答。
 
 exam_targets
 ├── id                    # 考试发布范围主键 ID
@@ -1215,7 +1215,7 @@ type ExamEntryContext struct {
 
 考试时间规则：
 
-- 前端新建考试使用右侧抽屉承载表单，必须由用户显式选择创建状态：`draft` 只保存考试配置和发布目标，不生成邀请码；`published` 立即发布并生成邀请码。表单提供两种录入模式：固定场次考试选择同一天的开始/结束时间，`duration_minutes` 由时间差自动计算；开放时间窗考试使用 Ant Design 双月日期范围选择开放日期，前端按起始日 `00:00` 到结束日 `23:59` 写入统一时间窗口，并显式填写单次作答时长。指定同学发布范围使用本地组合框按学生姓名筛选后加入已选名单。
+- 前端新建考试使用右侧抽屉承载表单，必须由用户显式选择创建状态：`draft` 只保存考试配置和发布目标，不生成邀请码；`published` 立即发布并生成邀请码。草稿考试在列表中提供编辑入口，复用新建抽屉保存草稿配置；考试列表同时提供详情入口跳转 `/exams/:id`。表单提供两种录入模式：固定场次考试选择同一天的开始/结束时间，`duration_minutes` 由时间差自动计算；开放时间窗考试使用 Ant Design 双月日期范围选择开放日期，前端按起始日 `00:00` 到结束日 `23:59` 写入统一时间窗口，并显式填写单次作答时长。指定同学发布范围使用本地组合框按学生姓名筛选后加入已选名单。教师角色的新建考试发布范围固定为当前进入空间；指定人群只通过 `/api/v1/spaces/:id/members?role=student&status=enabled` 筛选同空间启用学生；教师可只读引用启用公共试卷发布到授权空间，并可对当前授权空间内考试执行草稿保存、发布、提前结束和禁用，但后端不得因此开放教师的空间成员管理、公共试卷维护或教师/禁用成员读取权限。
 - 新建考试的发布试卷候选必须通过后端专用接口返回最新可用前 10 条；输入检索只向后端传递关键词和资源范围，`enabled` 状态过滤与前 10 条限制由后端强制执行，前端不得传递或控制候选状态。
 - 两种模式都落到同一组后端字段：`start_time`、`end_time` 和 `duration_minutes`，不新增考试时间类型字段。
 - 发布考试时必须校验 `duration_minutes <= end_time - start_time`。
@@ -1526,9 +1526,11 @@ PUT  /api/v1/papers/:id/rules/:rule_id
 DELETE /api/v1/papers/:id/rules/:rule_id
      query: tenant_id；rule_live 当前模式下删除后立即重算。
 GET  /api/v1/exams
-     query: tenant_id, space_id?, page?, page_size?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间。
+     query: tenant_id, space_id?, page?, page_size?, search?；tenant_admin 可省略 space_id，space_admin / teacher 必须传入自己启用成员空间；搜索按考试名称、试卷名称、邀请码和可见范围名称在后端过滤后再分页，不允许前端本地过滤造成越权或分页失真；列表按 `id DESC` 返回，保证越新的考试越靠前。
 POST /api/v1/exams
-     body: tenant_id, paper_id, name, targets[] 或 target_type/target_id, start_time, end_time, duration_minutes, max_attempts, result_strategy, publish_mode, status；status 只允许 draft 或 published，draft 不生成邀请码，published 生成邀请码并发布。
+     body: tenant_id, paper_id, name, targets[] 或 target_type/target_id, start_time, end_time, duration_minutes, max_attempts, result_strategy, publish_mode, status；targets[] 的用户目标可携带 scope_space_ids，由后端校验目标学生成员空间和当前操作者发布权限；status 只允许 draft 或 published，draft 不生成邀请码，published 生成邀请码并发布。
+POST /api/v1/exams/:id/draft
+     body: tenant_id, paper_id, name, targets[] 或 target_type/target_id, start_time, end_time, duration_minutes, max_attempts, result_strategy, publish_mode, status=draft；targets[] 的用户目标可携带 scope_space_ids；仅允许更新 draft 考试，重新校验试卷和投放目标权限，不生成邀请码。
 POST /api/v1/exams/:id/status
      body: tenant_id, status；status 只允许 published、closed 或 disabled，用于从列表发布草稿、提前结束考试或禁用考试；published 仅允许 draft 考试流转，closed / disabled 不能重新发布。
 GET  /api/v1/exams/:id/detail
@@ -1622,7 +1624,7 @@ page_size  默认 20，最大 100
 
 前端管理页不能内置核心业务 mock 数据。个人设置页必须通过 `/api/v1/profile` 读取当前账号资料并提交保存，不能只修改本地登录态；平台管理员登录账号在个人设置页只读，避免误改登录标识；租户用户保存成功后同步本地 session 的显示名称，让导航和页面标题立即刷新；租户用户处于首次登录强制改密状态时，后台路由必须跳转到个人设置页，直到成功调用 `/api/v1/profile/password` 清除该状态。租户登录页不再展示租户 ID 输入框，租户账号登录后进入 `/tenant-entry`，通过 `/api/v1/tenant/profile/spaces` 展示可进入的租户和空间，再调用 `/api/v1/auth/tenant/select-space` 绑定当前 session。`/tenant-entry` 必须按角色展示入口：`tenant_admin` 只展示租户后台入口，多个空间授权折叠为同一个租户入口，选择时不传 `space_id`；`space_admin`、`teacher` 和 `student` 才按具体空间展示空间管理、教学业务或考试入口。租户后台侧边栏必须展示当前租户身份和租户名称，主按钮固定为“切换租户”，点击后回到 `/tenant-entry`；平台管理员侧边栏继续展示平台身份和“回到概览”。后台左侧必须固定展示“总览 / 概览”入口，平台管理员进入平台概览，租户管理员进入当前租户或当前空间概览，教师进入当前授权空间的教学概览；概览指标和待办文案必须按角色视角区分。发布考试的试卷、发布范围必须来自试卷、空间、用户 API；创建空间的空间管理员必须来自用户 API 返回的真实用户 ID，不能在前端维护姓名到 ID 的静态映射。空间管理、用户管理等租户级页面必须从租户用户 session 获取目标租户，并调用 `/api/v1/tenant/**` 租户前缀接口；用户管理列表中启用状态用户展示“禁用用户”，禁用状态用户展示“启用用户”，并分别调用真实禁用/启用接口；用户管理新建用户使用右侧抽屉承载表单，姓名、账号、初始密码和角色必填项显示红色星号，教师和学生可在抽屉中勾选多个空间并通过空间成员接口写入归属；用户管理操作区提供编辑用户入口，编辑抽屉中的租户级角色只读不可变更，只允许维护教师或学生的空间归属，并同步所选空间内的 `teacher` 或 `student` 成员关系，已有 `space_admin` 成员关系不能被普通用户归属编辑误降级；用户详情抽屉必须展示用户账号、姓名、角色、状态、强制改密、手机号、邮箱、创建时间、最后活跃时间、最后登录时间、最后登录 IP，以及当前已加入空间和空间内角色。缺失有效租户 ID 时只展示选择提示，不得使用 `10` 等前端默认值请求后端。后台左侧“租户空间”和“用户管理”菜单对 `tenant_admin` 显示；`tenant_admin` 不显示独立“空间成员”菜单，空间成员维护统一从“空间管理”的成员管理抽屉进入；抽屉提供添加成员入口、当前空间成员检索、搜索和刷新，成员列表分页展示，不展示操作列或成员禁用、启用、详情、降级入口，成员新增可从当前成员抽屉预选空间后提交，空间管理员调整从空间管理页编辑空间入口完成。独立“空间成员”菜单只对拥有启用 `space_admin` 空间授权的账号显示，其可见性必须来自 `/api/v1/tenant/profile/spaces` 返回的当前用户启用空间成员关系和 `role = space_admin`，不能来自 session role，其中 `tenant_admin` 管理本租户全量空间和用户，`space_admin` 只能管理授权空间范围。后台左侧“考试业务”菜单对 `tenant_admin`、拥有授权空间的 `space_admin` 和 `teacher` 显示，其中 `tenant_admin` 管理本租户全量考试业务，`space_admin` / `teacher` 只能操作已加入且启用的空间范围。平台管理员直接访问租户业务后台路由时回到平台概览页，不渲染租户业务页面或触发租户业务 API 请求。平台管理员在租户管理列表中查看某个租户的空间或用户时，只在当前页面从右侧滑入抽屉并调用平台侧只读概览 API `/api/v1/tenants/:id/spaces` 或 `/api/v1/tenants/:id/users`，不跳转到租户侧空间管理或用户管理页面；抽屉统一使用 Ant Design Drawer 原生遮罩、展开动画和收起动画，不在父级布局中预留白色占位；抽屉默认占用 50% 视口宽度，全屏按钮在 50% 与 100% 视口宽度之间切换；点击遮罩层、返回按钮或关闭按钮都会收起抽屉；抽屉列表必须保持租户侧空间管理、用户管理列表的列结构，只改变承载方式。教师没有加入任何空间时，用户详情和业务页必须提示“该教师暂未加入任何空间，当前无法操作题库、试卷、考试或阅卷”。
 
-公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 可由本租户 `tenant_admin` 或具备考试业务入口的 `teacher` 创建、编辑和导入；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。题目更新接口显式提交 `space_id` 时表示重新设置归属，必须同时校验调用方对原题目范围和目标范围都有写权限；题目已被试卷、实时候选池或作答快照引用时，仍允许编辑题目内容，但必须拒绝删除和归属迁移。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷内容写入只允许 `tenant_admin`；未被考试引用的公共试卷显式提交目标 `space_id` 时，目标空间的 `space_admin` 可以把试卷归属到自己授权空间。空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷或修改试卷归属前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。读取试卷大题和组卷规则详情时，也必须从 `paper_id` 反查 `papers.space_id` 后校验当前账号的真实空间成员关系；非 `tenant_admin` 不能仅凭租户考试业务入口读取其他空间试卷结构。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系；无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
+公共题库和公共试卷的写权限必须按资源真实范围校验。`questions.space_id = NULL` 可由本租户 `tenant_admin` 或具备考试业务入口的 `teacher` 创建、编辑和导入；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。题目更新接口显式提交 `space_id` 时表示重新设置归属，必须同时校验调用方对原题目范围和目标范围都有写权限；题目已被试卷、实时候选池或作答快照引用时，仍允许编辑题目内容，但必须拒绝删除和归属迁移。试卷创建接口 `POST /api/v1/papers` 在 `space_id = NULL` 时只能由本租户 `tenant_admin` 创建公共试卷；`space_id` 非空时按当前用户在真实空间内的启用成员关系授权。试卷删除接口 `DELETE /api/v1/papers/:id` 和其他已暴露的试卷写接口，在删除、修改大题、手动选题、规则配置、规则生成和预检查前必须从 `paper_id` 反查 `papers.space_id`，公共试卷内容写入只允许 `tenant_admin`；未被考试引用的公共试卷显式提交目标 `space_id` 时，目标空间的 `space_admin` 可以把试卷归属到自己授权空间。空间试卷写入只允许本租户管理员或对应启用空间内的 `space_admin` / `teacher`。删除试卷或修改试卷归属前必须检查未删除考试是否仍引用该试卷；被考试引用时直接拒绝，避免破坏考试、作答和成绩链路。未被考试引用的试卷使用软删除，并清理当前试卷的组卷关系表；本次是新项目接口补齐，不新增数据库迁移动作。读取试卷大题和组卷规则详情时，也必须从 `paper_id` 反查 `papers.space_id` 后校验当前账号的真实空间成员关系；非 `tenant_admin` 不能仅凭租户考试业务入口读取其他空间试卷结构。手动组卷和规则组卷引用题目时，必须从 `question_id` 反查 `questions.space_id`，只允许引用租户公共题或与当前试卷真实空间一致的题目，不能信任请求参数中的空间范围。考试发布必须在创建草稿前反查 `papers.space_id`，空间试卷按试卷所属空间校验发布权限；公共试卷允许 `tenant_admin`、目标空间内的 `space_admin` 或 `teacher` 只读引用，并按 `target_type` 反查投放空间或目标用户的有效空间成员关系生成真实 `exam_target_scope_spaces`。草稿更新必须重新执行同一套试卷和目标权限校验；考试发布、提前结束和禁用必须以 `exam_target_scope_spaces` 反查考试真实作用空间，空间角色只能操作完全落在自身启用授权空间内的考试。无权发布的试卷或目标必须直接拒绝，且不得落库草稿考试或考试目标。
 
 用户管理编辑抽屉维护基础资料时，租户级角色仍只读不可变更，姓名为必填项并使用红色星号标识，手机号和邮箱可编辑；空间归属继续使用下拉多选组件，普通归属编辑不得降级或移除已有 `space_admin` 成员关系。
 

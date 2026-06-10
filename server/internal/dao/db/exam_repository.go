@@ -92,13 +92,14 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 	if input.PaperID != nil {
 		query = query.Where(ExamColumns.PaperID+" = ?", *input.PaperID)
 	}
+	query = r.applyExamListSearch(query, input)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return pagination.Result[serviceexam.Exam]{}, err
 	}
 	var rows []ExamDO
 	if err := query.
-		Order(ExamColumns.ID + " ASC").
+		Order(ExamColumns.ID + " DESC").
 		Limit(page.PageSize).
 		Offset(pagination.Offset(page)).
 		Find(&rows).Error; err != nil {
@@ -176,6 +177,58 @@ func (r *ExamRepository) ListExams(ctx context.Context, input serviceexam.ListIn
 	}, nil
 }
 
+func (r *ExamRepository) applyExamListSearch(query *gorm.DB, input serviceexam.ListInput) *gorm.DB {
+	keyword := strings.TrimSpace(input.Search)
+	if keyword == "" {
+		return query
+	}
+	pattern := likeIgnoreCasePattern(keyword)
+	condition := LikeIgnoreCase(r.db, "exams."+ExamColumns.Name, keyword).
+		Or(LikeIgnoreCase(r.db, "exams."+ExamColumns.InviteCode, keyword)).
+		Or(`EXISTS (
+			SELECT 1 FROM papers AS p
+			WHERE p.tenant_id = exams.tenant_id
+				and p.id = exams.paper_id
+				and p.deleted_at = 0
+				and `+likeIgnoreCaseClause(r.db, "p.name")+`
+		)`, pattern)
+	if input.SpaceID != nil {
+		condition = condition.Or(`EXISTS (
+			SELECT 1 FROM spaces AS visible_space
+			WHERE visible_space.tenant_id = exams.tenant_id
+				and visible_space.id = ?
+				and visible_space.status = ?
+				and visible_space.deleted_at = 0
+				and `+likeIgnoreCaseClause(r.db, "visible_space.name")+`
+		)`, *input.SpaceID, servicespace.StatusEnabled, pattern)
+	} else {
+		condition = condition.Or(`EXISTS (
+			SELECT 1 FROM exam_targets AS et_search
+			LEFT JOIN spaces AS target_space
+				ON target_space.tenant_id = et_search.tenant_id
+				and target_space.id = et_search.target_id
+				and et_search.target_type = ?
+				and target_space.status = ?
+				and target_space.deleted_at = 0
+			LEFT JOIN exam_target_scope_spaces AS etss_search
+				ON etss_search.tenant_id = et_search.tenant_id
+				and etss_search.exam_target_id = et_search.id
+			LEFT JOIN spaces AS scoped_space
+				ON scoped_space.tenant_id = etss_search.tenant_id
+				and scoped_space.id = etss_search.space_id
+				and scoped_space.status = ?
+				and scoped_space.deleted_at = 0
+			WHERE et_search.tenant_id = exams.tenant_id
+				and et_search.exam_id = exams.id
+				and (
+					`+likeIgnoreCaseClause(r.db, "target_space.name")+`
+					or `+likeIgnoreCaseClause(r.db, "scoped_space.name")+`
+				)
+		)`, serviceexam.TargetTypeSpace, servicespace.StatusEnabled, servicespace.StatusEnabled, pattern, pattern)
+	}
+	return query.Where(condition)
+}
+
 // CreateExam 创建考试草稿的基础记录。
 // 未指定作答次数、成绩策略和成绩发布模式时写入业务默认值，保证后续发布流程有稳定初始状态。
 func (r *ExamRepository) CreateExam(ctx context.Context, exam serviceexam.Exam) (serviceexam.Exam, error) {
@@ -183,8 +236,10 @@ func (r *ExamRepository) CreateExam(ctx context.Context, exam serviceexam.Exam) 
 	row := ExamDO{
 		BaseFields: BaseFields{
 			CreatedAt:     now,
+			CreatedBy:     exam.CreatedBy,
 			CreatedByType: AuditActorTenantUser,
 			UpdatedAt:     now,
+			UpdatedBy:     exam.CreatedBy,
 			UpdatedByType: AuditActorTenantUser,
 			Version:       1,
 			ExtJSON:       datatypes.JSON("{}"),
@@ -428,8 +483,10 @@ func (r *ExamRepository) CreatePublishedExamWithTargets(ctx context.Context, exa
 		row := ExamDO{
 			BaseFields: BaseFields{
 				CreatedAt:     now,
+				CreatedBy:     exam.CreatedBy,
 				CreatedByType: AuditActorTenantUser,
 				UpdatedAt:     now,
+				UpdatedBy:     exam.CreatedBy,
 				UpdatedByType: AuditActorTenantUser,
 				Version:       1,
 				ExtJSON:       datatypes.JSON([]byte("{}")),
@@ -506,6 +563,84 @@ func (r *ExamRepository) CreatePublishedExamWithTargets(ctx context.Context, exa
 		return serviceexam.Exam{}, err
 	}
 	return r.GetExam(ctx, exam.TenantID, createdID)
+}
+
+// UpdateDraftWithTargets 更新草稿考试配置，并重建投放目标。
+// 该方法只允许更新 draft 状态，避免已发布考试的公平性字段被绕过修改。
+func (r *ExamRepository) UpdateDraftWithTargets(ctx context.Context, input serviceexam.UpdateDraftWithTargetsRepositoryInput) (serviceexam.Exam, error) {
+	exam := input.Exam
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := r.now()
+		result := tx.Model(&ExamDO{}).
+			Where(ExamColumns.TenantID+" = ?", exam.TenantID).
+			Where(ExamColumns.ID+" = ?", exam.ID).
+			Where(ExamColumns.Status+" = ?", serviceexam.StatusDraft).
+			Where(ExamColumns.DeletedAt+" = ?", 0).
+			Updates(map[string]any{
+				ExamColumns.PaperID:          exam.PaperID,
+				ExamColumns.Name:             exam.Name,
+				ExamColumns.StartTime:        exam.StartTime,
+				ExamColumns.EndTime:          exam.EndTime,
+				ExamColumns.DurationMinutes:  exam.DurationMinutes,
+				ExamColumns.MaxAttempts:      exam.MaxAttempts,
+				ExamColumns.ResultStrategy:   exam.ResultStrategy,
+				ExamColumns.PublishMode:      exam.PublishMode,
+				ExamColumns.ScorePublishTime: exam.ScorePublishTime,
+				BaseColumns.UpdatedAt:        now,
+				BaseColumns.UpdatedByType:    AuditActorTenantUser,
+				BaseColumns.Version:          gorm.Expr(BaseColumns.Version + " + 1"),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return r.examStatusPreconditionError(tx, exam.TenantID, exam.ID, serviceexam.StatusDraft)
+		}
+		if err := tx.Where(ExamTargetScopeSpaceColumns.TenantID+" = ?", exam.TenantID).
+			Where(ExamTargetScopeSpaceColumns.ExamID+" = ?", exam.ID).
+			Delete(&ExamTargetScopeSpaceDO{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where(ExamTargetColumns.TenantID+" = ?", exam.TenantID).
+			Where(ExamTargetColumns.ExamID+" = ?", exam.ID).
+			Delete(&ExamTargetDO{}).Error; err != nil {
+			return err
+		}
+		for _, target := range input.Targets {
+			targetRow := ExamTargetDO{
+				RelationFields: RelationFields{
+					CreatedAt:     now,
+					CreatedByType: AuditActorTenantUser,
+					ExtJSON:       datatypes.JSON([]byte("{}")),
+				},
+				TenantID:   exam.TenantID,
+				ExamID:     exam.ID,
+				TargetType: target.TargetType,
+				TargetID:   target.TargetID,
+			}
+			if err := tx.Create(&targetRow).Error; err != nil {
+				return err
+			}
+			if err := r.createTargetScopeSpacesInTx(tx, targetRow, target, now); err != nil {
+				return err
+			}
+		}
+		if input.Log != nil {
+			log := *input.Log
+			log.TenantID = exam.TenantID
+			log.ExamID = exam.ID
+			spaceIDs, err := r.operationTargetSpaceIDsInTx(tx, exam.TenantID, input.Targets)
+			if err != nil {
+				return err
+			}
+			return r.appendOperationLogsForSpacesInTx(tx, log, spaceIDs)
+		}
+		return nil
+	})
+	if err != nil {
+		return serviceexam.Exam{}, err
+	}
+	return r.GetExam(ctx, exam.TenantID, exam.ID)
 }
 
 // TargetExists 判断考试目标是否已经存在。
@@ -1120,67 +1255,281 @@ func (r *ExamRepository) CountExamCandidates(ctx context.Context, tenantID uint6
 	if len(spaceIDs) == 0 {
 		return 0, nil
 	}
-	userTargetScopePredicate := r.userTargetScopedSpacePredicate("targets", "members.space_id")
-	var total int64
-	if err := r.db.WithContext(ctx).Raw(fmt.Sprintf(`
-		SELECT COUNT(DISTINCT candidate_id)
-		FROM (
-			SELECT members.user_id AS candidate_id
-			FROM exam_targets AS targets
-			JOIN spaces ON spaces.tenant_id = targets.tenant_id
-				AND spaces.id = targets.target_id
-				AND spaces.status = ?
-				AND spaces.deleted_at = 0
-				JOIN space_members AS members ON members.tenant_id = targets.tenant_id
-					AND members.space_id = targets.target_id
-					AND members.role_in_space = ?
-					AND members.status = ?
-					AND members.deleted_at = 0
-			JOIN users ON users.id = members.user_id
-				AND users.status = ?
-				AND users.deleted_at = 0
-			JOIN tenant_user_memberships AS tum ON tum.tenant_id = members.tenant_id
-				AND tum.user_id = members.user_id
-				AND tum.role = ?
-				AND tum.status = ?
-			WHERE targets.tenant_id = ?
-				AND targets.exam_id = ?
-				AND targets.target_type = ?
-				AND targets.target_id IN ?
-			UNION
-			SELECT targets.target_id AS candidate_id
-			FROM exam_targets AS targets
-			JOIN users ON users.id = targets.target_id
-				AND users.status = ?
-				AND users.deleted_at = 0
-			JOIN tenant_user_memberships AS tum ON tum.tenant_id = targets.tenant_id
-				AND tum.user_id = targets.target_id
-				AND tum.role = ?
-				AND tum.status = ?
-				JOIN space_members AS members ON members.tenant_id = targets.tenant_id
-					AND members.user_id = targets.target_id
-					AND members.space_id IN ?
-					AND members.role_in_space = ?
-					AND members.status = ?
-					AND members.deleted_at = 0
-				AND %s
-			JOIN spaces ON spaces.tenant_id = members.tenant_id
-				AND spaces.id = members.space_id
-				AND spaces.status = ?
-				AND spaces.deleted_at = 0
-			WHERE targets.tenant_id = ?
-				AND targets.exam_id = ?
-				AND targets.target_type = ?
-		) AS candidates
-	`, userTargetScopePredicate),
-		servicespace.StatusEnabled, constant.RoleStudent, servicespace.StatusEnabled, servicetenantuser.StatusEnabled, constant.RoleStudent, servicetenantuser.StatusEnabled,
-		tenantID, examID, serviceexam.TargetTypeSpace, spaceIDs,
-		servicetenantuser.StatusEnabled, constant.RoleStudent, servicetenantuser.StatusEnabled, spaceIDs, constant.RoleStudent, servicespace.StatusEnabled, servicespace.StatusEnabled,
-		tenantID, examID, serviceexam.TargetTypeUser,
-	).Scan(&total).Error; err != nil {
+	enabledSpaceIDs, err := r.enabledSpaceIDs(ctx, tenantID, spaceIDs)
+	if err != nil {
 		return 0, err
 	}
-	return int(total), nil
+	if len(enabledSpaceIDs) == 0 {
+		return 0, nil
+	}
+	candidateIDs := make(map[uint64]struct{})
+	if err := r.collectSpaceTargetCandidateIDs(ctx, tenantID, examID, enabledSpaceIDs, candidateIDs); err != nil {
+		return 0, err
+	}
+	if err := r.collectUserTargetCandidateIDs(ctx, tenantID, examID, enabledSpaceIDs, candidateIDs); err != nil {
+		return 0, err
+	}
+	return len(candidateIDs), nil
+}
+
+const examCandidateCountBatchSize = 500
+
+type examCandidateMemberRow struct {
+	ID      uint64
+	UserID  uint64
+	SpaceID uint64
+}
+
+type examCandidateTargetRow struct {
+	ID       uint64
+	TargetID uint64
+}
+
+type examCandidateScopeRow struct {
+	ExamTargetID uint64
+	SpaceID      uint64
+}
+
+func (r *ExamRepository) enabledSpaceIDs(ctx context.Context, tenantID uint64, spaceIDs []uint64) ([]uint64, error) {
+	ids := uniqueSortedOperationSpaceIDs(spaceIDs)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var enabled []uint64
+	if err := r.db.WithContext(ctx).Model(&SpaceDO{}).
+		Where(SpaceColumns.TenantID+" = ?", tenantID).
+		Where(SpaceColumns.ID+" IN ?", ids).
+		Where(SpaceColumns.Status+" = ?", servicespace.StatusEnabled).
+		Where(SpaceColumns.DeletedAt+" = ?", 0).
+		Order(SpaceColumns.ID+" ASC").
+		Pluck(SpaceColumns.ID, &enabled).Error; err != nil {
+		return nil, err
+	}
+	return enabled, nil
+}
+
+func (r *ExamRepository) collectSpaceTargetCandidateIDs(ctx context.Context, tenantID uint64, examID uint64, enabledSpaceIDs []uint64, candidateIDs map[uint64]struct{}) error {
+	var lastTargetID uint64
+	for {
+		var targets []examCandidateTargetRow
+		if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
+			Select(ExamTargetColumns.ID+", "+ExamTargetColumns.TargetID).
+			Where(ExamTargetColumns.TenantID+" = ?", tenantID).
+			Where(ExamTargetColumns.ExamID+" = ?", examID).
+			Where(ExamTargetColumns.TargetType+" = ?", serviceexam.TargetTypeSpace).
+			Where(ExamTargetColumns.TargetID+" IN ?", enabledSpaceIDs).
+			Where(ExamTargetColumns.ID+" > ?", lastTargetID).
+			Order(ExamTargetColumns.ID + " ASC").
+			Limit(examCandidateCountBatchSize).
+			Find(&targets).Error; err != nil {
+			return err
+		}
+		if len(targets) == 0 {
+			return nil
+		}
+		lastTargetID = targets[len(targets)-1].ID
+		targetSpaceIDs := make([]uint64, 0, len(targets))
+		for _, target := range targets {
+			targetSpaceIDs = append(targetSpaceIDs, target.TargetID)
+		}
+		if err := r.collectSpaceTargetCandidateBatch(ctx, tenantID, targetSpaceIDs, candidateIDs); err != nil {
+			return err
+		}
+		if len(targets) < examCandidateCountBatchSize {
+			return nil
+		}
+	}
+}
+
+func (r *ExamRepository) collectSpaceTargetCandidateBatch(ctx context.Context, tenantID uint64, targetSpaceIDs []uint64, candidateIDs map[uint64]struct{}) error {
+	var lastMemberID uint64
+	for {
+		var rows []examCandidateMemberRow
+		if err := r.db.WithContext(ctx).Model(&SpaceMemberDO{}).
+			Select(SpaceMemberColumns.ID+", "+SpaceMemberColumns.UserID).
+			Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
+			Where(SpaceMemberColumns.SpaceID+" IN ?", targetSpaceIDs).
+			Where(SpaceMemberColumns.RoleInSpace+" = ?", constant.RoleStudent).
+			Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
+			Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+			Where(SpaceMemberColumns.ID+" > ?", lastMemberID).
+			Order(SpaceMemberColumns.ID + " ASC").
+			Limit(examCandidateCountBatchSize).
+			Find(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		lastMemberID = rows[len(rows)-1].ID
+		userIDs := make([]uint64, 0, len(rows))
+		for _, row := range rows {
+			userIDs = append(userIDs, row.UserID)
+		}
+		validUserIDs, err := r.validEnabledTenantStudentUserSet(ctx, tenantID, userIDs)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if _, ok := validUserIDs[row.UserID]; ok {
+				candidateIDs[row.UserID] = struct{}{}
+			}
+		}
+		if len(rows) < examCandidateCountBatchSize {
+			return nil
+		}
+	}
+}
+
+func (r *ExamRepository) collectUserTargetCandidateIDs(ctx context.Context, tenantID uint64, examID uint64, enabledSpaceIDs []uint64, candidateIDs map[uint64]struct{}) error {
+	enabledSpaceSet := uint64Set(enabledSpaceIDs)
+	var lastTargetID uint64
+	for {
+		var targets []examCandidateTargetRow
+		if err := r.db.WithContext(ctx).Model(&ExamTargetDO{}).
+			Select(ExamTargetColumns.ID+", "+ExamTargetColumns.TargetID).
+			Where(ExamTargetColumns.TenantID+" = ?", tenantID).
+			Where(ExamTargetColumns.ExamID+" = ?", examID).
+			Where(ExamTargetColumns.TargetType+" = ?", serviceexam.TargetTypeUser).
+			Where(ExamTargetColumns.ID+" > ?", lastTargetID).
+			Order(ExamTargetColumns.ID + " ASC").
+			Limit(examCandidateCountBatchSize).
+			Find(&targets).Error; err != nil {
+			return err
+		}
+		if len(targets) == 0 {
+			return nil
+		}
+		lastTargetID = targets[len(targets)-1].ID
+		if err := r.collectUserTargetCandidateBatch(ctx, tenantID, examID, enabledSpaceIDs, enabledSpaceSet, targets, candidateIDs); err != nil {
+			return err
+		}
+		if len(targets) < examCandidateCountBatchSize {
+			return nil
+		}
+	}
+}
+
+func (r *ExamRepository) collectUserTargetCandidateBatch(ctx context.Context, tenantID uint64, examID uint64, enabledSpaceIDs []uint64, enabledSpaceSet map[uint64]struct{}, targets []examCandidateTargetRow, candidateIDs map[uint64]struct{}) error {
+	targetRowIDs := make([]uint64, 0, len(targets))
+	userIDs := make([]uint64, 0, len(targets))
+	targetsByUser := make(map[uint64][]examCandidateTargetRow, len(targets))
+	for _, target := range targets {
+		targetRowIDs = append(targetRowIDs, target.ID)
+		userIDs = append(userIDs, target.TargetID)
+		targetsByUser[target.TargetID] = append(targetsByUser[target.TargetID], target)
+	}
+	scopedSpacesByTargetID, err := r.userTargetScopeSpacesByTargetID(ctx, tenantID, examID, targetRowIDs)
+	if err != nil {
+		return err
+	}
+	validUserIDs, err := r.validEnabledTenantStudentUserSet(ctx, tenantID, userIDs)
+	if err != nil {
+		return err
+	}
+	if len(validUserIDs) == 0 {
+		return nil
+	}
+	var lastMemberID uint64
+	for {
+		var members []examCandidateMemberRow
+		if err := r.db.WithContext(ctx).Model(&SpaceMemberDO{}).
+			Select(SpaceMemberColumns.ID+", "+SpaceMemberColumns.UserID+", "+SpaceMemberColumns.SpaceID).
+			Where(SpaceMemberColumns.TenantID+" = ?", tenantID).
+			Where(SpaceMemberColumns.UserID+" IN ?", userIDs).
+			Where(SpaceMemberColumns.SpaceID+" IN ?", enabledSpaceIDs).
+			Where(SpaceMemberColumns.RoleInSpace+" = ?", constant.RoleStudent).
+			Where(SpaceMemberColumns.Status+" = ?", servicespace.StatusEnabled).
+			Where(SpaceMemberColumns.DeletedAt+" = ?", 0).
+			Where(SpaceMemberColumns.ID+" > ?", lastMemberID).
+			Order(SpaceMemberColumns.ID + " ASC").
+			Limit(examCandidateCountBatchSize).
+			Find(&members).Error; err != nil {
+			return err
+		}
+		if len(members) == 0 {
+			return nil
+		}
+		lastMemberID = members[len(members)-1].ID
+		for _, member := range members {
+			if _, ok := validUserIDs[member.UserID]; !ok {
+				continue
+			}
+			for _, target := range targetsByUser[member.UserID] {
+				if userTargetAllowsSpace(target.ID, member.SpaceID, enabledSpaceSet, scopedSpacesByTargetID) {
+					candidateIDs[member.UserID] = struct{}{}
+					break
+				}
+			}
+		}
+		if len(members) < examCandidateCountBatchSize {
+			return nil
+		}
+	}
+}
+
+func (r *ExamRepository) userTargetScopeSpacesByTargetID(ctx context.Context, tenantID uint64, examID uint64, targetRowIDs []uint64) (map[uint64]map[uint64]struct{}, error) {
+	result := make(map[uint64]map[uint64]struct{})
+	if len(targetRowIDs) == 0 {
+		return result, nil
+	}
+	var rows []examCandidateScopeRow
+	if err := r.db.WithContext(ctx).Model(&ExamTargetScopeSpaceDO{}).
+		Select(ExamTargetScopeSpaceColumns.ExamTargetID+", "+ExamTargetScopeSpaceColumns.SpaceID).
+		Where(ExamTargetScopeSpaceColumns.TenantID+" = ?", tenantID).
+		Where(ExamTargetScopeSpaceColumns.ExamID+" = ?", examID).
+		Where(ExamTargetScopeSpaceColumns.ExamTargetID+" IN ?", targetRowIDs).
+		Order(ExamTargetScopeSpaceColumns.ExamTargetID + " ASC, " + ExamTargetScopeSpaceColumns.SpaceID + " ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if result[row.ExamTargetID] == nil {
+			result[row.ExamTargetID] = make(map[uint64]struct{})
+		}
+		result[row.ExamTargetID][row.SpaceID] = struct{}{}
+	}
+	return result, nil
+}
+
+func (r *ExamRepository) validEnabledTenantStudentUserSet(ctx context.Context, tenantID uint64, userIDs []uint64) (map[uint64]struct{}, error) {
+	ids := uniqueSortedOperationSpaceIDs(userIDs)
+	if len(ids) == 0 {
+		return map[uint64]struct{}{}, nil
+	}
+	var enabledUserIDs []uint64
+	if err := r.db.WithContext(ctx).Model(&UserDO{}).
+		Where(UserColumns.ID+" IN ?", ids).
+		Where(UserColumns.Status+" = ?", servicetenantuser.StatusEnabled).
+		Where(UserColumns.DeletedAt+" = ?", 0).
+		Pluck(UserColumns.ID, &enabledUserIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(enabledUserIDs) == 0 {
+		return map[uint64]struct{}{}, nil
+	}
+	var tenantStudentIDs []uint64
+	if err := r.db.WithContext(ctx).Model(&UserRoleDO{}).
+		Where(UserRoleColumns.TenantID+" = ?", tenantID).
+		Where(UserRoleColumns.UserID+" IN ?", enabledUserIDs).
+		Where(UserRoleColumns.Role+" = ?", constant.RoleStudent).
+		Where(UserRoleColumns.Status+" = ?", servicetenantuser.StatusEnabled).
+		Pluck(UserRoleColumns.UserID, &tenantStudentIDs).Error; err != nil {
+		return nil, err
+	}
+	return uint64Set(tenantStudentIDs), nil
+}
+
+func userTargetAllowsSpace(targetID uint64, spaceID uint64, enabledSpaceSet map[uint64]struct{}, scopedSpacesByTargetID map[uint64]map[uint64]struct{}) bool {
+	if _, ok := enabledSpaceSet[spaceID]; !ok {
+		return false
+	}
+	scopedSpaces, hasScope := scopedSpacesByTargetID[targetID]
+	if !hasScope {
+		return true
+	}
+	_, ok := scopedSpaces[spaceID]
+	return ok
 }
 
 // ListExamCandidates 动态展开考试目标形成当前页应考名单。
@@ -1973,13 +2322,13 @@ func (r *ExamRepository) applyPendingAttemptSearch(query *gorm.DB, keyword strin
 	if value == "" {
 		return query
 	}
-	pattern := "%" + strings.ToLower(value) + "%"
+	pattern := likeIgnoreCasePattern(value)
 	userTargetScopePredicate := r.userTargetScopedSpacePredicate("targets", "members.space_id")
-	condition := r.db.Where("LOWER(COALESCE(users.real_name, users.username)) LIKE ?", pattern).
-		Or("LOWER(users.username) LIKE ?", pattern).
-		Or("LOWER(exams.name) LIKE ?", pattern).
-		Or("LOWER(attempt_questions.question_snapshot) LIKE ?", pattern).
-		Or("LOWER(answers.answer_content) LIKE ?", pattern).
+	condition := LikeIgnoreCase(r.db, "COALESCE(users.real_name, users.username)", value).
+		Or(LikeIgnoreCase(r.db, "users.username", value)).
+		Or(LikeIgnoreCase(r.db, "exams.name", value)).
+		Or(LikeIgnoreCase(r.db, "attempt_questions.question_snapshot", value)).
+		Or(LikeIgnoreCase(r.db, "answers.answer_content", value)).
 		Or(fmt.Sprintf(`
 					EXISTS (
 						SELECT 1
@@ -2006,9 +2355,9 @@ func (r *ExamRepository) applyPendingAttemptSearch(query *gorm.DB, keyword strin
 						AND spaces.deleted_at = 0
 					WHERE targets.tenant_id = attempts.tenant_id
 						AND targets.exam_id = attempts.exam_id
-						AND LOWER(spaces.name) LIKE ?
+						AND %s
 					)
-				`, userTargetScopePredicate), servicespace.StatusEnabled, constant.RoleStudent, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, constant.RoleStudent, servicetenantuser.StatusEnabled, servicespace.StatusEnabled, pattern)
+				`, userTargetScopePredicate, likeIgnoreCaseClause(r.db, "spaces.name")), servicespace.StatusEnabled, constant.RoleStudent, serviceexam.TargetTypeSpace, serviceexam.TargetTypeUser, constant.RoleStudent, servicetenantuser.StatusEnabled, servicespace.StatusEnabled, pattern)
 	return query.Where(condition)
 }
 
@@ -3599,6 +3948,8 @@ func examFromDO(row ExamDO, buildMode string) serviceexam.Exam {
 		InviteCode:       row.InviteCode,
 		Status:           row.Status,
 		BuildMode:        buildMode,
+		CreatedBy:        row.CreatedBy,
+		CreatedByType:    row.CreatedByType,
 	}
 }
 

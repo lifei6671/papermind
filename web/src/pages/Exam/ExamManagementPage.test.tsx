@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import ConfigProvider from "antd/es/config-provider";
 import zhCN from "antd/es/locale/zh_CN";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { expect, test, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { FeedbackProvider } from "../../app/feedback";
@@ -17,7 +18,9 @@ function renderExamManagementPage(page: ReactNode) {
 function withExamManagementProviders(page: ReactNode) {
   return (
     <ConfigProvider locale={zhCN}>
-      <FeedbackProvider>{page}</FeedbackProvider>
+      <MemoryRouter>
+        <FeedbackProvider>{page}</FeedbackProvider>
+      </MemoryRouter>
     </ConfigProvider>
   );
 }
@@ -113,6 +116,66 @@ test("考试列表支持分页和切换每页条数", async () => {
   expect(await screen.findByText("分页考试 1")).toBeInTheDocument();
   expect(screen.getByText("第 1 / 1 页")).toBeInTheDocument();
   expect(screen.getByText("分页考试 7")).toBeInTheDocument();
+});
+
+test("考试列表支持服务端搜索和刷新", async () => {
+  const user = userEvent.setup();
+  const exams = [
+    {
+      id: 1,
+      tenantID: 10,
+      paperID: 100,
+      name: "语文考试",
+      paperName: "语文试卷",
+      inviteCode: "PM100",
+      target: "当前空间",
+      status: "published" as const,
+      startAt: "2026-05-30 09:00",
+      endAt: "2026-05-30 11:00",
+      durationMinutes: 120,
+    },
+    {
+      id: 2,
+      tenantID: 10,
+      paperID: 101,
+      name: "数学考试",
+      paperName: "数学试卷",
+      inviteCode: "PM101",
+      target: "当前空间",
+      status: "published" as const,
+      startAt: "2026-05-30 09:00",
+      endAt: "2026-05-30 11:00",
+      durationMinutes: 120,
+    },
+  ];
+  const api = {
+    listExams: vi.fn().mockImplementation(async ({ search }: { search?: string }) => {
+      const keyword = search?.trim() ?? "";
+      const items = keyword ? exams.filter((exam) => exam.name.includes(keyword)) : exams;
+      return { items, total: items.length };
+    }),
+    publishExam: vi.fn(),
+  };
+  const paperApi = { listPublishPaperCandidates: vi.fn().mockResolvedValue({ items: [] }) };
+  const spaceApi = {
+    listSpaces: vi.fn().mockResolvedValue({ items: [] }),
+    listSpaceMembers: vi.fn(),
+  };
+  const userApi = { listUsers: vi.fn().mockResolvedValue({ items: [] }) };
+
+  renderExamManagementPage(<ExamManagementPage api={api} paperApi={paperApi} spaceApi={spaceApi} userApi={userApi} tenantID={10} />);
+
+  expect(await screen.findByText("语文考试")).toBeInTheDocument();
+  await user.type(screen.getByLabelText("搜索考试"), "数学");
+  await user.click(screen.getByRole("button", { name: "搜索" }));
+  await waitFor(() => expect(api.listExams).toHaveBeenLastCalledWith({ tenantID: 10, page: 1, pageSize: 5, search: "数学" }));
+  expect(await screen.findByText("数学考试")).toBeInTheDocument();
+  expect(screen.queryByText("语文考试")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "刷新考试列表" }));
+  await waitFor(() => expect(api.listExams).toHaveBeenLastCalledWith({ tenantID: 10, page: 1, pageSize: 5 }));
+  expect(screen.getByLabelText("搜索考试")).toHaveValue("");
+  expect(await screen.findByText("语文考试")).toBeInTheDocument();
 });
 
 test("考试页支持配置发布范围、邀请码和发布考试", async () => {
@@ -741,10 +804,11 @@ test("考试列表支持发布、提前结束和禁用考试", async () => {
 
   const closedRow = await screen.findByRole("row", { name: /进行中考试/ });
   expect(within(closedRow).queryByRole("button", { name: "禁用考试" })).not.toBeInTheDocument();
-  expect(closedRow).toHaveTextContent("暂无操作");
+  expect(within(closedRow).getByRole("link", { name: "详情" })).toHaveAttribute("href", "/exams/12");
 });
 
-test("空间教师查看考试列表时不展示租户级考试状态操作", async () => {
+test("空间教师查看考试列表时只展示自己考试的编辑和状态操作", async () => {
+  const user = userEvent.setup();
   const api = {
     listExams: vi.fn().mockResolvedValue({
       items: [
@@ -755,11 +819,19 @@ test("空间教师查看考试列表时不展示租户级考试状态操作", as
           name: "空间草稿考试",
           paperName: "语文试卷",
           inviteCode: "",
-          target: "当前空间",
+          target: "用户 601",
+          createdBy: 501,
           status: "draft",
+          targets: [{ targetID: 601, targetType: "user" }],
+          startTime: new Date("2026-05-30T09:00:00+08:00").getTime(),
+          endTime: new Date("2026-05-30T11:00:00+08:00").getTime(),
           startAt: "2026-05-30 09:00",
           endAt: "2026-05-30 11:00",
           durationMinutes: 120,
+          maxAttempts: 1,
+          resultStrategy: "latest",
+          publishMode: "manual_publish",
+          scorePublishTime: null,
         },
         {
           id: 22,
@@ -769,18 +841,61 @@ test("空间教师查看考试列表时不展示租户级考试状态操作", as
           paperName: "数学试卷",
           inviteCode: "PM2200",
           target: "当前空间",
+          createdBy: 777,
           status: "published",
+          targets: [{ targetID: 301, targetType: "space" }],
+          startTime: new Date("2026-05-30T09:00:00+08:00").getTime(),
+          endTime: new Date("2026-05-30T11:00:00+08:00").getTime(),
           startAt: "2026-05-30 09:00",
           endAt: "2026-05-30 11:00",
           durationMinutes: 120,
+          maxAttempts: 1,
+          resultStrategy: "latest",
+          publishMode: "manual_publish",
+          scorePublishTime: null,
         },
       ],
       total: 2,
     }),
     publishExam: vi.fn(),
+    updateDraftExam: vi.fn(async (input) => ({
+      id: input.examID,
+      tenantID: input.tenantID,
+      paperID: input.paperID,
+      name: input.name,
+      paperName: "语文试卷",
+      inviteCode: "",
+      target: "当前空间",
+      targets: input.targets ?? [],
+      createdBy: 501,
+      status: "draft" as const,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      startAt: "2026-05-30 09:00",
+      endAt: "2026-05-30 11:00",
+      durationMinutes: input.durationMinutes,
+      maxAttempts: input.maxAttempts,
+      resultStrategy: input.resultStrategy,
+      publishMode: input.publishMode,
+      scorePublishTime: input.scorePublishTime ?? null,
+    })),
     updateExamStatus: vi.fn(),
   };
-  const paperApi = { listPublishPaperCandidates: vi.fn().mockResolvedValue({ items: [] }) };
+  const paperApi = {
+    listPublishPaperCandidates: vi.fn().mockResolvedValue({
+      items: [{
+        id: 444,
+        tenantID: 10,
+        name: "候选列表中的其它试卷",
+        description: "草稿原试卷不在当前候选页",
+        buildMode: "manual",
+        status: "enabled",
+        totalScore: "100",
+        createdAt: new Date("2026-05-01T09:00:00+08:00").getTime(),
+        creatorName: "teacher.exam",
+      }],
+    }),
+  };
   const spaceApi = {
     listSpaces: vi.fn(),
     listSpaceMembers: vi.fn().mockResolvedValue({ items: [] }),
@@ -790,6 +905,8 @@ test("空间教师查看考试列表时不展示租户级考试状态操作", as
   renderExamManagementPage(
     <ExamManagementPage
       api={api}
+      actorID={501}
+      actorRole="teacher"
       canManageTenantTargets={false}
       paperApi={paperApi}
       spaceApi={spaceApi}
@@ -801,11 +918,91 @@ test("空间教师查看考试列表时不展示租户级考试状态操作", as
 
   const draftRow = await screen.findByRole("row", { name: /空间草稿考试/ });
   const publishedRow = await screen.findByRole("row", { name: /空间进行中考试/ });
-  expect(within(draftRow).queryByRole("button", { name: "发布考试" })).not.toBeInTheDocument();
+  expect(within(draftRow).getByRole("link", { name: "详情" })).toHaveAttribute("href", "/exams/21");
+  expect(within(draftRow).getByRole("button", { name: "编辑草稿" })).toBeInTheDocument();
+  expect(within(draftRow).getByRole("button", { name: "发布考试" })).toBeInTheDocument();
+  expect(within(publishedRow).getByRole("link", { name: "详情" })).toHaveAttribute("href", "/exams/22");
   expect(within(publishedRow).queryByRole("button", { name: "提前结束考试" })).not.toBeInTheDocument();
   expect(within(publishedRow).queryByRole("button", { name: "禁用考试" })).not.toBeInTheDocument();
-  expect(draftRow).toHaveTextContent("暂无操作");
-  expect(publishedRow).toHaveTextContent("暂无操作");
+
+  await user.click(within(draftRow).getByRole("button", { name: "编辑草稿" }));
+  const editDialog = screen.getByRole("dialog", { name: "编辑草稿抽屉" });
+  const examNameInput = within(editDialog).getByRole("textbox", { name: "考试名称" });
+  expect(examNameInput).toHaveValue("空间草稿考试");
+  await user.clear(examNameInput);
+  await user.type(examNameInput, "调整后的草稿");
+  await user.click(within(editDialog).getByRole("button", { name: "保存草稿" }));
+  expect(api.updateDraftExam).toHaveBeenCalledWith(expect.objectContaining({
+    examID: 21,
+    paperID: 333,
+    name: "调整后的草稿",
+    status: "draft",
+    targets: [{ scopeSpaceIDs: [301], targetID: 601, targetType: "user" }],
+  }));
+});
+
+test("空间管理员可以操作自己创建的空间草稿考试", async () => {
+  const api = {
+    listExams: vi.fn().mockResolvedValue({
+      items: [{
+        id: 31,
+        tenantID: 10,
+        paperID: 333,
+        name: "空间管理员草稿",
+        paperName: "语文试卷",
+        inviteCode: "",
+        target: "当前空间",
+        createdBy: 502,
+        status: "draft",
+        targets: [{ targetID: 301, targetType: "space" }],
+        startTime: new Date("2026-05-30T09:00:00+08:00").getTime(),
+        endTime: new Date("2026-05-30T11:00:00+08:00").getTime(),
+        startAt: "2026-05-30 09:00",
+        endAt: "2026-05-30 11:00",
+        durationMinutes: 120,
+        maxAttempts: 1,
+        resultStrategy: "latest",
+        publishMode: "manual_publish",
+        scorePublishTime: null,
+      }],
+      total: 1,
+    }),
+    publishExam: vi.fn(),
+    updateDraftExam: vi.fn(),
+    updateExamStatus: vi.fn(),
+  };
+  const paperApi = { listPublishPaperCandidates: vi.fn().mockResolvedValue({ items: [] }) };
+  const spaceApi = {
+    listSpaces: vi.fn(),
+    listSpaceMembers: vi.fn().mockResolvedValue({ items: [] }),
+  };
+  const userApi = { listUsers: vi.fn().mockResolvedValue({ items: [] }) };
+
+  renderExamManagementPage(
+    <ExamManagementPage
+      actorID={502}
+      actorRole="space_admin"
+      api={api}
+      canManageTenantTargets={false}
+      paperApi={paperApi}
+      spaceApi={spaceApi}
+      userApi={userApi}
+      tenantID={10}
+      spaceID={301}
+    />,
+  );
+
+  const row = await screen.findByRole("row", { name: /空间管理员草稿/ });
+  expect(within(row).getByRole("button", { name: "编辑草稿" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "发布考试" })).toBeInTheDocument();
+});
+
+test("考试详情入口使用 React Router Link", () => {
+  const source = readFileSync(join(process.cwd(), "src/pages/Exam/ExamManagementPage.tsx"), "utf8");
+
+  expect(source).toContain("import { Link } from \"react-router-dom\"");
+  expect(source).toContain("to={`/exams/${exam.id}`}");
+  expect(source).not.toContain("href={`/exams/${exam.id}`}");
 });
 
 test("指定同名学生时按用户 ID 移除已选目标", async () => {
@@ -1114,6 +1311,22 @@ test("发布考试表单控件高度与普通输入框一致", () => {
   expect(css).not.toContain(".exam-user-autocomplete");
 });
 
+test("发布考试作答规则和成绩配置在窄抽屉内按字段完整换行", () => {
+  const source = readFileSync(join(process.cwd(), "src/pages/Exam/ExamManagementPage.tsx"), "utf8");
+  const css = readFileSync(join(process.cwd(), "src/styles/global.css"), "utf8");
+  const ruleGridMatches = source.match(/className="exam-time-range exam-publish-rule-grid"/g) ?? [];
+  const ruleGridRule = css.match(/\.exam-publish-rule-grid\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const ruleGridFieldRule = css.match(/\.exam-publish-rule-grid \.field\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const fieldNoteRule = css.match(/\.exam-publish-form \.field-note\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  expect(ruleGridMatches).toHaveLength(2);
+  expect(ruleGridRule).toContain("grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr))");
+  expect(ruleGridRule).toContain("align-items: start");
+  expect(ruleGridFieldRule).toContain("min-width: 0");
+  expect(fieldNoteRule).toContain("display: block");
+  expect(fieldNoteRule).toContain("overflow-wrap: anywhere");
+});
+
 test("发布考试日期和时间选择弹层挂载到抽屉内而不是表单 label 内", async () => {
   const user = userEvent.setup();
   const api = {
@@ -1314,6 +1527,7 @@ test("空间教师发布考试时只使用当前空间作为发布范围", async
   renderExamManagementPage(
     <ExamManagementPage
       api={api}
+      actorRole="teacher"
       canManageTenantTargets={false}
       paperApi={paperApi}
       spaceApi={spaceApi}
@@ -1325,15 +1539,16 @@ test("空间教师发布考试时只使用当前空间作为发布范围", async
 
   await waitFor(() => expect(paperApi.listPublishPaperCandidates).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, search: "" }));
   expect(spaceApi.listSpaces).not.toHaveBeenCalled();
-  expect(spaceApi.listSpaceMembers).toHaveBeenCalledWith({ tenantID: 10, spaceID: 301, page: 1, pageSize: 1 });
+  expect(spaceApi.listSpaceMembers).not.toHaveBeenCalled();
   expect(userApi.listUsers).not.toHaveBeenCalled();
 
   await user.click(screen.getByRole("button", { name: "新建考试" }));
 
   const dialog = screen.getByRole("dialog", { name: "新建考试抽屉" });
-  expect(within(dialog).getByText("当前空间 301")).toBeInTheDocument();
-  await user.click(within(dialog).getByRole("combobox", { name: "选择班级范围" }));
-  expect(await screen.findByRole("option", { name: "当前空间 301" })).toBeInTheDocument();
+  expect(within(dialog).getByRole("radio", { name: "当前空间" })).toBeChecked();
+  expect(within(dialog).queryByRole("radio", { name: "班级范围" })).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("当前空间范围")).toHaveTextContent("当前空间 301");
+  expect(within(dialog).queryByRole("combobox", { name: "选择班级范围" })).not.toBeInTheDocument();
   await user.click(within(dialog).getByRole("radio", { name: "指定人群" }));
   await user.type(within(dialog).getByRole("combobox", { name: "指定同学" }), "王");
   await waitFor(() => expect(spaceApi.listSpaceMembers).toHaveBeenLastCalledWith({
@@ -1348,7 +1563,7 @@ test("空间教师发布考试时只使用当前空间作为发布范围", async
   expect(within(dialog).getByText("王同学（个人）")).toBeInTheDocument();
   expect(within(dialog).queryByText("禁用学生（个人）")).not.toBeInTheDocument();
   expect(within(dialog).queryByText("空间教师（个人）")).not.toBeInTheDocument();
-  await user.click(within(dialog).getByRole("radio", { name: "班级范围" }));
+  await user.click(within(dialog).getByRole("radio", { name: "当前空间" }));
   changePickerInput(within(dialog).getByLabelText("考试日期").closest("label") as HTMLElement, "2026-05-30");
   changePickerInput(within(dialog).getByLabelText("开始时间").closest("label") as HTMLElement, "09:00");
   changePickerInput(within(dialog).getByLabelText("结束时间").closest("label") as HTMLElement, "11:00");
@@ -1365,7 +1580,7 @@ test("空间教师发布考试时只使用当前空间作为发布范围", async
   }));
 });
 
-test("空间教师读取成员返回 403 时回退到当前空间并提示范围受限", async () => {
+test("空间管理员读取成员返回 403 时回退到当前空间并提示范围受限", async () => {
   const user = userEvent.setup();
   const api = {
     listExams: vi.fn().mockResolvedValue({ items: [] }),
@@ -1407,6 +1622,7 @@ test("空间教师读取成员返回 403 时回退到当前空间并提示范围
   renderExamManagementPage(
     <ExamManagementPage
       api={api}
+      actorRole="space_admin"
       canManageTenantTargets={false}
       paperApi={paperApi}
       spaceApi={spaceApi}

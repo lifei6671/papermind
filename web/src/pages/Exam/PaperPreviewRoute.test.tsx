@@ -179,10 +179,18 @@ function createExamRow({ id, paperID }: { id: number; paperID: number }): ExamRo
     paperName: `试卷 ${paperID}`,
     inviteCode: `PM${id}`,
     target: "空间 301",
+    createdBy: 501,
     status: "published",
     startAt: "2026-06-04 09:00",
     endAt: "2026-06-04 10:00",
+    startTime: new Date("2026-06-04T09:00:00+08:00").getTime(),
+    endTime: new Date("2026-06-04T10:00:00+08:00").getTime(),
     durationMinutes: 60,
+    maxAttempts: 1,
+    resultStrategy: "latest",
+    publishMode: "manual_publish",
+    scorePublishTime: null,
+    targets: [],
   };
 }
 

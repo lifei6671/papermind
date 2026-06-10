@@ -14,12 +14,16 @@ import AntSelect from "antd/es/select";
 import TimePicker from "antd/es/time-picker";
 import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
-import { X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { Search, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useFeedback } from "../../app/feedback-context";
 import { examApi } from "../../api/exams";
 import type { ExamCreationStatus, ExamManagementAPI, ExamRow, ExamStatus, ExamStatusUpdate } from "../../api/exams";
+import { RefreshIcon } from "../../components/ui/RefreshIcon";
+import { withRefreshFeedback } from "../../components/ui/refreshFeedback";
+import type { ActorRole } from "../../api/grading";
 import { paperApi as defaultPaperApi } from "../../api/papers";
 import type { PaperAPI, PaperRow } from "../../api/papers";
 import { spaceApi as defaultSpaceApi } from "../../api/spaces";
@@ -29,6 +33,8 @@ import type { TenantUserRow, UserManagementAPI } from "../../api/users";
 
 type ExamManagementPageProps = {
   api?: ExamManagementAPI;
+  actorID?: number;
+  actorRole?: ActorRole;
   paperApi?: Pick<PaperAPI, "listPublishPaperCandidates">;
   spaceApi?: Pick<SpaceManagementAPI & SpaceMemberAPI, "listSpaces" | "listSpaceMembers">;
   userApi?: Pick<UserManagementAPI, "listUsers">;
@@ -40,6 +46,7 @@ type ExamManagementPageProps = {
 type TargetOption = {
   id: number;
   label: string;
+  scopeSpaceIDs?: number[];
   type: "space" | "user";
   value: string;
 };
@@ -73,6 +80,8 @@ const publishExamPickerPlacements = {
 
 export function ExamManagementPage({
   api = examApi,
+  actorID = 0,
+  actorRole,
   paperApi = defaultPaperApi,
   spaceApi = defaultSpaceApi,
   userApi = defaultUserApi,
@@ -108,15 +117,32 @@ export function ExamManagementPage({
   const [publishMode, setPublishMode] = useState<"immediate_score" | "manual_publish">("manual_publish");
   const [scorePublishDateTime, setScorePublishDateTime] = useState("");
   const [pendingStatusAction, setPendingStatusAction] = useState<PendingStatusAction | null>(null);
+  const [editingExam, setEditingExam] = useState<ExamRow | null>(null);
   const [examPage, setExamPage] = useState(1);
   const [examPageSize, setExamPageSize] = useState(defaultExamPageSize);
+  const [examSearchQuery, setExamSearchQuery] = useState("");
+  const [appliedExamSearchQuery, setAppliedExamSearchQuery] = useState("");
+  const [examReloadToken, setExamReloadToken] = useState(0);
+  const [isExamListRefreshing, setIsExamListRefreshing] = useState(false);
+  const examRefreshPendingRef = useRef(false);
+  const isTeacherTargetScope = !canManageTenantTargets && actorRole === "teacher";
+  const canManageOwnSpaceExam = !canManageTenantTargets && (actorRole === "teacher" || actorRole === "space_admin");
   const [examTotal, setExamTotal] = useState(0);
   const [candidateUserTargetOptions, setCandidateUserTargetOptions] = useState<TargetOption[]>([]);
 
   useEffect(() => {
     let ignore = false;
 
-    api.listExams({ tenantID, ...(spaceID === undefined ? {} : { spaceID }), page: examPage, pageSize: examPageSize })
+    const request = api.listExams({
+      tenantID,
+      ...(spaceID === undefined ? {} : { spaceID }),
+      ...(appliedExamSearchQuery.trim() ? { search: appliedExamSearchQuery } : {}),
+      page: examPage,
+      pageSize: examPageSize,
+    });
+    const shouldUseRefreshFeedback = examRefreshPendingRef.current;
+    const listRequest = shouldUseRefreshFeedback ? withRefreshFeedback(request) : request;
+    listRequest
       .then((data) => {
         if (!ignore) {
           setExams(data.items);
@@ -133,13 +159,17 @@ export function ExamManagementPage({
       .finally(() => {
         if (!ignore) {
           setIsLoading(false);
+          setIsExamListRefreshing(false);
+        }
+        if (shouldUseRefreshFeedback) {
+          examRefreshPendingRef.current = false;
         }
       });
 
     return () => {
       ignore = true;
     };
-  }, [api, showError, tenantID, spaceID, examPage, examPageSize]);
+  }, [api, showError, tenantID, spaceID, examPage, examPageSize, appliedExamSearchQuery, examReloadToken]);
 
   useEffect(() => {
     const timeoutID = window.setTimeout(() => {
@@ -207,7 +237,12 @@ export function ExamManagementPage({
           }))
       : spaceID === undefined
         ? Promise.resolve({ notice: null, options: [] })
-        : spaceApi.listSpaceMembers({ tenantID, spaceID, page: 1, pageSize: 1 })
+        : isTeacherTargetScope
+          ? Promise.resolve({
+            notice: null,
+            options: [currentSpaceTargetOption(spaceID)],
+          })
+          : spaceApi.listSpaceMembers({ tenantID, spaceID, page: 1, pageSize: 1 })
             .then(() => ({
               notice: null,
               options: [currentSpaceTargetOption(spaceID)],
@@ -271,7 +306,7 @@ export function ExamManagementPage({
     return () => {
       ignore = true;
     };
-  }, [spaceApi, tenantID, spaceID, canManageTenantTargets, showError, selectedUserTargetValues]);
+  }, [spaceApi, tenantID, spaceID, canManageTenantTargets, isTeacherTargetScope, showError, selectedUserTargetValues]);
 
   useEffect(() => {
     const keyword = userTargetQuery.trim();
@@ -293,7 +328,7 @@ export function ExamManagementPage({
       : spaceID === undefined
         ? Promise.resolve([])
         : spaceApi.listSpaceMembers({ tenantID, spaceID, page: 1, pageSize: userTargetCandidatePageSize, search: keyword, role: "student", status: "enabled" })
-            .then((data) => buildSpaceMemberTargetOptions(data.items));
+            .then((data) => buildSpaceMemberTargetOptions(data.items, spaceID));
 
     request
       .then((options) => {
@@ -319,8 +354,10 @@ export function ExamManagementPage({
   const selectedUserTargets = userTargetOptions.filter((option) => selectedUserTargetSet.has(option.value));
   const visibleUserTargetCandidates = userTargetOptions
     .filter((option) => !selectedUserTargetSet.has(option.value));
+  const spaceScopeLabel = isTeacherTargetScope ? "当前空间" : "班级范围";
 
   function openPublishDialog() {
+    setEditingExam(null);
     setExamStatus("");
     setPaperSearchQuery("");
     setDebouncedPaperSearchQuery("");
@@ -332,7 +369,47 @@ export function ExamManagementPage({
     setIsPublishDialogOpen(true);
   }
 
+  function openDraftEditor(exam: ExamRow) {
+    setEditingExam(exam);
+    setPaperSearchQuery("");
+    setDebouncedPaperSearchQuery("");
+    setPaperID(String(exam.paperID));
+    setExamName(exam.name);
+    setExamStatus("draft");
+    setMaxAttempts(exam.maxAttempts === 0 ? "" : String(exam.maxAttempts));
+    setResultStrategy(exam.resultStrategy ?? "latest");
+    setPublishMode(exam.publishMode ?? "manual_publish");
+    setScorePublishDateTime(exam.scorePublishTime === null || exam.scorePublishTime === undefined ? "" : dayjs(exam.scorePublishTime).format(dateTimeFormat));
+    const start = dayjs(exam.startTime);
+    const end = dayjs(exam.endTime);
+    if (start.isValid() && end.isValid() && start.format(dateFormat) === end.format(dateFormat)) {
+      setExamTimeMode("fixed");
+      setExamDate(start.format(dateFormat));
+      setStartTimeText(start.format(timeFormat));
+      setEndTimeText(end.format(timeFormat));
+      setWindowStartText("");
+      setWindowEndText("");
+    } else {
+      setExamTimeMode("window");
+      setExamDate("");
+      setStartTimeText("");
+      setEndTimeText("");
+      setWindowStartText(start.isValid() ? start.format(dateFormat) : "");
+      setWindowEndText(end.isValid() ? end.format(dateFormat) : "");
+    }
+    setDurationMinutes(String(exam.durationMinutes));
+    const examTargetOptions = exam.targets.map(examTargetToOption);
+    setTargetOptions((current) => mergeTargetOptions(current, examTargetOptions));
+    setSelectedSpaceTargetValues(examTargetOptions.filter((target) => target.type === "space").map((target) => target.value));
+    setSelectedUserTargetValues(examTargetOptions.filter((target) => target.type === "user").map((target) => target.value));
+    setScopeMode(examTargetOptions.some((target) => target.type === "user") ? "users" : "space");
+    setUserTargetQuery("");
+    setCandidateUserTargetOptions([]);
+    setIsPublishDialogOpen(true);
+  }
+
   function closePublishDialog() {
+    setEditingExam(null);
     setExamStatus("");
     setPaperSearchQuery("");
     setDebouncedPaperSearchQuery("");
@@ -346,18 +423,37 @@ export function ExamManagementPage({
     setIsPublishDialogOpen(false);
   }
 
+  function handleSearchExams() {
+    setExamPage(1);
+    setAppliedExamSearchQuery(examSearchQuery.trim());
+    setExamReloadToken((value) => value + 1);
+  }
+
+  function handleRefreshExams() {
+    setExamSearchQuery("");
+    setAppliedExamSearchQuery("");
+    setExamPage(1);
+    examRefreshPendingRef.current = true;
+    setIsExamListRefreshing(true);
+    setExamReloadToken((value) => value + 1);
+  }
+
   async function handlePublishExam(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const selectedPaper = papers.find((option) => String(option.id) === paperID);
+    const fallbackDraftPaper = editingExam !== null && String(editingExam.paperID) === paperID
+      ? { id: editingExam.paperID, name: editingExam.paperName }
+      : null;
+    const resolvedPaper = selectedPaper ?? fallbackDraftPaper;
     const selectedTargets = scopeMode === "space"
       ? spaceTargetOptions.filter((option) => selectedSpaceTargetValues.includes(option.value))
       : userTargetOptions.filter((option) => selectedUserTargetSet.has(option.value));
-    if (!selectedPaper || selectedTargets.length === 0) {
+    if (!resolvedPaper || selectedTargets.length === 0) {
       showError("请先选择试卷和发布范围");
       return;
     }
-    if (examStatus === "") {
+    if (examStatus === "" && editingExam === null) {
       showError("请选择考试状态");
       return;
     }
@@ -393,14 +489,27 @@ export function ExamManagementPage({
     }
 
     try {
-      const nextExam = await api.publishExam({
+      const targetScopeSpaceIDsForRequest = (target: TargetOption) => {
+        if (target.scopeSpaceIDs !== undefined) {
+          return target.scopeSpaceIDs;
+        }
+        if (target.type === "user" && !canManageTenantTargets && spaceID !== undefined) {
+          return [spaceID];
+        }
+        return undefined;
+      };
+      const payload = {
         tenantID,
-        paperID: selectedPaper.id,
-        name: examName.trim() || selectedPaper.name,
-        targets: selectedTargets.map((target) => ({
-          targetType: target.type,
-          targetID: target.id,
-        })),
+        paperID: resolvedPaper.id,
+        name: examName.trim() || resolvedPaper.name,
+        targets: selectedTargets.map((target) => {
+          const scopeSpaceIDs = targetScopeSpaceIDsForRequest(target);
+          return {
+            ...(scopeSpaceIDs !== undefined ? { scopeSpaceIDs } : {}),
+            targetType: target.type,
+            targetID: target.id,
+          };
+        }),
         targetType: selectedTargets[0].type,
         targetID: selectedTargets[0].id,
         startTime: timeSettings.startTime,
@@ -410,8 +519,22 @@ export function ExamManagementPage({
         resultStrategy,
         publishMode,
         scorePublishTime,
-        status: examStatus,
-      });
+        status: (editingExam === null ? examStatus : "draft") as ExamCreationStatus,
+      };
+
+      if (editingExam !== null) {
+        if (!api.updateDraftExam) {
+          showError("保存草稿失败");
+          return;
+        }
+        const updatedDraft = await api.updateDraftExam({ ...payload, examID: editingExam.id, status: "draft" });
+        setExams((items) => items.map((item) => item.id === updatedDraft.id ? updatedDraft : item));
+        showSuccess(`${updatedDraft.name} 草稿已保存`);
+        closePublishDialog();
+        return;
+      }
+
+      const nextExam = await api.publishExam(payload);
 
       setExams((items) => examPage === 1 ? [nextExam, ...items].slice(0, examPageSize) : items);
       setExamTotal((total) => total + 1);
@@ -421,7 +544,7 @@ export function ExamManagementPage({
         : `${nextExam.name} 已保存为草稿`);
       closePublishDialog();
     } catch {
-      showError("新建考试失败");
+      showError(editingExam === null ? "新建考试失败" : "保存草稿失败");
     }
   }
 
@@ -495,6 +618,34 @@ export function ExamManagementPage({
               新建考试
             </Button>
           </div>
+          <div className="tenant-search-actions">
+            <label className="tenant-search-field">
+              <span className="sr-only">搜索考试</span>
+              <input
+                onChange={(event) => setExamSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleSearchExams();
+                  }
+                }}
+                placeholder="输入考试、试卷、邀请码或范围"
+                value={examSearchQuery}
+              />
+            </label>
+            <Button aria-label="搜索" variant="icon" onClick={handleSearchExams} type="button">
+              <Search aria-hidden="true" size={16} />
+            </Button>
+            <Button
+              aria-label="刷新考试列表"
+              disabled={isExamListRefreshing}
+              onClick={handleRefreshExams}
+              type="button"
+              variant="icon"
+            >
+              <RefreshIcon active={isExamListRefreshing} />
+            </Button>
+          </div>
         </div>
 
         {isLoading && <div className="tenant-admin-status" role="status">正在加载考试列表</div>}
@@ -515,23 +666,13 @@ export function ExamManagementPage({
             <tbody>
               {exams.length === 0 && <EmptyTableRow colSpan={7} />}
               {exams.map((exam) => (
-                <tr key={exam.id}>
-                  <td>{exam.name}</td>
-                  <td>{exam.paperName}</td>
-                  <td>{exam.target}</td>
-                  <td><code>{exam.inviteCode}</code></td>
-                  <td>{exam.startAt} - {exam.endAt} / {exam.durationMinutes} 分钟</td>
-                  <td>
-                    <StatusBadge tone={examStatusTone(exam.status)}>
-                      {examStatusLabel(exam.status)}
-                    </StatusBadge>
-                  </td>
-                  <td>
-                    {canManageTenantTargets
-                      ? <ExamStatusActions exam={exam} onUpdate={requestUpdateExamStatus} />
-                      : <span className="tenant-admin-muted">暂无操作</span>}
-                  </td>
-                </tr>
+                <ExamTableRow
+                  canManageActions={canManageTenantTargets || (canManageOwnSpaceExam && exam.createdBy === actorID)}
+                  exam={exam}
+                  key={exam.id}
+                  onEditDraft={openDraftEditor}
+                  onUpdate={requestUpdateExamStatus}
+                />
               ))}
             </tbody>
           </table>
@@ -549,8 +690,8 @@ export function ExamManagementPage({
         />
       </Panel>
 
-        <PlatformDrawer ariaLabel="新建考试抽屉" onClose={closePublishDialog} open={isPublishDialogOpen}>
-          <PlatformDrawerHeader onBack={closePublishDialog} title="新建考试" />
+        <PlatformDrawer ariaLabel={editingExam === null ? "新建考试抽屉" : "编辑草稿抽屉"} onClose={closePublishDialog} open={isPublishDialogOpen}>
+          <PlatformDrawerHeader onBack={closePublishDialog} title={editingExam === null ? "新建考试" : "编辑草稿"} />
             <form className="platform-form exam-publish-form" onSubmit={handlePublishExam}>
               <label className="field">
                 <RequiredLabel>发布试卷</RequiredLabel>
@@ -595,7 +736,7 @@ export function ExamManagementPage({
                   virtual={false}
                 />
               </label>
-              <div className="exam-time-range">
+              <div className="exam-time-range exam-publish-rule-grid">
                 <label className="field">
                   <span>最多作答次数</span>
                   <AntInputNumber
@@ -630,7 +771,7 @@ export function ExamManagementPage({
                   </small>
                 </label>
               </div>
-              <div className="exam-time-range">
+              <div className="exam-time-range exam-publish-rule-grid">
                 <label className="field">
                   <RequiredLabel>成绩发布方式</RequiredLabel>
                   <AntSelect
@@ -833,7 +974,7 @@ export function ExamManagementPage({
                       onChange={() => setScopeMode("space")}
                       type="radio"
                     />
-                    <span>班级范围</span>
+                    <span>{spaceScopeLabel}</span>
                   </label>
                   <label className="exam-scope-mode__item">
                     <input
@@ -845,22 +986,31 @@ export function ExamManagementPage({
                   </label>
                 </div>
                 {scopeMode === "space" ? (
-                  <label className="field">
-                    <span className="field-label">选择班级范围</span>
-                    <AntSelect
-                      aria-label="选择班级范围"
-                      className="exam-publish-select"
-                      getPopupContainer={getDrawerPopupContainer}
-                      mode="multiple"
-                      onChange={(values) => setSelectedSpaceTargetValues(values)}
-                      optionFilterProp="label"
-                      options={spaceTargetOptions.map((option) => ({ label: option.label, value: option.value }))}
-                      placeholder="请选择班级，可多选"
-                      showSearch
-                      value={selectedSpaceTargetValues}
-                      virtual={false}
-                    />
-                  </label>
+                  isTeacherTargetScope ? (
+                    <div className="field">
+                      <span className="field-label">当前空间</span>
+                      <div aria-label="当前空间范围" className="exam-current-space-target">
+                        {spaceTargetOptions[0]?.label ?? "当前空间"}
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="field">
+                      <span className="field-label">选择班级范围</span>
+                      <AntSelect
+                        aria-label="选择班级范围"
+                        className="exam-publish-select"
+                        getPopupContainer={getDrawerPopupContainer}
+                        mode="multiple"
+                        onChange={(values) => setSelectedSpaceTargetValues(values)}
+                        optionFilterProp="label"
+                        options={spaceTargetOptions.map((option) => ({ label: option.label, value: option.value }))}
+                        placeholder="请选择班级，可多选"
+                        showSearch
+                        value={selectedSpaceTargetValues}
+                        virtual={false}
+                      />
+                    </label>
+                  )
                 ) : (
                   <div className="field exam-user-picker">
                     <span className="field-label">指定同学</span>
@@ -927,9 +1077,9 @@ export function ExamManagementPage({
                 <Button variant="secondary" onClick={closePublishDialog} type="button">
                   取消
                 </Button>
-                <Button variant="primary" type="submit">
-                  确认创建
-                </Button>
+	                <Button variant="primary" type="submit">
+	                  {editingExam === null ? "确认创建" : "保存草稿"}
+	                </Button>
               </div>
             </form>
         </PlatformDrawer>
@@ -942,18 +1092,58 @@ export function ExamManagementPage({
   );
 }
 
-type ExamStatusActionsProps = {
+type ExamTableRowProps = {
+  canManageActions: boolean;
   exam: ExamRow;
+  onEditDraft(exam: ExamRow): void;
   onUpdate(exam: ExamRow, status: ExamStatusUpdate): void;
 };
 
-function ExamStatusActions({ exam, onUpdate }: ExamStatusActionsProps) {
-  const actions = examStatusActions(exam.status);
-  if (actions.length === 0) {
-    return <span className="tenant-admin-muted">暂无操作</span>;
-  }
+function ExamTableRow({ canManageActions, exam, onEditDraft, onUpdate }: ExamTableRowProps) {
+  return (
+    <tr>
+      <td>{exam.name}</td>
+      <td>{exam.paperName}</td>
+      <td>{exam.target}</td>
+      <td><code>{exam.inviteCode}</code></td>
+      <td>{exam.startAt} - {exam.endAt} / {exam.durationMinutes} 分钟</td>
+      <td>
+        <StatusBadge tone={examStatusTone(exam.status)}>
+          {examStatusLabel(exam.status)}
+        </StatusBadge>
+      </td>
+      <td>
+        <ExamRowActions
+          canEditDraft={canManageActions}
+          canUpdateStatus={canManageActions}
+          exam={exam}
+          onEditDraft={onEditDraft}
+          onUpdate={onUpdate}
+        />
+      </td>
+    </tr>
+  );
+}
+
+type ExamRowActionsProps = {
+  canEditDraft: boolean;
+  canUpdateStatus: boolean;
+  exam: ExamRow;
+  onEditDraft(exam: ExamRow): void;
+  onUpdate(exam: ExamRow, status: ExamStatusUpdate): void;
+};
+
+function ExamRowActions({ canEditDraft, canUpdateStatus, exam, onEditDraft, onUpdate }: ExamRowActionsProps) {
+  const actions = canUpdateStatus ? examStatusActions(exam.status) : [];
+  const showEditDraft = canEditDraft && exam.status === "draft";
   return (
     <div className="tenant-actions">
+      <Link className="tenant-action-button" to={`/exams/${exam.id}`}>详情</Link>
+      {showEditDraft && (
+        <Button onClick={() => onEditDraft(exam)} type="button" variant="actionOpen">
+          编辑草稿
+        </Button>
+      )}
       {actions.map((action) => (
         <Button
           key={action.status}
@@ -1165,6 +1355,16 @@ function currentSpaceTargetOption(spaceID: number): TargetOption {
   };
 }
 
+function examTargetToOption(target: ExamRow["targets"][number]): TargetOption {
+  return {
+    id: target.targetID,
+    label: target.targetType === "space" ? `空间 ${target.targetID}` : `用户 ${target.targetID}`,
+    scopeSpaceIDs: target.scopeSpaceIDs,
+    type: target.targetType,
+    value: `${target.targetType}:${target.targetID}`,
+  };
+}
+
 function buildTargetOptions(spaces: SpaceRow[], users: TenantUserRow[]): TargetOption[] {
   return [
     ...spaces
@@ -1243,12 +1443,13 @@ function renderUserTargetOption(option: TargetOption) {
 //
 // 空间管理员和教师只能在当前空间范围内发起考试，因此候选个人目标必须来自
 // space_members，而不能直接复用租户全量用户列表。
-function buildSpaceMemberTargetOptions(members: SpaceMember[]): TargetOption[] {
+function buildSpaceMemberTargetOptions(members: SpaceMember[], spaceID: number): TargetOption[] {
   return members
     .filter((member) => member.role === "student" && member.status === "enabled")
     .map((member) => ({
       id: member.userID,
       label: `${member.name}（个人）`,
+      scopeSpaceIDs: [spaceID],
       type: "user" as const,
       value: `user:${member.userID}`,
     }));

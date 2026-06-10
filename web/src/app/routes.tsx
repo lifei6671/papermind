@@ -251,7 +251,7 @@ export function buildAdminRoutes(
     label: "考试列表",
     description: "发布考试、配置范围、邀请码和结果策略",
     icon: ClipboardList,
-    element: examNeedsSpace ? renderExamSpaceRequiredPage("考试列表") : <ExamManagementPage canManageTenantTargets={user?.role === "tenant_admin"} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
+    element: examNeedsSpace ? renderExamSpaceRequiredPage("考试列表") : <ExamManagementPage actorID={actorID} actorRole={actorRole} canManageTenantTargets={user?.role === "tenant_admin"} tenantID={sessionTenantID ?? 0} spaceID={selectedSpaceID} />,
     group: "exam",
     menuRoles: examBusinessRoles,
     spaceMemberRoles: examSpaceMemberRoles,

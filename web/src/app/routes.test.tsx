@@ -153,6 +153,7 @@ test("空间管理员页面 actorRole 来自当前选中空间授权", () => {
     status: "enabled",
   }]);
 
+  expect(routeActorRole(routes, "/exams")).toBe("space_admin");
   expect(routeActorRole(routes, "/grading")).toBe("space_admin");
   expect(routeActorRole(routes, "/results")).toBe("space_admin");
 });

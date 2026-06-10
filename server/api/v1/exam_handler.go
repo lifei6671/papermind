@@ -58,8 +58,9 @@ type examTargetFinder interface {
 // 多目标发布只允许显式投放到空间或用户，后续权限校验会逐个目标确认当前
 // 操作者是否有权把考试投放到对应范围。
 type publishExamTargetRequest struct {
-	TargetType string `json:"target_type"`
-	TargetID   uint64 `json:"target_id"`
+	TargetType    string   `json:"target_type"`
+	TargetID      uint64   `json:"target_id"`
+	ScopeSpaceIDs []uint64 `json:"scope_space_ids"`
 }
 
 type publishExamRequest struct {
@@ -177,14 +178,16 @@ type examResponse struct {
 	ScorePublishTime *int64                         `json:"score_publish_time"`
 	InviteCode       string                         `json:"invite_code"`
 	Status           string                         `json:"status"`
+	CreatedBy        uint64                         `json:"created_by"`
 	TargetType       string                         `json:"target_type,omitempty"`
 	TargetID         uint64                         `json:"target_id,omitempty"`
 	Targets          []examManagementTargetResponse `json:"targets,omitempty"`
 }
 
 type examManagementTargetResponse struct {
-	TargetType string `json:"target_type"`
-	TargetID   uint64 `json:"target_id"`
+	TargetType    string   `json:"target_type"`
+	TargetID      uint64   `json:"target_id"`
+	ScopeSpaceIDs []uint64 `json:"scope_space_ids,omitempty"`
 }
 
 type examManagementPermissionsResponse struct {
@@ -604,7 +607,14 @@ func (h examHandler) list(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "page 和 page_size 必须是正整数"))
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), serviceexam.ListInput{TenantID: tenantID, SpaceID: spaceID, PaperID: paperID, Page: page, PageSize: pageSize})
+	result, err := h.service.List(c.Request.Context(), serviceexam.ListInput{
+		TenantID: tenantID,
+		SpaceID:  spaceID,
+		PaperID:  paperID,
+		Search:   c.Query("search"),
+		Page:     page,
+		PageSize: pageSize,
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试列表失败"))
 		return
@@ -1122,7 +1132,7 @@ func (h examHandler) publish(c *gin.Context) {
 	}
 	serviceTargets := make([]serviceexam.Target, 0, len(targets))
 	for _, target := range targets {
-		scopeSpaceIDs, ok := h.authorizePublishScope(c, request.TenantID, request.PaperID, target.TargetType, target.TargetID)
+		scopeSpaceIDs, ok := h.authorizePublishScope(c, request.TenantID, request.PaperID, target.TargetType, target.TargetID, target.ScopeSpaceIDs)
 		if !ok {
 			return
 		}
@@ -1160,6 +1170,81 @@ func (h examHandler) publish(c *gin.Context) {
 	c.JSON(http.StatusOK, response.OK(result))
 }
 
+func (h examHandler) updateDraft(c *gin.Context) {
+	examID, err := readUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "考试 ID 必须是正整数"))
+		return
+	}
+	var request publishExamRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "请求体不是合法 JSON"))
+		return
+	}
+	if err := request.validate(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	if request.Status != "" && request.Status != serviceexam.StatusDraft {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, "草稿更新接口只能保存 draft 状态"))
+		return
+	}
+	if !h.authorizeExamBusiness(c, request.TenantID) {
+		return
+	}
+	principal, err := h.liveTenantPrincipal(c, request.TenantID)
+	if err != nil {
+		writePermissionContextError(c, err, "读取当前操作人失败")
+		return
+	}
+	if !h.authorizeExamStatusUpdate(c, request.TenantID, examID, principal.UserID) {
+		return
+	}
+	targets, err := request.normalizedTargets()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Fail(code.InvalidParam, err.Error()))
+		return
+	}
+	serviceTargets := make([]serviceexam.Target, 0, len(targets))
+	for _, target := range targets {
+		scopeSpaceIDs, ok := h.authorizePublishScope(c, request.TenantID, request.PaperID, target.TargetType, target.TargetID, target.ScopeSpaceIDs)
+		if !ok {
+			return
+		}
+		serviceTargets = append(serviceTargets, serviceexam.Target{
+			TenantID:      request.TenantID,
+			TargetType:    target.TargetType,
+			TargetID:      target.TargetID,
+			ScopeSpaceIDs: scopeSpaceIDs,
+		})
+	}
+	updated, err := h.service.UpdateDraftWithTarget(c.Request.Context(), serviceexam.UpdateDraftWithTargetInput{
+		TenantID:         request.TenantID,
+		ExamID:           examID,
+		PaperID:          request.PaperID,
+		Name:             request.Name,
+		Targets:          serviceTargets,
+		StartTime:        request.StartTime,
+		EndTime:          request.EndTime,
+		DurationMinutes:  request.DurationMinutes,
+		MaxAttempts:      request.MaxAttempts,
+		ResultStrategy:   request.ResultStrategy,
+		PublishMode:      request.PublishMode,
+		ScorePublishTime: request.ScorePublishTime,
+		ActorID:          principal.UserID,
+		ActorType:        principal.SubjectType,
+		ActorRole:        principal.Role,
+	})
+	if err != nil {
+		writeExamServiceError(c, err)
+		return
+	}
+	result := examToResponse(updated)
+	result.TargetType = targets[0].TargetType
+	result.TargetID = targets[0].TargetID
+	c.JSON(http.StatusOK, response.OK(result))
+}
+
 func (h examHandler) updateStatus(c *gin.Context) {
 	examID, err := readUintParam(c, "id")
 	if err != nil {
@@ -1183,26 +1268,7 @@ func (h examHandler) updateStatus(c *gin.Context) {
 		writePermissionContextError(c, err, "读取当前操作人失败")
 		return
 	}
-	permissionContext, err := h.managementPermissionContext(c, request.TenantID, 0)
-	if err != nil {
-		writePermissionContextError(c, err, "构建考试状态权限上下文失败")
-		return
-	}
-	detail, err := h.management.GetDetail(c.Request.Context(), serviceexam.ManagementDetailInput{
-		Permission: permissionContext,
-		TenantID:   request.TenantID,
-		ExamID:     examID,
-	})
-	if err != nil {
-		if errors.Is(err, permission.ErrForbidden) {
-			writePermissionOrInternalError(c, err, "无权更新考试状态")
-			return
-		}
-		writeExamServiceError(c, err)
-		return
-	}
-	if !detail.Permissions.CanUpdateSettings {
-		writePermissionOrInternalError(c, permission.ErrForbidden, "无权更新考试状态")
+	if !h.authorizeExamStatusUpdate(c, request.TenantID, examID, principal.UserID) {
 		return
 	}
 	updated, err := h.service.UpdateStatus(c.Request.Context(), serviceexam.UpdateStatusInput{
@@ -1218,6 +1284,35 @@ func (h examHandler) updateStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.OK(examToResponse(updated)))
+}
+
+func (h examHandler) authorizeExamStatusUpdate(c *gin.Context, tenantID uint64, examID uint64, actorID uint64) bool {
+	permissionContext, err := h.managementPermissionContext(c, tenantID, 0)
+	if err != nil {
+		writePermissionContextError(c, err, "构建考试状态权限上下文失败")
+		return false
+	}
+	detail, err := h.management.GetDetail(c.Request.Context(), serviceexam.ManagementDetailInput{
+		Permission: permissionContext,
+		TenantID:   tenantID,
+		ExamID:     examID,
+	})
+	if err != nil {
+		if errors.Is(err, permission.ErrForbidden) {
+			writePermissionOrInternalError(c, err, "无权更新考试状态")
+			return false
+		}
+		writeExamServiceError(c, err)
+		return false
+	}
+	if detail.Permissions.CanUpdateSettings {
+		return true
+	}
+	if detail.Exam.CreatedBy == actorID && examTargetSpacesCoveredByAllowedSpaces(detail.TargetSpaceIDs, detail.AllowedSpaceIDs) {
+		return true
+	}
+	writePermissionOrInternalError(c, permission.ErrForbidden, "无权更新考试状态")
+	return false
 }
 
 func (h examHandler) authorizeExamBusiness(c *gin.Context, tenantID uint64) bool {
@@ -1241,23 +1336,18 @@ func (h examHandler) authorizeExamBusiness(c *gin.Context, tenantID uint64) bool
 	return false
 }
 
-func (h examHandler) authorizePublishScope(c *gin.Context, tenantID uint64, paperID uint64, targetType string, targetID uint64) ([]uint64, bool) {
+func (h examHandler) authorizePublishScope(c *gin.Context, tenantID uint64, paperID uint64, targetType string, targetID uint64, requestedScopeSpaceIDs []uint64) ([]uint64, bool) {
 	spaceID, err := h.papers.GetPaperSpaceID(c.Request.Context(), tenantID, paperID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试试卷权限范围失败"))
 		return nil, false
 	}
-	permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.tenantUsers)
-	if err != nil {
-		writePermissionOrInternalError(c, err, "构建考试发布权限上下文失败")
-		return nil, false
-	}
-	if spaceID == nil {
-		if permissionContext.Role != permission.RoleTenantAdmin {
-			writePermissionOrInternalError(c, permission.ErrForbidden, "公共试卷仅租户管理员可发布")
+	if spaceID != nil {
+		permissionContext, err := permissionContextForResourceScope(c, tenantID, spaceID, h.members, h.tenantUsers)
+		if err != nil {
+			writePermissionOrInternalError(c, err, "构建考试发布权限上下文失败")
 			return nil, false
 		}
-	} else {
 		permissionContext.PaperScope = map[uint64]uint64{paperID: *spaceID}
 		if err := permission.NewFixedRoleChecker().CanPublishExam(permissionContext, paperID); err != nil {
 			writePermissionOrInternalError(c, err, "校验考试发布权限失败")
@@ -1271,7 +1361,7 @@ func (h examHandler) authorizePublishScope(c *gin.Context, tenantID uint64, pape
 		}
 		return nil, true
 	case serviceexam.TargetTypeUser:
-		return h.authorizePublishUserTarget(c, tenantID, targetID, spaceID)
+		return h.authorizePublishUserTarget(c, tenantID, targetID, spaceID, requestedScopeSpaceIDs)
 	default:
 		writePermissionOrInternalError(c, permission.ErrForbidden, "校验考试发布目标失败")
 		return nil, false
@@ -1304,9 +1394,22 @@ func (h examHandler) authorizePublishSpaceTarget(c *gin.Context, tenantID uint64
 	return false
 }
 
-func (h examHandler) authorizePublishUserTarget(c *gin.Context, tenantID uint64, userID uint64, currentSpaceID *uint64) ([]uint64, bool) {
+func (h examHandler) authorizePublishUserTarget(c *gin.Context, tenantID uint64, userID uint64, currentSpaceID *uint64, requestedScopeSpaceIDs []uint64) ([]uint64, bool) {
 	principal, ok := currentAuthPrincipal(c)
 	if !ok {
+		writePermissionOrInternalError(c, permission.ErrForbidden, "校验考试发布目标失败")
+		return nil, false
+	}
+	requestedScopeSpaceIDs = uniqueUint64s(requestedScopeSpaceIDs)
+	requestedScopeSet := make(map[uint64]struct{}, len(requestedScopeSpaceIDs))
+	for _, spaceID := range requestedScopeSpaceIDs {
+		if spaceID == 0 {
+			writePermissionOrInternalError(c, permission.ErrForbidden, "校验考试发布目标失败")
+			return nil, false
+		}
+		requestedScopeSet[spaceID] = struct{}{}
+	}
+	if principal.Role != permission.RoleTenantAdmin && currentSpaceID == nil && len(requestedScopeSpaceIDs) == 0 {
 		writePermissionOrInternalError(c, permission.ErrForbidden, "校验考试发布目标失败")
 		return nil, false
 	}
@@ -1328,14 +1431,6 @@ func (h examHandler) authorizePublishUserTarget(c *gin.Context, tenantID uint64,
 		c.JSON(http.StatusInternalServerError, response.Fail(code.InternalError, "读取考试发布目标范围失败"))
 		return nil, false
 	}
-	if principal.SubjectType == permission.SubjectTenantUser && principal.TenantID == tenantID && principal.Role == permission.RoleTenantAdmin {
-		scopeSpaceIDs := publishMembershipSpaceIDs(memberships)
-		if len(scopeSpaceIDs) > 0 {
-			return scopeSpaceIDs, true
-		}
-		writePermissionOrInternalError(c, permission.ErrForbidden, "校验考试发布目标失败")
-		return nil, false
-	}
 	scopeSpaceIDs := make([]uint64, 0, len(memberships))
 	for _, membership := range memberships {
 		if membership.Role != servicespace.RoleStudent {
@@ -1344,9 +1439,18 @@ func (h examHandler) authorizePublishUserTarget(c *gin.Context, tenantID uint64,
 		if currentSpaceID != nil && membership.SpaceID != *currentSpaceID {
 			continue
 		}
+		if len(requestedScopeSet) > 0 {
+			if _, ok := requestedScopeSet[membership.SpaceID]; !ok {
+				continue
+			}
+		}
 		if h.actorCanPublishToSpace(c, tenantID, membership.SpaceID) {
 			scopeSpaceIDs = append(scopeSpaceIDs, membership.SpaceID)
 		}
+	}
+	if len(requestedScopeSpaceIDs) > 0 && len(uniqueUint64s(scopeSpaceIDs)) != len(requestedScopeSpaceIDs) {
+		writePermissionOrInternalError(c, permission.ErrForbidden, "校验考试发布目标失败")
+		return nil, false
 	}
 	if len(scopeSpaceIDs) > 0 {
 		return uniqueUint64s(scopeSpaceIDs), true
@@ -1367,17 +1471,6 @@ func (h examHandler) actorCanPublishToSpace(c *gin.Context, tenantID uint64, spa
 	return role == permission.RoleSpaceAdmin || role == permission.RoleTeacher
 }
 
-func publishMembershipSpaceIDs(memberships []servicespace.Member) []uint64 {
-	spaceIDs := make([]uint64, 0, len(memberships))
-	for _, membership := range memberships {
-		if membership.Role != servicespace.RoleStudent {
-			continue
-		}
-		spaceIDs = append(spaceIDs, membership.SpaceID)
-	}
-	return uniqueUint64s(spaceIDs)
-}
-
 func uniqueUint64s(values []uint64) []uint64 {
 	if len(values) == 0 {
 		return nil
@@ -1395,6 +1488,24 @@ func uniqueUint64s(values []uint64) []uint64 {
 		unique = append(unique, value)
 	}
 	return unique
+}
+
+func examTargetSpacesCoveredByAllowedSpaces(targetSpaceIDs []uint64, allowedSpaceIDs []uint64) bool {
+	targetSpaceIDs = uniqueUint64s(targetSpaceIDs)
+	allowedSpaceIDs = uniqueUint64s(allowedSpaceIDs)
+	if len(targetSpaceIDs) == 0 || len(allowedSpaceIDs) == 0 {
+		return false
+	}
+	allowed := make(map[uint64]struct{}, len(allowedSpaceIDs))
+	for _, spaceID := range allowedSpaceIDs {
+		allowed[spaceID] = struct{}{}
+	}
+	for _, spaceID := range targetSpaceIDs {
+		if _, ok := allowed[spaceID]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (h examHandler) resolveInvite(c *gin.Context) {
@@ -2057,11 +2168,18 @@ func (r publishExamRequest) normalizedTargets() ([]publishExamTargetRequest, err
 		if target.TargetID == 0 {
 			return nil, errors.New("target_id 必须是正整数")
 		}
+		scopeSpaceIDs := uniqueUint64s(target.ScopeSpaceIDs)
+		for _, spaceID := range scopeSpaceIDs {
+			if spaceID == 0 {
+				return nil, errors.New("scope_space_ids 必须是正整数")
+			}
+		}
 		key := target.TargetType + ":" + strconv.FormatUint(target.TargetID, 10)
 		if _, exists := seen[key]; exists {
 			continue
 		}
 		seen[key] = struct{}{}
+		target.ScopeSpaceIDs = scopeSpaceIDs
 		normalized = append(normalized, target)
 	}
 	return normalized, nil
@@ -2387,8 +2505,9 @@ func examToResponse(exam serviceexam.Exam) examResponse {
 	targets := make([]examManagementTargetResponse, 0, len(exam.Targets))
 	for _, target := range exam.Targets {
 		targets = append(targets, examManagementTargetResponse{
-			TargetType: target.TargetType,
-			TargetID:   target.TargetID,
+			TargetType:    target.TargetType,
+			TargetID:      target.TargetID,
+			ScopeSpaceIDs: target.ScopeSpaceIDs,
 		})
 	}
 	return examResponse{
@@ -2405,6 +2524,7 @@ func examToResponse(exam serviceexam.Exam) examResponse {
 		ScorePublishTime: exam.ScorePublishTime,
 		InviteCode:       examInviteCodeForResponse(exam),
 		Status:           exam.Status,
+		CreatedBy:        exam.CreatedBy,
 		TargetType:       exam.TargetType,
 		TargetID:         exam.TargetID,
 		Targets:          targets,
@@ -2422,8 +2542,9 @@ func examManagementDetailToResponse(detail serviceexam.ManagementDetail) examMan
 	targets := make([]examManagementTargetResponse, 0, len(detail.Targets))
 	for _, target := range detail.Targets {
 		targets = append(targets, examManagementTargetResponse{
-			TargetType: target.TargetType,
-			TargetID:   target.TargetID,
+			TargetType:    target.TargetType,
+			TargetID:      target.TargetID,
+			ScopeSpaceIDs: target.ScopeSpaceIDs,
 		})
 	}
 	return examManagementDetailResponse{

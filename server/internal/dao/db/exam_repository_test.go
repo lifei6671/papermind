@@ -1,17 +1,20 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lifei6671/papermind/server/bootstrap/migration"
 	serviceexam "github.com/lifei6671/papermind/server/internal/service/exam"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestExamRepositoryInviteCodeExistsChecksAllTenants(t *testing.T) {
@@ -647,6 +650,103 @@ func TestExamRepositoryListExamsScopesReturnedTargetsToRequestedSpace(t *testing
 	}
 }
 
+func TestExamRepositoryListExamsOrdersNewestFirst(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
+	seedMultiSpaceAttemptData(t, gormDB)
+	if err := gormDB.Exec(`
+		INSERT INTO exams (
+			id, tenant_id, paper_id, name, start_time, end_time, duration_minutes,
+			max_attempts, result_strategy, publish_mode, invite_code, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(800, 10, 100, '较早考试', 1000, 2000, 30, 1, 'latest', 'manual_publish', 'OLD2026', 'published', 900, 900, '{}'),
+			(950, 10, 100, '最新考试', 1000, 2000, 30, 1, 'latest', 'manual_publish', 'NEW2026', 'published', 1100, 1100, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed ordered exams: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_targets (
+			id, tenant_id, exam_id, target_type, target_id, created_at, ext_json
+		) VALUES
+			(2, 10, 800, 'space', 302, 900, '{}'),
+			(3, 10, 950, 'space', 302, 1100, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed ordered exam targets: %v", err)
+	}
+
+	list, err := repo.ListExams(t.Context(), serviceexam.ListInput{
+		TenantID: 10,
+		SpaceID:  uint64Ptr(302),
+		Page:     1,
+		PageSize: 20,
+	})
+	if err != nil {
+		t.Fatalf("ListExams returned error: %v", err)
+	}
+	if len(list.Items) != 3 {
+		t.Fatalf("expected three exams, got %#v", list.Items)
+	}
+	gotIDs := []uint64{list.Items[0].ID, list.Items[1].ID, list.Items[2].ID}
+	wantIDs := []uint64{950, 900, 800}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("expected newest exams first, got %v", gotIDs)
+	}
+}
+
+func TestExamRepositoryListExamsSearchesBeforePaginatingWithinAuthorizedScope(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
+	seedMultiSpaceAttemptData(t, gormDB)
+	if err := gormDB.Exec(`
+		INSERT INTO papers (
+			id, tenant_id, name, description, total_score, build_mode, status,
+			created_at, updated_at, ext_json
+		) VALUES (101, 10, '高二数学试卷', '', 10, 'manual', 'enabled', 1000, 1000, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed search paper: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exams (
+			id, tenant_id, paper_id, name, start_time, end_time, duration_minutes,
+			max_attempts, result_strategy, publish_mode, invite_code, status,
+			created_at, updated_at, ext_json
+		) VALUES
+			(910, 10, 101, '高二数学期中考试', 1000, 2000, 30, 1, 'latest', 'manual_publish', 'MATH910', 'published', 1100, 1100, '{}'),
+			(920, 10, 101, '高二数学期末考试', 1000, 2000, 30, 1, 'latest', 'manual_publish', 'MATH920', 'published', 1200, 1200, '{}'),
+			(930, 10, 101, '高二数学越权考试', 1000, 2000, 30, 1, 'latest', 'manual_publish', 'MATH930', 'published', 1300, 1300, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed search exams: %v", err)
+	}
+	if err := gormDB.Exec(`
+		INSERT INTO exam_targets (
+			id, tenant_id, exam_id, target_type, target_id, created_at, ext_json
+		) VALUES
+			(2, 10, 910, 'space', 302, 1100, '{}'),
+			(3, 10, 920, 'space', 302, 1200, '{}'),
+			(4, 10, 930, 'space', 301, 1300, '{}')
+	`).Error; err != nil {
+		t.Fatalf("seed search exam targets: %v", err)
+	}
+
+	list, err := repo.ListExams(t.Context(), serviceexam.ListInput{
+		TenantID: 10,
+		SpaceID:  uint64Ptr(302),
+		Page:     1,
+		PageSize: 1,
+		Search:   "数学",
+	})
+	if err != nil {
+		t.Fatalf("ListExams returned error: %v", err)
+	}
+	if list.Total != 2 || len(list.Items) != 1 {
+		t.Fatalf("expected filtered total=2 and one paged item, got %#v", list)
+	}
+	if list.Items[0].ID != 920 {
+		t.Fatalf("expected newest authorized matching exam first, got %#v", list.Items[0])
+	}
+}
+
 func TestExamRepositoryOverviewStatsIgnoreDisabledTargetSpaces(t *testing.T) {
 	gormDB := openExamRepositoryTestDB(t)
 	repo := NewExamRepository(gormDB, ExamRepositoryOptions{Now: func() int64 { return 1000 }})
@@ -690,6 +790,27 @@ func TestExamRepositoryOverviewStatsIgnoreDisabledTargetSpaces(t *testing.T) {
 	}
 	if stats.Joined != 0 || stats.Submitted != 0 || stats.InProgress != 0 {
 		t.Fatalf("disabled target space should not contribute attempt stats, got %#v", stats)
+	}
+}
+
+func TestExamRepositoryCountExamCandidatesUsesComposableQueries(t *testing.T) {
+	gormDB := openExamRepositoryTestDB(t)
+	seedMultiSpaceAttemptData(t, gormDB)
+	sqlLogger := &captureSQLLogger{}
+	repo := NewExamRepository(gormDB.Session(&gorm.Session{Logger: sqlLogger}), ExamRepositoryOptions{Now: func() int64 { return 1000 }})
+
+	candidates, err := repo.CountExamCandidates(t.Context(), 10, 900, []uint64{302})
+	if err != nil {
+		t.Fatalf("CountExamCandidates returned error: %v", err)
+	}
+	if candidates != 1 {
+		t.Fatalf("expected one candidate, got %d", candidates)
+	}
+	for _, sql := range sqlLogger.statements {
+		normalized := strings.ToLower(strings.Join(strings.Fields(sql), " "))
+		if strings.Contains(normalized, " union ") {
+			t.Fatalf("CountExamCandidates should compose simple queries instead of issuing UNION SQL: %s", sql)
+		}
 	}
 }
 
@@ -2143,6 +2264,20 @@ func seedMultiSpaceAttemptData(t *testing.T, gormDB *gorm.DB) {
 	`).Error; err != nil {
 		t.Fatalf("seed answer: %v", err)
 	}
+}
+
+type captureSQLLogger struct {
+	logger.Interface
+	statements []string
+}
+
+func (l *captureSQLLogger) LogMode(logger.LogLevel) logger.Interface {
+	return l
+}
+
+func (l *captureSQLLogger) Trace(_ context.Context, _ time.Time, fc func() (string, int64), _ error) {
+	sql, _ := fc()
+	l.statements = append(l.statements, sql)
 }
 
 func serviceExamForRuleLive() serviceexam.Exam {

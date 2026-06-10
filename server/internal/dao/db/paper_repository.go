@@ -114,14 +114,13 @@ func (r *PaperRepository) applyPaperSearch(query *gorm.DB, search string) *gorm.
 	if keyword == "" {
 		return query
 	}
-	pattern := "%" + strings.ToLower(keyword) + "%"
 	return query.Where(
-		r.db.Where("LOWER(papers."+PaperColumns.Name+") LIKE ?", pattern).
-			Or("LOWER(papers."+PaperColumns.Description+") LIKE ?", pattern).
-			Or("LOWER(papers."+PaperColumns.Status+") LIKE ?", pattern).
-			Or("LOWER(papers."+PaperColumns.BuildMode+") LIKE ?", pattern).
-			Or("LOWER(users."+UserColumns.Username+") LIKE ?", pattern).
-			Or("LOWER(users."+UserColumns.RealName+") LIKE ?", pattern),
+		LikeIgnoreCase(r.db, "papers."+PaperColumns.Name, keyword).
+			Or(LikeIgnoreCase(r.db, "papers."+PaperColumns.Description, keyword)).
+			Or(LikeIgnoreCase(r.db, "papers."+PaperColumns.Status, keyword)).
+			Or(LikeIgnoreCase(r.db, "papers."+PaperColumns.BuildMode, keyword)).
+			Or(LikeIgnoreCase(r.db, "users."+UserColumns.Username, keyword)).
+			Or(LikeIgnoreCase(r.db, "users."+UserColumns.RealName, keyword)),
 	)
 }
 

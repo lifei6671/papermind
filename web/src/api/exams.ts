@@ -13,19 +13,28 @@ export type ExamRow = {
   paperName: string;
   inviteCode: string;
   target: string;
+  targets: PublishExamTargetInput[];
+  createdBy: number;
   status: ExamStatus;
+  startTime: number;
+  endTime: number;
   startAt: string;
   endAt: string;
   durationMinutes: number;
+  maxAttempts: number;
+  resultStrategy: "latest" | "highest";
+  publishMode: "immediate_score" | "manual_publish";
+  scorePublishTime: number | null;
 };
 
 // PublishExamTargetInput 表示一次考试发布中的单个投放目标。
 //
-// 后端会逐个目标做权限校验，因此前端只负责把用户选择的空间/个人目标
-// 原样传递，不在浏览器里推导额外权限。
+// 后端会逐个目标做权限校验；空间角色指定个人时可携带当前空间范围，
+// 避免公共试卷发布时把个人目标扩散到其它授权空间。
 export type PublishExamTargetInput = {
   targetType: "space" | "user";
   targetID: number;
+  scopeSpaceIDs?: number[];
 };
 
 export type PublishExamInput = {
@@ -51,6 +60,11 @@ export type UpdateExamStatusInput = {
   status: ExamStatusUpdate;
 };
 
+export type UpdateDraftExamInput = PublishExamInput & {
+  examID: number;
+  status: "draft";
+};
+
 export type ResolveExamInviteInput = {
   inviteCode: string;
 };
@@ -66,6 +80,7 @@ export type ListExamsInput = {
   tenantID: number;
   spaceID?: number;
   paperID?: number;
+  search?: string;
   page?: number;
   pageSize?: number;
 };
@@ -73,6 +88,7 @@ export type ListExamsInput = {
 export type ExamManagementAPI = {
   listExams(input: ListExamsInput): Promise<ExamListResult>;
   publishExam(input: PublishExamInput): Promise<ExamRow>;
+  updateDraftExam?(input: UpdateDraftExamInput): Promise<ExamRow>;
   updateExamStatus?(input: UpdateExamStatusInput): Promise<ExamRow>;
 };
 
@@ -165,13 +181,19 @@ type ExamAPIResponse = {
   start_time: number;
   end_time: number;
   duration_minutes: number;
+  max_attempts: number;
+  result_strategy: "latest" | "highest";
+  publish_mode: "immediate_score" | "manual_publish";
+  score_publish_time: number | null;
   invite_code: string;
   status: ExamStatus;
+  created_by: number;
   target_type?: "space" | "user";
   target_id?: number;
   targets?: Array<{
     target_type: "space" | "user";
     target_id: number;
+    scope_space_ids?: number[];
   }>;
 };
 
@@ -230,6 +252,10 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
       if (input.paperID !== undefined) {
         params.set("paper_id", String(input.paperID));
       }
+      const keyword = input.search?.trim();
+      if (keyword) {
+        params.set("search", keyword);
+      }
       if (input.page !== undefined) {
         params.set("page", String(input.page));
       }
@@ -255,6 +281,7 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
         targets: targets.map((target) => ({
           target_type: target.targetType,
           target_id: target.targetID,
+          ...(target.scopeSpaceIDs !== undefined ? { scope_space_ids: target.scopeSpaceIDs } : {}),
         })),
         start_time: input.startTime,
         end_time: input.endTime,
@@ -264,6 +291,30 @@ export function createExamAPI(apiClient: ApiClient): ExamManagementAPI & ExamEnt
         publish_mode: input.publishMode,
         score_publish_time: input.scorePublishTime ?? null,
         status: input.status,
+      });
+      return mapExamResponse(data);
+    },
+    async updateDraftExam(input) {
+      const targets = normalizePublishTargets(input);
+      const data = await apiClient.post<ExamAPIResponse>(`/api/v1/exams/${input.examID}/draft`, {
+        tenant_id: input.tenantID,
+        paper_id: input.paperID,
+        name: input.name,
+        target_type: targets[0]?.targetType,
+        target_id: targets[0]?.targetID,
+        targets: targets.map((target) => ({
+          target_type: target.targetType,
+          target_id: target.targetID,
+          ...(target.scopeSpaceIDs !== undefined ? { scope_space_ids: target.scopeSpaceIDs } : {}),
+        })),
+        start_time: input.startTime,
+        end_time: input.endTime,
+        duration_minutes: input.durationMinutes,
+        max_attempts: input.maxAttempts,
+        result_strategy: input.resultStrategy,
+        publish_mode: input.publishMode,
+        score_publish_time: input.scorePublishTime ?? null,
+        status: "draft",
       });
       return mapExamResponse(data);
     },
@@ -370,12 +421,34 @@ function mapExamResponse(row: ExamAPIResponse): ExamRow {
     name: row.name,
     paperName: "试卷 " + row.paper_id,
     inviteCode: row.invite_code,
+    targets: mapExamTargets(row.targets, row.target_type, row.target_id),
     target: formatTargets(row.targets, row.target_type, row.target_id),
+    createdBy: row.created_by ?? 0,
     status: row.status,
+    startTime: row.start_time,
+    endTime: row.end_time,
     startAt: formatDateTime(row.start_time),
     endAt: formatDateTime(row.end_time),
     durationMinutes: row.duration_minutes,
+    maxAttempts: row.max_attempts ?? 0,
+    resultStrategy: row.result_strategy ?? "latest",
+    publishMode: row.publish_mode ?? "manual_publish",
+    scorePublishTime: row.score_publish_time ?? null,
   };
+}
+
+function mapExamTargets(
+  targets: ExamAPIResponse["targets"],
+  targetType: "space" | "user" | undefined,
+  targetID: number | undefined,
+): PublishExamTargetInput[] {
+  if (targets !== undefined && targets.length > 0) {
+    return targets.map((target) => ({ targetType: target.target_type, targetID: target.target_id, scopeSpaceIDs: target.scope_space_ids }));
+  }
+  if (targetType !== undefined && targetID !== undefined) {
+    return [{ targetType, targetID }];
+  }
+  return [];
 }
 
 function formatTarget(targetType: "space" | "user" | undefined, targetID: number | undefined) {

@@ -1831,6 +1831,27 @@ func (r *fakeRepository) CreatePublishedExamWithTargets(ctx context.Context, exa
 	return exam, nil
 }
 
+func (r *fakeRepository) UpdateDraftWithTargets(ctx context.Context, input UpdateDraftWithTargetsRepositoryInput) (Exam, error) {
+	existing := r.exams[input.Exam.ID]
+	if existing.Status != StatusDraft {
+		return Exam{}, ErrInvalidExamStatus
+	}
+	exam := input.Exam
+	exam.InviteCode = existing.InviteCode
+	exam.Status = StatusDraft
+	r.addedTargets = make([]Target, 0, len(input.Targets))
+	for _, target := range input.Targets {
+		target.ExamID = exam.ID
+		r.addedTargets = append(r.addedTargets, target)
+	}
+	exam.Targets = append([]Target(nil), r.addedTargets...)
+	r.exams[exam.ID] = exam
+	if input.Log != nil {
+		r.operationLogs = append(r.operationLogs, *input.Log)
+	}
+	return exam, nil
+}
+
 func (r *fakeRepository) UpdateExamStatus(ctx context.Context, input UpdateExamStatusRepositoryInput) (Exam, error) {
 	if r.statusBeforeUpdate != "" {
 		stale := r.exams[input.ExamID]

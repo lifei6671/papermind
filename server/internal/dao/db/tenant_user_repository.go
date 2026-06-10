@@ -131,14 +131,13 @@ func (r *TenantUserRepository) applyTenantUserSearch(query *gorm.DB, search stri
 	if keyword == "" {
 		return query
 	}
-	pattern := "%" + strings.ToLower(keyword) + "%"
-	condition := r.db.Where("LOWER(users."+UserColumns.Username+") LIKE ?", pattern).
-		Or("LOWER(users."+UserColumns.RealName+") LIKE ?", pattern).
-		Or("LOWER(users."+UserColumns.Phone+") LIKE ?", pattern).
-		Or("LOWER(users."+UserColumns.Email+") LIKE ?", pattern).
-		Or("LOWER(tum."+UserRoleColumns.Role+") LIKE ?", pattern).
-		Or("LOWER(tum."+UserRoleColumns.Status+") LIKE ?", pattern).
-		Or("LOWER(users."+UserColumns.Status+") LIKE ?", pattern)
+	condition := LikeIgnoreCase(r.db, "users."+UserColumns.Username, keyword).
+		Or(LikeIgnoreCase(r.db, "users."+UserColumns.RealName, keyword)).
+		Or(LikeIgnoreCase(r.db, "users."+UserColumns.Phone, keyword)).
+		Or(LikeIgnoreCase(r.db, "users."+UserColumns.Email, keyword)).
+		Or(LikeIgnoreCase(r.db, "tum."+UserRoleColumns.Role, keyword)).
+		Or(LikeIgnoreCase(r.db, "tum."+UserRoleColumns.Status, keyword)).
+		Or(LikeIgnoreCase(r.db, "users."+UserColumns.Status, keyword))
 	for _, role := range localizedEnumMatches(keyword, tenantUserRoleSearchLabels) {
 		condition = condition.Or("tum."+UserRoleColumns.Role+" = ?", role)
 	}

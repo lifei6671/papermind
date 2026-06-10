@@ -377,6 +377,59 @@ func TestSpaceMemberRoutesAllowCurrentSpaceAdminOnlyWithSQLite(t *testing.T) {
 	}
 }
 
+func TestSpaceTeacherCanListCurrentSpaceStudentCandidatesOnlyWithSQLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := openExamAPITestDB(t)
+	seedSpaceAPITestData(t, gormDB)
+	seedProfileSpacesAPITestData(t, gormDB)
+	seedSpaceMemberPermissionAPITestData(t, gormDB)
+
+	if err := gormDB.Table("space_members").
+		Where("tenant_id = ? AND space_id = ? AND user_id = ?", 10, 100, 20).
+		Update("role_in_space", "teacher").Error; err != nil {
+		t.Fatalf("demote seeded space admin to teacher: %v", err)
+	}
+
+	router := NewRouter(RouterOptions{
+		DB:  gormDB,
+		Now: func() int64 { return fixedAPINow },
+	})
+	teacherAuthHeader := tenantAuthHeader(t, router, 10, "teacher_li", "papermind123")
+
+	listRecorder := httptest.NewRecorder()
+	router.ServeHTTP(listRecorder, authorizedRequest(http.MethodGet, "/api/v1/spaces/100/members?tenant_id=10&role=student&status=enabled&search=张", nil, teacherAuthHeader))
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("teacher list current space student candidates status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
+	}
+	listBody := decodeExamAPIResponse[spaceMemberListResponse](t, listRecorder.Body.Bytes())
+	if listBody.Data.Total != 1 || len(listBody.Data.Items) != 1 {
+		t.Fatalf("expected one student candidate, got %#v", listBody.Data)
+	}
+	if listBody.Data.Items[0].UserID != 21 || listBody.Data.Items[0].Role != "student" || listBody.Data.Items[0].Status != "enabled" {
+		t.Fatalf("expected enabled student candidate only, got %#v", listBody.Data.Items[0])
+	}
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		target string
+		body   []byte
+	}{
+		{name: "list teachers in own space", method: http.MethodGet, target: "/api/v1/spaces/100/members?tenant_id=10&role=teacher&status=enabled"},
+		{name: "list students without enabled status", method: http.MethodGet, target: "/api/v1/spaces/100/members?tenant_id=10&role=student"},
+		{name: "list other space students", method: http.MethodGet, target: "/api/v1/spaces/110/members?tenant_id=10&role=student&status=enabled"},
+		{name: "add own space member", method: http.MethodPost, target: "/api/v1/spaces/100/members", body: []byte(`{"tenant_id":10,"user_id":22,"role":"student"}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedRequest(tc.method, tc.target, tc.body, teacherAuthHeader))
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("%s status = %d, body = %s", tc.name, recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestSpaceMemberRoutesKeepLastSpaceAdminWithSQLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := openExamAPITestDB(t)

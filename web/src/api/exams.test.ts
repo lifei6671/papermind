@@ -18,11 +18,12 @@ describe("examApi", () => {
           duration_minutes: 120,
           invite_code: "PM8888",
           status: "published",
+          created_by: 501,
           target_type: "space",
           target_id: 301,
           targets: [
             { target_type: "space", target_id: 301 },
-            { target_type: "user", target_id: 501 },
+            { target_type: "user", target_id: 501, scope_space_ids: [301] },
           ],
         }],
         page: 2,
@@ -49,15 +50,48 @@ describe("examApi", () => {
         paperName: "试卷 100",
         inviteCode: "PM8888",
         target: "空间 301、用户 501",
+        targets: [
+          { targetType: "space", targetID: 301 },
+          { targetType: "user", targetID: 501, scopeSpaceIDs: [301] },
+        ],
+        createdBy: 501,
         status: "published",
+        startTime: 1779792000000,
+        endTime: 1779799200000,
         startAt: "2026-05-26 18:40",
         endAt: "2026-05-26 20:40",
         durationMinutes: 120,
+        maxAttempts: 0,
+        resultStrategy: "latest",
+        publishMode: "manual_publish",
+        scorePublishTime: null,
       }],
       page: 2,
       pageSize: 50,
       total: 128,
     });
+  });
+
+  test("考试列表请求只在关键词非空时发送服务端搜索参数", async () => {
+    const requestedURLs: string[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      requestedURLs.push(String(input));
+      return jsonResponse({
+        items: [],
+        page: 1,
+        page_size: 5,
+        total: 0,
+      });
+    });
+    const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    await api.listExams({ tenantID: 10, spaceID: 301, search: "  数学  ", page: 1, pageSize: 5 });
+    await api.listExams({ tenantID: 10, spaceID: 301, search: "   ", page: 1, pageSize: 5 });
+
+    expect(requestedURLs).toEqual([
+      "/api/v1/exams?tenant_id=10&space_id=301&search=%E6%95%B0%E5%AD%A6&page=1&page_size=5",
+      "/api/v1/exams?tenant_id=10&space_id=301&page=1&page_size=5",
+    ]);
   });
 
   test("发布考试请求同时发送多目标数组和兼容单目标字段", async () => {
@@ -71,7 +105,7 @@ describe("examApi", () => {
         target_id: 301,
         targets: [
           { target_type: "space", target_id: 301 },
-          { target_type: "user", target_id: 501 },
+          { target_type: "user", target_id: 501, scope_space_ids: [301] },
         ],
         start_time: 1779792000000,
         end_time: 1779799200000,
@@ -96,7 +130,7 @@ describe("examApi", () => {
         target_id: 301,
         targets: [
           { target_type: "space", target_id: 301 },
-          { target_type: "user", target_id: 501 },
+          { target_type: "user", target_id: 501, scope_space_ids: [301] },
         ],
       });
     });
@@ -108,7 +142,7 @@ describe("examApi", () => {
       name: "高一数学月考",
       targets: [
         { targetType: "space", targetID: 301 },
-        { targetType: "user", targetID: 501 },
+        { targetType: "user", targetID: 501, scopeSpaceIDs: [301] },
       ],
       startTime: 1779792000000,
       endTime: 1779799200000,
@@ -160,6 +194,67 @@ describe("examApi", () => {
     expect(result.status).toBe("closed");
   });
 
+  test("草稿考试更新请求发送草稿配置和目标范围", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/v1/exams/8/draft");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(init?.body as string)).toEqual({
+        tenant_id: 10,
+        paper_id: 100,
+        name: "高一数学草稿",
+        target_type: "space",
+        target_id: 301,
+        targets: [{ target_type: "space", target_id: 301 }],
+        start_time: 1779792000000,
+        end_time: 1779799200000,
+        duration_minutes: 120,
+        max_attempts: 1,
+        result_strategy: "latest",
+        publish_mode: "manual_publish",
+        score_publish_time: null,
+        status: "draft",
+      });
+      return jsonResponse({
+        id: 8,
+        tenant_id: 10,
+        paper_id: 100,
+        name: "高一数学草稿",
+        start_time: 1779792000000,
+        end_time: 1779799200000,
+        duration_minutes: 120,
+        max_attempts: 1,
+        result_strategy: "latest",
+        publish_mode: "manual_publish",
+        score_publish_time: null,
+        invite_code: "",
+        status: "draft",
+        target_type: "space",
+        target_id: 301,
+      });
+    });
+    const api = createExamAPI(createApiClient({ baseUrl: "", fetcher }));
+
+    const result = await api.updateDraftExam!({
+      tenantID: 10,
+      examID: 8,
+      paperID: 100,
+      name: "高一数学草稿",
+      targets: [{ targetType: "space", targetID: 301 }],
+      startTime: 1779792000000,
+      endTime: 1779799200000,
+      durationMinutes: 120,
+      maxAttempts: 1,
+      resultStrategy: "latest",
+      publishMode: "manual_publish",
+      scorePublishTime: null,
+      status: "draft",
+    });
+
+    expect(result.status).toBe("draft");
+    expect(result.inviteCode).toBe("");
+    expect(result.targets).toEqual([{ targetType: "space", targetID: 301 }]);
+  });
+
   test("考试入口按邀请码解析考试信息", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe("POST");
@@ -182,6 +277,7 @@ describe("examApi", () => {
           publish_mode: "manual_publish",
           invite_code: "PM2026",
           status: "published",
+          created_by: 501,
         },
       }));
     });
@@ -201,10 +297,18 @@ describe("examApi", () => {
       paperName: "试卷 100",
       inviteCode: "PM2026",
       target: "未配置",
+      targets: [],
+      createdBy: 501,
       status: "published",
+      startTime: 1779792000000,
+      endTime: 1779799200000,
       startAt: "2026-05-26 18:40",
       endAt: "2026-05-26 20:40",
       durationMinutes: 120,
+      maxAttempts: 1,
+      resultStrategy: "latest",
+      publishMode: "manual_publish",
+      scorePublishTime: null,
     });
   });
 

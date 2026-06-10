@@ -60,6 +60,7 @@ func RegisterRoutes(api *gin.RouterGroup, deps apirouter.Dependencies) {
 	tenant.GET("/profile/spaces", apimiddleware.RequireAuthPrincipal(), authHandler.listProfileSpaces)
 	api.GET("/exams", apimiddleware.RequireExamBusinessPrincipal(), examHandler.list)
 	api.POST("/exams", apimiddleware.RequireExamBusinessPrincipal(), examHandler.publish)
+	api.POST("/exams/:id/draft", apimiddleware.RequireExamBusinessPrincipal(), examHandler.updateDraft)
 	api.POST("/exams/:id/status", apimiddleware.RequireExamBusinessPrincipal(), examHandler.updateStatus)
 	api.GET("/exams/:id/detail", apimiddleware.RequireExamBusinessPrincipal(), examHandler.getManagementDetail)
 	api.GET("/exams/:id/overview", apimiddleware.RequireExamBusinessPrincipal(), examHandler.getOverview)

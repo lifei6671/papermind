@@ -162,7 +162,7 @@ func (r *QuestionRepository) ListVisibleQuestionTags(ctx context.Context, input 
 		Joins("JOIN tags AS tags ON tags.tenant_id = qt.tenant_id AND tags.id = qt.tag_id AND tags.deleted_at = 0")
 	query = r.applyQuestionFilters(query, servicequestion.ListQuestionsInput{Status: input.Status})
 	if keyword := strings.TrimSpace(input.Search); keyword != "" {
-		query = query.Where("LOWER(tags.name) LIKE ?", "%"+strings.ToLower(keyword)+"%")
+		query = query.Where(likeIgnoreCaseClause(r.db, "tags.name"), likeIgnoreCasePattern(keyword))
 	}
 	var tags []string
 	if err := query.Distinct("tags.name").Order("tags.name ASC").Pluck("tags.name", &tags).Error; err != nil {
@@ -324,21 +324,21 @@ func (r *QuestionRepository) applyQuestionSearch(query *gorm.DB, search string) 
 	if keyword == "" {
 		return query
 	}
-	pattern := "%" + strings.ToLower(keyword) + "%"
-	condition := r.db.Where("LOWER(questions."+QuestionColumns.Title+") LIKE ?", pattern).
-		Or("LOWER(questions."+QuestionColumns.Analysis+") LIKE ?", pattern).
-		Or("LOWER(questions."+QuestionColumns.Difficulty+") LIKE ?", pattern).
-		Or("LOWER(questions."+QuestionColumns.Type+") LIKE ?", pattern).
-		Or("LOWER(questions."+QuestionColumns.Status+") LIKE ?", pattern).
-		Or("LOWER(users.username) LIKE ?", pattern).
-		Or("LOWER(tum.role) LIKE ?", pattern).
+	pattern := likeIgnoreCasePattern(keyword)
+	condition := LikeIgnoreCase(r.db, "questions."+QuestionColumns.Title, keyword).
+		Or(LikeIgnoreCase(r.db, "questions."+QuestionColumns.Analysis, keyword)).
+		Or(LikeIgnoreCase(r.db, "questions."+QuestionColumns.Difficulty, keyword)).
+		Or(LikeIgnoreCase(r.db, "questions."+QuestionColumns.Type, keyword)).
+		Or(LikeIgnoreCase(r.db, "questions."+QuestionColumns.Status, keyword)).
+		Or(LikeIgnoreCase(r.db, "users.username", keyword)).
+		Or(LikeIgnoreCase(r.db, "tum.role", keyword)).
 		Or(
 			`EXISTS (
 					SELECT 1
 					FROM question_options AS qo
 					WHERE qo.tenant_id = questions.tenant_id
 						AND qo.question_id = questions.id
-						AND LOWER(qo.content) LIKE ?
+						AND `+likeIgnoreCaseClause(r.db, "qo.content")+`
 				)`,
 			pattern,
 		).
@@ -349,7 +349,7 @@ func (r *QuestionRepository) applyQuestionSearch(query *gorm.DB, search string) 
 					JOIN tags AS tags ON tags.tenant_id = qt.tenant_id AND tags.id = qt.tag_id AND tags.deleted_at = 0
 					WHERE qt.tenant_id = questions.tenant_id
 						AND qt.question_id = questions.id
-						AND LOWER(tags.name) LIKE ?
+						AND `+likeIgnoreCaseClause(r.db, "tags.name")+`
 				)`,
 			pattern,
 		)
